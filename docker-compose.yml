@@ -1,0 +1,23 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: workflow-builder-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: workflow
+      POSTGRES_PASSWORD: devpass123
+      POSTGRES_DB: workflow_builder
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_INITDB_ARGS: "--auth-host=trust --auth-local=trust"
+    ports:
+      - "5433:5432"
+    volumes:
+      - workflow-builder-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workflow -d workflow_builder"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  workflow-builder-db-data:
