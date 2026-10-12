@@ -45,22 +45,23 @@ pnpm db:migrate
 pnpm start:dev
 # → http://localhost:3000
 ```
-Scripts
-Command	Description
-pnpm start:dev	Dev server with watch
-pnpm build	Production build
-pnpm test	Unit tests (Vitest)
-pnpm db:generate	Generate Drizzle migration from schema
-pnpm db:migrate	Apply migrations
-pnpm db:studio	Drizzle Studio (web UI)
-Documentation
-docs/development/RULES.md — rules for TS/NestJS/ESM/Drizzle
+## Scripts
 
-docs/CHANGELOG.md — version history
+| Command | Description |
+|---|---|
+| `pnpm start:dev` | Dev server with watch |
+| `pnpm build` | Production build |
+| `pnpm test` | Unit tests (Vitest) |
+| `pnpm db:generate` | Generate Drizzle migration from schema |
+| `pnpm db:migrate` | Apply migrations |
+| `pnpm db:studio` | Drizzle Studio (web UI) |
+## Documentation
 
-docs/KNOWN_ISSUES.md — known issues registry
+- [`docs/development/RULES.md`](docs/development/RULES.md) — rules for TS/NestJS/ESM/Drizzle
+- [`docs/CHANGELOG.md`](docs/CHANGELOG.md) — version history
+- [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) — known issues registry
+- [`docs/development/PROMPT_V1.md`](docs/development/PROMPT_V1.md) — starting prompt for new sessions
 
-docs/development/PROMPT_V1.md — starting prompt for new sessions
+## License
 
-License
 Proprietary. © 2026 RuChating (iilmchat).
