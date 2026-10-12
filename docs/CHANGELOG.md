@@ -30,6 +30,12 @@
   - Multi-tenant readiness: необязательный `userId` фильтр во всех методах.
   - 31 тест (было 7): +18 service, +8 controller, −2 заменено.
 
+### Fixed
+- **PATCH `/workflow/:id` с пустым body** возвращает 400 вместо 200
+  (v0.2.0). `UpdateWorkflowSchema` переписан без `.partial()` —
+  defaults на `nodes`/`edges` больше не блокируют `.refine()`.
+  `userId` исключён из update-схемы.
+
 ### Planned
 - **KI-101** — Visual canvas для редактирования workflow (React + @xyflow/react).
 - **KI-102** — LLM-провайдеры (Anthropic, OpenAI, локальные).
