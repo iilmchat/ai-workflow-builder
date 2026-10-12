@@ -19,6 +19,16 @@
 ## [Unreleased]
 
 ### Added
+- **Frontend — Task 1 (v0.3.0):**
+  - Отдельный пакет `web/` — Vite 8 + React 19 + TypeScript 6 (strict, ESM).
+  - Tailwind CSS v4 (CSS-based config).
+  - React Flow v12 (`@xyflow/react`) — canvas с сеткой, controls, minimap.
+  - Zustand store (`useWorkflowStore`) для `nodes`/`edges`.
+  - `Toolbar` с 3 кнопками (Text / LLM / Image Generation) — каскадный
+    сдвиг +40px на каждый следующий узел.
+  - Vite proxy: `/workflow` → `http://localhost:3000`, `/engine` → тот же.
+  - Dev-only `window.__wfStore` для отладки в DevTools.
+  - Проверка в headless Chrome + CDP: 3 ноды, 2 связи, 0 ошибок.
 - **Engine (v0.2.0):**
   - `EngineService` — топологическая сортировка (алгоритм Кана), валидация графа,
     построение плана выполнения с уровнями параллелизма.

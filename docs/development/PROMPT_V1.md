@@ -3,7 +3,8 @@
 **Версия промпта:** v1.0
 **Дата:** 2026-10-12
 **Актуальный релиз:** v0.1.0 (2026-10-13)
-**Статус:** CRUD + Engine готовы. В работе — Frontend (React Flow canvas).
+**Статус:** CRUD + Engine + Frontend (Task 1: canvas) готовы.
+В работе — Frontend Task 2 (кастомные ноды).
 
 ---
 
@@ -47,7 +48,8 @@
 - `fd1da75` — `docs: add CI status badge`
 - `bdebc6f` — `docs: update CHANGELOG and PROMPT_V1 after CRUD + PATCH fix`
 - `<новый hash>` — `feat(engine): topological sort + validation + execution plan`
-
+- `b9b404f` — `docs: update KNOWN_ISSUES.md`
+- `<новый hash>` — `feat(web): initial React Flow canvas + toolbar`
 ---
 
 ## § 2. Правила оформления (ОБЯЗАТЕЛЬНО)
@@ -91,15 +93,19 @@
 
 ### Метрики
 
-- **3 модуля** (Workflow, Engine, Nodes).
+- **Backend — 3 модуля** (Workflow, Engine, Nodes).
   - **Workflow** — CRUD реализован (5 endpoints).
   - **Engine** — validation + topological sort + execution plan.
   - **Nodes** — пустой скелет.
+- **Frontend — пакет `web/`** (Vite 8 + React 19 + React Flow v12).
+  - Canvas + minimap + controls + toolbar.
+  - 3 базовые ноды (default React Flow, кастомные будут в Task 2).
+  - Zustand store.
 - **3 таблицы** БД (workflows, workflow_runs, node_runs).
-- **68 тестов** (7 базовых + 24 CRUD + 10 PATCH fix + 27 Engine).
-- **CI**: зелёный (build + test на push).
-- **KI:** 3 (KI-001 шаблон, KI-002 validateGraphAsync async-нейминг, KI-003 executionMap collisions).
-- **Релизы**: v0.1.0 (scaffold + Drizzle + CRUD + Engine).
+- **68 тестов** (backend).
+- **CI**: зелёный (backend; frontend не покрыт тестами).
+- **KI:** 4 (KI-001..004).
+- **Релизы**: v0.1.0 (scaffold + Drizzle + CRUD + Engine + Frontend canvas).
 
 ---
 
@@ -117,20 +123,31 @@
 - 29 тестов.
 - См. commit `<hash>`.
 
-### Пункт C — Сейчас: Frontend (React Flow canvas)
+### Пункт C — ✅ Сделан: Frontend Task 1 (v0.3.0)
 
-1. Отдельный пакет `web/` (Vite + React 19 + TypeScript).
-2. React Flow (`@xyflow/react` v12).
-3. 3 кастомных нода: `TextNode`, `LLMNode`, `ImageGenNode`.
-4. Панель добавления нод (левая панель / toolbar).
-5. Сохранение / загрузка графа через `/workflow` API.
-6. Кнопка «Run» (пока — вызов `/engine/plan`, отображение порядка).
+- Vite + React + React Flow canvas + toolbar.
+- Проверено в headless Chrome.
+- См. commit `<hash>`.
 
-### Пункт D — После frontend: Runner
+### Пункт D — Сейчас: Frontend Task 2 (кастомные ноды)
 
-- BullMQ queue + worker.
+1. `TextNode` — с textarea для ввода промпта.
+2. `LLMNode` — с выпадающим списком модели (пока — заглушка).
+3. `ImageGenNode` — с превью-плейсхолдером.
+4. Стилизация под дизайн скрина: серые скруглённые карточки, типизированные
+   порты с цветами (T — синий, G — зелёный, I — серый).
+5. Регистрация через `nodeTypes` в ReactFlow.
+
+### Пункт E — После Task 2: Frontend Task 3 (API интеграция)
+
+- Загрузка/сохранение workflow через `/workflow` API.
+- Клик «Save» — POST/PATCH.
+- Клик «Run» — `POST /engine/plan` + визуализация порядка.
+
+### Пункт F — Runner (Backend)
+
+- BullMQ + worker для реального выполнения узлов.
 - LLM-провайдеры (Anthropic / OpenAI / локальные).
-- Image-generation провайдеры.
 - SSE-стриминг прогресса.
 
 ---

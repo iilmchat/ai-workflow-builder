@@ -58,6 +58,30 @@
 
 ---
 
+### KI-004 — React Flow: лицензия `hideAttribution` при платных плагинах
+- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-10-13
+- **Файлы:** `web/src/components/Canvas.tsx` (`proOptions={{ hideAttribution: true }}`)
+- **Описание:** Отключили watermark React Flow в dev. В v12 MIT это разрешено,
+  но при подключении проприетарных плагинов (`@xyflow/pro`) условия меняются.
+- **Что проверить перед prod:** актуальная лицензия React Flow +
+  всех плагинов. Если условия требуют attribution — вернуть.
+- **Не блокер:** dev-only.
+
+### KI-005 — Frontend не покрыт CI (нет сборки `web/` в GitHub Actions)
+- **Приоритет:** 🟡 Medium | **Статус:** Planned | **Запланировано:** v0.3.1
+- **Файлы:** `.github/workflows/ci.yml`
+- **Описание:** CI собирает только backend (`pnpm build` + `pnpm test`).
+  Frontend `web/` не проверяется — сломанный TypeScript или Vite-build
+  пройдёт незамеченным.
+- **Fix:** добавить в `.github/workflows/ci.yml` новый job:
+  - `working-directory: web`
+  - `pnpm install --frozen-lockfile`
+  - `pnpm build` (tsc -b + vite build)
+  - (опционально) `pnpm lint` — после добавления ESLint/oxlint в web
+- **Не блокер:** пока web маленький. Добавить вместе с Task 2 или Task 3.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
