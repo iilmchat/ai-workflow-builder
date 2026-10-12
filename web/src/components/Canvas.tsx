@@ -9,6 +9,7 @@ import {
   useReactFlow,
 } from '@xyflow/react';
 import { useWorkflowStore } from '@/stores/workflow';
+import { nodeTypes } from '@/components/nodes';
 
 /** Функция, возвращающая центр вьюпорта в координатах холста. */
 export type FindCenterHandler = () => { x: number; y: number };
@@ -66,11 +67,16 @@ function CanvasInner({ onReady }: CanvasProps) {
     <ReactFlow
       nodes={nodes}
       edges={edges}
+      nodeTypes={nodeTypes}
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onConnect={onConnect}
       proOptions={{ hideAttribution: true }}
+      // Связи по умолчанию тонкие и почти незаметные — делаем их чуть плотнее.
+      defaultEdgeOptions={{ style: { strokeWidth: 2, stroke: '#94a3b8' } }}
+      // maxZoom: иначе один-два узла растягиваются на весь экран.
       fitView
+      fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
       <Controls />

@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react';
 import { Canvas, type FindCenterHandler } from '@/components/Canvas';
 import { Toolbar } from '@/components/Toolbar';
 import { useWorkflowStore } from '@/stores/workflow';
-import { NODE_TYPE_LABELS, type NodeType } from '@/types/graph';
+import type { NodeType } from '@/types/graph';
 
 /**
  * Корневой компонент редактора: канвас на всю высоту и нижний тулбар поверх него.
@@ -30,16 +30,14 @@ export function App() {
       }
 
       const center = findCenter();
-      // Небольшой сдвиг на каждый следующий узел, иначе узлы ложатся
-      // ровно друг на друга в центре канваса.
-      const step = nodeCount * 40;
+      // Раскладываем узлы сеткой от центра: карточка ~240x150, поэтому шаг
+      // 280x190 — узлы не накладываются друг на друга.
+      const column = nodeCount % 3;
+      const row = Math.floor(nodeCount / 3);
 
-      addNode({
-        id: `${type}-${crypto.randomUUID()}`,
-        type: 'default',
-        position: { x: center.x + step, y: center.y + step },
-        data: { label: NODE_TYPE_LABELS[type], nodeType: type },
-        selected: true,
+      addNode(type, {
+        x: center.x - 280 + column * 280,
+        y: center.y - 80 + row * 190,
       });
     },
     [addNode, nodeCount],

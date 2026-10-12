@@ -15,3 +15,6 @@ dist-ssr
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+nodes-preview.png
+*-preview.png
