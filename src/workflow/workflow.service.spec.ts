@@ -332,7 +332,10 @@ describe('WorkflowService', () => {
       expect(result).toBeNull();
     });
 
-    it('бросает BadRequestException при пустом DTO', async () => {
+    it('бросает BadRequestException при пустом DTO (defense in depth)', async () => {
+      // Через HTTP сюда пустой объект уже не доедет: его отклонит
+      // UpdateWorkflowSchema.refine() в ZodValidationPipe. Проверка в сервисе
+      // остаётся как страховка на случай прямого вызова сервиса.
       await expect(service.updateAsync(WORKFLOW_ID, {})).rejects.toThrow(
         'Не передано ни одного поля для обновления',
       );
