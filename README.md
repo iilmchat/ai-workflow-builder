@@ -19,6 +19,10 @@ Frontend (React 19 + @xyflow/react) — в разработке.
 - **LLM**: Anthropic / OpenAI / local (planned)
 - **Frontend**: React 19 + Vite + @xyflow/react (planned)
 
+## Getting Started
+
+**First time here?** Смотрите [docs/development/GETTING_STARTED.md](docs/development/GETTING_STARTED.md) — пошаговое разворачивание за ~20 минут.
+
 ## Local Development
 
 ### Prerequisites
