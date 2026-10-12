@@ -3,8 +3,9 @@
 **Версия промпта:** v1.0
 **Дата:** 2026-10-12
 **Актуальный релиз:** v0.1.0 (2026-10-13)
-**Статус:** CRUD + Engine + Frontend (Task 1+2: canvas + кастомные ноды) готовы.
-В работе — Frontend Task 3 (API интеграция: сохранение/загрузка workflow).
+**Статус:** CRUD + Engine + Frontend (Tasks 1-3: canvas + ноды + API) готовы.
+MVP замкнут: рисуем → сохраняем → загружаем → смотрим план.
+В работе — Runner (BullMQ + LLM-провайдеры + SSE).
 
 ---
 
@@ -52,6 +53,8 @@
 - `<новый hash>` — `feat(web): initial React Flow canvas + toolbar`
 - `246d8b8` — `docs: update CHANGELOG and PROMPT_V1 after Frontend Task 1`
 - `<новый hash>` — `feat(web): custom nodes (Text / LLM / Image Generation)`
+- `d0d1bfc` — `docs: update CHANGELOG and PROMPT_V1 after Frontend Task 2`
+- `afb3d0c` — `feat(web): API integration — save/load/run workflow`
 
 ---
 
@@ -97,18 +100,21 @@
 ### Метрики
 
 - **Backend — 3 модуля** (Workflow, Engine, Nodes).
-  - **Workflow** — CRUD реализован (5 endpoints).
-  - **Engine** — validation + topological sort + execution plan.
-  - **Nodes** — пустой скелет.
+  - **Workflow** — CRUD (5 endpoints).
+  - **Engine** — validation + topological sort + execution plan (3 endpoints).
+  - **Nodes** — пустой скелет (для будущей registry).
 - **Frontend — пакет `web/`** (Vite 8 + React 19 + React Flow v12).
   - Canvas + minimap + controls + toolbar.
-  - 3 базовые ноды (default React Flow, кастомные будут в Task 2).
-  - Zustand store.
+  - 3 кастомные ноды с типизированными портами.
+  - TopBar (Save/Load/Run) + LoadModal + Toast.
+  - URL-sync `?workflowId=`.
+  - Zod-валидация API-ответов.
+  - Bundle: 506 kB JS, 27 kB CSS.
 - **3 таблицы** БД (workflows, workflow_runs, node_runs).
-- **68 тестов** (backend).
-- **CI**: зелёный (backend; frontend не покрыт тестами).
-- **KI:** 4 (KI-001..004).
-- **Релизы**: v0.1.0 (scaffold + Drizzle + CRUD + Engine + Frontend canvas).
+- **68 тестов** backend (frontend не покрыт тестами).
+- **CI**: зелёный (backend только; фронт — KI-005).
+- **KI:** 9 (KI-001..009).
+- **Релизы**: v0.1.0 (scaffold + Drizzle + CRUD + Engine + Frontend Tasks 1-3).
 
 ---
 
@@ -132,28 +138,45 @@
 - Проверено в headless Chrome.
 - См. commit `<hash>`.
 
-### Пункт D — ✅ Сделан: Frontend Task 2 (v0.3.0)
+### Пункт D — ✅ Сделан: Frontend Task 2+3 (v0.3.0)
 
-- 3 кастомные ноды + BaseNode + типизированные порты.
-- Проверено в headless Chrome.
-- См. commit `<hash>`.
+- Task 2: кастомные ноды, типизированные порты (commit 67c06c3).
+- Task 3: API integration, Save/Load/Run, badges уровней (commit afb3d0c).
+- Проверено на живом backend.
 
-### Пункт E — Сейчас: Frontend Task 3 (API интеграция)
+### Пункт E — Сейчас: Runner (Backend)
 
-1. API-клиент (`web/src/lib/api.ts`) — fetch-обёртки для `/workflow` и `/engine`.
-2. Кнопка «Save» в верхнем правом углу — POST `/workflow` (создание) или
-   PATCH `/workflow/:id` (обновление существующего).
-3. Кнопка «Load» — модалка со списком workflow (GET `/workflow`).
-4. Кнопка «Run» — POST `/engine/plan`, показать уровни порядка в UI
-   (например, badges 1/2/3 на нодах).
-5. Сохранить `currentWorkflowId` в Zustand — чтобы Save → PATCH после первого создания.
-6. URL-роутинг: `/workflow/:id` — при загрузке страницы fetch workflow.
+1. **BullMQ-инфраструктура:**
+   - Redis в docker-compose (рядом с Postgres).
+   - `@nestjs/bullmq` — регистрация Queue + Worker.
+   - `RunsModule` — сервис управления запусками.
 
-### Пункт F — После Task 3: Runner (Backend)
+2. **Провайдеры LLM:**
+   - `ILLMProvider` интерфейс + `AnthropicProvider` / `OpenAIProvider`.
+   - Выбор по `providerModel` из node.data.
+   - Стриминг ответа (для UI).
 
-- BullMQ + worker для реального выполнения.
-- LLM-провайдеры.
-- SSE-стриминг прогресса.
+3. **Image-генерация:**
+   - `IImageProvider` + один провайдер (Replicate / FAL / OpenAI).
+   - Сохранение результата в S3-совместимое хранилище или локальный uploads/.
+
+4. **Executor:**
+   - `POST /runs` — создать Run, вернуть runId.
+   - Worker читает `executionMap` (из EngineService), выполняет узлы
+     последовательно, пишет `node_runs` в БД.
+   - SSE `GET /runs/:id/stream` — прогресс: `node_started`, `node_completed`,
+     `run_completed`.
+
+5. **Frontend:**
+   - Кнопка «Run» в TopBar — POST /runs → SSE → подсветка узлов
+     (running / completed / error).
+   - Финальный результат — в модалке или панели снизу.
+
+### Пункт F — После Runner: Auth + Multi-user
+
+- JWT + Passport (зависимости уже установлены).
+- Заменить `DEFAULT_USER_ID = 'demo-user'` на `req.user.id`.
+- Регистрация / логин UI.
 
 ---
 

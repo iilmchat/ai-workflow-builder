@@ -19,6 +19,26 @@
 ## [Unreleased]
 
 ### Added
+- **Frontend — Task 3 (v0.3.0):**
+  - `web/src/lib/api.ts` — типизированный клиент API: Zod-валидация ответов,
+    `requestAsync<T>` с обработкой сетевых и HTTP-ошибок, 6 endpoints.
+  - `web/src/lib/plan.ts` — `levelsToMap` (`string[][]` → `Record<string, number>`).
+  - `TopBar` — редактируемое имя workflow, кнопки Load / Save / Run.
+  - `LoadModal` — список workflow, открытие / удаление, Escape.
+  - `Toast` — inline-уведомления (без библиотек).
+  - Store: `currentWorkflowId`, `currentWorkflowName`, `executionLevels`,
+    `saveWorkflowAsync`, `loadWorkflowAsync`, `runPlanAsync`.
+  - `BaseNode`: badge уровня выполнения (серый кружок с номером).
+  - Синхронизация URL: после первого Save → `?workflowId=` в
+    `history.replaceState`; при перезагрузке — fetch по id.
+  - `executionLevels` сбрасывается при `addNode` / `onConnect` / `load`.
+  - Проверено на живом backend:
+    - Save first → POST /workflow → id в URL, тост.
+    - Save second → PATCH same id (без дубля).
+    - Run на diamond A→B/C→D → `{A:1, B:2, C:2, D:3}` → badges в UI.
+    - Load → граф заменён, план очищен.
+    - Reload `?workflowId=` → 3 узла восстановлены.
+    - 0 ошибок в консоли.
 - **Frontend — Task 2 (v0.3.0):**
   - Кастомные ноды: `TextNode`, `LLMNode`, `ImageGenNode` +
     презентационная обёртка `BaseNode`.
