@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
-import { WorkflowService } from './workflow.service.js';
 import { WorkflowController } from './workflow.controller.js';
+import { WorkflowService } from './workflow.service.js';
 
+// DbModule помечен @Global(), поэтому импортировать его здесь не нужно.
 @Module({
+  imports: [],
+  controllers: [WorkflowController],
   providers: [WorkflowService],
-  controllers: [WorkflowController]
 })
 export class WorkflowModule {}
