@@ -3,7 +3,7 @@
 **Версия промпта:** v1.0
 **Дата:** 2026-10-12
 **Актуальный релиз:** v0.1.0 (2026-10-13)
-**Статус:** CRUD Workflow готов (5 endpoints, Zod). В работе — Engine (топологическая сортировка).
+**Статус:** CRUD + Engine готовы. В работе — Frontend (React Flow canvas).
 
 ---
 
@@ -45,6 +45,8 @@
 - `f76e9b7` — `fix: move allowBuilds to pnpm-workspace.yaml`
 - `4be9cdf` — `feat(workflow): implement CRUD via Drizzle + Zod`
 - `fd1da75` — `docs: add CI status badge`
+- `bdebc6f` — `docs: update CHANGELOG and PROMPT_V1 after CRUD + PATCH fix`
+- `<новый hash>` — `feat(engine): topological sort + validation + execution plan`
 
 ---
 
@@ -91,13 +93,13 @@
 
 - **3 модуля** (Workflow, Engine, Nodes).
   - **Workflow** — CRUD реализован (5 endpoints).
-  - **Engine** — пустой скелет.
+  - **Engine** — validation + topological sort + execution plan.
   - **Nodes** — пустой скелет.
 - **3 таблицы** БД (workflows, workflow_runs, node_runs).
-- **31 тест** (7 базовых + 24 на CRUD).
+- **68 тестов** (7 базовых + 24 CRUD + 10 PATCH fix + 27 Engine).
 - **CI**: зелёный (build + test на push).
-- **KI:** 1 (шаблон).
-- **Релизы**: v0.1.0 (scaffold + Drizzle + CRUD).
+- **KI:** 3 (KI-001 шаблон, KI-002 validateGraphAsync async-нейминг, KI-003 executionMap collisions).
+- **Релизы**: v0.1.0 (scaffold + Drizzle + CRUD + Engine).
 
 ---
 
@@ -108,19 +110,28 @@
 - 5 REST endpoints, Zod-валидация, 24 теста, lint clean.
 - См. commit `4be9cdf`.
 
-### Пункт B — Сейчас: Engine (топологическая сортировка)
+### Пункт B — ✅ Сделан: Engine (v0.2.0)
 
-1. `EngineService.validateGraphAsync(nodes, edges)` — проверка на циклы.
-2. `EngineService.topologicalSortAsync(nodes, edges)` — порядок выполнения (алгоритм Кана).
-3. `EngineService.buildExecutionPlanAsync(nodes, edges)` — план с уровнями параллелизма.
-4. Unit-тесты на 5-10 графов.
+- `EngineService` — Kahn's algorithm + DFS cycle detection + levels.
+- `EngineController` — 3 endpoints.
+- 29 тестов.
+- См. commit `<hash>`.
 
-### Пункт C — Frontend
+### Пункт C — Сейчас: Frontend (React Flow canvas)
 
-1. Отдельный пакет `web/` (Vite + React).
-2. React Flow canvas.
-3. 3 кастомных нода (Text, LLM, ImageGen).
-4. Сохранение графа через API.
+1. Отдельный пакет `web/` (Vite + React 19 + TypeScript).
+2. React Flow (`@xyflow/react` v12).
+3. 3 кастомных нода: `TextNode`, `LLMNode`, `ImageGenNode`.
+4. Панель добавления нод (левая панель / toolbar).
+5. Сохранение / загрузка графа через `/workflow` API.
+6. Кнопка «Run» (пока — вызов `/engine/plan`, отображение порядка).
+
+### Пункт D — После frontend: Runner
+
+- BullMQ queue + worker.
+- LLM-провайдеры (Anthropic / OpenAI / локальные).
+- Image-generation провайдеры.
+- SSE-стриминг прогресса.
 
 ---
 

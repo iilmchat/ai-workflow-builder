@@ -19,6 +19,13 @@
 ## [Unreleased]
 
 ### Added
+- **Engine (v0.2.0):**
+  - `EngineService` — топологическая сортировка (алгоритм Кана), валидация графа,
+    построение плана выполнения с уровнями параллелизма.
+  - DTO: `PositionSchema`, `NodeSchema`, `EdgeSchema`, `GraphSchema`
+    (`src/engine/dto/`).
+  - `EngineController` — 3 endpoints: `POST /engine/validate`, `/sort`, `/plan`.
+  - 29 тестов (+26 service, +3 controller). Всего: **68**.
 - **CRUD Workflow (v0.2.0):**
   - `ZodValidationPipe` (`src/common/pipes/`) — валидация body/query/param
     через Zod 4, `static create(schema)` для использования в декораторах.
