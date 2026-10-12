@@ -104,6 +104,8 @@
 **Инструменты:**
 - pnpm 12 (в `packageManager`)
 - dsh (DeepSeek Harness) — Web UI на `http://127.0.0.1:3080`
+- `docs/development/RULES.md` — правила разработки.
+- `docs/development/GETTING_STARTED.md` — разворачивание с нуля для новых разработчиков.
 
 ### Архитектура
 
