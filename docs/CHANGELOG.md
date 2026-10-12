@@ -18,6 +18,18 @@
 
 ## [Unreleased]
 
+### Added
+- **CRUD Workflow (v0.2.0):**
+  - `ZodValidationPipe` (`src/common/pipes/`) — валидация body/query/param
+    через Zod 4, `static create(schema)` для использования в декораторах.
+  - DTO: `CreateWorkflowSchema`, `UpdateWorkflowSchema`, `ListWorkflowsQuerySchema`
+    (`src/workflow/dto/`).
+  - `WorkflowService` — 5 методов: `createAsync`, `findAllAsync`, `findOneAsync`,
+    `updateAsync`, `removeAsync` (Drizzle ORM + pg driver).
+  - `WorkflowController` — 5 REST endpoints (`POST/GET/GET:id/PATCH/DELETE /workflow`).
+  - Multi-tenant readiness: необязательный `userId` фильтр во всех методах.
+  - 31 тест (было 7): +18 service, +8 controller, −2 заменено.
+
 ### Planned
 - **KI-101** — Visual canvas для редактирования workflow (React + @xyflow/react).
 - **KI-102** — LLM-провайдеры (Anthropic, OpenAI, локальные).
