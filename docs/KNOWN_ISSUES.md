@@ -67,6 +67,8 @@
   всех плагинов. Если условия требуют attribution — вернуть.
 - **Не блокер:** dev-only.
 
+---
+
 ### KI-005 — Frontend не покрыт CI (нет сборки `web/` в GitHub Actions)
 - **Приоритет:** 🟡 Medium | **Статус:** Planned | **Запланировано:** v0.3.1
 - **Файлы:** `.github/workflows/ci.yml`
@@ -79,6 +81,37 @@
   - `pnpm build` (tsc -b + vite build)
   - (опционально) `pnpm lint` — после добавления ESLint/oxlint в web
 - **Не блокер:** пока web маленький. Добавить вместе с Task 2 или Task 3.
+
+---
+
+### KI-006 — `imageUrl` рендерится в `<img>` без валидации схемы URL
+- **Приоритет:** 🟡 Medium | **Статус:** Planned | **Запланировано:** Task 3
+- **Файлы:** `web/src/components/nodes/ImageGenNode.tsx`
+- **Описание:** Если `data.imageUrl` придёт с бэкенда/LLM, поле вставится
+  в `<img src="...">` без проверки. `data:image/svg+xml` может содержать
+  скрипты. Нужна валидация: `http(s):` или `data:image/(png|jpeg|webp|gif);`
+  + `onError` заглушка.
+- **Когда чинить:** до того, как image-generation провайдеры начнут
+  возвращать реальные URL.
+- **Связанные:** KI-003.
+
+---
+
+### KI-007 — Отсутствие необязательного пропа React Flow не ловит tsc
+- **Приоритет:** 🟡 Medium | **Статус:** Documented | **Обнаружено:** 2026-10-13
+- **Файлы:** `web/src/components/Canvas.tsx`
+- **Описание:** При рефакторинге `Canvas.tsx` проп `nodeTypes={nodeTypes}`
+  исчез. TypeScript не ругался — проп необязательный. Узлы рендерились
+  дефолтным компонентом React Flow. Обнаружено только в браузере (headless
+  Chrome + CDP): `react-flow__node-default` вместо `react-flow__node-text`.
+- **Паттерн:** после рефакторинга React-компонентов с React Flow —
+  **обязательная проверка в реальном браузере**. Юнит-тесты и `tsc`
+  не ловят этот класс ошибок.
+- **Возможные меры:**
+  1. Простой smoke-тест в CI: собирать web/ и открывать страницу через
+     Playwright/Cypress, проверять наличие `react-flow__node-text` и т.п.
+  2. Линт-правило (custom): требовать `nodeTypes` в `<ReactFlow>`.
+- **Не блокер:** задокументировано, работает после fix.
 
 ---
 

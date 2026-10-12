@@ -19,6 +19,22 @@
 ## [Unreleased]
 
 ### Added
+- **Frontend — Task 2 (v0.3.0):**
+  - Кастомные ноды: `TextNode`, `LLMNode`, `ImageGenNode` +
+    презентационная обёртка `BaseNode`.
+  - Типизированные порты: T (синий #3b82f6), G (зелёный #22c55e),
+    10px + белая обводка + подпись рядом.
+  - `TextNode`: textarea (3 строки) с плейсхолдером, `nodrag`.
+  - `LLMNode`: select моделей (Claude Opus 4 / GPT-4o / DeepSeek V4)
+    + подсказка «Высокий / Быстрый».
+  - `ImageGenNode`: плейсхолдер «Здесь появится результат» +
+    disabled select «Grom Nova 1K».
+  - Регистрация через `nodeTypes` в `ReactFlow`.
+  - Сеточная раскладка 280×190 (вместо каскада — карточки не перекрываются).
+  - `fitViewOptions: { maxZoom: 1 }` — узлы не растягиваются на весь экран.
+  - `defaultEdgeOptions: { strokeWidth: 2 }` — связи видны.
+  - Проверка в headless Chrome + CDP: ввод текста/смена модели доходят
+    до Zustand-стора, порты соединяются, 0 ошибок в консоли.
 - **Frontend — Task 1 (v0.3.0):**
   - Отдельный пакет `web/` — Vite 8 + React 19 + TypeScript 6 (strict, ESM).
   - Tailwind CSS v4 (CSS-based config).

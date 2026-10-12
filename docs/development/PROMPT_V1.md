@@ -3,8 +3,8 @@
 **Версия промпта:** v1.0
 **Дата:** 2026-10-12
 **Актуальный релиз:** v0.1.0 (2026-10-13)
-**Статус:** CRUD + Engine + Frontend (Task 1: canvas) готовы.
-В работе — Frontend Task 2 (кастомные ноды).
+**Статус:** CRUD + Engine + Frontend (Task 1+2: canvas + кастомные ноды) готовы.
+В работе — Frontend Task 3 (API интеграция: сохранение/загрузка workflow).
 
 ---
 
@@ -50,6 +50,9 @@
 - `<новый hash>` — `feat(engine): topological sort + validation + execution plan`
 - `b9b404f` — `docs: update KNOWN_ISSUES.md`
 - `<новый hash>` — `feat(web): initial React Flow canvas + toolbar`
+- `246d8b8` — `docs: update CHANGELOG and PROMPT_V1 after Frontend Task 1`
+- `<новый hash>` — `feat(web): custom nodes (Text / LLM / Image Generation)`
+
 ---
 
 ## § 2. Правила оформления (ОБЯЗАТЕЛЬНО)
@@ -129,25 +132,27 @@
 - Проверено в headless Chrome.
 - См. commit `<hash>`.
 
-### Пункт D — Сейчас: Frontend Task 2 (кастомные ноды)
+### Пункт D — ✅ Сделан: Frontend Task 2 (v0.3.0)
 
-1. `TextNode` — с textarea для ввода промпта.
-2. `LLMNode` — с выпадающим списком модели (пока — заглушка).
-3. `ImageGenNode` — с превью-плейсхолдером.
-4. Стилизация под дизайн скрина: серые скруглённые карточки, типизированные
-   порты с цветами (T — синий, G — зелёный, I — серый).
-5. Регистрация через `nodeTypes` в ReactFlow.
+- 3 кастомные ноды + BaseNode + типизированные порты.
+- Проверено в headless Chrome.
+- См. commit `<hash>`.
 
-### Пункт E — После Task 2: Frontend Task 3 (API интеграция)
+### Пункт E — Сейчас: Frontend Task 3 (API интеграция)
 
-- Загрузка/сохранение workflow через `/workflow` API.
-- Клик «Save» — POST/PATCH.
-- Клик «Run» — `POST /engine/plan` + визуализация порядка.
+1. API-клиент (`web/src/lib/api.ts`) — fetch-обёртки для `/workflow` и `/engine`.
+2. Кнопка «Save» в верхнем правом углу — POST `/workflow` (создание) или
+   PATCH `/workflow/:id` (обновление существующего).
+3. Кнопка «Load» — модалка со списком workflow (GET `/workflow`).
+4. Кнопка «Run» — POST `/engine/plan`, показать уровни порядка в UI
+   (например, badges 1/2/3 на нодах).
+5. Сохранить `currentWorkflowId` в Zustand — чтобы Save → PATCH после первого создания.
+6. URL-роутинг: `/workflow/:id` — при загрузке страницы fetch workflow.
 
-### Пункт F — Runner (Backend)
+### Пункт F — После Task 3: Runner (Backend)
 
-- BullMQ + worker для реального выполнения узлов.
-- LLM-провайдеры (Anthropic / OpenAI / локальные).
+- BullMQ + worker для реального выполнения.
+- LLM-провайдеры.
 - SSE-стриминг прогресса.
 
 ---
