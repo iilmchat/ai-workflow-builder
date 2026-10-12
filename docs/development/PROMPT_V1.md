@@ -2,8 +2,8 @@
 
 **Версия промпта:** v1.0
 **Дата:** 2026-10-12
-**Актуальный релиз:** v0.1.0 (2026-10-12)
-**Статус:** Проект инициализирован, схема БД готова. В работе — CRUD + Engine.
+**Актуальный релиз:** v0.1.0 (2026-10-13)
+**Статус:** CRUD Workflow готов. В работе — Engine (топологическая сортировка).
 
 ---
 
@@ -34,9 +34,17 @@
 
 ### История коммитов
 
-- `<hash1>` — `chore: initial NestJS 12 skeleton with ESM + vitest`
-- `<hash2>` — `feat: scaffold workflow, engine, nodes modules`
-- `<hash3>` — `feat: add Drizzle schema + PostgreSQL integration` (после db:migrate)
+- `23a4b2e` — `chore: initial NestJS 12 skeleton with ESM + vitest + drizzle`
+- `a257616` — `feat: scaffold workflow, engine, nodes modules`
+- `ac9625b` — `feat: add Drizzle schema + PostgreSQL integration + docs`
+- `ea09d31` — `chore: add docker-compose.yml for local PostgreSQL`
+- `deddd4e` — `docs: replace NestJS default README with project overview`
+- `326f295` — `chore: add .env.example template`
+- `f890bd5` — `docs: fix markdown formatting in README`
+- `f931feb` — `ci: add GitHub Actions workflow`
+- `f76e9b7` — `fix: move allowBuilds to pnpm-workspace.yaml`
+- `4be9cdf` — `feat(workflow): implement CRUD via Drizzle + Zod`
+- `fd1da75` — `docs: add CI status badge`
 
 ---
 
@@ -81,27 +89,31 @@
 
 ### Метрики
 
-- **3 модуля-скелета** (Workflow, Engine, Nodes).
+- **3 модуля** (Workflow, Engine, Nodes).
+  - **Workflow** — CRUD реализован (5 endpoints).
+  - **Engine** — пустой скелет.
+  - **Nodes** — пустой скелет.
 - **3 таблицы** БД (workflows, workflow_runs, node_runs).
-- **7 тестов** (заглушки).
+- **31 тест** (7 базовых + 24 на CRUD).
+- **CI**: зелёный (build + test на push).
 - **KI:** 1 (шаблон).
+- **Релизы**: v0.1.0 (scaffold + Drizzle + CRUD).
 
 ---
 
 ## § 4. Roadmap текущей сессии
 
-### Пункт A — Сейчас: CRUD Workflow
+### Пункт A — ✅ Сделан: CRUD Workflow (v0.1.0)
 
-1. `WorkflowService` — CRUD через Drizzle.
-2. DTO + Zod-схемы для создания/обновления.
-3. `WorkflowController` — endpoints (`POST /workflows`, `GET /workflows`, `GET /workflows/:id`, `PATCH /workflows/:id`, `DELETE /workflows/:id`).
-4. Unit-тесты.
+- 5 REST endpoints, Zod-валидация, 24 теста, lint clean.
+- См. commit `4be9cdf`.
 
-### Пункт B — Engine (топологическая сортировка)
+### Пункт B — Сейчас: Engine (топологическая сортировка)
 
-1. `EngineService.validateGraph(nodes, edges)` — проверка на циклы.
-2. `EngineService.topologicalSort(nodes, edges)` — порядок выполнения.
-3. Unit-тесты на 5-10 графов (линейный, diamond, с циклом).
+1. `EngineService.validateGraphAsync(nodes, edges)` — проверка на циклы.
+2. `EngineService.topologicalSortAsync(nodes, edges)` — порядок выполнения (алгоритм Кана).
+3. `EngineService.buildExecutionPlanAsync(nodes, edges)` — план с уровнями параллелизма.
+4. Unit-тесты на 5-10 графов.
 
 ### Пункт C — Frontend
 
