@@ -1,0 +1,17 @@
+# Зависимости
+node_modules
+
+# Сборка
+dist
+dist-ssr
+
+# Кэш Vite
+.vite
+
+# Локальные переопределения окружения
+*.local
+
+# Логи
+*.log
+npm-debug.log*
+pnpm-debug.log*
