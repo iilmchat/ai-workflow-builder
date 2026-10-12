@@ -1,5 +1,7 @@
 # IIChatTools AI Workflow Builder
 
+[![CI](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml/badge.svg)](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml)
+
 **Visual node-based editor for LLM workflows.**
 
 Backend (NestJS 12 + ESM + Drizzle ORM + PostgreSQL 17).
