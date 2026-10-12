@@ -1,5 +1,6 @@
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
 import { BaseNode } from '@/components/nodes/BaseNode';
+import { useWorkflowStore } from '@/stores/workflow';
 import {
   DATA_TYPE_COLORS,
   DATA_TYPE_LABELS,
@@ -15,10 +16,16 @@ import {
  */
 export function TextNode({ id, data }: NodeProps<TextFlowNode>) {
   const { updateNodeData } = useReactFlow();
+  // Уровень выполнения появляется после Run (/engine/plan).
+  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
 
   return (
     <>
-      <BaseNode icon={NODE_TYPE_ICONS.text} title={NODE_TYPE_LABELS.text}>
+      <BaseNode
+        icon={NODE_TYPE_ICONS.text}
+        title={NODE_TYPE_LABELS.text}
+        executionLevel={executionLevel}
+      >
         <textarea
           rows={3}
           value={data.value}

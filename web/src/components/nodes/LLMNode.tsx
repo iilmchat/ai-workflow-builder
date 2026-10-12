@@ -1,5 +1,6 @@
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
 import { BaseNode } from '@/components/nodes/BaseNode';
+import { useWorkflowStore } from '@/stores/workflow';
 import {
   DATA_TYPE_COLORS,
   DATA_TYPE_LABELS,
@@ -18,6 +19,8 @@ import {
  */
 export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
   const { updateNodeData } = useReactFlow();
+  // Уровень выполнения появляется после Run (/engine/plan).
+  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
 
   return (
     <>
@@ -29,7 +32,11 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
         style={{ background: DATA_TYPE_COLORS.text }}
       />
 
-      <BaseNode icon={NODE_TYPE_ICONS.llm} title={NODE_TYPE_LABELS.llm}>
+      <BaseNode
+        icon={NODE_TYPE_ICONS.llm}
+        title={NODE_TYPE_LABELS.llm}
+        executionLevel={executionLevel}
+      >
         <select
           value={data.model}
           // nodrag: иначе клик по списку тащит ноду вместо открытия меню.

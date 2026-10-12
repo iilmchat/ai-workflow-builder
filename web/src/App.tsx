@@ -1,30 +1,48 @@
-import { useCallback, useRef } from 'react';
-import { Canvas, type FindCenterHandler } from '@/components/Canvas';
+import { useCallback, useEffect } from 'react';
+import { Canvas } from '@/components/Canvas';
+import { Toast } from '@/components/Toast';
 import { Toolbar } from '@/components/Toolbar';
-import { useWorkflowStore } from '@/stores/workflow';
+import { TopBar } from '@/components/TopBar';
+import {
+  useWorkflowStore,
+  type FindCenterHandler,
+} from '@/stores/workflow';
 import type { NodeType } from '@/types/graph';
 
+/** Отступ верхней панели, под который уходит канвас. */
+const TOP_BAR_HEIGHT = 56;
+
 /**
- * Корневой компонент редактора: канвас на всю высоту и нижний тулбар поверх него.
+ * Корневой компонент редактора: верхняя панель, канвас и нижний тулбар.
  *
  * Создание узла живёт здесь: Canvas отдаёт функцию поиска центра вьюпорта
  * (у него есть доступ к трансформации React Flow), а стор — операцию добавления.
- * Функция хранится в ref: setState принял бы функцию за updater, а лишние
- * ре-рендеры при передаче колбэка здесь не нужны.
  */
 export function App() {
   const addNode = useWorkflowStore((state) => state.addNode);
   const nodeCount = useWorkflowStore((state) => state.nodes.length);
-  const findCenterRef = useRef<FindCenterHandler | null>(null);
+  const findCenter = useWorkflowStore((state) => state.findCenter);
+  const setFindCenter = useWorkflowStore((state) => state.setFindCenter);
+  const loadWorkflowAsync = useWorkflowStore((state) => state.loadWorkflowAsync);
 
-  const handleCanvasReady = useCallback((findCenter: FindCenterHandler) => {
-    findCenterRef.current = findCenter;
-  }, []);
+  // При открытии страницы с ?workflowId=... подтягиваем сохранённый граф.
+  useEffect(() => {
+    const workflowId = new URL(window.location.href).searchParams.get('workflowId');
+
+    if (workflowId) {
+      void loadWorkflowAsync(workflowId);
+    }
+  }, [loadWorkflowAsync]);
+
+  const handleCanvasReady = useCallback(
+    (handler: FindCenterHandler) => {
+      setFindCenter(handler);
+    },
+    [setFindCenter],
+  );
 
   const handleAddNode = useCallback(
     (type: NodeType) => {
-      const findCenter = findCenterRef.current;
-
       if (!findCenter) {
         return;
       }
@@ -40,16 +58,22 @@ export function App() {
         y: center.y - 80 + row * 190,
       });
     },
-    [addNode, nodeCount],
+    [addNode, findCenter, nodeCount],
   );
 
   return (
-    <div className="relative flex h-screen w-screen flex-col">
-      <div className="min-h-0 flex-1">
+    <div className="relative h-screen w-screen">
+      <TopBar />
+
+      <div
+        className="absolute inset-x-0 bottom-0"
+        style={{ top: TOP_BAR_HEIGHT }}
+      >
         <Canvas onReady={handleCanvasReady} />
       </div>
 
       <Toolbar onAddNode={handleAddNode} />
+      <Toast />
     </div>
   );
 }

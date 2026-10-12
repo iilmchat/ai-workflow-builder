@@ -8,17 +8,13 @@ import {
   ReactFlowProvider,
   useReactFlow,
 } from '@xyflow/react';
-import { useWorkflowStore } from '@/stores/workflow';
 import { nodeTypes } from '@/components/nodes';
-
-/** Функция, возвращающая центр вьюпорта в координатах холста. */
-export type FindCenterHandler = () => { x: number; y: number };
+import { useWorkflowStore, type FindCenterHandler } from '@/stores/workflow';
 
 interface CanvasProps {
   /**
    * Canvas отдаёт наружу функцию поиска центра вьюпорта: только у него есть
-   * доступ к трансформации React Flow, а решение о добавлении узла принимает
-   * приложение.
+   * доступ к трансформации React Flow.
    */
   onReady: (findCenter: FindCenterHandler) => void;
 }
@@ -30,6 +26,7 @@ function CanvasInner({ onReady }: CanvasProps) {
   const onNodesChange = useWorkflowStore((state) => state.onNodesChange);
   const onEdgesChange = useWorkflowStore((state) => state.onEdgesChange);
   const onConnect = useWorkflowStore((state) => state.onConnect);
+  const isEmpty = nodes.length === 0;
 
   const { getViewport } = useReactFlow();
 
@@ -75,7 +72,8 @@ function CanvasInner({ onReady }: CanvasProps) {
       // Связи по умолчанию тонкие и почти незаметные — делаем их чуть плотнее.
       defaultEdgeOptions={{ style: { strokeWidth: 2, stroke: '#94a3b8' } }}
       // maxZoom: иначе один-два узла растягиваются на весь экран.
-      fitView
+      // При загрузке графа из backend подгоняем вид по всем узлам.
+      fitView={isEmpty}
       fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1} />

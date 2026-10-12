@@ -1,5 +1,6 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { BaseNode } from '@/components/nodes/BaseNode';
+import { useWorkflowStore } from '@/stores/workflow';
 import {
   DATA_TYPE_COLORS,
   DATA_TYPE_LABELS,
@@ -14,7 +15,10 @@ import {
  *
  * Вход — `text` (синий), выход — `image` (зелёный, метка G).
  */
-export function ImageGenNode({ data }: NodeProps<ImageGenFlowNode>) {
+export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
+  // Уровень выполнения появляется после Run (/engine/plan).
+  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
+
   return (
     <>
       <Handle
@@ -25,7 +29,11 @@ export function ImageGenNode({ data }: NodeProps<ImageGenFlowNode>) {
         style={{ background: DATA_TYPE_COLORS.text }}
       />
 
-      <BaseNode icon={NODE_TYPE_ICONS.image} title={NODE_TYPE_LABELS.image}>
+      <BaseNode
+        icon={NODE_TYPE_ICONS.image}
+        title={NODE_TYPE_LABELS.image}
+        executionLevel={executionLevel}
+      >
         {data.imageUrl ? (
           <img
             src={data.imageUrl}
