@@ -19,6 +19,20 @@
 ## [Unreleased]
 
 ### Added
+- **Runner — R4.1: SSE + список моделей (v0.3.7):**
+  - `GET /runs/:id/stream` — SSE-поток прогресса запуска
+    (`@Sse()` + `@SseSignal()`). Первым сообщением — `snapshot`
+    (KI-049: run + все `node_runs`), далее — события из Redis
+    pub/sub. Закрытие — только на `run_completed(completed)`:
+    при KI-040 `failed`-run может быть переигран. Keep-alive
+    `: keep-alive` раз в 15 с — защита от `proxy_read_timeout`.
+  - `src/runs/dto/run-stream-message.dto.ts` — `RunStreamMessageSchema`
+    (discriminatedUnion `RunEventSchema` + `SnapshotMessageSchema`).
+    `RunEventSchema` (pub/sub-контракт) не менялся.
+  - `GET /llm/models` (KI-056) — `LlmController` отдаёт
+    `LlmRegistryService.listModels()` (отфильтровано по
+    `isConfigured` из KI-039). Без envelope.
+  - 12 новых тестов (190 → 202).
 - **Runner — KI-039 + KI-052: провайдеры и стоимость (v0.3.6):**
   - `ILlmProvider.isConfigured` (KI-039) — геттер `client !== null`.
   - `LlmRegistryService.listModels()` фильтрует неконфигурированные
