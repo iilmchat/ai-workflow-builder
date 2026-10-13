@@ -291,10 +291,10 @@ function createNode(
           model: defaultModelId ?? DEFAULT_LLM_MODEL_ID,
         },
       };
-    case 'image':
+    case 'image_generation':
       return {
         ...shared,
-        type: 'image',
+        type: 'image_generation',
         data: {
           kind: 'image',
           label: 'Image Generation',
@@ -352,7 +352,7 @@ function nodeDataFromApi(
         model: typeof model === 'string' ? model : '',
       };
     }
-    case 'image':
+    case 'image_generation':
       return {
         kind: 'image',
         label,
@@ -385,7 +385,11 @@ function fromApiWorkflow(workflow: ApiWorkflow): {
   const skipped: string[] = [];
 
   for (const node of workflow.nodes) {
-    if (node.type !== 'text' && node.type !== 'llm' && node.type !== 'image') {
+    if (
+      node.type !== 'text' &&
+      node.type !== 'llm' &&
+      node.type !== 'image_generation'
+    ) {
       skipped.push(node.id);
       continue;
     }

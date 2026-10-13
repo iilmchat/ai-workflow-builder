@@ -29,21 +29,27 @@ export type Graph = {
   edges: GraphEdge[];
 };
 
-/** Типы узлов, доступные из нижнего тулбара. */
-export type NodeType = 'text' | 'llm' | 'image';
+/**
+ * Типы узлов, доступные из нижнего тулбара.
+ *
+ * Значение `type` узла уходит в backend как есть (`NodeDto.type`), поэтому
+ * имена совпадают с backend-контрактом: `image_generation`, а не `image`
+ * (v0.6.0b.2.5). UI-метка узла (`data.kind`) остаётся `image`.
+ */
+export type NodeType = 'text' | 'llm' | 'image_generation';
 
 /** Подписи узлов по их типу (используются в тулбаре и в шапке узла). */
 export const NODE_TYPE_LABELS: Record<NodeType, string> = {
   text: 'Text',
   llm: 'LLM',
-  image: 'Image Generation',
+  image_generation: 'Image Generation',
 };
 
 /** Иконки узлов по их типу. */
 export const NODE_TYPE_ICONS: Record<NodeType, string> = {
   text: '📝',
   llm: '🤖',
-  image: '🖼',
+  image_generation: '🖼',
 };
 
 /**
@@ -119,7 +125,7 @@ export type TextFlowNode = Node<TextNodeData, 'text'>;
 /** Узел LLM в терминах React Flow. */
 export type LlmFlowNode = Node<LlmNodeData, 'llm'>;
 /** Узел генерации изображений в терминах React Flow. */
-export type ImageGenFlowNode = Node<ImageGenNodeData, 'image'>;
+export type ImageGenFlowNode = Node<ImageGenNodeData, 'image_generation'>;
 
 /** Любой узел редактора. */
 export type AppNode = TextFlowNode | LlmFlowNode | ImageGenFlowNode;

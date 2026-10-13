@@ -7,7 +7,8 @@ import { TextNode } from './TextNode';
 /**
  * Реестр кастомных узлов React Flow.
  *
- * Ключ должен совпадать со значением `type` у узла (`text` | `llm` | `image`).
+ * Ключ должен совпадать со значением `type` у узла
+ * (`text` | `llm` | `image_generation`) — то же имя уходит в backend.
  *
  * Типы сужаем через `NodeTypes`: у каждого узла свои данные (`TextNodeData`,
  * `LlmNodeData`, ...), а `NodeProps` инвариантен по типу узла, поэтому без
@@ -17,7 +18,7 @@ import { TextNode } from './TextNode';
 const registry = {
   text: TextNode,
   llm: LLMNode,
-  image: ImageGenNode,
+  image_generation: ImageGenNode,
 } as unknown as NodeTypes;
 
 export const nodeTypes: Record<string, ComponentType<NodeProps>> = registry;

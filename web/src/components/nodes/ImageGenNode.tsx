@@ -103,8 +103,8 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
       />
 
       <BaseNode
-        icon={NODE_TYPE_ICONS.image}
-        title={NODE_TYPE_LABELS.image}
+        icon={NODE_TYPE_ICONS.image_generation}
+        title={NODE_TYPE_LABELS.image_generation}
         executionLevel={executionLevel}
         status={status}
       >

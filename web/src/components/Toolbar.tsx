@@ -11,7 +11,7 @@ interface ToolbarProps {
 const BUTTONS: { type: NodeType; label: string; icon: string }[] = [
   { type: 'text', label: 'Text', icon: '📝' },
   { type: 'llm', label: 'LLM', icon: '🤖' },
-  { type: 'image', label: 'Image Generation', icon: '🖼' },
+  { type: 'image_generation', label: 'Image Generation', icon: '🖼' },
 ];
 
 /**
