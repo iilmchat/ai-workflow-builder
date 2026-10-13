@@ -44,8 +44,10 @@ function runStatusText(
 
   const base = RUN_STATUS_STYLE[status].text;
 
-  if (status === 'running' && attempts !== null) {
-    return `${base} (попытка ${Math.max(attemptNumber, 1)}/${attempts})`;
+  // Промежуточный провал (KI-070) статус не меняет: он остаётся 'running',
+  // поэтому подпись продолжает показывать номер попытки.
+  if (status === 'running' && attempts !== null && attemptNumber > 0) {
+    return `${base} (попытка ${attemptNumber}/${attempts})`;
   }
 
   return base;
@@ -88,6 +90,7 @@ export function TopBar() {
   const runError = useWorkflowStore((state) => state.runError);
   const attemptNumber = useWorkflowStore((state) => state.attemptNumber);
   const attempts = useWorkflowStore((state) => state.attempts);
+  const runHasMoreAttempts = useWorkflowStore((state) => state.runHasMoreAttempts);
 
   const isBusy = isSaving || isLoading;
   const isRunActive = runStatus !== null && ACTIVE_RUN_STATUSES.has(runStatus);
@@ -152,7 +155,13 @@ export function TopBar() {
         {runStatus !== null && (
           <span
             data-run-badge={runStatus}
-            title={runError ?? undefined}
+            // Тултип: причина ошибки либо подсказка, что будет ещё попытка (KI-070).
+            title={
+              runError ??
+              (runHasMoreAttempts
+                ? 'Предыдущая попытка упала — BullMQ повторит запуск'
+                : undefined)
+            }
             className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${RUN_STATUS_STYLE[runStatus].className}`}
           >
             {runLabel}

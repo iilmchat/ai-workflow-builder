@@ -21,6 +21,9 @@ export default defineConfig({
     proxy: {
       '/workflow': 'http://localhost:3000',
       '/engine': 'http://localhost:3000',
+      // Модели для селекта LLM-узла (`GET /llm/models`, R4.1b): обычный JSON,
+      // потоковость не нужна, поэтому короткая форма.
+      '/llm': 'http://localhost:3000',
       /**
        * SSE-поток прогресса запуска (R4.1).
        *

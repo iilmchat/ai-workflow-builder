@@ -1,21 +1,22 @@
+import { useEffect } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
 import { BaseNode } from '@/components/nodes/BaseNode';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
   DATA_TYPE_COLORS,
   DATA_TYPE_LABELS,
-  LLM_MODEL_HINTS,
-  LLM_MODELS,
   NODE_TYPE_ICONS,
   NODE_TYPE_LABELS,
   type LlmFlowNode,
-  type LlmModel,
 } from '@/types/graph';
 
 /**
  * Узел вызова языковой модели.
  *
- * Вход и выход — типизированные порты `text` (синие).
+ * Вход и выход — типизированные порты `text` (синие). Список моделей берётся с
+ * backend (`GET /llm/models`, R4.1b) и кэшируется в сторе: в `data.model`
+ * хранится **id** модели (`claude-sonnet-4-20250514`), а в селекте показывается
+ * её человекочитаемый label (KI-069).
  */
 export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
   const { updateNodeData } = useReactFlow();
@@ -23,6 +24,20 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
   const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   // Статус выполнения приходит из SSE-потока (R4.2).
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
+  const llmModels = useWorkflowStore((state) => state.llmModels);
+  const loadLlmModels = useWorkflowStore((state) => state.loadLlmModelsAsync);
+
+  // Список грузится лениво при появлении LLM-узла и кэшируется в сторе,
+  // поэтому запрос уходит один раз на сессию, а не на каждый узел.
+  useEffect(() => {
+    void loadLlmModels();
+  }, [loadLlmModels]);
+
+  const selected = llmModels.find((model) => model.id === data.model);
+  // Модель, которой нет среди доступных (старое значение label или ключ
+  // провайдера пропал): показываем как есть, но помечаем недоступной —
+  // молчаливой подмены модели больше нет (KI-069).
+  const isUnavailable = data.model !== '' && selected === undefined;
 
   return (
     <>
@@ -44,19 +59,36 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
           value={data.model}
           // nodrag: иначе клик по списку тащит ноду вместо открытия меню.
           className="nodrag w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-slate-300"
-          onChange={(event) =>
-            updateNodeData(id, { model: event.target.value as LlmModel })
-          }
+          onChange={(event) => updateNodeData(id, { model: event.target.value })}
         >
-          {LLM_MODELS.map((model) => (
-            <option key={model} value={model}>
-              {model}
+          {data.model === '' && (
+            <option value="" disabled>
+              {llmModels.length === 0 ? 'Нет доступных моделей' : 'Выберите модель'}
+            </option>
+          )}
+
+          {isUnavailable && (
+            <option value={data.model} disabled>
+              {data.model} (недоступно)
+            </option>
+          )}
+
+          {llmModels.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.label}
             </option>
           ))}
         </select>
 
-        <p className="mt-1.5 text-[10px] text-slate-400">
-          {LLM_MODEL_HINTS[data.model]}
+        <p
+          className="mt-1.5 truncate text-[10px] text-slate-400"
+          title={selected?.id ?? data.model}
+        >
+          {selected
+            ? selected.provider
+            : llmModels.length === 0
+              ? 'Нет доступных моделей'
+              : 'Модель недоступна'}
         </p>
       </BaseNode>
 

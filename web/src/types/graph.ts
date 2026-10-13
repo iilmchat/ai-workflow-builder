@@ -68,18 +68,17 @@ export const DATA_TYPE_COLORS: Record<DataType, string> = {
   image: '#64748b',
 };
 
-/** Модели LLM, доступные в выпадающем списке (пока хардкод). */
-export const LLM_MODELS = ['Claude Opus 4', 'GPT-4o', 'DeepSeek V4'] as const;
-
-/** Модель LLM. */
-export type LlmModel = (typeof LLM_MODELS)[number];
-
-/** Подсказка о скорости/стоимости модели. */
-export const LLM_MODEL_HINTS: Record<LlmModel, string> = {
-  'Claude Opus 4': 'Высокий',
-  'GPT-4o': 'Средний',
-  'DeepSeek V4': 'Быстрый',
-};
+/**
+ * Модель LLM по умолчанию для нового узла.
+ *
+ * Временный fallback: список доступных моделей приходит с backend
+ * (`GET /llm/models`, R4.1b) и кэшируется в сторе, но узел создаётся в момент,
+ * когда список ещё может быть не загружен. Если этого id нет среди доступных,
+ * селект покажет его как «(недоступно)» — молчаливой подмены модели нет
+ * (KI-069). Выбор модели из уже загруженного списка при создании узла — задача
+ * R4.3b (вместе с панелью и тулбаром).
+ */
+export const DEFAULT_LLM_MODEL_ID = 'claude-sonnet-4-20250514';
 
 /** Модель генерации изображений (пока одна и неактивная). */
 export const IMAGE_MODEL = 'Grom Nova 1K';
@@ -95,7 +94,8 @@ export interface TextNodeData extends Record<string, unknown> {
 export interface LlmNodeData extends Record<string, unknown> {
   label?: string;
   kind?: 'llm';
-  model: LlmModel;
+  /** id модели, который принимает backend (`claude-sonnet-4-20250514`) — KI-069. */
+  model: string;
 }
 
 /** Данные узла генерации изображений. */

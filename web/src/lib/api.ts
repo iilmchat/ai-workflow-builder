@@ -68,6 +68,16 @@ export const ApiRunSchema = z.object({
 /** Запуск в терминах API. */
 export type ApiRun = z.infer<typeof ApiRunSchema>;
 
+/** Модель, доступная для выбора в LLM-узле (R4.1b, KI-056). */
+export const LlmModelInfoSchema = z.object({
+  provider: z.string(),
+  id: z.string(),
+  label: z.string(),
+});
+
+/** Модель в терминах API: id для вызова + label для интерфейса. */
+export type LlmModelInfo = z.infer<typeof LlmModelInfoSchema>;
+
 /** Ошибка обращения к API (сеть, HTTP-статус или неожиданный формат ответа). */
 export class ApiError extends Error {
   /** HTTP-статус, если ответ успел прийти. */
@@ -268,4 +278,19 @@ export async function createRunAsync(workflowId: string): Promise<ApiRun> {
   });
 
   return ApiRunSchema.parse(data);
+}
+
+/**
+ * Возвращает модели, доступные для вызова.
+ *
+ * Backend уже отфильтровал неконфигурированные провайдеры (KI-039), поэтому
+ * пустой список означает «ключей нет» — UI покажет это в селекте модели.
+ *
+ * @returns список моделей (пустой, если ни один провайдер не сконфигурирован)
+ * @throws ApiError при сетевой ошибке, не-2xx статусе или неожиданном формате
+ */
+export async function fetchLlmModelsAsync(): Promise<LlmModelInfo[]> {
+  const data = await requestAsync<unknown>('/llm/models');
+
+  return z.array(LlmModelInfoSchema).parse(data);
 }

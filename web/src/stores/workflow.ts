@@ -11,20 +11,21 @@ import { create } from 'zustand';
 import {
   createRunAsync,
   createWorkflowAsync,
+  fetchLlmModelsAsync,
   getWorkflowAsync,
   planWorkflowAsync,
   updateWorkflowAsync,
   type ApiGraphEdge,
   type ApiGraphNode,
   type ApiWorkflow,
+  type LlmModelInfo,
 } from '@/lib/api';
 import { subscribeToRunStream } from '@/lib/run-stream';
 import { levelsToMap } from '@/lib/plan';
 import {
-  LLM_MODELS,
+  DEFAULT_LLM_MODEL_ID,
   type AppNode,
   type ImageGenNodeData,
-  type LlmModel,
   type LlmNodeData,
   type NodeType,
   type TextNodeData,
@@ -127,6 +128,16 @@ export interface WorkflowState {
   attemptsMade: number;
   /** Лимит попыток job'а (из `run_completed`; `null` — неизвестен). */
   attempts: number | null;
+  /**
+   * Есть ли у текущего запуска ещё попытки (KI-040): выставляется промежуточным
+   * провалом (`run_completed` с `final: false`) и сбрасывается финалом (KI-070).
+   */
+  runHasMoreAttempts: boolean;
+
+  /** Доступные модели LLM с backend (`GET /llm/models`, KI-069). */
+  llmModels: LlmModelInfo[];
+  /** Загружен ли список моделей в этой сессии. */
+  llmModelsLoaded: boolean;
 
   isSaving: boolean;
   isLoading: boolean;
@@ -176,6 +187,14 @@ export interface WorkflowState {
   /** Сбрасывает состояние запуска и закрывает поток (Load / Save / новый Run). */
   resetRunState: () => void;
 
+  /**
+   * Загружает список моделей LLM с backend (один раз за сессию).
+   *
+   * Кэшируется в сторе: селект LLM-узла читает `llmModels`, поэтому запрос не
+   * повторяется на каждый узел и каждое монтирование.
+   */
+  loadLlmModelsAsync: () => Promise<void>;
+
   setCurrentWorkflowId: (id: string | null, name?: string) => void;
   setCurrentWorkflowName: (name: string) => void;
   setExecutionLevels: (levels: string[][]) => void;
@@ -202,7 +221,7 @@ function createNode(type: NodeType, position: Position, index: number): AppNode 
       return {
         ...shared,
         type: 'llm',
-        data: { kind: 'llm', label: 'LLM', model: LLM_MODELS[0] },
+        data: { kind: 'llm', label: 'LLM', model: DEFAULT_LLM_MODEL_ID },
       };
     case 'image':
       return {
@@ -253,9 +272,10 @@ function nodeDataFromApi(
       return {
         kind: 'llm',
         label,
-        model: LLM_MODELS.includes(model as LlmModel)
-          ? (model as LlmModel)
-          : LLM_MODELS[0],
+        // Модель НЕ подменяем (KI-069): если id неизвестен текущему списку,
+        // селект покажет его как «(недоступно)». Молчаливая подмена на первый
+        // из списка перезаписывала сохранённую модель при следующем Save.
+        model: typeof model === 'string' ? model : '',
       };
     }
     case 'image':
@@ -351,6 +371,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   attemptNumber: 0,
   attemptsMade: 0,
   attempts: null,
+  runHasMoreAttempts: false,
+
+  llmModels: [],
+  llmModelsLoaded: false,
 
   isSaving: false,
   isLoading: false,
@@ -598,12 +622,29 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         return;
 
       case 'run_completed':
+        // KI-070: промежуточный провал (final=false) — не финал, BullMQ повторит
+        // запуск (KI-040). Статус остаётся 'running', поэтому UI не показывает
+        // «Ошибка» и не разблокирует Run до настоящего финала.
+        if (event.status === 'failed' && !event.final) {
+          set({
+            runStatus: 'running',
+            runHasMoreAttempts: true,
+            attemptsMade: event.attemptsMade,
+            attempts: event.attempts,
+            // `attemptsMade` — сколько попыток сделано ДО текущей доставки
+            // (KI-059), значит следующая попытка имеет номер attemptsMade + 2.
+            attemptNumber: event.attemptsMade + 2,
+          });
+
+          return;
+        }
+
+        // Финальный провал либо успех.
         set((state) => ({
           runStatus: event.status,
+          runHasMoreAttempts: false,
           attemptsMade: event.attemptsMade,
           attempts: event.attempts,
-          // `attemptsMade` — сколько попыток BullMQ сделал ДО текущей доставки
-          // (KI-059), значит следующая попытка имеет номер attemptsMade + 2.
           attemptNumber: event.attemptsMade + 2,
           runError:
             event.status === 'failed'
@@ -631,7 +672,25 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       attemptNumber: 0,
       attemptsMade: 0,
       attempts: null,
+      runHasMoreAttempts: false,
     });
+  },
+
+  loadLlmModelsAsync: async () => {
+    if (get().llmModelsLoaded) {
+      return;
+    }
+
+    try {
+      const models = await fetchLlmModelsAsync();
+
+      set({ llmModels: models, llmModelsLoaded: true });
+    } catch (error: unknown) {
+      // Не критично для работы редактора: селект покажет «нет доступных
+      // моделей», а причина видна в консоли. Повторная попытка — при следующем
+      // монтировании LLM-узла (флаг loaded не выставлен).
+      console.warn('Не удалось загрузить список моделей LLM', error);
+    }
   },
 
   setCurrentWorkflowId: (id, name) =>
