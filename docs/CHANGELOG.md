@@ -148,6 +148,28 @@
   - Smoke: graceful degradation без `ANTHROPIC_API_KEY` — провайдер
     бросает `LlmProviderException`, run → `failed`, `node_runs.error`
     заполнен; prompt в логи не попадает (RULES § 5.9).
+- **Frontend — R4.3b: панель результата (v0.3.13):**
+  - `RunResultPanel` (снизу) — по клику на ноду: outputs (JSON),
+    метрики (duration/tokens/cost), error, logs (retry). Без
+    выбора — статус запуска с номером попытки и `runError`.
+  - Раскладка переведена на flex-колонку: `TopBar` — обычный
+    элемент, `Canvas` — `flex-1 min-h-0`, панель — `shrink-0`.
+    React Flow корректно ресайзится при сворачивании панели.
+  - `stores/workflow.ts` — `selectedNodeId`, `nodeErrors`,
+    `nodeLogs`, `nodeMetrics`. Снятие выбора при удалении ноды.
+    Фикс `attemptNumber`: промежуточный провал — `attemptsMade + 2`
+    (следующая), финал — `attemptsMade + 1` (завершившаяся).
+  - `vite.config.ts` — `/llm` proxy (Smoke R4.3a: без него
+    `GET /llm/models` → 404).
+
+### Fixed
+- **KI-074** — список моделей грузится на старте; новый LLM-узел
+  получает `llmModels[0].id`; `TopBar.findNodesWithUnavailableModel`
+  блокирует Run с тостом при недоступной модели. Smoke:
+  `POST /runs` не уходит.
+- **KI-071** — favicon встроен SVG data-URI в `web/index.html`;
+  консоль чистая.
+
 
 ### Changed
 - **Husky pre-commit hook** (`d8a642d`) — блокирует коммиты, в которых
