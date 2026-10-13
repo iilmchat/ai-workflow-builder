@@ -19,6 +19,19 @@
 ## [Unreleased]
 
 ### Added
+- **Runner — v0.6.0b.1: GPTunnel chat (2026-10-13):**
+  - GPTunnel (`https://gptunnel.ru/v1`) — OpenAI-совместимый chat.
+    Два независимых API: `/v1` (chat) и `/api/v2/media` (image/
+    video/audio, добавляется в v0.6.0b.2).
+  - `GPTUNNEL_API_KEY`, `GPTUNNEL_BASE_URL`, `GPTUNNEL_MODELS`
+    (формат `id:modality+modality,id:modality` — как
+    `LMSTUDIO_MODELS`; парсер общий).
+  - Провайдер включается при **ключе** и **непустом списке** —
+    в отличие от LM Studio (только список).
+  - Парсер `parseModelIds` обобщён: `{ envKey, labelSuffix }` в
+    опциях — предупреждения называют правильную переменную.
+  - +11 тестов (260 → 271).
+
 - **Runner — v0.6.0a: модальности моделей (2026-10-13):**
   - `ModelModality` (`text` / `vision` / `image-generation` /
     `audio` / `video` / `embedding`) + `ModelInfo` с
