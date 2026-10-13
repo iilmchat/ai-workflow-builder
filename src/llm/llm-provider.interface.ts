@@ -32,7 +32,10 @@ export interface LlmGenerateResult {
 
 /** Провайдер LLM. */
 export interface ILlmProvider {
-  /** Идентификатор провайдера: 'anthropic' | 'openai'. */
+  /**
+   * Идентификатор провайдера: `anthropic`, `openai`, `routerai`, `deepseek`,
+   * `yandex`, `lmstudio`.
+   */
   readonly name: string;
   /** Модели, доступные у провайдера. */
   readonly models: ReadonlyArray<{ id: string; label: string }>;
@@ -71,7 +74,9 @@ export class LlmProviderException extends Error {
   readonly retryable: boolean;
 
   /**
-   * @param provider - идентификатор провайдера ('anthropic' | 'openai' | 'llm' | 'registry')
+   * @param provider - идентификатор провайдера (`anthropic`, `openai`,
+   *   `routerai`, `deepseek`, `yandex`, `lmstudio`, а также `llm`/`registry`
+   *   для ошибок уровня сервиса)
    * @param message - текст ошибки
    * @param options.cause - исходная ошибка (если есть)
    * @param options.retryable - можно ли повторять вызов (по умолчанию `false`)

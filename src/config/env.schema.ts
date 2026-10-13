@@ -1,6 +1,27 @@
 import { z } from 'zod';
 
 /**
+ * Приводит пустую строку к `undefined`.
+ *
+ * Нужен для `.env`, где переменная объявлена, но не заполнена
+ * (`OPENAI_BASE_URL=`): `z.string().optional()` пропускает только `undefined`,
+ * поэтому пустая строка раньше роняла старт приложения (KI-084).
+ *
+ * @param value - сырое значение переменной окружения
+ * @returns `undefined` для пустой строки, иначе исходное значение
+ */
+const emptyToUndefined = (value: unknown): unknown =>
+  value === '' ? undefined : value;
+
+/**
+ * URL, допустимый для обращения к LLM API: только `http`/`https`.
+ *
+ * Без ограничения схемы `z.url()` принимает `ftp://` и `ws://` (KI-085),
+ * а такие baseURL заведомо нерабочие.
+ */
+const httpUrl = z.url({ protocol: /^https?$/ });
+
+/**
  * Zod-схема настроек воркера очереди workflow-runs (KI-065) и порога
  * «зависшего» запуска (KI-032).
  *
@@ -76,15 +97,57 @@ export const EnvSchema = z.object({
    * Ключ Anthropic (R3). Опционален: приложение и тесты поднимаются без ключа,
    * а провайдер отдаёт `LlmProviderException` только при реальном вызове.
    */
-  ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
   /** Ключ OpenAI (R3). Опционален по той же причине, что и Anthropic. */
-  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
   /**
-   * Base URL для OpenAI-совместимого API (RouterAI, DeepSeek, Yandex
-   * и т.п.). Если не задан — используется дефолт SDK
-   * (https://api.openai.com/v1).
+   * Base URL для OpenAI-совместимого API. Если не задан (или задан пустым) —
+   * используется дефолт SDK `https://api.openai.com/v1`.
+   *
+   * В v0.5.0 оставлен для обратной совместимости: в мультипровайдерной схеме
+   * у каждого OpenAI-совместимого провайдера свой `<PROVIDER>_BASE_URL`
+   * (см. `ROUTERAI_BASE_URL` и ниже).
    */
-  OPENAI_BASE_URL: z.url().optional(),
+  OPENAI_BASE_URL: z.preprocess(emptyToUndefined, httpUrl.optional()),
+
+  // === RouterAI (OpenAI-совместимый прокси к 100+ моделям) ===
+  /** Ключ RouterAI. Без него провайдер не регистрируется. */
+  ROUTERAI_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Base URL RouterAI. */
+  ROUTERAI_BASE_URL: z
+    .preprocess(emptyToUndefined, httpUrl.optional())
+    .default('https://routerai.ru/api/v1'),
+
+  // === DeepSeek (OpenAI-совместимый) ===
+  /** Ключ DeepSeek. Без него провайдер не регистрируется. */
+  DEEPSEEK_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Base URL DeepSeek. */
+  DEEPSEEK_BASE_URL: z
+    .preprocess(emptyToUndefined, httpUrl.optional())
+    .default('https://api.deepseek.com/v1'),
+
+  // === Yandex AI Studio (OpenAI-совместимый) ===
+  /** Ключ Yandex AI Studio. Без него провайдер не регистрируется. */
+  YANDEX_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Base URL Yandex AI Studio. */
+  YANDEX_BASE_URL: z
+    .preprocess(emptyToUndefined, httpUrl.optional())
+    .default('https://llm.api.cloud.yandex.net/v1'),
+
+  // === LM Studio (локальный сервер, ключ не нужен) ===
+  /** Base URL локального LM Studio. */
+  LMSTUDIO_BASE_URL: z
+    .preprocess(emptyToUndefined, httpUrl.optional())
+    .default('http://localhost:1234/v1'),
+  /**
+   * Список моделей LM Studio через запятую (например,
+   * `qwen2.5-7b-instruct,llama-3.3-70b`). LM Studio отдаёт список через
+   * `GET /v1/models`, но для простоты задаём его в окружении. Пустое значение
+   * (дефолт) означает «провайдер не включён».
+   */
+  LMSTUDIO_MODELS: z
+    .preprocess(emptyToUndefined, z.string().optional())
+    .default(''),
   // Настройки воркера очереди (KI-065) и lease-порог (KI-032).
   ...WorkerEnvSchema.shape,
 });
@@ -98,8 +161,8 @@ export type Env = z.infer<typeof EnvSchema>;
  * Используется как `validate` в `ConfigModule.forRoot()`: получает уже
  * прочитанные значения (`process.env` + `.env`) и возвращает их вместе с
  * распарсенными значениями по умолчанию. Исходные ключи сохраняются, потому
- * что схема описывает обязательный минимум, а не закрытый список переменных
- * (например, ключи LLM-провайдеров появятся в R3).
+ * что схема описывает известный набор переменных, а не закрытый список:
+ * посторонние ключи окружения не отбрасываются.
  *
  * @param config - сырые переменные окружения
  * @returns окружение с применёнными default-значениями схемы

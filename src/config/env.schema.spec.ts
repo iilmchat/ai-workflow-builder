@@ -80,7 +80,7 @@ describe('EnvSchema и validateEnv', () => {
   });
 });
 
-describe('OPENAI_BASE_URL (R5.0)', () => {
+describe('OPENAI_BASE_URL (R5.0, KI-084, KI-085)', () => {
   it('опционален: без него окружение валидно', () => {
     const parsed = EnvSchema.parse(baseEnv);
 
@@ -96,13 +96,26 @@ describe('OPENAI_BASE_URL (R5.0)', () => {
     expect(parsed.OPENAI_BASE_URL).toBe('https://routerai.ru/api/v1');
   });
 
-  it('отклоняет не-URL и пустое значение', () => {
-    // Пустая строка — частая ошибка при копировании .env.example
-    // (там `OPENAI_BASE_URL=`), поэтому она обязана падать fail-fast.
+  it('трактует пустую строку как «не задано» (KI-084)', () => {
+    // `.env.example` содержит `OPENAI_BASE_URL=` — раньше это роняло старт.
+    const parsed = EnvSchema.parse({ ...baseEnv, OPENAI_BASE_URL: '' });
+
+    expect(parsed.OPENAI_BASE_URL).toBeUndefined();
+  });
+
+  it('отклоняет не-URL', () => {
     expect(EnvSchema.safeParse({ ...baseEnv, OPENAI_BASE_URL: 'not-a-url' }).success).toBe(
       false,
     );
-    expect(EnvSchema.safeParse({ ...baseEnv, OPENAI_BASE_URL: '' }).success).toBe(false);
+  });
+
+  it('отклоняет схемы кроме http/https (KI-085)', () => {
+    expect(EnvSchema.safeParse({ ...baseEnv, OPENAI_BASE_URL: 'ftp://x.ru' }).success).toBe(
+      false,
+    );
+    expect(EnvSchema.safeParse({ ...baseEnv, OPENAI_BASE_URL: 'ws://x.ru' }).success).toBe(
+      false,
+    );
   });
 
   it('валидирует значение через validateEnv при старте', () => {
@@ -116,5 +129,67 @@ describe('OPENAI_BASE_URL (R5.0)', () => {
     });
 
     expect(result.OPENAI_BASE_URL).toBe('https://routerai.ru/api/v1');
+  });
+});
+
+describe('переменные провайдеров (v0.5.0)', () => {
+  it('применяет дефолтные baseURL, когда переменные не заданы', () => {
+    const parsed = EnvSchema.parse(baseEnv);
+
+    expect(parsed.ROUTERAI_BASE_URL).toBe('https://routerai.ru/api/v1');
+    expect(parsed.DEEPSEEK_BASE_URL).toBe('https://api.deepseek.com/v1');
+    expect(parsed.YANDEX_BASE_URL).toBe('https://llm.api.cloud.yandex.net/v1');
+    expect(parsed.LMSTUDIO_BASE_URL).toBe('http://localhost:1234/v1');
+    expect(parsed.LMSTUDIO_MODELS).toBe('');
+  });
+
+  it('оставляет ключи провайдеров необязательными', () => {
+    const parsed = EnvSchema.parse(baseEnv);
+
+    expect(parsed.ROUTERAI_API_KEY).toBeUndefined();
+    expect(parsed.DEEPSEEK_API_KEY).toBeUndefined();
+    expect(parsed.YANDEX_API_KEY).toBeUndefined();
+  });
+
+  it('читает заполненные ключи и кастомные baseURL', () => {
+    const parsed = EnvSchema.parse({
+      ...baseEnv,
+      ROUTERAI_API_KEY: 'sk-router',
+      DEEPSEEK_API_KEY: 'sk-deepseek',
+      YANDEX_API_KEY: 'sk-yandex',
+      DEEPSEEK_BASE_URL: 'http://localhost:9999/v1',
+      LMSTUDIO_MODELS: 'qwen2.5-7b-instruct,llama-3.3-70b',
+    });
+
+    expect(parsed.ROUTERAI_API_KEY).toBe('sk-router');
+    expect(parsed.DEEPSEEK_API_KEY).toBe('sk-deepseek');
+    expect(parsed.YANDEX_API_KEY).toBe('sk-yandex');
+    expect(parsed.DEEPSEEK_BASE_URL).toBe('http://localhost:9999/v1');
+    expect(parsed.LMSTUDIO_MODELS).toBe('qwen2.5-7b-instruct,llama-3.3-70b');
+  });
+
+  it('пустые ключи и baseURL трактуются как «не задано» (KI-084)', () => {
+    const parsed = EnvSchema.parse({
+      ...baseEnv,
+      ROUTERAI_API_KEY: '',
+      DEEPSEEK_API_KEY: '',
+      DEEPSEEK_BASE_URL: '',
+      LMSTUDIO_MODELS: '',
+    });
+
+    expect(parsed.ROUTERAI_API_KEY).toBeUndefined();
+    expect(parsed.DEEPSEEK_API_KEY).toBeUndefined();
+    // Пустой baseURL уходит в дефолт, а не в ошибку.
+    expect(parsed.DEEPSEEK_BASE_URL).toBe('https://api.deepseek.com/v1');
+    expect(parsed.LMSTUDIO_MODELS).toBe('');
+  });
+
+  it('отклоняет не-http/https baseURL провайдера (KI-085)', () => {
+    expect(
+      EnvSchema.safeParse({ ...baseEnv, ROUTERAI_BASE_URL: 'ftp://routerai.ru' }).success,
+    ).toBe(false);
+    expect(
+      EnvSchema.safeParse({ ...baseEnv, LMSTUDIO_BASE_URL: 'ws://localhost:1234' }).success,
+    ).toBe(false);
   });
 });

@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { LlmProviderException, type ILlmProvider } from './llm-provider.interface.js';
-import { AnthropicProvider } from './providers/anthropic.provider.js';
-import { OpenAiProvider } from './providers/openai.provider.js';
+
+/** Токен DI со списком сконфигурированных провайдеров (см. `LlmModule`). */
+export const LLM_PROVIDERS = 'LLM_PROVIDERS';
 
 /** Модель с указанием провайдера (для UI). */
 export interface LlmModelInfo {
@@ -16,25 +17,45 @@ export interface LlmModelInfo {
 /**
  * Реестр LLM-провайдеров: сопоставляет id модели с провайдером.
  *
- * Провайдеры инжектятся по конструктору (RULES 1.3), поэтому регистрация новой
- * модели сводится к добавлению её в `models` провайдера.
+ * Провайдеры приходят одним массивом через {@link LLM_PROVIDERS} (v0.5.0):
+ * состав собирает {@link LlmProviderFactory} из окружения, поэтому добавление
+ * нового OpenAI-совместимого провайдера не требует правок реестра.
  */
 @Injectable()
 export class LlmRegistryService {
+  private readonly logger = new Logger(LlmRegistryService.name);
+
   /** Все провайдеры в порядке приоритета (для листинга моделей). */
   private readonly providers: ReadonlyArray<ILlmProvider>;
   /** id модели → провайдер, который её обслуживает. */
   private readonly byModelId = new Map<string, ILlmProvider>();
 
   /**
-   * @param anthropic - провайдер Anthropic
-   * @param openai - провайдер OpenAI
+   * Регистрирует модели всех провайдеров.
+   *
+   * При конфликте id (две модели с одинаковым id у разных провайдеров)
+   * **побеждает первый** провайдер в массиве, а конфликт пишется в лог
+   * предупреждением. Порядок задаёт `LlmProviderFactory`: Anthropic, OpenAI,
+   * RouterAI, DeepSeek, Yandex, LM Studio. Так «нативный» провайдер не
+   * перекрывается прокси, и маршрутизация остаётся предсказуемой: один и тот
+   * же id всегда уходит в один и тот же провайдер.
+   *
+   * @param providers - сконфигурированные провайдеры в порядке приоритета
    */
-  constructor(anthropic: AnthropicProvider, openai: OpenAiProvider) {
-    this.providers = [anthropic, openai];
+  constructor(@Inject(LLM_PROVIDERS) providers: ILlmProvider[]) {
+    this.providers = providers;
 
     for (const provider of this.providers) {
       for (const model of provider.models) {
+        const existing = this.byModelId.get(model.id);
+
+        if (existing) {
+          this.logger.warn(
+            `Модель ${model.id} объявлена у провайдеров ${existing.name} и ${provider.name}; используется ${existing.name}`,
+          );
+          continue;
+        }
+
         this.byModelId.set(model.id, provider);
       }
     }
@@ -72,8 +93,8 @@ export class LlmRegistryService {
    *
    * Неконфигурированные провайдеры (без API-ключа) отфильтровываются (KI-039):
    * UI не должен предлагать модели, вызов которых гарантированно упадёт.
-   * Для диагностики «почему модели нет в списке» смотрите `isConfigured`
-   * провайдера и переменные окружения (`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`).
+   * С v0.5.0 фильтр избыточен — фабрика уже не создаёт провайдеров без ключа, —
+   * но оставлен для надёжности, если реестр соберут вручную.
    *
    * @returns модели с указанием провайдера (для UI выбора модели); пустой
    *   массив, если ни один провайдер не сконфигурирован

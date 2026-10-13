@@ -1,6 +1,8 @@
-import { ConfigService } from '@nestjs/config';
 import { LlmProviderException } from '../llm-provider.interface.js';
-import { OpenAiProvider } from './openai.provider.js';
+import {
+  OpenAiCompatibleProvider,
+  type OpenAiCompatibleConfig,
+} from './openai-compatible.provider.js';
 
 const { createMock, constructorMock } = vi.hoisted(() => ({
   createMock: vi.fn(),
@@ -9,7 +11,7 @@ const { createMock, constructorMock } = vi.hoisted(() => ({
 
 // Реальный SDK в юнит-тестах не вызывается: подменяем клиент целиком
 // (RULES: никаких сетевых вызовов в тестах). Опции конструктора запоминаем,
-// чтобы проверять проброс baseURL (R5.0).
+// чтобы проверять проброс baseURL и apiKey (R5.0/v0.5.0).
 vi.mock('openai', () => ({
   default: class MockOpenAI {
     readonly chat = { completions: { create: createMock } };
@@ -21,13 +23,25 @@ vi.mock('openai', () => ({
 }));
 
 /**
- * Создаёт заглушку `ConfigService`.
+ * Собирает конфиг провайдера с разумными дефолтами.
  *
- * @param values - значения переменных окружения по ключам
- * @returns заглушка ConfigService
+ * @param overrides - поля, которые нужно переопределить в тесте
+ * @returns конфиг OpenAI-совместимого провайдера
  */
-function configStub(values: Record<string, string | undefined>): ConfigService {
-  return { get: (key: string) => values[key] } as unknown as ConfigService;
+function providerConfig(
+  overrides: Partial<OpenAiCompatibleConfig> = {},
+): OpenAiCompatibleConfig {
+  return {
+    name: 'openai',
+    apiKey: 'sk-test',
+    baseURL: 'https://api.openai.com/v1',
+    models: [
+      { id: 'gpt-4o', label: 'GPT-4o' },
+      { id: 'gpt-4o-mini', label: 'GPT-4o mini' },
+    ],
+    envKey: 'OPENAI_API_KEY',
+    ...overrides,
+  };
 }
 
 /**
@@ -51,7 +65,9 @@ function lastConstructorOptions(): Record<string, unknown> {
  * @param provider - провайдер под тестом
  * @returns ошибка, которую бросил вызов
  */
-async function catchGenerateError(provider: OpenAiProvider): Promise<unknown> {
+async function catchGenerateError(
+  provider: OpenAiCompatibleProvider,
+): Promise<unknown> {
   try {
     await provider.generateAsync('x', { model: 'm' });
   } catch (error: unknown) {
@@ -75,42 +91,72 @@ function retryableOf(error: unknown): boolean {
   return error.retryable;
 }
 
-describe('OpenAiProvider', () => {
+describe('OpenAiCompatibleProvider', () => {
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it('создаёт клиент без baseURL, если OPENAI_BASE_URL не задан (R5.0)', () => {
-    new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' }));
+  it('создаёт клиент с apiKey и baseURL из конфига', () => {
+    new OpenAiCompatibleProvider(providerConfig());
 
     expect(constructorMock).toHaveBeenCalledTimes(1);
-    expect(lastConstructorOptions()).toEqual({ apiKey: 'sk-test' });
-    expect(lastConstructorOptions()).not.toHaveProperty('baseURL');
+    expect(lastConstructorOptions()).toEqual({
+      apiKey: 'sk-test',
+      baseURL: 'https://api.openai.com/v1',
+    });
   });
 
-  it('прокидывает baseURL из OPENAI_BASE_URL (R5.0)', () => {
-    new OpenAiProvider(
-      configStub({
-        OPENAI_API_KEY: 'sk-router',
-        OPENAI_BASE_URL: 'https://routerai.ru/api/v1',
+  it('использует baseURL конкретного провайдера (RouterAI, v0.5.0)', () => {
+    const provider = new OpenAiCompatibleProvider(
+      providerConfig({
+        name: 'routerai',
+        apiKey: 'sk-router',
+        baseURL: 'https://routerai.ru/api/v1',
+        models: [{ id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4' }],
+        envKey: 'ROUTERAI_API_KEY',
       }),
     );
 
+    expect(provider.name).toBe('routerai');
+    expect(provider.models).toEqual([
+      { id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4' },
+    ]);
     expect(lastConstructorOptions()).toEqual({
       apiKey: 'sk-router',
       baseURL: 'https://routerai.ru/api/v1',
     });
   });
 
-  it('игнорирует пустой OPENAI_BASE_URL и берёт дефолт SDK (R5.0)', () => {
-    new OpenAiProvider(
-      configStub({ OPENAI_API_KEY: 'sk-test', OPENAI_BASE_URL: '' }),
+  it('работает без ключа для LM Studio (заглушка not-needed)', () => {
+    const provider = new OpenAiCompatibleProvider(
+      providerConfig({
+        name: 'lmstudio',
+        apiKey: 'not-needed',
+        baseURL: 'http://localhost:1234/v1',
+        models: [{ id: 'qwen2.5-7b-instruct', label: 'qwen2.5-7b-instruct (local)' }],
+        envKey: undefined,
+      }),
     );
 
-    // Пустая строка (частый случай в .env) не должна попадать в SDK:
-    // иначе baseURL перекроет дефолт https://api.openai.com/v1.
-    expect(lastConstructorOptions()).toEqual({ apiKey: 'sk-test' });
-    expect(lastConstructorOptions()).not.toHaveProperty('baseURL');
+    expect(provider.isConfigured).toBe(true);
+    expect(lastConstructorOptions()).toEqual({
+      apiKey: 'not-needed',
+      baseURL: 'http://localhost:1234/v1',
+    });
+  });
+
+  it('isConfigured=false и понятная ошибка, если ключ пустой (KI-039)', async () => {
+    const provider = new OpenAiCompatibleProvider(
+      providerConfig({ apiKey: '', name: 'deepseek', envKey: 'DEEPSEEK_API_KEY' }),
+    );
+
+    expect(constructorMock).not.toHaveBeenCalled();
+    expect(provider.isConfigured).toBe(false);
+
+    // В тексте ошибки — имя провайдера и его переменной окружения.
+    await expect(provider.generateAsync('x', { model: 'deepseek-chat' })).rejects.toThrow(
+      '[deepseek] DEEPSEEK_API_KEY не задан',
+    );
   });
 
   it('возвращает content ответа и передаёт параметры в SDK', async () => {
@@ -120,7 +166,7 @@ describe('OpenAiProvider', () => {
       choices: [{ message: { content: 'ответ gpt' } }],
     });
 
-    const provider = new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' }));
+    const provider = new OpenAiCompatibleProvider(providerConfig());
 
     await expect(
       provider.generateAsync('вопрос', { model: 'gpt-4o', maxTokens: 5, system: 'ты кот' }),
@@ -145,15 +191,10 @@ describe('OpenAiProvider', () => {
     expect(options.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('isConfigured отражает наличие ключа (KI-039)', () => {
-    expect(new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' })).isConfigured).toBe(true);
-    expect(new OpenAiProvider(configStub({ OPENAI_API_KEY: undefined })).isConfigured).toBe(false);
-  });
-
   it('возвращает пустой текст и usage: null, если контента и метрик нет (KI-038)', async () => {
     createMock.mockResolvedValue({ choices: [] });
 
-    const provider = new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' }));
+    const provider = new OpenAiCompatibleProvider(providerConfig());
 
     await expect(provider.generateAsync('x', { model: 'gpt-4o' })).resolves.toEqual({
       text: '',
@@ -161,19 +202,13 @@ describe('OpenAiProvider', () => {
     });
   });
 
-  it('оборачивает ошибку SDK и падает без ключа', async () => {
-    const failing = new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' }));
+  it('оборачивает ошибку SDK в LlmProviderException', async () => {
+    const failing = new OpenAiCompatibleProvider(providerConfig());
 
     createMock.mockRejectedValue(new Error('boom'));
 
     await expect(failing.generateAsync('x', { model: 'gpt-4o' })).rejects.toThrow(
       LlmProviderException,
-    );
-
-    const withoutKey = new OpenAiProvider(configStub({ OPENAI_API_KEY: undefined }));
-
-    await expect(withoutKey.generateAsync('x', { model: 'gpt-4o' })).rejects.toThrow(
-      'OPENAI_API_KEY не задан',
     );
   });
 
@@ -182,7 +217,7 @@ describe('OpenAiProvider', () => {
       Object.assign(new Error('service unavailable'), { status: 503 }),
     );
 
-    const provider = new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' }));
+    const provider = new OpenAiCompatibleProvider(providerConfig());
 
     expect(retryableOf(await catchGenerateError(provider))).toBe(true);
   });
@@ -192,13 +227,13 @@ describe('OpenAiProvider', () => {
       Object.assign(new Error('unauthorized'), { status: 401 }),
     );
 
-    const provider = new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' }));
+    const provider = new OpenAiCompatibleProvider(providerConfig());
 
     expect(retryableOf(await catchGenerateError(provider))).toBe(false);
   });
 
   it('помечает таймаут сигнала как повторяемую ошибку (KI-036)', async () => {
-    const provider = new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' }));
+    const provider = new OpenAiCompatibleProvider(providerConfig());
 
     createMock.mockRejectedValue(
       Object.assign(new Error('aborted'), { name: 'AbortError' }),

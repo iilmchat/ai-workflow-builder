@@ -1,9 +1,23 @@
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
-import { LlmProviderException } from './llm-provider.interface.js';
-import { LlmRegistryService } from './llm-registry.service.js';
+import { Logger } from '@nestjs/common';
+import { LlmProviderException, type ILlmProvider } from './llm-provider.interface.js';
+import { LLM_PROVIDERS, LlmRegistryService } from './llm-registry.service.js';
 import { AnthropicProvider } from './providers/anthropic.provider.js';
-import { OpenAiProvider } from './providers/openai.provider.js';
+import { OpenAiCompatibleProvider } from './providers/openai-compatible.provider.js';
+
+// Клиенты SDK в тестах реестра не нужны: подменяем оба (RULES: без сети).
+vi.mock('openai', () => ({
+  default: class MockOpenAI {
+    readonly chat = { completions: { create: vi.fn() } };
+  },
+}));
+
+vi.mock('@anthropic-ai/sdk', () => ({
+  default: class MockAnthropic {
+    readonly messages = { create: vi.fn() };
+  },
+}));
 
 /**
  * Создаёт заглушку `ConfigService` с заданными значениями.
@@ -15,7 +29,7 @@ function configStub(keys: Record<string, string>): ConfigService {
   return { get: (key: string) => keys[key] } as unknown as ConfigService;
 }
 
-/** Оба ключа заданы — «всё сконфигурировано». */
+/** Оба «нативных» ключа заданы — Anthropic и OpenAI сконфигурированы. */
 const ALL_KEYS: Record<string, string> = {
   ANTHROPIC_API_KEY: 'sk-ant-test',
   OPENAI_API_KEY: 'sk-test',
@@ -25,44 +39,66 @@ const ALL_KEYS: Record<string, string> = {
  * Создаёт провайдеров с заданными ключами.
  *
  * @param keys - карта «имя переменной → значение»
- * @returns пара «Anthropic + OpenAI»
+ * @returns пара «Anthropic + OpenAI-совместимый»
  */
 function createProviders(keys: Record<string, string>): {
   anthropic: AnthropicProvider;
-  openai: OpenAiProvider;
+  openai: OpenAiCompatibleProvider;
 } {
   return {
     anthropic: new AnthropicProvider(configStub(keys)),
-    openai: new OpenAiProvider(configStub(keys)),
+    openai: new OpenAiCompatibleProvider({
+      name: 'openai',
+      apiKey: keys.OPENAI_API_KEY ?? '',
+      baseURL: 'https://api.openai.com/v1',
+      models: [
+        { id: 'gpt-4o', label: 'GPT-4o' },
+        { id: 'gpt-4o-mini', label: 'GPT-4o mini' },
+      ],
+      envKey: 'OPENAI_API_KEY',
+    }),
   };
 }
 
 /**
- * Собирает реестр на заданных провайдерах.
+ * Собирает реестр на переданном списке провайдеров.
  *
- * @param anthropicProvider - провайдер Anthropic
- * @param openAiProvider - провайдер OpenAI
+ * @param providers - провайдеры в порядке приоритета
  * @returns экземпляр реестра
  */
 async function createRegistry(
-  anthropicProvider: AnthropicProvider,
-  openAiProvider: OpenAiProvider,
+  providers: ILlmProvider[],
 ): Promise<LlmRegistryService> {
   const moduleRef = await Test.createTestingModule({
     providers: [
       LlmRegistryService,
-      { provide: AnthropicProvider, useValue: anthropicProvider },
-      { provide: OpenAiProvider, useValue: openAiProvider },
+      { provide: LLM_PROVIDERS, useValue: providers },
     ],
   }).compile();
 
   return moduleRef.get(LlmRegistryService);
 }
 
+/**
+ * Создаёт минимального провайдера-заглушку для проверки конфликтов id моделей.
+ *
+ * @param name - идентификатор провайдера
+ * @param modelIds - id моделей, которые он объявляет
+ * @returns провайдер-заглушка
+ */
+function stubProvider(name: string, modelIds: string[]): ILlmProvider {
+  return {
+    name,
+    models: modelIds.map((id) => ({ id, label: id })),
+    isConfigured: true,
+    generateAsync: vi.fn(),
+  };
+}
+
 describe('LlmRegistryService', () => {
   let registry: LlmRegistryService;
   let anthropic: AnthropicProvider;
-  let openai: OpenAiProvider;
+  let openai: OpenAiCompatibleProvider;
 
   beforeEach(async () => {
     // Провайдеры создаются с фейковыми ключами: SDK-клиент в конструкторе
@@ -71,7 +107,7 @@ describe('LlmRegistryService', () => {
 
     anthropic = providers.anthropic;
     openai = providers.openai;
-    registry = await createRegistry(anthropic, openai);
+    registry = await createRegistry([anthropic, openai]);
   });
 
   afterEach(() => {
@@ -86,6 +122,22 @@ describe('LlmRegistryService', () => {
   it('находит OpenAI по id модели gpt-*', () => {
     expect(registry.resolveByModel('gpt-4o')).toBe(openai);
     expect(registry.resolveByModel('gpt-4o-mini')).toBe(openai);
+  });
+
+  it('находит модель у любого провайдера из массива (v0.5.0)', async () => {
+    const routerai = new OpenAiCompatibleProvider({
+      name: 'routerai',
+      apiKey: 'sk-router',
+      baseURL: 'https://routerai.ru/api/v1',
+      models: [{ id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4 (RouterAI)' }],
+      envKey: 'ROUTERAI_API_KEY',
+    });
+
+    const local = await createRegistry([anthropic, openai, routerai]);
+
+    expect(local.resolveByModel('anthropic/claude-sonnet-4')).toBe(routerai);
+    // Провайдеры не перекрывают друг друга: native-модель остаётся у Anthropic.
+    expect(local.resolveByModel('claude-sonnet-4-20250514')).toBe(anthropic);
   });
 
   it('бросает LlmProviderException на неизвестную модель', () => {
@@ -110,7 +162,7 @@ describe('LlmRegistryService', () => {
 
   it('listModels скрывает модели провайдера без API-ключа (KI-039)', async () => {
     const providers = createProviders({ ANTHROPIC_API_KEY: 'sk-ant-test' });
-    const local = await createRegistry(providers.anthropic, providers.openai);
+    const local = await createRegistry([providers.anthropic, providers.openai]);
 
     expect(providers.openai.isConfigured).toBe(false);
     expect(local.listModels()).toEqual([
@@ -125,7 +177,7 @@ describe('LlmRegistryService', () => {
 
   it('listModels возвращает пустой список, если ключей нет вовсе (KI-039)', async () => {
     const providers = createProviders({});
-    const local = await createRegistry(providers.anthropic, providers.openai);
+    const local = await createRegistry([providers.anthropic, providers.openai]);
 
     expect(providers.anthropic.isConfigured).toBe(false);
     expect(providers.openai.isConfigured).toBe(false);
@@ -134,7 +186,7 @@ describe('LlmRegistryService', () => {
 
   it('resolveByModel не зависит от конфигурации: ошибка всплывает на вызове (KI-039)', async () => {
     const providers = createProviders({});
-    const local = await createRegistry(providers.anthropic, providers.openai);
+    const local = await createRegistry([providers.anthropic, providers.openai]);
 
     // Резолв работает и без ключа: он отвечает только за маршрутизацию модели...
     const resolved = local.resolveByModel('claude-sonnet-4-20250514');
@@ -146,5 +198,38 @@ describe('LlmRegistryService', () => {
     await expect(
       resolved.generateAsync('привет', { model: 'claude-sonnet-4-20250514' }),
     ).rejects.toThrow('ANTHROPIC_API_KEY не задан');
+  });
+
+  it('при конфликте id побеждает первый провайдер и пишется warning (v0.5.0)', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const first = stubProvider('first', ['shared-model']);
+    const second = stubProvider('second', ['shared-model']);
+
+    const local = await createRegistry([first, second]);
+
+    // Решение: первый в массиве выигрывает — маршрутизация детерминирована.
+    expect(local.resolveByModel('shared-model')).toBe(first);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('Модель shared-model объявлена у провайдеров first и second'),
+    );
+  });
+
+  it('не пишет warning, когда конфликтов нет', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const first = stubProvider('first', ['a']);
+    const second = stubProvider('second', ['b']);
+
+    const local = await createRegistry([first, second]);
+
+    expect(local.resolveByModel('a')).toBe(first);
+    expect(local.resolveByModel('b')).toBe(second);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('работает с пустым списком провайдеров', async () => {
+    const local = await createRegistry([]);
+
+    expect(local.listModels()).toEqual([]);
+    expect(() => local.resolveByModel('gpt-4o')).toThrow('Модель не поддерживается');
   });
 });
