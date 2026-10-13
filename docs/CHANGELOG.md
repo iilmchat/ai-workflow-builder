@@ -19,6 +19,23 @@
 ## [Unreleased]
 
 ### Added
+- **Runner — KI-065 + KI-032: конфигурируемый воркер (v0.3.10):**
+  - `WorkerEnvSchema` в `env.schema.ts` — единый источник дефолтов
+    и границ; встроена в `EnvSchema` через `.shape`, поэтому
+    `ConfigModule` и `@Processor` валидируют одно и то же.
+  - `src/runs/runs.worker-options.ts` — читает env в момент загрузки
+    модуля (декораторы вне DI). Значения валидируются Zod **до**
+    передачи в BullMQ (`Number('abc') = NaN` не утечёт).
+  - `@Processor(WORKFLOW_RUNS_QUEUE, WORKFLOW_RUNS_WORKER_OPTIONS)`:
+    `concurrency` (default 5), `lockDuration` (default 300 000),
+    `maxStalledCount` (default 2) — из env.
+  - `RUN_STALE_THRESHOLD_MS` удалён из `runs.constants.ts`; значение
+    берётся из `WORKFLOW_RUNS_STALE_THRESHOLD_MS` (default 300 000).
+    Единый источник — без расхождения prod/тестов.
+  - 12 новых тестов (217 → 229).
+  - Smoke: `concurrency=2` → `max simultaneously running = 2`
+    (до правки — 1). `concurrency=1` → регресс 1.
+  - Env fail-fast: `0` / `100` / `abc` → `exit=1`.
 - **Runner — KI-060: явный признак финальности `run_completed` (v0.3.9):**
   - `run_completed` несёт `final: boolean` (KI-060) — эвристика
     `attemptsMade >= attempts - 1` ломалась на детерминированных
