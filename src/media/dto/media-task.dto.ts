@@ -61,7 +61,8 @@ export const MediaTaskResponseSchema = z.object({
   /** Итоговая стоимость задачи в рублях (заполняется к моменту `done`). */
   price: z.number().nonnegative().optional(),
   /** URL-ы результата (48 часов жизни, см. KI-077). */
-  result: z.array(z.url()).optional(),
+  // KI-111: upstream отдаёт массив объектов { url }, а не массив строк.
+  result: z.array(z.object({ url: z.url() })).optional(),
   /** Причина падения при `status: 'failed'`. */
   error: z.string().optional(),
   /** Предупреждения upstream, например о снятой модели. */

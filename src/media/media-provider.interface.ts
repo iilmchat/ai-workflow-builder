@@ -122,8 +122,14 @@ export interface MediaModelInfo {
   type: MediaType;
   /** Цена за генерацию (рубли). Может быть `0` — см. `priceUnit`. */
   price: number;
+
+  /** «per_generation» / «per_second» / …; null — тариф по входу (KI-112). */
   /** Единица тарификации: `per_generation`, `per_second`, `per_character`. */
-  priceUnit: string;
+  priceUnit: string | null;
+  /** Ставка за вход (например, per_character); null — тариф за генерацию. */
+  priceInput: number | null;
+  /** За что берётся priceInput («per_character», «per_1k_tokens»); null — не применимо. */
+  priceInputUnit: string | null;  
   /** Режим модерации промпта. */
   moderation: 'auto' | 'strict';
   /** Обязательность промпта. */

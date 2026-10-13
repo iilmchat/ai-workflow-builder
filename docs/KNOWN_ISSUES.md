@@ -1679,6 +1679,24 @@
 
 ---
 
+### KI-110 — WSL2 Docker proxy (wslrelay.exe) рвёт idle TCP
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.6.0b.2.3 (коммит `<hash>`)
+- **Файлы:** `src/db/db.module.ts`, `src/redis/redis.module.ts`
+- **Описание:** Docker Desktop с WSL2 backend проксирует TCP через
+  `wslrelay.exe`. Он закрывает idle-соединения непредсказуемо (раньше,
+  чем `pg.Pool`/`ioredis` ожидают). Node переиспользует мёртвый сокет →
+  `Connection terminated unexpectedly` на первом запросе после паузы,
+  `ECONNABORTED` в логах Redis.
+- **Fix:** `pg.Pool` — `idleTimeoutMillis: 5_000`,
+  `maxLifetimeSeconds: 30`, `connectionTimeoutMillis: 5_000`.
+  `ioredis` — `keepAlive: 10_000`, ограниченный `retryStrategy`.
+- **Альтернатива (не использована):** Docker Desktop → Hyper-V backend
+  (пропадёт wslrelay); смена порта 5433 → 5434.
+- **Связанные:** KI-099.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |

@@ -67,7 +67,11 @@ export const MediaModelSchema = z.object({
   code: z.string(),
   type: z.enum(MEDIA_TYPES),
   price: z.number().nonnegative(),
-  price_unit: z.string(),
+  // KI-112: у моделей с тарифом «по входу» price_unit отсутствует,
+  // а ставка лежит в price_input + price_input_unit (см. докy GPTunnel).
+  price_unit: z.string().optional(),
+  price_input: z.number().nonnegative().optional(),
+  price_input_unit: z.string().optional(),
   moderation: z.enum(['auto', 'strict']).default('auto'),
   prompt: z.enum(['required', 'optional', 'none']).default('required'),
   params: z.array(MediaParamSchema).default([]),

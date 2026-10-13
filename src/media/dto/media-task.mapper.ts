@@ -27,7 +27,8 @@ export function toMediaTaskResult(dto: MediaTaskResponseDto): MediaTaskResult {
     taskId: dto.id,
     model: dto.model,
     status: dto.status,
-    resultUrls: dto.result ?? [],
+    // KI-111: dto.result — массив объектов { url }, извлекаем строки.
+    resultUrls: dto.result?.map((item) => item.url) ?? [],
     costRub: dto.price ?? null,
     error: dto.error ?? null,
   };

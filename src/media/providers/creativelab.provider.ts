@@ -334,9 +334,19 @@ export class CreativeLabProvider implements IMediaProvider {
     const parsed = MediaTaskResponseSchema.safeParse(payload);
 
     if (!parsed.success) {
+      // KI-111: схема tasks могла разойтись с upstream. Логируем точный path
+      // и обрезанный raw — иначе по «1 ошибка схемы» не найти поле.
+      const details = parsed.error.issues
+        .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
+        .join('; ');
+
+      this.logger.error(
+        `media API task response schema mismatch: ${details}; raw=${JSON.stringify(payload).slice(0, 800)}`,
+      );
+
       throw new MediaProviderException(
         this.name,
-        `неожиданный формат ответа media API: ${parsed.error.issues.length} ошибок схемы`,
+        `неожиданный формат ответа media API: ${details}`,
         { cause: parsed.error },
       );
     }
@@ -536,9 +546,22 @@ export class CreativeLabProvider implements IMediaProvider {
     const parsed = MediaModelsResponseSchema.safeParse(payload);
 
     if (!parsed.success) {
+      // KI-112: как и в parseTaskAsync — печатаем точный path и обрезанный raw.
+      const details = parsed.error.issues
+        .slice(0, 10)
+        .map(
+          (issue) =>
+            `${issue.path.join('.') || '<root>'}: ${issue.message}`,
+        )
+        .join('; ');
+
+      this.logger.error(
+        `media API models schema mismatch: ${details}; raw=${JSON.stringify(payload).slice(0, 1500)}`,
+      );
+
       throw new MediaProviderException(
         this.name,
-        `неожиданный формат ответа media API: ${parsed.error.issues.length} ошибок схемы`,
+        `неожиданный формат ответа media API: ${details}`,
         { cause: parsed.error },
       );
     }
