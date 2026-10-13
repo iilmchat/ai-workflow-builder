@@ -254,13 +254,13 @@ describe('EngineService', () => {
 
     it('строит inputs и dependents в executionMap', async () => {
       const graph: GraphDto = {
-        nodes: [node('A'), node('B')],
+        nodes: [node('A', 'text'), node('B')],
         edges: [
           {
             id: 'e1',
             source: 'A',
             target: 'B',
-            sourceHandle: 'result',
+            sourceHandle: 'text-output',
             targetHandle: 'payload',
           },
         ],
@@ -271,7 +271,8 @@ describe('EngineService', () => {
       expect(plan.executionMap.A).toEqual({ inputs: {}, dependents: ['B'] });
       expect(plan.executionMap.B).toEqual({
         inputs: {
-          payload: { fromNode: 'A', fromPort: 'result' },
+          // KI-030: id хендла React Flow переводится в имя порта в outputs.
+          payload: { fromNode: 'A', fromPort: 'text' },
         },
         dependents: [],
       });
@@ -324,8 +325,10 @@ describe('EngineService', () => {
       const plan = await service.buildExecutionPlanAsync(graph);
 
       expect(plan.executionMap.C.inputs).toEqual({
-        in: { fromNode: 'A', fromPort: 'out' },
-        out: { fromNode: 'B', fromPort: 'out' },
+        // Ключи проверяются здесь; порты: 'out' — не id хендла, поэтому для
+        // узлов без контракта ('task') берётся fallback 'output' (KI-030).
+        in: { fromNode: 'A', fromPort: 'output' },
+        out: { fromNode: 'B', fromPort: 'output' },
         e3: { fromNode: 'A', fromPort: 'output' },
       });
     });
@@ -356,7 +359,7 @@ describe('EngineService', () => {
       });
     });
 
-    it('не перекрывает явный sourceHandle дефолтом по типу узла (KI-022)', async () => {
+    it('неизвестный sourceHandle не проходит насквозь: порт берётся из типа узла (KI-030)', async () => {
       const graph: GraphDto = {
         nodes: [node('A', 'text'), node('B', 'llm')],
         edges: [
@@ -372,8 +375,104 @@ describe('EngineService', () => {
 
       const plan = await service.buildExecutionPlanAsync(graph);
 
+      // Контракт KI-030: насквозь проходят только известные id хендлов React
+      // Flow; всё остальное разрешается через тип узла-источника.
       expect(plan.executionMap.B.inputs).toEqual({
-        in: { fromNode: 'A', fromPort: 'custom' },
+        in: { fromNode: 'A', fromPort: 'text' },
+      });
+    });
+
+    it('переводит id хендла text-output в порт text (KI-030)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'text'), node('B', 'llm')],
+        edges: [
+          {
+            id: 'e1',
+            source: 'A',
+            target: 'B',
+            sourceHandle: 'text-output',
+            targetHandle: 'text-input',
+          },
+        ],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      expect(plan.executionMap.B.inputs).toEqual({
+        'text-input': { fromNode: 'A', fromPort: 'text' },
+      });
+    });
+
+    it('переводит id хендла image-output в порт url (KI-030)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'image_generation'), node('B', 'llm')],
+        edges: [
+          {
+            id: 'e1',
+            source: 'A',
+            target: 'B',
+            sourceHandle: 'image-output',
+            targetHandle: 'text-input',
+          },
+        ],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      expect(plan.executionMap.B.inputs).toEqual({
+        'text-input': { fromNode: 'A', fromPort: 'url' },
+      });
+    });
+
+    it('для неизвестного хендла падает на дефолт по типу узла (KI-030)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'llm'), node('B', 'text')],
+        edges: [
+          {
+            id: 'e1',
+            source: 'A',
+            target: 'B',
+            sourceHandle: 'unknown-handle',
+            targetHandle: 'in',
+          },
+        ],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      expect(plan.executionMap.B.inputs).toEqual({
+        in: { fromNode: 'A', fromPort: 'text' },
+      });
+    });
+
+    it('разрешает порты всего UI-графа text→llm→image_generation (KI-030)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'text'), node('B', 'llm'), node('C', 'image_generation')],
+        edges: [
+          {
+            id: 'e1',
+            source: 'A',
+            target: 'B',
+            sourceHandle: 'text-output',
+            targetHandle: 'text-input',
+          },
+          {
+            id: 'e2',
+            source: 'B',
+            target: 'C',
+            sourceHandle: 'text-output',
+            targetHandle: 'text-input',
+          },
+        ],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      expect(plan.executionMap.B.inputs).toEqual({
+        'text-input': { fromNode: 'A', fromPort: 'text' },
+      });
+      expect(plan.executionMap.C.inputs).toEqual({
+        'text-input': { fromNode: 'B', fromPort: 'text' },
       });
     });
 
@@ -423,8 +522,10 @@ describe('EngineService', () => {
       const plan = await service.buildExecutionPlanAsync(graph);
 
       expect(plan.executionMap.C.inputs).toEqual({
-        leftInput: { fromNode: 'A', fromPort: 'left' },
-        rightInput: { fromNode: 'B', fromPort: 'right' },
+        // Ключи — targetHandle; порты не являются id хендлов, поэтому по
+        // контракту KI-030 берётся fallback для неизвестного типа узла.
+        leftInput: { fromNode: 'A', fromPort: 'output' },
+        rightInput: { fromNode: 'B', fromPort: 'output' },
       });
     });
 

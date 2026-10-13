@@ -386,15 +386,16 @@ describe('ExecutionEngineService', () => {
     );
   });
 
-  it('кладёт null во вход, если у предшественника нет такого выходного порта', async () => {
+  it('прокидывает null, когда выход предшественника пуст (url = null)', async () => {
     const graph: GraphDto = {
-      nodes: [node('A', 'text', { value: 'привет' }), node('B', 'llm')],
-      edges: [edge('e1', 'A', 'B', 'несуществующий-порт', 'prompt')],
+      nodes: [node('A', 'image_generation'), node('B', 'llm')],
+      edges: [edge('e1', 'A', 'B', 'image-output', 'prompt')],
     };
 
     const result = await service.executeAsync(RUN_ID, graph);
 
     expect(result.status).toBe('completed');
+    expect(fake.rows[0].outputs).toEqual({ url: null });
     expect(fake.rows[1].inputs).toEqual({ prompt: null });
   });
 

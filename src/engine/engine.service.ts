@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type { EdgeDto, GraphDto } from './dto/index.js';
-import { inferDefaultOutputPort } from './node-ports.js';
+import { handleIdToOutputPort, inferDefaultOutputPort } from './node-ports.js';
 
 /** Результат проверки графа: ошибки блокируют запуск, warnings — нет. */
 export interface GraphValidationResult {
@@ -144,10 +144,11 @@ export class EngineService {
    * - `inputs` — что подать на вход: ключ → откуда приходит значение
    *   (`fromNode`, `fromPort`). Ключ выбирается по приоритету `targetHandle` →
    *   `sourceHandle` → `edge.id`: несколько входов без заданных портов больше
-   *   не перезаписывают друг друга (KI-003). `fromPort` — это `sourceHandle`,
-   *   а если он не задан, порт выводится из типа узла-источника
-   *   (`inferDefaultOutputPort`), а не подставляется несуществующий `output`
-   *   (KI-022);
+   *   не перезаписывают друг друга (KI-003). `fromPort` разрешается в два
+   *   шага: сначала id хендла React Flow переводится в имя порта
+   *   (`handleIdToOutputPort`: `text-output` → `text`, `image-output` → `url`,
+   *   KI-030), а для неизвестного/отсутствующего хендла порт выводится из типа
+   *   узла-источника (`inferDefaultOutputPort`, KI-022);
    * - `dependents` — `id` узлов, которые ждут завершения этого узла.
    *
    * @param graph - валидированный DTO графа
@@ -181,7 +182,9 @@ export class EngineService {
 
         plan.inputs[edge.targetHandle ?? edge.sourceHandle ?? edge.id] = {
           fromNode: edge.source,
-          fromPort: edge.sourceHandle ?? inferDefaultOutputPort(sourceNode?.type ?? ''),
+          fromPort:
+            handleIdToOutputPort(edge.sourceHandle) ??
+            inferDefaultOutputPort(sourceNode?.type ?? ''),
         };
       }
 
