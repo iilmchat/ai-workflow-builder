@@ -19,6 +19,31 @@
 ## [Unreleased]
 
 ### Added
+- **Runner — v0.5.0: мультипровайдерная поддержка LLM (2026-10-13):**
+  - `LlmProviderFactory` — конфиг-массив провайдеров из env.
+    Провайдер попадает в список **только если задан его ключ**
+    (LM Studio — при непустом `LMSTUDIO_MODELS`).
+  - `OpenAiCompatibleProvider` — единый класс для любого
+    OpenAI-совместимого API (`/chat/completions`): OpenAI,
+    RouterAI, DeepSeek, Yandex AI Studio, LM Studio.
+  - `AnthropicProvider` — без изменений (свой SDK).
+  - Конфликт id моделей: **первый провайдер побеждает**,
+    `logger.warn`. Порядок фабрики — единственный источник
+    приоритета.
+  - **KI-084:** `emptyToUndefined` через `z.preprocess` — пустая
+    строка в env = undefined. `.env.example` копируется как есть.
+  - **KI-085:** `httpUrl = z.url({ protocol: /^https?$/ })` —
+    только http/https.
+  - `.env.example` — секции Anthropic / OpenAI / RouterAI /
+    DeepSeek / Yandex / LM Studio.
+  - +21 тест (236 → 257).
+  - Smoke: `GET /llm/models` возвращает модели нескольких
+    провайдеров одновременно.
+
+### Fixed
+- **KI-084** — пустой `OPENAI_BASE_URL=` больше не роняет старт.
+- **KI-085** — `z.url()` теперь отсекает не-http(s) схемы.
+
 - **Runner — R5.0: `OPENAI_BASE_URL` (2026-10-13):**
   - `OPENAI_BASE_URL` в env — для OpenAI-совместимых API (RouterAI,
     DeepSeek, Yandex, LM Studio). Прокидывается в SDK `openai`
