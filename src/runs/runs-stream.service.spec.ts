@@ -141,6 +141,94 @@ function payloads(messages: MessageEvent[]): RunStreamMessage[] {
   return messages.map((message) => message.data as RunStreamMessage);
 }
 
+/**
+ * Собирает событие `run_completed` (KI-059).
+ *
+ * @param status - итоговый статус запуска
+ * @param attemptsMade - сколько попыток уже сделал BullMQ
+ * @param attempts - максимум попыток (null — лимит неизвестен)
+ * @returns событие завершения запуска
+ */
+function completed(
+  status: 'completed' | 'failed',
+  attemptsMade: number,
+  attempts: number | null,
+): RunEventDto {
+  return {
+    type: 'run_completed',
+    runId: RUN_ID,
+    status,
+    attemptsMade,
+    attempts,
+    finishedAt: '2024-01-01T00:00:03.000Z',
+  };
+}
+
+/**
+ * Отдаёт события и «висит» дальше — как реальная подписка на Redis, которая не
+ * завершается сама. Так тесты доказывают, что поток закрылся именно по правилу
+ * финальности (KI-059), а не потому что закончился генератор.
+ *
+ * @param events - события, которые нужно отдать
+ * @returns асинхронный итератор событий
+ */
+function eventsThenHang(events: RunEventDto[]): AsyncIterable<RunEventDto> {
+  let index = 0;
+
+  return {
+    [Symbol.asyncIterator]: () => ({
+      next: (): Promise<IteratorResult<RunEventDto>> => {
+        if (index < events.length) {
+          const value = events[index];
+
+          index += 1;
+
+          return Promise.resolve({ done: false, value });
+        }
+
+        return new Promise<IteratorResult<RunEventDto>>(() => {
+          // Событий больше нет: подписка ждёт новые, не завершаясь.
+        });
+      },
+    }),
+  };
+}
+
+/**
+ * Ждёт завершения потока, падая по таймауту (защита от «вечного» потока).
+ *
+ * @param stream - поток SSE-сообщений
+ * @param timeoutMs - сколько ждать завершения
+ * @returns полученные сообщения
+ */
+function collectWithTimeout(
+  stream: Observable<MessageEvent>,
+  timeoutMs = 2000,
+): Promise<MessageEvent[]> {
+  return Promise.race([
+    collectAsync(stream),
+    new Promise<never>((_resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('поток не закрылся за отведённое время')),
+        timeoutMs,
+      );
+
+      timer.unref();
+    }),
+  ]);
+}
+
+/**
+ * Даёт потоку доставить уже готовые сообщения (дренаж микротасок + таймер).
+ *
+ * @returns промис без значения
+ */
+function settle(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 10);
+  });
+}
+
 describe('RunsStreamService', () => {
   /**
    * Собирает сервис на заглушках.
@@ -219,7 +307,7 @@ describe('RunsStreamService', () => {
     });
   });
 
-  it('пробрасывает события после snapshot и замолкает на run_completed', async () => {
+  it('пробрасывает события после snapshot и закрывается на run_completed(completed)', async () => {
     const events: RunEventDto[] = [
       { type: 'run_started', runId: RUN_ID, startedAt: '2024-01-01T00:00:01.000Z' },
       {
@@ -230,13 +318,8 @@ describe('RunsStreamService', () => {
         durationMs: 3,
         finishedAt: '2024-01-01T00:00:02.000Z',
       },
-      {
-        type: 'run_completed',
-        runId: RUN_ID,
-        status: 'completed',
-        finishedAt: '2024-01-01T00:00:03.000Z',
-      },
-      // Событие «после» терминального: в поток попасть не должно.
+      completed('completed', 0, 3),
+      // Событие «после» финального: в поток попасть не должно.
       {
         type: 'node_started',
         runId: RUN_ID,
@@ -248,16 +331,11 @@ describe('RunsStreamService', () => {
 
     const { service } = await createService({
       rows: [],
-      events: {
-        subscribeAsync: vi.fn(async function* generate(): AsyncIterable<RunEventDto> {
-          for (const event of events) {
-            yield event;
-          }
-        }),
-      },
+      // Подписка сама не завершается: поток обязан закрыться по финальному событию.
+      events: { subscribeAsync: vi.fn(() => eventsThenHang(events)) },
     });
 
-    const messages = await collectAsync(
+    const messages = await collectWithTimeout(
       service.streamAsync(RUN_ID, new AbortController().signal),
     );
     const types = payloads(messages).map((message) => message.type);
@@ -265,22 +343,118 @@ describe('RunsStreamService', () => {
     expect(types).toEqual(['snapshot', 'run_started', 'node_completed', 'run_completed']);
   });
 
-  it('не закрывает поток на run_completed(failed): запуск может быть переигран (KI-040)', async () => {
+  it('закрывается на run_completed(failed) с исчерпанными попытками (KI-059)', async () => {
+    const { service } = await createService({
+      rows: [],
+      // attemptsMade = 2 при attempts = 3 — это последняя попытка.
+      events: { subscribeAsync: vi.fn(() => eventsThenHang([completed('failed', 2, 3)])) },
+    });
+
+    const messages = await collectWithTimeout(
+      service.streamAsync(RUN_ID, new AbortController().signal),
+    );
+
+    expect(payloads(messages).map((message) => message.type)).toEqual([
+      'snapshot',
+      'run_completed',
+    ]);
+  });
+
+  it('закрывается только на третьей из трёх попыток (KI-059)', async () => {
     const events: RunEventDto[] = [
-      {
-        type: 'run_completed',
-        runId: RUN_ID,
-        status: 'failed',
-        finishedAt: '2024-01-01T00:00:03.000Z',
-      },
-      // Job-level retry (KI-040): новая попытка того же запуска.
+      completed('failed', 0, 3),
       { type: 'run_started', runId: RUN_ID, startedAt: '2024-01-01T00:00:05.000Z' },
-      {
-        type: 'run_completed',
-        runId: RUN_ID,
-        status: 'completed',
-        finishedAt: '2024-01-01T00:00:06.000Z',
-      },
+      completed('failed', 1, 3),
+      { type: 'run_started', runId: RUN_ID, startedAt: '2024-01-01T00:00:08.000Z' },
+      completed('failed', 2, 3),
+    ];
+
+    const { service } = await createService({
+      rows: [],
+      events: { subscribeAsync: vi.fn(() => eventsThenHang(events)) },
+    });
+
+    const messages = await collectWithTimeout(
+      service.streamAsync(RUN_ID, new AbortController().signal),
+    );
+    const types = payloads(messages).map((message) => message.type);
+
+    expect(types).toEqual([
+      'snapshot',
+      'run_completed',
+      'run_started',
+      'run_completed',
+      'run_started',
+      'run_completed',
+    ]);
+  });
+
+  it('НЕ закрывается на промежуточном провале: будет retry (KI-059)', async () => {
+    const { service } = await createService({
+      rows: [],
+      // Первая попытка из трёх провалилась — BullMQ ещё переиграет запуск.
+      events: { subscribeAsync: vi.fn(() => eventsThenHang([completed('failed', 0, 3)])) },
+    });
+
+    const received: MessageEvent[] = [];
+    let finished = false;
+    const subscription = service
+      .streamAsync(RUN_ID, new AbortController().signal)
+      .subscribe({
+        next: (message) => received.push(message),
+        complete: () => {
+          finished = true;
+        },
+      });
+
+    await settle();
+
+    expect(payloads(received).map((message) => message.type)).toEqual([
+      'snapshot',
+      'run_completed',
+    ]);
+    // Поток остаётся открытым: клиент ждёт новую попытку того же runId (KI-040).
+    expect(finished).toBe(false);
+
+    subscription.unsubscribe();
+  });
+
+  it('НЕ закрывается при неизвестном лимите попыток (attempts = null, KI-059)', async () => {
+    const { service } = await createService({
+      rows: [],
+      events: { subscribeAsync: vi.fn(() => eventsThenHang([completed('failed', 7, null)])) },
+    });
+
+    const received: MessageEvent[] = [];
+    let finished = false;
+    const subscription = service
+      .streamAsync(RUN_ID, new AbortController().signal)
+      .subscribe({
+        next: (message) => received.push(message),
+        complete: () => {
+          finished = true;
+        },
+      });
+
+    await settle();
+
+    expect(payloads(received).map((message) => message.type)).toEqual([
+      'snapshot',
+      'run_completed',
+    ]);
+    // Лимит неизвестен — консервативно ждём возможный retry.
+    expect(finished).toBe(false);
+
+    subscription.unsubscribe();
+  });
+
+  it('показывает retry того же запуска и закрывается на успешной попытке (KI-040)', async () => {
+    const events: RunEventDto[] = [
+      // Первая попытка провалилась, но лимит не исчерпан…
+      completed('failed', 0, 3),
+      // …поэтому job-level retry публикует новую попытку того же запуска.
+      { type: 'run_started', runId: RUN_ID, startedAt: '2024-01-01T00:00:05.000Z' },
+      completed('completed', 1, 3),
     ];
 
     const { service } = await createService({

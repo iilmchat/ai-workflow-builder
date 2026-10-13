@@ -112,10 +112,15 @@ describe('RunsProcessor', () => {
     await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
 
     expect(selectChain.from).toHaveBeenCalledWith(workflowRuns);
-    expect(executor.executeAsync).toHaveBeenCalledWith(RUN_ID, {
-      nodes: [{ id: 'A', type: 'text', data: { value: 'x' } }],
-      edges: [],
-    });
+    expect(executor.executeAsync).toHaveBeenCalledWith(
+      RUN_ID,
+      {
+        nodes: [{ id: 'A', type: 'text', data: { value: 'x' } }],
+        edges: [],
+      },
+      // KI-059: контекст попытки задания уходит в executor.
+      { attemptsMade: 0, attempts: 3 },
+    );
   });
 
   it('помечает запуск failed и бросает при битом snapshot', async () => {
@@ -167,6 +172,7 @@ describe('RunsProcessor', () => {
     expect(executor.executeAsync).toHaveBeenCalledWith(
       RUN_ID,
       expect.objectContaining({ nodes: expect.any(Array) }),
+      { attemptsMade: 0, attempts: 3 },
     );
   });
 
@@ -216,6 +222,8 @@ describe('RunsProcessor', () => {
     expect(executor.executeAsync).toHaveBeenCalledWith(
       RUN_ID,
       expect.objectContaining({ nodes: expect.any(Array) }),
+      // KI-059: на retry-доставке видно, сколько попыток уже сделано.
+      { attemptsMade: 2, attempts: 3 },
     );
   });
 

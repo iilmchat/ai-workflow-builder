@@ -288,6 +288,18 @@ describe('ExecutionEngineService', () => {
   const eventTypes = (): string[] => publish.mock.calls.map(([, event]) => event.type);
 
   /**
+   * Последнее опубликованное событие заданного типа.
+   *
+   * @param type - тип события прогресса
+   * @returns событие либо `undefined`, если такого события не было
+   */
+  const lastEventOfType = (type: RunEventDto['type']): RunEventDto | undefined =>
+    publish.mock.calls
+      .map(([, event]) => event)
+      .filter((event) => event.type === type)
+      .at(-1);
+
+  /**
    * Подменяет приватный `runNodeAsync` (проверка падений узла).
    *
    * @param impl - реализация-заглушка для выполнения узла (выходы + метрики)
@@ -971,5 +983,33 @@ describe('ExecutionEngineService', () => {
     expect(row?.tokensIn).toBeNull();
     expect(row?.tokensOut).toBeNull();
     expect(row?.costUsd).toBeNull();
+  });
+
+  it('KI-059: без контекста публикует run_completed с attemptsMade=0 и attempts=null', async () => {
+    await service.executeAsync(RUN_ID, { nodes: [node('A', 'text')], edges: [] });
+
+    expect(lastEventOfType('run_completed')).toEqual(
+      expect.objectContaining({
+        status: 'completed',
+        attemptsMade: 0,
+        attempts: null,
+      }),
+    );
+  });
+
+  it('KI-059: пробрасывает attemptsMade/attempts задания в run_completed', async () => {
+    await service.executeAsync(
+      RUN_ID,
+      { nodes: [node('A', 'text')], edges: [] },
+      { attemptsMade: 2, attempts: 3 },
+    );
+
+    expect(lastEventOfType('run_completed')).toEqual(
+      expect.objectContaining({
+        status: 'completed',
+        attemptsMade: 2,
+        attempts: 3,
+      }),
+    );
   });
 });

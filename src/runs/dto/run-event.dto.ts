@@ -41,11 +41,23 @@ export const RunEventSchema = z.discriminatedUnion('type', [
     error: z.string(),
     finishedAt: z.iso.datetime(),
   }),
-  /** Запуск завершён — успешно или с ошибкой. */
+  /** Запуск завершён — успешно или с ошибкой (см. KI-059 о финальности). */
   z.object({
     type: z.literal('run_completed'),
     runId: z.uuid(),
     status: z.enum(['completed', 'failed']),
+    /**
+     * Сколько попыток уже сделал BullMQ (0 для первой доставки задания).
+     *
+     * Для `failed`-запуска клиент сравнивает `attemptsMade` с `attempts`, чтобы
+     * отличить «будет retry» от «попытки исчерпаны» (KI-059).
+     */
+    attemptsMade: z.number().int().nonnegative(),
+    /**
+     * Максимум попыток из `defaultJobOptions` (`attempts: 3`, KI-016);
+     * `null`, если лимит не задан.
+     */
+    attempts: z.number().int().positive().nullable(),
     finishedAt: z.iso.datetime(),
   }),
 ]);

@@ -35,6 +35,8 @@ describe('RunEventSchema', () => {
         type: 'run_completed',
         runId: RUN_ID,
         status: 'failed',
+        attemptsMade: 1,
+        attempts: 3,
         finishedAt: ISO_NOW,
       },
     ];
@@ -44,6 +46,31 @@ describe('RunEventSchema', () => {
 
       expect(parsed.success, `событие ${event.type} должно быть валидным`).toBe(true);
     }
+  });
+
+  it('принимает attempts = null и требует attemptsMade (KI-059)', () => {
+    const base = {
+      type: 'run_completed',
+      runId: RUN_ID,
+      status: 'failed',
+      finishedAt: ISO_NOW,
+    };
+
+    // Лимит попыток неизвестен: клиент трактует это как «не финал».
+    expect(
+      RunEventSchema.safeParse({ ...base, attemptsMade: 0, attempts: null }).success,
+    ).toBe(true);
+
+    // attemptMade обязателен: без него нельзя понять, будет ли retry.
+    expect(RunEventSchema.safeParse({ ...base, attempts: 3 }).success).toBe(false);
+
+    // attempts = 0 невалиден (положительное число), отрицательный attemptsMade тоже.
+    expect(
+      RunEventSchema.safeParse({ ...base, attemptsMade: 0, attempts: 0 }).success,
+    ).toBe(false);
+    expect(
+      RunEventSchema.safeParse({ ...base, attemptsMade: -1, attempts: 3 }).success,
+    ).toBe(false);
   });
 
   it('отклоняет событие с неизвестным дискриминатором type', () => {

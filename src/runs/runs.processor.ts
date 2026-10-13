@@ -148,7 +148,11 @@ export class RunsProcessor extends WorkerHost {
     );
 
     try {
-      await this.executionEngine.executeAsync(runId, snapshot.data);
+      await this.executionEngine.executeAsync(runId, snapshot.data, {
+        // KI-059: клиент SSE узнаёт из run_completed, остались ли попытки.
+        attemptsMade: job.attemptsMade,
+        attempts: job.opts.attempts ?? null,
+      });
     } catch (error: unknown) {
       // Итог в БД и событие run_completed проставляет сам executor; здесь
       // только логируем и пробрасываем — стек не гасим, job уйдёт в retry.

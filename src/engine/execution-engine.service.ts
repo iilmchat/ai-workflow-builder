@@ -20,6 +20,19 @@ import {
 } from './node-executors.js';
 
 /**
+ * Контекст попытки выполнения задания BullMQ (KI-059).
+ *
+ * Нужен, чтобы клиент SSE отличил промежуточный провал запуска (будет retry,
+ * KI-040) от финального — когда попытки задания исчерпаны.
+ */
+export interface RunAttemptContext {
+  /** Сколько попыток уже сделал BullMQ (0 для первой доставки). */
+  attemptsMade: number;
+  /** Максимум попыток из `defaultJobOptions`; `null`, если лимит не задан. */
+  attempts: number | null;
+}
+
+/**
  * Приводит неизвестную ошибку к тексту для логов и колонки `error`.
  *
  * @param error - значение из `catch` (тип `unknown`)
@@ -109,8 +122,7 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-/** Метрики выполнения узла для записи в `node_runs` (KI-038). */
-interface NodeStepMetrics {
+/** Метрики выполнения узла для записи в `node_runs` (KI-038). */interface NodeStepMetrics {
   /** Токенов на входе. */
   inputTokens: number | null;
   /** Токенов на выходе. */
@@ -184,11 +196,17 @@ export class ExecutionEngineService {
    *
    * @param runId - uuid запуска (строка в workflow_runs уже создана)
    * @param graph - граф из `workflow_runs.snapshot`
+   * @param context - номера попыток задания BullMQ (KI-059): попадают в событие
+   *   `run_completed`, чтобы клиент SSE понял, будет ли ещё retry
    * @returns итог выполнения: статус, число отработавших узлов, outputs
    * @throws Error если узел исчерпал попытки (KI-036) либо не удалось завершить запуск
    * @throws InternalServerErrorException если не удалось обновить запись запуска в БД
    */
-  async executeAsync(runId: string, graph: GraphDto): Promise<ExecutionResult> {
+  async executeAsync(
+    runId: string,
+    graph: GraphDto,
+    context?: RunAttemptContext,
+  ): Promise<ExecutionResult> {
     let plan: ExecutionPlanDto;
 
     try {
@@ -206,7 +224,7 @@ export class ExecutionEngineService {
       const message = describePlanError(error);
 
       this.logger.error(`Запуск ${runId}: планирование не удалось — ${message}`);
-      await this.failRunAsync(runId, message, {});
+      await this.failRunAsync(runId, message, {}, context);
 
       return {
         status: 'failed',
@@ -260,6 +278,10 @@ export class ExecutionEngineService {
       type: 'run_completed',
       runId,
       status,
+      // KI-059: клиент SSE по этим полям отличает промежуточный провал
+      // (будет retry от BullMQ) от финального.
+      attemptsMade: context?.attemptsMade ?? 0,
+      attempts: context?.attempts ?? null,
       finishedAt: new Date().toISOString(),
     });
 
@@ -657,12 +679,14 @@ export class ExecutionEngineService {
    * @param runId - uuid запуска
    * @param message - текст ошибки планирования
    * @param outputs - частичные выходы (для фазы планирования — пусто)
+   * @param context - номера попыток задания BullMQ (KI-059)
    * @returns промис без значения
    */
   private async failRunAsync(
     runId: string,
     message: string,
     outputs: Record<string, Record<string, unknown>>,
+    context?: RunAttemptContext,
   ): Promise<void> {
     try {
       await this.finishRunAsync(runId, 'failed', outputs, message);
@@ -677,6 +701,8 @@ export class ExecutionEngineService {
         type: 'run_completed',
         runId,
         status: 'failed',
+        attemptsMade: context?.attemptsMade ?? 0,
+        attempts: context?.attempts ?? null,
         finishedAt: new Date().toISOString(),
       });
     } catch (error: unknown) {
