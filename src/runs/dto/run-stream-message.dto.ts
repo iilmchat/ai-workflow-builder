@@ -43,6 +43,13 @@ export const NodeRunSnapshotSchema = z.object({
   tokensIn: z.number().int().nullable(),
   tokensOut: z.number().int().nullable(),
   costUsd: z.string().nullable(),
+  /**
+   * Стоимость media-генерации в рублях (v0.6.0b.2.2, колонка `cost_rub`).
+   *
+   * Необязательное, чтобы снимок оставался совместимым с клиентами, которые
+   * ещё не знают про поле (фронтенд читает его как `.optional()`).
+   */
+  costRub: z.string().nullable().optional(),
   durationMs: z.number().int().nullable(),
   startedAt: z.iso.datetime().nullable(),
   finishedAt: z.iso.datetime().nullable(),

@@ -39,6 +39,7 @@ function nodeRun(overrides: Partial<NodeRun> = {}): NodeRun {
     tokensIn: null,
     tokensOut: null,
     costUsd: null,
+    costRub: null,
     durationMs: 5,
     startedAt: new Date('2024-01-01T00:00:01.000Z'),
     finishedAt: new Date('2024-01-01T00:00:01.005Z'),
@@ -302,12 +303,40 @@ describe('RunsStreamService', () => {
           tokensIn: null,
           tokensOut: null,
           costUsd: null,
+          costRub: null,
           durationMs: 5,
           startedAt: '2024-01-01T00:00:01.000Z',
           finishedAt: '2024-01-01T00:00:01.005Z',
         },
       ],
     });
+  });
+
+  it('KI-114: отдаёт cost_rub в snapshot — для media-узла и null для остальных', async () => {
+    const { service } = await createService({
+      rows: [
+        nodeRun({ nodeId: 'A', nodeType: 'text' }),
+        nodeRun({
+          nodeId: 'B',
+          nodeType: 'image_generation',
+          outputs: { mediaUrl: 'https://cdn/img.png' },
+          // Drizzle numeric без mode отдаёт значение строкой (6 знаков).
+          costRub: '0.600000',
+        }),
+      ],
+    });
+    const messages = await collectAsync(
+      service.streamAsync(RUN_ID, new AbortController().signal),
+    );
+    const snapshot = payloads(messages)[0] as {
+      nodes: Array<{ nodeId: string; costRub?: string | null }>;
+    };
+
+    expect(snapshot.nodes.find((node) => node.nodeId === 'B')?.costRub).toBe(
+      '0.600000',
+    );
+    // Узел без media-стоимости: поле присутствует и равно null.
+    expect(snapshot.nodes.find((node) => node.nodeId === 'A')?.costRub).toBeNull();
   });
 
   it('пробрасывает события после snapshot и закрывается на run_completed(completed)', async () => {

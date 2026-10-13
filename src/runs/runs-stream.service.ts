@@ -205,6 +205,7 @@ export class RunsStreamService {
       tokensIn: row.tokensIn,
       tokensOut: row.tokensOut,
       costUsd: row.costUsd,
+      costRub: row.costRub ?? null,
       durationMs: row.durationMs,
       startedAt: row.startedAt?.toISOString() ?? null,
       finishedAt: row.finishedAt?.toISOString() ?? null,
