@@ -1697,6 +1697,47 @@
 
 ---
 
+### KI-112 — `price_unit` отсутствует у моделей с тарифом «по входу»
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.6.0b.2.3 (коммит `<hash>`)
+- **Файлы:** `src/media/dto/media-model.dto.ts`,
+  `src/media/dto/media-model.mapper.ts`,
+  `src/media/media-provider.interface.ts`
+- **Описание:** У моделей с тарифом по входу (`tts2`: 0.06 ₽/1000
+  символов) в ответе `GET /media/models` нет поля `price_unit`:
+  `price: 0`, ставка — в `price_input` + `price_input_unit`.
+  Схема требовала `price_unit: z.string()`, поэтому один такой
+  элемент ломал **весь** safeParse. `listModelsAsync()` без `type`
+  (вызывается из `resolveByModelAsync`) возвращал ошибку — executor
+  падал ещё до `createTaskAsync`.
+- **Fix:** `price_unit` — `.optional()`; добавлены `price_input` и
+  `price_input_unit`. В `MediaModelInfo` — `priceUnit` / `priceInput`
+  / `priceInputUnit` nullable.
+- **Замечание:** `resolveByModelAsync` в `MediaRegistryService`
+  каждый раз читает **все** модели; при появлении второго
+  провайдера стоит держать реестр `Map<modelId, provider>` в памяти,
+  а не пересобирать на каждый вызов (KI-113).
+- **Связанные:** KI-101, KI-113.
+
+---
+
+### KI-113 — `resolveByModelAsync` перечитывает все модели при каждом вызове
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `src/media/media-registry.service.ts`
+- **Описание:** На каждый `createTaskAsync` / `getTaskAsync` реестр
+  зовёт `provider.listModelsAsync()` — первый раз это поход в
+  upstream (кэш провайдера TTL 15 мин), дальше — попадание в кэш.
+  Но кэш привязан к `type`/`ALL`, а реестр делает вызов без типа
+  и не помнит сам результат: `Map<modelId, provider>` не строится.
+  При расширении (несколько провайдеров) — N вызовов к N
+  провайдерам на каждый task.
+- **Решение:** построить `Map<modelId, provider>` в реестре с TTL
+  либо один раз при старте модуля.
+- **Когда чинить:** при появлении второго media-провайдера.
+- **Связанные:** KI-112.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |

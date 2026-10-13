@@ -18,6 +18,23 @@
 
 ## [Unreleased]
 
+### Fixed
+- **KI-110** — WSL2 Docker proxy (`wslrelay.exe`) рвал idle TCP:
+  `pg.Pool` переиспользовал мёртвый сокет, `POST /workflow` падал с
+  500, ioredis сыпал `ECONNABORTED`. `pg.Pool` — `idleTimeoutMillis:
+  5s`, `maxLifetimeSeconds: 30s`, `connectionTimeoutMillis: 5s`.
+  `ioredis` — `keepAlive: 10s`, bounded `retryStrategy`.
+- **KI-111** — `MediaTaskResponseSchema.result` — массив
+  **объектов** `{ url }`, не массив строк. Схема ждала
+  `z.array(z.url())`, узел `image_generation` падал за ~300 мс до
+  первого poll. Схема — `z.array(z.object({ url: z.url() }))`,
+  mapper — `dto.result.map(item => item.url)`.
+- **KI-112** — у моделей с тарифом «по входу» (`tts2`) нет
+  `price_unit`, есть `price_input`/`price_input_unit`. Схема
+  требовала `price_unit: z.string()`, один такой элемент в
+  коллекции ломал `safeParse` → вся пачка моделей не грузилась.
+  Поле — `.optional()`, добавлены `price_input`/`price_input_unit`.
+
 ### Added
 - **Runner — v0.6.0b.2.2: executor для media (2026-10-14):**
   - Узел `image_generation` выполняет **реальный** CreativeLab:
