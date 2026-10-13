@@ -18,7 +18,80 @@
 
 ## [Unreleased]
 
+### Fixed
+- **KI-022** — `executionMap` подставлял несуществующий порт `output`
+  для связей без `sourceHandle`; `collectInputsAsync` молча клал `null`
+  (R2.2). Теперь `fromPort = sourceHandle ??
+  inferDefaultOutputPort(sourceNode.type)`: `text`/`llm` → `'text'`,
+  `image_generation` → `'url'`. Реестр портов — `src/engine/node-ports.ts`
+  (отдельно от `node-executors.ts`, чтобы планировщик не зависел
+  от исполнителей). +4 теста (28 → 32 в `engine.service.spec`).
+- **KI-023** — зависший запуск при падении worker'а: `workflow_runs`
+  навсегда оставался в `running`, потому что BullMQ re-deliver
+  пропускался guard'ом `status !== 'pending'`. Введён lease-guard:
+  повторное выполнение разрешено, если `status='running'` и
+  `started_at` старше `RUN_STALE_THRESHOLD_MS` (5 мин). Свежий
+  `running` — пропускается, `started_at=null` — консервативно
+  пропускается. Вариант A (не сбрасываем в `pending`). +4 теста
+  (6 → 10 в `runs.processor.spec`).
+
+### Known Issues
+- KI-030 (🔴 Critical для UI-графов) — React Flow handle id
+  (`text-output`/`image-output`) не совпадают с именами портов
+  исполнителей (`text`/`url`). KI-022 закрыл только случай
+  «`sourceHandle` не задан вовсе».
+- KI-031 (🟡 Medium) — повторный запуск зависшего run дублирует
+  `node_runs` (нет очистки/upsert по `(run_id, node_id)`).
+- KI-032 (🟠 High) — аренда по `started_at` без heartbeat:
+  `RUN_STALE_THRESHOLD_MS` захардкожена, wall-clock без продления.
+
+### Fixed
+- **KI-022** — `executionMap` подставлял несуществующий порт `output`
+  для связей без `sourceHandle`, из-за чего `collectInputsAsync` молча
+  клал `null` (R2.2). Теперь `fromPort = sourceHandle ??
+  inferDefaultOutputPort(sourceNode.type)`: text/llm → `'text'`,
+  image_generation → `'url'`. Реестр портов — `src/engine/node-ports.ts`
+  (отдельно от `node-executors.ts`, чтобы планировщик не зависел от
+  исполнителей). +4 теста.
+- **KI-023** — зависший запуск при падении worker'а. `workflow_runs`
+  навсегда оставался в `running`, потому что BullMQ re-deliver
+  пропускался guard'ом `status !== 'pending'`. Введён lease-guard:
+  повторное выполнение разрешено, если `status='running'` и
+  `started_at` старше `RUN_STALE_THRESHOLD_MS` (5 мин). Свежий
+  running — пропускается, `started_at=null` — консервативно
+  пропускается. Вариант A (не сбрасываем в pending). +4 теста.
+
 ### Added
+- **Runner — R2.2: Executor (v0.3.3):**
+  - `ExecutionEngineService` (`src/engine/execution-engine.service.ts`):
+    - `executeAsync(runId, graph)` — обход `plan.levels`:
+      `Promise.allSettled` внутри уровня (RULES 4.16), `for...of`
+      между уровнями. Прерывание на первом failed-узле.
+    - `executeNodeAsync` — INSERT `node_runs` (`running`) → выполнение
+      → UPDATE (`completed`/`failed`) + публикация `node_started`,
+      `node_completed`, `node_failed`.
+    - `collectInputsAsync` — параллельное чтение `outputs` предшественников
+      (RULES 4.17), `null` при отсутствии порта.
+    - `markRunRunningAsync` (в transaction), `finishRunAsync`.
+  - `src/engine/node-executors.ts`:
+    - `executeTextNode` — реальный: отдаёт `data.value` как `{ text }`.
+    - `executeLlmNodeStub` — заглушка `{ text: '[LLM stub — R3]' }`.
+    - `executeImageGenNodeStub` — заглушка `{ url: null }`.
+    - `UnsupportedNodeTypeException` (extends Error, не HttpException).
+  - `RunsProcessor` — вместо скелета вызывает `ExecutionEngineService`;
+    валидирует `snapshot` (Zod); идемпотентен (`status !== 'pending'`
+    → return для ретраев BullMQ).
+  - `EngineModule` — `exports: [EngineService]`.
+  - `RunsModule` — `imports: [EngineModule]`,
+    `providers: [..., ExecutionEngineService]`.
+  - 13 новых тестов (95 → 108): executor (7), processor (6).
+  - Smoke: линейный A→B→C — 3 `node_runs` completed, `inputs[B]` от A,
+    полная цепочка событий в Redis pub/sub.
+
+### Known Issues
+- Заведены KI-022…KI-029. Ключевые: KI-022 (дефолтный порт `output`
+  не существует ни у одного узла — тихая потеря данных), KI-023
+  (зависший run при падении worker'а).
 - **Runner — R2.2: Executor (v0.3.3):**
   - `ExecutionEngineService` (`src/engine/execution-engine.service.ts`):
     - `executeAsync(runId, graph)` — обход `plan.levels`:

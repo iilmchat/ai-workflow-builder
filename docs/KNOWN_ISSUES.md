@@ -343,7 +343,8 @@
 ---
 
 ### KI-022 — Дефолтный выходной порт `output` не существует ни у одного исполнителя
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-13
+- **Исправлено в:** v0.3.3 (коммит `<hash KI-022>`)
 - **Файлы:** `src/engine/engine.service.ts`, `src/engine/node-executors.ts`
 - **Описание:** `executionMap` подставляет `fromPort = sourceHandle ?? 'output'`,
   а узлы отдают `text` (text/llm) или `url` (image_generation). Если у связи
@@ -353,11 +354,18 @@
   в `web/src/components/nodes/` (T/G badges).
 - **Когда чинить:** до R3 (LLM-вызовы) или отдельным микро-шагом.
 - **Связанные:** KI-003.
+- **Fix:** `inferDefaultOutputPort(nodeType)` в `src/engine/node-ports.ts`;
+  `buildExecutionPlanAsync` использует `sourceHandle ??
+  inferDefaultOutputPort(sourceNode.type)`. Fallback `'output'`
+  сохранён для неизвестных типов. +4 теста.
+- **Остаток:** закрыт только для API-графов; для UI-графов требуется
+  KI-030 (handle id не совпадают).
 
 ---
 
 ### KI-023 — Зависший запуск при падении worker'а
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-13
+- **Исправлено в:** v0.3.3 (коммит `b1065be`)
 - **Файлы:** `src/runs/runs.processor.ts`
 - **Описание:** Если worker умрёт во время выполнения, `workflow_runs.status`
   останется `running`. BullMQ перезапустит job (attempts: 3, stalled-check),
@@ -367,6 +375,12 @@
   ('pending', 'running') AND started_at < now() - interval '...'`.
 - **Когда чинить:** R3 (реальные LLM-вызовы падают чаще).
 - **Связанные:** —
+- **Fix:** lease-guard в `RunsProcessor.process()` — `RUN_STALE_THRESHOLD_MS
+  = 5 min` в `src/runs/runs.constants.ts`. Повтор разрешён при
+  `status='running'` и `started_at` старше порога; свежий `running`
+  и `started_at=null` — пропускаются. Вариант A (не сбрасываем
+  в pending — executor сам обновит `started_at`).
+- **Остаток:** KI-031 (дубли `node_runs`), KI-032 (нет heartbeat).
 
 ---
 
@@ -434,18 +448,73 @@
 
 ---
 
+### KI-030 — Хендлы фронтенда не совпадают с портами бэкенда
+- **Приоритет:** 🔴 Critical | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `web/src/components/nodes/*.tsx`, `src/engine/node-ports.ts`,
+  `src/engine/node-executors.ts`, `src/engine/execution-engine.service.ts`
+- **Описание:** UI рисует handle id `text-output` / `image-output` /
+  `text-input`, а исполнители отдают порты `text` / `url`. React Flow
+  пишет id хендла в `edge.sourceHandle`, поэтому для любой связи,
+  собранной в редакторе, `fromPort = 'text-output'` и
+  `collectInputsAsync` кладёт `null`. KI-022 закрыл только случай
+  «`sourceHandle` не задан вовсе» (API-графы); для UI-графов данные
+  по-прежнему теряются молча.
+- **Возможные решения:**
+  1. Переименовать хендлы во фронтенде в `text` / `url` (R4).
+  2. Переименовать выходные порты исполнителей и дефолты в
+     `node-ports.ts` в `text-output` / `image-output`.
+  3. Свести обе системы имён в один реестр (`node-ports.ts` хранит
+     и `handleId`, и имя порта) и маппить на границе. **Выбрано.**
+- **Когда чинить:** до R3 (LLM-вызовы). Нужен единый контракт до R3/R4.
+- **Связанные:** KI-022.
+
+---
+
+### KI-031 — Повторный запуск зависшего run дублирует `node_runs`
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/engine/execution-engine.service.ts`
+- **Описание:** KI-023 разрешает выполнить граф заново, но строки
+  от умершей попытки не удаляются: у одного `(run_id, node_id)` окажутся
+  две записи (часть — «висящие» `running`), а `collectInputsAsync`
+  с `.limit(1)` возьмёт произвольную.
+- **Возможные решения:**
+  1. Очистка `node_runs` по `run_id` перед перезапуском.
+  2. Идемпотентный upsert по `(run_id, node_id)`.
+- **Когда чинить:** до R4 (UI начнёт показывать историю узлов).
+- **Связанные:** KI-023.
+
+---
+
+### KI-032 — Аренда по `started_at` без heartbeat
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/runs/runs.processor.ts`, `src/runs/runs.constants.ts`
+- **Описание:** Порог 5 минут — wall-clock, а `started_at` обновляется
+  только в начале запуска. В R3 реальные LLM-графы легко превысят 5 минут;
+  если в этот момент BullMQ переотдаст задание (пауза процесса >
+  `lockDuration`, stalled-check), процессор сочтёт живой запуск «зависшим»
+  и выполнит граф параллельно — двойные вызовы и траты.
+- **Возможные решения:**
+  1. Heartbeat / продление аренды по ходу выполнения.
+  2. Опора на состояние job'а BullMQ, а не на стену.
+  3. `RUN_STALE_THRESHOLD_MS` из env (сейчас захардкожена —
+     нарушение RULES 4.5/4.6).
+- **Когда чинить:** до R3 (LLM-вызовы могут быть долгими).
+- **Связанные:** KI-023.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 5 |
+| Fixed | 7 |
 | In Progress | 0 |
 | Planned | 2 |
 | Deferred | 0 |
-| Documented | 9 |
-| Open | 13 |
+| Documented | 6 |
+| Open | 17 |
 | Won't Fix | 0 |
-| **Всего** | **29** |
+| **Всего** | **32** |
 
 
 ---
