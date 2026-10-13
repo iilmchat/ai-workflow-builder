@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { Canvas } from '@/components/Canvas';
+import { RunResultPanel } from '@/components/RunResultPanel';
 import { Toast } from '@/components/Toast';
 import { Toolbar } from '@/components/Toolbar';
 import { TopBar } from '@/components/TopBar';
@@ -9,14 +10,15 @@ import {
 } from '@/stores/workflow';
 import type { NodeType } from '@/types/graph';
 
-/** Отступ верхней панели, под который уходит канвас. */
-const TOP_BAR_HEIGHT = 56;
-
 /**
- * Корневой компонент редактора: верхняя панель, канвас и нижний тулбар.
+ * Корневой компонент редактора: верхняя панель, канвас, нижний тулбар и панель
+ * результата.
  *
  * Создание узла живёт здесь: Canvas отдаёт функцию поиска центра вьюпорта
  * (у него есть доступ к трансформации React Flow), а стор — операцию добавления.
+ * Раскладка — flex-колонка: канвас занимает всё свободное место (`flex-1`), а
+ * панель результата — фиксированную высоту снизу, поэтому React Flow корректно
+ * ресайзится при сворачивании панели (у контейнера всегда есть размер).
  */
 export function App() {
   const addNode = useWorkflowStore((state) => state.addNode);
@@ -33,6 +35,12 @@ export function App() {
       void loadWorkflowAsync(workflowId);
     }
   }, [loadWorkflowAsync]);
+
+  // Список моделей нужен не только LLM-узлам, но и созданию нового узла
+  // (KI-074: модель по умолчанию = llmModels[0]), поэтому грузим его на старте.
+  useEffect(() => {
+    void useWorkflowStore.getState().loadLlmModelsAsync();
+  }, []);
 
   const handleCanvasReady = useCallback(
     (handler: FindCenterHandler) => {
@@ -62,17 +70,15 @@ export function App() {
   );
 
   return (
-    <div className="relative h-screen w-screen">
+    <div className="relative flex h-screen w-screen flex-col">
       <TopBar />
 
-      <div
-        className="absolute inset-x-0 bottom-0"
-        style={{ top: TOP_BAR_HEIGHT }}
-      >
+      <div className="relative min-h-0 flex-1">
         <Canvas onReady={handleCanvasReady} />
+        <Toolbar onAddNode={handleAddNode} />
       </div>
 
-      <Toolbar onAddNode={handleAddNode} />
+      <RunResultPanel />
       <Toast />
     </div>
   );

@@ -73,7 +73,7 @@ function syncWorkflowUrlParam(workflowId: string): void {
  *
  * Run запускает реальный прогон (`POST /runs` + SSE, R4.2) и показывает статус:
  * «Создаётся…», «Выполняется… (попытка N/M)», «Готово», «Ошибка».
- * Позиционируется фиксированно (56px), канвас занимает остальное место.
+ * Панель — обычный flex-элемент колонки приложения (не fixed), её высота 56px.
  */
 export function TopBar() {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -86,6 +86,7 @@ export function TopBar() {
   const isLoading = useWorkflowStore((state) => state.isLoading);
   const saveWorkflowAsync = useWorkflowStore((state) => state.saveWorkflowAsync);
   const startRunAsync = useWorkflowStore((state) => state.startRunAsync);
+  const setNotice = useWorkflowStore((state) => state.setNotice);
   const runStatus = useWorkflowStore((state) => state.runStatus);
   const runError = useWorkflowStore((state) => state.runError);
   const attemptNumber = useWorkflowStore((state) => state.attemptNumber);
@@ -95,6 +96,23 @@ export function TopBar() {
   const isBusy = isSaving || isLoading;
   const isRunActive = runStatus !== null && ACTIVE_RUN_STATUSES.has(runStatus);
   const runLabel = runStatusText(runStatus, attemptNumber, attempts);
+
+  /**
+   * Ищет LLM-узлы, модель которых недоступна (KI-074).
+   *
+   * Граф с такой моделью гарантированно упадёт в узле с «Модель не
+   * поддерживается», поэтому запуск блокируется до выбора модели из списка.
+   *
+   * @returns подписи узлов с недоступной моделью (пусто — запускать можно)
+   */
+  const findNodesWithUnavailableModel = (): string[] => {
+    const { nodes, llmModels } = useWorkflowStore.getState();
+
+    return nodes
+      .filter((node) => node.data.kind === 'llm')
+      .filter((node) => !llmModels.some((model) => model.id === node.data.model))
+      .map((node) => node.data.label ?? node.id);
+  };
 
   /**
    * Сохраняет граф. После первого сохранения id попадает в URL, чтобы
@@ -117,6 +135,20 @@ export function TopBar() {
    * требует id из БД, а backend выполняет снимок графа из сохранённого workflow.
    */
   const handleRun = async () => {
+    // KI-074: сначала проверяем модели — граф с недоступной моделью упадёт.
+    const unavailableNodes = findNodesWithUnavailableModel();
+
+    if (unavailableNodes.length > 0) {
+      setNotice({
+        kind: 'error',
+        text:
+          `Модель недоступна в узлах: ${unavailableNodes.join(', ')}. ` +
+          'Выберите модель из списка перед запуском.',
+      });
+
+      return;
+    }
+
     let workflowId = useWorkflowStore.getState().currentWorkflowId;
 
     if (!workflowId) {
@@ -138,7 +170,7 @@ export function TopBar() {
 
   return (
     <>
-      <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-slate-200 bg-white px-4">
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4">
         <span className="text-sm" aria-hidden="true">
           🧩
         </span>

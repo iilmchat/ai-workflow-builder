@@ -26,6 +26,7 @@ function CanvasInner({ onReady }: CanvasProps) {
   const onNodesChange = useWorkflowStore((state) => state.onNodesChange);
   const onEdgesChange = useWorkflowStore((state) => state.onEdgesChange);
   const onConnect = useWorkflowStore((state) => state.onConnect);
+  const setSelectedNodeId = useWorkflowStore((state) => state.setSelectedNodeId);
   const isEmpty = nodes.length === 0;
 
   const { getViewport } = useReactFlow();
@@ -68,6 +69,11 @@ function CanvasInner({ onReady }: CanvasProps) {
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onConnect={onConnect}
+      // Клик по узлу показывает его результат в нижней панели (R4.3b),
+      // клик по пустому месту возвращает панель к run-уровню. Клик по связи или
+      // порту эти обработчики не дёргает, поэтому выбор не «слетает».
+      onNodeClick={(_event, node) => setSelectedNodeId(node.id)}
+      onPaneClick={() => setSelectedNodeId(null)}
       proOptions={{ hideAttribution: true }}
       // Связи по умолчанию тонкие и почти незаметные — делаем их чуть плотнее.
       defaultEdgeOptions={{ style: { strokeWidth: 2, stroke: '#94a3b8' } }}

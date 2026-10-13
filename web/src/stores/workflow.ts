@@ -90,6 +90,26 @@ export interface Notice {
   text: string;
 }
 
+/** Метрики узла для панели результата (R4.3b). */
+export interface NodeRunMetrics {
+  /** Длительность выполнения, мс (`null` — узел ещё не завершался). */
+  durationMs: number | null;
+  /** Токенов на входе (`null` — провайдер не отдал usage или данных ещё нет). */
+  tokensIn: number | null;
+  /** Токенов на выходе. */
+  tokensOut: number | null;
+  /** Стоимость в USD строкой (как отдаёт backend `numeric`). */
+  costUsd: string | null;
+}
+
+/** Пустые метрики: узел ещё не отдавал ни одного значения. */
+const EMPTY_METRICS: NodeRunMetrics = {
+  durationMs: null,
+  tokensIn: null,
+  tokensOut: null,
+  costUsd: null,
+};
+
 /** Функция поиска центра вьюпорта, которую отдаёт Canvas. */
 export type FindCenterHandler = () => Position;
 
@@ -116,6 +136,18 @@ export interface WorkflowState {
   nodeStatuses: Record<string, RunStatus>;
   /** id узла → последние выходы узла из `node_completed`. */
   nodeOutputs: Record<string, Record<string, unknown>>;
+  /** id узла → текст ошибки (из snapshot и `node_failed`). */
+  nodeErrors: Record<string, string>;
+  /** id узла → записи ретраев (KI-036); приходят только в snapshot. */
+  nodeLogs: Record<string, string[]>;
+  /** id узла → метрики выполнения (длительность, токены, стоимость). */
+  nodeMetrics: Record<string, NodeRunMetrics>;
+  /**
+   * id выбранной ноды для панели результата снизу.
+   *
+   * `null` — панель показывает run-уровневую информацию.
+   */
+  selectedNodeId: string | null;
   /**
    * Номер текущей попытки job'а (1-based) для подписи «попытка N/M».
    *
@@ -188,6 +220,13 @@ export interface WorkflowState {
   resetRunState: () => void;
 
   /**
+   * Запоминает выбранную ноду для панели результата.
+   *
+   * @param id - id узла графа либо `null`, если выбор снят
+   */
+  setSelectedNodeId: (id: string | null) => void;
+
+  /**
    * Загружает список моделей LLM с backend (один раз за сессию).
    *
    * Кэшируется в сторе: селект LLM-узла читает `llmModels`, поэтому запрос не
@@ -212,8 +251,15 @@ export interface WorkflowState {
  * @param type - тип узла из тулбара
  * @param position - позиция на холсте
  * @param index - порядковый номер узла, нужен для уникального id
+ * @param defaultModelId - id первой доступной модели (KI-074); если список ещё
+ *   не загружен или пуст, используется {@link DEFAULT_LLM_MODEL_ID}
  */
-function createNode(type: NodeType, position: Position, index: number): AppNode {
+function createNode(
+  type: NodeType,
+  position: Position,
+  index: number,
+  defaultModelId?: string,
+): AppNode {
   const shared = { id: `${type}-${index}-${crypto.randomUUID()}`, position };
 
   switch (type) {
@@ -221,7 +267,11 @@ function createNode(type: NodeType, position: Position, index: number): AppNode 
       return {
         ...shared,
         type: 'llm',
-        data: { kind: 'llm', label: 'LLM', model: DEFAULT_LLM_MODEL_ID },
+        data: {
+          kind: 'llm',
+          label: 'LLM',
+          model: defaultModelId ?? DEFAULT_LLM_MODEL_ID,
+        },
       };
     case 'image':
       return {
@@ -368,6 +418,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   runError: null,
   nodeStatuses: {},
   nodeOutputs: {},
+  nodeErrors: {},
+  nodeLogs: {},
+  nodeMetrics: {},
+  selectedNodeId: null,
   attemptNumber: 0,
   attemptsMade: 0,
   attempts: null,
@@ -385,7 +439,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   addNode: (type, position) =>
     set((state) => {
-      const node = createNode(type, position, state.nodes.length);
+      // Модель нового LLM-узла берём из загруженного списка (KI-074), чтобы
+      // узел сразу был запускаемым; fallback — дефолтный id из types/graph.
+      const node = createNode(type, position, state.nodes.length, state.llmModels[0]?.id);
 
       return {
         nodes: [
@@ -398,7 +454,20 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }),
 
   onNodesChange: (changes) =>
-    set((state) => ({ nodes: applyNodeChanges(changes, state.nodes) })),
+    set((state) => {
+      const nodes = applyNodeChanges(changes, state.nodes);
+      // Удалённая нода не должна оставаться выбранной: панель результата иначе
+      // показывала бы данные узла, которого уже нет (R4.3b).
+      const removed = changes
+        .filter((change) => change.type === 'remove')
+        .map((change) => change.id);
+      const selectedNodeId =
+        state.selectedNodeId !== null && removed.includes(state.selectedNodeId)
+          ? null
+          : state.selectedNodeId;
+
+      return { nodes, selectedNodeId };
+    }),
 
   onEdgesChange: (changes) =>
     set((state) => ({ edges: applyEdgeChanges(changes, state.edges) })),
@@ -463,6 +532,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         isLoading: false,
         // Прежний план относился к другому графу.
         executionLevels: {},
+        // Выбранная нода тоже относилась к другому графу.
+        selectedNodeId: null,
         notice: warning
           ? { kind: 'error', text: warning }
           : { kind: 'success', text: `Workflow загружен: ${workflow.name}` },
@@ -567,6 +638,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   applySnapshot: (snapshot) => {
     const nodeStatuses: Record<string, RunStatus> = {};
     const nodeOutputs: Record<string, Record<string, unknown>> = {};
+    const nodeErrors: Record<string, string> = {};
+    const nodeLogs: Record<string, string[]> = {};
+    const nodeMetrics: Record<string, NodeRunMetrics> = {};
 
     for (const node of snapshot.nodes) {
       nodeStatuses[node.nodeId] = node.status;
@@ -574,6 +648,21 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       if (node.outputs) {
         nodeOutputs[node.nodeId] = node.outputs;
       }
+
+      if (node.error) {
+        nodeErrors[node.nodeId] = node.error;
+      }
+
+      if (node.logs !== null && node.logs.length > 0) {
+        nodeLogs[node.nodeId] = node.logs;
+      }
+
+      nodeMetrics[node.nodeId] = {
+        durationMs: node.durationMs,
+        tokensIn: node.tokensIn,
+        tokensOut: node.tokensOut,
+        costUsd: node.costUsd,
+      };
     }
 
     // Snapshot — источник истины на момент подключения: карты заменяются
@@ -583,6 +672,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       runStatus: snapshot.run.status,
       nodeStatuses,
       nodeOutputs,
+      nodeErrors,
+      nodeLogs,
+      nodeMetrics,
     });
   },
 
@@ -608,6 +700,15 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         set((state) => ({
           ...withNodeStatus(state, event.nodeId, 'completed'),
           nodeOutputs: { ...state.nodeOutputs, [event.nodeId]: event.outputs },
+          // Токены и стоимость приходят только в snapshot, а длительность есть и
+          // в событии — обновляем её, сохраняя уже известные метрики.
+          nodeMetrics: {
+            ...state.nodeMetrics,
+            [event.nodeId]: {
+              ...(state.nodeMetrics[event.nodeId] ?? EMPTY_METRICS),
+              durationMs: event.durationMs,
+            },
+          },
         }));
 
         return;
@@ -615,8 +716,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       case 'node_failed':
         set((state) => ({
           ...withNodeStatus(state, event.nodeId, 'failed'),
-          // Текст падения узла доступен сразу — пригодится в панели R4.3.
+          // Текст падения узла доступен сразу — панель результата покажет его
+          // до переподключения, а run-уровневый runError остаётся для бейджа.
           runError: event.error,
+          nodeErrors: { ...state.nodeErrors, [event.nodeId]: event.error },
         }));
 
         return;
@@ -645,7 +748,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           runHasMoreAttempts: false,
           attemptsMade: event.attemptsMade,
           attempts: event.attempts,
-          attemptNumber: event.attemptsMade + 2,
+          // Финал: завершилась попытка номер attemptsMade + 1 (attemptsMade —
+          // счётчик предыдущих доставок, KI-059).
+          attemptNumber: event.attemptsMade + 1,
           runError:
             event.status === 'failed'
               ? (state.runError ?? 'Запуск завершился с ошибкой')
@@ -669,12 +774,19 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       runError: null,
       nodeStatuses: {},
       nodeOutputs: {},
+      nodeErrors: {},
+      nodeLogs: {},
+      nodeMetrics: {},
       attemptNumber: 0,
       attemptsMade: 0,
       attempts: null,
       runHasMoreAttempts: false,
     });
+    // selectedNodeId намеренно НЕ сбрасывается: пользователь может выбрать ноду
+    // и после запуска, чтобы посмотреть её результат.
   },
+
+  setSelectedNodeId: (id) => set({ selectedNodeId: id }),
 
   loadLlmModelsAsync: async () => {
     if (get().llmModelsLoaded) {
