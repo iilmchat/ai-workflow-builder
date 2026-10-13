@@ -1,3 +1,8 @@
 allowBuilds:
   esbuild: true
   msgpackr-extract: true
+
+# KI-010: pnpm 12 self-management пишет @pnpm/exe в packageManagerDependencies
+# при каждой не-install команде (pnpm/pnpm#14575). pmOnFail: ignore
+# отключает проверку версии и переключение — lockfile остаётся чистым.
+pmOnFail: ignore
