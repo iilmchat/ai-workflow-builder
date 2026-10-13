@@ -34,6 +34,11 @@ export const InjectRedis = (): ParameterDecorator => Inject(REDIS_TOKEN);
         new Redis(config.getOrThrow<string>('REDIS_URL'), {
           // Для BullMQ-совместимого клиента команды не должны падать при реконнекте.
           maxRetriesPerRequest: null,
+          // WSL2-прокси (wslrelay.exe) может закрывать idle TCP: держим
+          // соединение живым через TCP keep-alive каждые 10 с (KI-110).
+          keepAlive: 10_000,
+          // Ограниченный экспоненциальный реконнект — не долбить wslrelay.
+          retryStrategy: (times) => Math.min(times * 200, 3_000),
         }),
     },
   ],

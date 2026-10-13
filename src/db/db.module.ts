@@ -13,7 +13,19 @@ export const DB_SCHEMA = 'DB_SCHEMA';
 export type Database = ReturnType<typeof createDrizzleClient>;
 
 function createDrizzleClient(url: string) {
-  const pool = new Pool({ connectionString: url, max: 10 });
+  /**
+   * WSL2-прокси (wslrelay.exe) закрывает idle TCP непредсказуемо, и pg.Pool
+   * переиспользует мёртвый сокет → "Connection terminated unexpectedly" на
+   * первом запросе после паузы. Держим соединения короткоживущими, чтобы
+   * ротация происходила ДО того, как их убьёт прокси (KI-110).
+   */
+  const pool = new Pool({
+    connectionString: url,
+    max: 10,
+    idleTimeoutMillis: 5_000,       // закрыть простаивающее соединение через 5 с
+    maxLifetimeSeconds: 30,          // жёсткая ротация всего соединения
+    connectionTimeoutMillis: 5_000,  // fail-fast при недоступности
+  });
   return drizzle(pool, { schema });
 }
 
