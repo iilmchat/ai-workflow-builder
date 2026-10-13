@@ -18,6 +18,21 @@
 
 ## [Unreleased]
 
+### Added
+- **Frontend — v0.6.0b.2.3: узел image_generation (2026-10-14):**
+  - `ImageGenNode` — рабочий узел: селект `GET /media/models?type=IMAGE`
+    (55 моделей), `aspect_ratio` из `params` модели, подпись цены
+    («от 0.6 ₽ / генерация»), рендер `<img src={mediaUrl}>` в теле узла.
+  - `isRenderableMediaUrl` — валидация http(s) перед `<img>`
+    (класс KI-006).
+  - Валидация Run — `findImageNodesWithoutModel`.
+  - Store: `mediaModels`, `mediaModelsLoaded`, `loadMediaModelsAsync`
+    (lazy, один fetch за сессию); `NodeRunMetrics.costRub`.
+  - `RunResultPanel`: `formatRub` — `"0.600000"` → `"0.60 ₽"`.
+  - `costRub` в `NodeRunSnapshotSchema` (`.nullable().optional()`).
+  - CDP-smoke: 55 моделей, дефолт `flux-schnell`, `<img>` по URL,
+    метрика `0.60 ₽`, Run заблокирован без модели.
+
 ### Fixed
 - **KI-110** — WSL2 Docker proxy (`wslrelay.exe`) рвал idle TCP:
   `pg.Pool` переиспользовал мёртвый сокет, `POST /workflow` падал с
