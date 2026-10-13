@@ -51,7 +51,7 @@ export class RunsProcessor extends WorkerHost {
   /**
    * Обрабатывает задание на выполнение workflow.
    *
-   * Идемпотентность построена на lease-логике (KI-023):
+   * Идемпотентность построена на lease-логике (KI-023) и job-level retry (KI-040):
    * - `pending` — штатный первый запуск задания;
    * - `running` с `started_at` свежее `RUN_STALE_THRESHOLD_MS` — запуск живой
    *   (его выполняет этот или другой worker), задание пропускается;
@@ -59,7 +59,16 @@ export class RunsProcessor extends WorkerHost {
    *   задание, поэтому граф выполняется заново;
    * - `running` без `started_at` — судить о живости нельзя, поэтому
    *   консервативно пропускаем;
-   * - любой закрытый статус (`completed`/`failed`/`cancelled`) — пропускаем.
+   * - `failed` + `job.attemptsMade > 0` — предыдущая попытка упала, а это retry
+   *   от BullMQ (`attempts`/backoff, KI-016): граф переигрывается, идемпотентность
+   *   обеспечена UPSERT `node_runs` по (`run_id`, `node_id`) (KI-031) и
+   *   перезаписью `workflow_runs` в executor'е;
+   * - `completed` + `job.attemptsMade > 0` — запуск терминален, повтор не
+   *   выполняется: успешный job BullMQ не ретраит, переигрывать нечего;
+   * - `running` + `job.attemptsMade > 0` — живой lease важнее повтора: пока
+   *   worker не умер, повторную доставку не обрабатываем, иначе получаем два
+   *   параллельных прогона одного графа;
+   * - `cancelled` — запуск закрыт пользователем, повтор не выполняется.
    *
    * Статус зависшего запуска намеренно НЕ сбрасывается в `pending`: executor
    * сам переведёт запуск в `running` со свежим `started_at`, а лишний UPDATE
@@ -94,13 +103,26 @@ export class RunsProcessor extends WorkerHost {
       run.startedAt !== null &&
       Date.now() - run.startedAt.getTime() > RUN_STALE_THRESHOLD_MS;
 
-    if (run.status !== 'pending' && !isStale) {
+    // KI-040: повторная доставка от BullMQ (`attemptsMade > 0`) переигрывает
+    // только заведомо провалившийся запуск. `completed`/`cancelled` терминальны,
+    // а у `running` приоритет у живой аренды.
+    const isJobRetry = job.attemptsMade > 0 && run.status === 'failed';
+
+    if (run.status !== 'pending' && !isStale && !isJobRetry) {
       this.logger.warn(
         `Запуск ${runId} в статусе ${run.status} ` +
-          `(started_at=${run.startedAt?.toISOString() ?? 'null'}) — задание пропущено`,
+          `(started_at=${run.startedAt?.toISOString() ?? 'null'}, ` +
+          `attemptsMade=${job.attemptsMade}) — задание пропущено`,
       );
 
       return;
+    }
+
+    if (isJobRetry) {
+      this.logger.log(
+        `Запуск ${runId}: job-level retry ${job.attemptsMade}/${job.opts.attempts} — ` +
+          'переигрываем граф (KI-040)',
+      );
     }
 
     if (isStale) {

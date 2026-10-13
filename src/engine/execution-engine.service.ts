@@ -473,6 +473,11 @@ export class ExecutionEngineService {
   /**
    * Переводит запуск в статус `running` в транзакции (RULES 4.22).
    *
+   * Сбрасывает `error` и `finished_at` от предыдущей попытки (KI-040): при
+   * job-level retry запуск переходит `failed` → `running`, и без сброса UI (R4)
+   * видел бы «выполняется» вместе с ошибкой и временем завершения прошлого
+   * прогона, а при повторном падении процесса они бы так и остались в строке.
+   *
    * @param runId - uuid запуска
    * @returns промис без значения
    * @throws InternalServerErrorException если обновление не удалось
@@ -482,7 +487,12 @@ export class ExecutionEngineService {
       await this.db.transaction(async (tx) => {
         await tx
           .update(workflowRuns)
-          .set({ status: 'running', startedAt: new Date() })
+          .set({
+            status: 'running',
+            startedAt: new Date(),
+            error: null,
+            finishedAt: null,
+          })
           .where(eq(workflowRuns.id, runId));
       });
     } catch (error: unknown) {

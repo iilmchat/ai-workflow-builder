@@ -53,10 +53,16 @@ function chain(resolveWith: unknown): Record<string, ReturnType<typeof vi.fn>> {
  * Оборачивает данные в минимальный объект задания BullMQ.
  *
  * @param data - payload задания
- * @returns задание с `data` (остальные поля не нужны обработчику)
+ * @param attemptsMade - сколько попыток уже сделал BullMQ (0 — первый вызов)
+ * @returns задание с `data`, `attemptsMade` и `opts.attempts`
  */
-function job(data: unknown): Job<ExecuteRunJobDto> {
-  return { id: 'job-1', data } as unknown as Job<ExecuteRunJobDto>;
+function job(data: unknown, attemptsMade = 0): Job<ExecuteRunJobDto> {
+  return {
+    id: 'job-1',
+    data,
+    attemptsMade,
+    opts: { attempts: 3 },
+  } as unknown as Job<ExecuteRunJobDto>;
 }
 
 describe('RunsProcessor', () => {
@@ -184,6 +190,55 @@ describe('RunsProcessor', () => {
     ]);
 
     await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
+
+    expect(executor.executeAsync).not.toHaveBeenCalled();
+  });
+
+  it('KI-040: не переигрывает failed-запуск без job-level retry (attemptsMade=0)', async () => {
+    selectChain.limit.mockImplementation(() => [
+      { status: 'failed', snapshot, startedAt: new Date(Date.now() - 60_000) },
+    ]);
+
+    await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
+
+    expect(executor.executeAsync).not.toHaveBeenCalled();
+  });
+
+  it('KI-040: переигрывает граф при job-level retry для failed-запуска', async () => {
+    selectChain.limit.mockImplementation(() => [
+      { status: 'failed', snapshot, startedAt: new Date(Date.now() - 60_000) },
+    ]);
+
+    await expect(
+      processor.process(job({ runId: RUN_ID }, 2)),
+    ).resolves.toBeUndefined();
+
+    expect(executor.executeAsync).toHaveBeenCalledWith(
+      RUN_ID,
+      expect.objectContaining({ nodes: expect.any(Array) }),
+    );
+  });
+
+  it('KI-040: не переигрывает completed-запуск даже при job-level retry', async () => {
+    selectChain.limit.mockImplementation(() => [
+      { status: 'completed', snapshot, startedAt: new Date(Date.now() - 60_000) },
+    ]);
+
+    await expect(
+      processor.process(job({ runId: RUN_ID }, 2)),
+    ).resolves.toBeUndefined();
+
+    expect(executor.executeAsync).not.toHaveBeenCalled();
+  });
+
+  it('KI-040: живой lease важнее job-level retry для running-запуска', async () => {
+    selectChain.limit.mockImplementation(() => [
+      { status: 'running', snapshot, startedAt: new Date(Date.now() - 60_000) },
+    ]);
+
+    await expect(
+      processor.process(job({ runId: RUN_ID }, 2)),
+    ).resolves.toBeUndefined();
 
     expect(executor.executeAsync).not.toHaveBeenCalled();
   });

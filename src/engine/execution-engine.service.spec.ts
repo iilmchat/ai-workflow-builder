@@ -130,6 +130,8 @@ function createFakeDb(runId: string) {
     finishedAt: null,
   };
   const rows: FakeNodeRun[] = [];
+  /** Payload'ы UPDATE workflow_runs — для проверки сброса полей (KI-040). */
+  const runUpdates: Array<Record<string, unknown>> = [];
   let sequence = 0;
 
   const applySet = (target: object, values: Record<string, unknown>): void => {
@@ -188,6 +190,7 @@ function createFakeDb(runId: string) {
 
           if (table === workflowRuns) {
             if (id === run.id) {
+              runUpdates.push(values);
               applySet(run, values);
             }
 
@@ -222,7 +225,7 @@ function createFakeDb(runId: string) {
     }),
   };
 
-  return { db: db as unknown as Database, run, rows };
+  return { db: db as unknown as Database, run, rows, runUpdates };
 }
 
 describe('ExecutionEngineService', () => {
@@ -630,5 +633,26 @@ describe('ExecutionEngineService', () => {
     expect(fake.rows).toHaveLength(2);
     expect(fake.rows.map((row) => row.id)).toEqual(idsAfterFirstRun);
     expect(fake.rows.every((row) => row.status === 'completed')).toBe(true);
+  });
+
+  it('KI-040: retry сбрасывает error и finished_at прошлой попытки', async () => {
+    fake.run.status = 'failed';
+    fake.run.error = 'ошибка прошлой попытки';
+    fake.run.finishedAt = new Date();
+
+    await service.executeAsync(RUN_ID, { nodes: [], edges: [] });
+
+    // markRunRunningAsync — первый UPDATE workflow_runs в прогоне.
+    expect(fake.runUpdates[0]).toEqual(
+      expect.objectContaining({
+        status: 'running',
+        error: null,
+        finishedAt: null,
+        startedAt: expect.any(Date),
+      }),
+    );
+    expect(fake.run.error).toBeNull();
+    // `finished_at` на завершении прогона проставляет finishRunAsync, поэтому
+    // проверяется именно сброс в момент старта повтора (payload первого UPDATE).
   });
 });
