@@ -1,3 +1,10 @@
+/**
+ * Чистые исполнители узлов: преобразование `data` → outputs без DI и сети.
+ *
+ * `llm` здесь больше нет — с R3 узел ходит во внешний провайдер, поэтому живёт
+ * в `src/llm/llm-node-executor.service.ts` (DI + `LlmService`). Здесь остаются
+ * только синхронные преобразования и заглушка `image_generation` (R4).
+ */
 import type { NodeDto } from './dto/index.js';
 
 /**
@@ -13,22 +20,9 @@ export function executeTextNode(node: NodeDto): Record<string, unknown> {
 }
 
 /**
- * ЗАГЛУШКА исполнителя узла типа `llm`.
- *
- * Реальный вызов LLM-провайдера появится в R3; сейчас узел отдаёт маркер,
- * чтобы сквозной прогон графа был проверяем.
- *
- * @param _node - узел графа типа `llm` (в заглушке не используется)
- * @returns выходной порт `text` с маркером заглушки
- */
-export function executeLlmNodeStub(_node: NodeDto): Record<string, unknown> {
-  return { text: '[LLM stub — R3]' };
-}
-
-/**
  * ЗАГЛУШКА исполнителя узла типа `image_generation`.
  *
- * Реальный вызов провайдера генерации изображений появится в R3/R4.
+ * Реальный вызов провайдера генерации изображений появится в R4.
  *
  * @param _node - узел графа типа `image_generation` (в заглушке не используется)
  * @returns выходной порт `url` со значением `null`

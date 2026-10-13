@@ -7,6 +7,7 @@ import { RunEventsService } from '../runs/run-events.service.js';
 import type { EdgeDto, GraphDto, NodeDto } from './dto/index.js';
 import { EngineService } from './engine.service.js';
 import { ExecutionEngineService } from './execution-engine.service.js';
+import { LlmNodeExecutor } from '../llm/llm-node-executor.service.js';
 import { UnsupportedNodeTypeException } from './node-executors.js';
 
 /** Стабильный uuid запуска. */
@@ -204,6 +205,7 @@ describe('ExecutionEngineService', () => {
   let service: ExecutionEngineService;
   let engineService: EngineService;
   let publish: ReturnType<typeof vi.fn>;
+  let llmExecute: ReturnType<typeof vi.fn>;
   let fake: ReturnType<typeof createFakeDb>;
 
   /** Типы опубликованных событий в порядке публикации. */
@@ -211,6 +213,9 @@ describe('ExecutionEngineService', () => {
 
   beforeEach(async () => {
     publish = vi.fn((_runId: string, _event: RunEventDto) => Promise.resolve());
+    llmExecute = vi.fn((_node: NodeDto, _inputs: Record<string, unknown>) =>
+      Promise.resolve({ text: 'ответ модели' }),
+    );
     fake = createFakeDb(RUN_ID);
 
     const moduleRef = await Test.createTestingModule({
@@ -219,6 +224,8 @@ describe('ExecutionEngineService', () => {
         EngineService,
         { provide: DRIZZLE, useValue: fake.db },
         { provide: RunEventsService, useValue: { publishAsync: publish } },
+        // R3: llm-узел ходит в провайдера — в юнит-тесте он замокан.
+        { provide: LlmNodeExecutor, useValue: { executeAsync: llmExecute } },
       ],
     }).compile();
 
@@ -251,9 +258,15 @@ describe('ExecutionEngineService', () => {
     expect(result.failedNodeId).toBeNull();
     expect(result.outputs).toEqual({
       A: { text: 'привет' },
-      B: { text: '[LLM stub — R3]' },
+      B: { text: 'ответ модели' },
       C: { url: null },
     });
+
+    // R3: llm-узел получил нормализованный вход prompt и ушёл в LLM-исполнитель.
+    expect(llmExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'B', type: 'llm' }),
+      { prompt: 'привет' },
+    );
 
     // Запуск переведён в running и закрыт completed.
     expect(fake.run.status).toBe('completed');
@@ -337,7 +350,10 @@ describe('ExecutionEngineService', () => {
 
     const nodeD = fake.rows.find((row) => row.nodeId === 'D');
 
-    expect(nodeD?.inputs).toEqual({ left: 'b', right: 'c' });
+    // KI-034: ключи входов нормализованы в имя порта, а у 'text'-узла порт один,
+    // поэтому вторая связь перекрывает первую. Готовый multi-input (merge,
+    // condition) потребует per-handle контракта в R4.
+    expect(nodeD?.inputs).toEqual({ text: 'c' });
   });
 
   it('прерывает следующие уровни на первом упавшем узле', async () => {
@@ -350,16 +366,21 @@ describe('ExecutionEngineService', () => {
     };
 
     const internals = service as unknown as {
-      runNode: (node: NodeDto) => Record<string, unknown>;
+      runNodeAsync: (
+        node: NodeDto,
+        inputs: Record<string, unknown>,
+      ) => Promise<Record<string, unknown>>;
     };
 
-    vi.spyOn(internals, 'runNode').mockImplementation((current: NodeDto) => {
-      if (current.id === 'B') {
-        throw new Error('узел упал');
-      }
+    vi.spyOn(internals, 'runNodeAsync').mockImplementation(
+      async (current: NodeDto) => {
+        if (current.id === 'B') {
+          throw new Error('узел упал');
+        }
 
-      return { text: 'ok' };
-    });
+        return { text: 'ok' };
+      },
+    );
 
     const result = await service.executeAsync(RUN_ID, graph);
 
@@ -411,15 +432,18 @@ describe('ExecutionEngineService', () => {
     expect(fake.run.status).toBe('failed');
   });
 
-  it('runNode бросает UnsupportedNodeTypeException с типом узла', () => {
+  it('runNodeAsync бросает UnsupportedNodeTypeException с типом узла', async () => {
     const internals = service as unknown as {
-      runNode: (node: NodeDto) => Record<string, unknown>;
+      runNodeAsync: (
+        node: NodeDto,
+        inputs: Record<string, unknown>,
+      ) => Promise<Record<string, unknown>>;
     };
 
-    expect(() => internals.runNode(node('A', 'merge'))).toThrow(
+    await expect(internals.runNodeAsync(node('A', 'merge'), {})).rejects.toThrow(
       UnsupportedNodeTypeException,
     );
-    expect(() => internals.runNode(node('A', 'merge'))).toThrow(
+    await expect(internals.runNodeAsync(node('A', 'merge'), {})).rejects.toThrow(
       'Неподдерживаемый тип узла: merge',
     );
   });

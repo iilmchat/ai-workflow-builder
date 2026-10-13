@@ -1,6 +1,11 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type { EdgeDto, GraphDto } from './dto/index.js';
-import { handleIdToOutputPort, inferDefaultOutputPort } from './node-ports.js';
+import {
+  NODE_PORT_CONTRACT,
+  handleIdToOutputPort,
+  inferDefaultOutputPort,
+  inferInputPortName,
+} from './node-ports.js';
 
 /** Результат проверки графа: ошибки блокируют запуск, warnings — нет. */
 export interface GraphValidationResult {
@@ -142,13 +147,15 @@ export class EngineService {
    *
    * Для каждого узла строится `executionMap`:
    * - `inputs` — что подать на вход: ключ → откуда приходит значение
-   *   (`fromNode`, `fromPort`). Ключ выбирается по приоритету `targetHandle` →
-   *   `sourceHandle` → `edge.id`: несколько входов без заданных портов больше
-   *   не перезаписывают друг друга (KI-003). `fromPort` разрешается в два
-   *   шага: сначала id хендла React Flow переводится в имя порта
-   *   (`handleIdToOutputPort`: `text-output` → `text`, `image-output` → `url`,
-   *   KI-030), а для неизвестного/отсутствующего хендла порт выводится из типа
-   *   узла-источника (`inferDefaultOutputPort`, KI-022);
+   *   (`fromNode`, `fromPort`). Ключ — **имя входного порта** узла-получателя
+   *   (`prompt` для `llm`/`image_generation`, `text` для `text`), а не UI-id
+   *   хендла (`text-input`) — KI-034. Для узлов без контракта работает прежний
+   *   fallback `targetHandle` → `sourceHandle` → `edge.id` (KI-003), поэтому
+   *   несколько входов без заданных портов не перезаписывают друг друга.
+   *   `fromPort` разрешается в два шага: сначала id хендла React Flow
+   *   переводится в имя порта (`handleIdToOutputPort`: `text-output` → `text`,
+   *   `image-output` → `url`, KI-030), а для неизвестного/отсутствующего хендла
+   *   порт выводится из типа узла-источника (`inferDefaultOutputPort`, KI-022);
    * - `dependents` — `id` узлов, которые ждут завершения этого узла.
    *
    * @param graph - валидированный DTO графа
@@ -179,8 +186,18 @@ export class EngineService {
 
       if (plan) {
         const sourceNode = nodesById.get(edge.source);
+        const targetNode = nodesById.get(edge.target);
 
-        plan.inputs[edge.targetHandle ?? edge.sourceHandle ?? edge.id] = {
+        // KI-034: для узла с известным контрактом ключ входа — нормализованное
+        // имя порта ('prompt'/'text'), а не UI-id хендла ('text-input'). Для
+        // неизвестного типа контракта нет, поэтому работает прежний fallback
+        // (KI-003): targetHandle → sourceHandle → edge.id.
+        const inputKey =
+          targetNode && NODE_PORT_CONTRACT[targetNode.type]
+            ? inferInputPortName(targetNode.type)
+            : (edge.targetHandle ?? edge.sourceHandle ?? edge.id);
+
+        plan.inputs[inputKey] = {
           fromNode: edge.source,
           fromPort:
             handleIdToOutputPort(edge.sourceHandle) ??

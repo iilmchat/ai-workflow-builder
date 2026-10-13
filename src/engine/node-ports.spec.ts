@@ -3,6 +3,7 @@ import {
   NODE_PORT_CONTRACT,
   handleIdToOutputPort,
   inferDefaultOutputPort,
+  inferInputPortName,
 } from './node-ports.js';
 
 describe('node-ports', () => {
@@ -34,6 +35,19 @@ describe('node-ports', () => {
           contract.outputPortName,
         );
       }
+    });
+  });
+
+  describe('inferInputPortName', () => {
+    it('возвращает нормализованное имя входа по типу узла (KI-034)', () => {
+      expect(inferInputPortName('llm')).toBe('prompt');
+      expect(inferInputPortName('image_generation')).toBe('prompt');
+      expect(inferInputPortName('text')).toBe('text');
+    });
+
+    it('возвращает input для типа без контракта (KI-034)', () => {
+      expect(inferInputPortName('merge')).toBe('input');
+      expect(inferInputPortName('')).toBe('input');
     });
   });
 });

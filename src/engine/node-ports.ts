@@ -21,6 +21,14 @@ export interface NodePortContract {
   outputPortName: string;
   /** id target-хендла во frontend (React Flow `edge.targetHandle`). */
   targetHandleId: string;
+  /**
+   * Имя входного порта узла в `executionMap.inputs` / `node_runs.inputs`.
+   *
+   * Нормализованное имя вместо UI-id хендла (KI-034): исполнителю узла нужно
+   * читать вход по контракту (`inputs.prompt`), а не угадывать ключ
+   * (`text-input`). У `text`-узла входа нет — значение-заглушка.
+   */
+  inputPortName: string;
 }
 
 /** Контракт портов по типу узла. */
@@ -29,16 +37,19 @@ export const NODE_PORT_CONTRACT: Record<string, NodePortContract> = {
     sourceHandleId: 'text-output',
     outputPortName: 'text',
     targetHandleId: 'text-input',
+    inputPortName: 'text',
   },
   llm: {
     sourceHandleId: 'text-output',
     outputPortName: 'text',
     targetHandleId: 'text-input',
+    inputPortName: 'prompt',
   },
   image_generation: {
     sourceHandleId: 'image-output',
     outputPortName: 'url',
     targetHandleId: 'text-input',
+    inputPortName: 'prompt',
   },
 };
 
@@ -65,6 +76,18 @@ export const DEFAULT_OUTPUT_PORT_BY_NODE_TYPE: Record<string, string> =
  */
 export function inferDefaultOutputPort(nodeType: string): string {
   return DEFAULT_OUTPUT_PORT_BY_NODE_TYPE[nodeType] ?? 'output';
+}
+
+/**
+ * Возвращает имя входного порта узла по его типу.
+ *
+ * @param nodeType - тип узла-получателя
+ * @returns нормализованное имя входного порта (`prompt` для
+ *   `llm`/`image_generation`, `text` для `text`); для неизвестного типа —
+ *   `input` (fallback, если контракта нет)
+ */
+export function inferInputPortName(nodeType: string): string {
+  return NODE_PORT_CONTRACT[nodeType]?.inputPortName ?? 'input';
 }
 
 /**

@@ -2,6 +2,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { EngineModule } from '../engine/engine.module.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
+import { LlmModule } from '../llm/llm.module.js';
 import { RunEventsService } from './run-events.service.js';
 import { WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 import { RunsController } from './runs.controller.js';
@@ -20,6 +21,8 @@ import { RunsService } from './runs.service.js';
 @Module({
   imports: [
     EngineModule,
+    // ExecutionEngineService получает из него LlmNodeExecutor (R3).
+    LlmModule,
     BullModule.registerQueue({
       name: WORKFLOW_RUNS_QUEUE,
       // KI-016: без attempts/backoff упавший job не ретраится, а без

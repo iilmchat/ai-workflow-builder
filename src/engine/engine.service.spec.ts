@@ -355,7 +355,8 @@ describe('EngineService', () => {
       const plan = await service.buildExecutionPlanAsync(graph);
 
       expect(plan.executionMap.B.inputs).toEqual({
-        in: { fromNode: 'A', fromPort: 'url' },
+        // KI-034: ключ — имя входного порта text-узла, а не targetHandle.
+        text: { fromNode: 'A', fromPort: 'url' },
       });
     });
 
@@ -378,7 +379,8 @@ describe('EngineService', () => {
       // Контракт KI-030: насквозь проходят только известные id хендлов React
       // Flow; всё остальное разрешается через тип узла-источника.
       expect(plan.executionMap.B.inputs).toEqual({
-        in: { fromNode: 'A', fromPort: 'text' },
+        // KI-034: ключ входа llm-узла нормализован в 'prompt'.
+        prompt: { fromNode: 'A', fromPort: 'text' },
       });
     });
 
@@ -399,7 +401,7 @@ describe('EngineService', () => {
       const plan = await service.buildExecutionPlanAsync(graph);
 
       expect(plan.executionMap.B.inputs).toEqual({
-        'text-input': { fromNode: 'A', fromPort: 'text' },
+        prompt: { fromNode: 'A', fromPort: 'text' },
       });
     });
 
@@ -420,7 +422,7 @@ describe('EngineService', () => {
       const plan = await service.buildExecutionPlanAsync(graph);
 
       expect(plan.executionMap.B.inputs).toEqual({
-        'text-input': { fromNode: 'A', fromPort: 'url' },
+        prompt: { fromNode: 'A', fromPort: 'url' },
       });
     });
 
@@ -441,7 +443,7 @@ describe('EngineService', () => {
       const plan = await service.buildExecutionPlanAsync(graph);
 
       expect(plan.executionMap.B.inputs).toEqual({
-        in: { fromNode: 'A', fromPort: 'text' },
+        text: { fromNode: 'A', fromPort: 'text' },
       });
     });
 
@@ -469,10 +471,105 @@ describe('EngineService', () => {
       const plan = await service.buildExecutionPlanAsync(graph);
 
       expect(plan.executionMap.B.inputs).toEqual({
-        'text-input': { fromNode: 'A', fromPort: 'text' },
+        prompt: { fromNode: 'A', fromPort: 'text' },
       });
       expect(plan.executionMap.C.inputs).toEqual({
-        'text-input': { fromNode: 'B', fromPort: 'text' },
+        prompt: { fromNode: 'B', fromPort: 'text' },
+      });
+    });
+
+    it('нормализует ключ входа llm-узла в prompt, а не UI-id (KI-034)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'text'), node('B', 'llm')],
+        edges: [
+          {
+            id: 'e1',
+            source: 'A',
+            target: 'B',
+            sourceHandle: 'text-output',
+            targetHandle: 'text-input',
+          },
+        ],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      expect(Object.keys(plan.executionMap.B.inputs)).toEqual(['prompt']);
+      expect(plan.executionMap.B.inputs.prompt).toEqual({
+        fromNode: 'A',
+        fromPort: 'text',
+      });
+    });
+
+    it('нормализует ключ входа text-узла в text (KI-034)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'llm'), node('B', 'text')],
+        edges: [
+          {
+            id: 'e1',
+            source: 'A',
+            target: 'B',
+            sourceHandle: 'text-output',
+            targetHandle: 'text-input',
+          },
+        ],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      expect(Object.keys(plan.executionMap.B.inputs)).toEqual(['text']);
+    });
+
+    it('для неизвестного типа узла-получателя оставляет targetHandle как ключ (KI-034)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'text'), node('B', 'merge')],
+        edges: [
+          {
+            id: 'e1',
+            source: 'A',
+            target: 'B',
+            sourceHandle: 'text-output',
+            targetHandle: 'left-input',
+          },
+        ],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      // Контракта для 'merge' нет — работает fallback KI-003.
+      expect(Object.keys(plan.executionMap.B.inputs)).toEqual(['left-input']);
+    });
+
+    it('сворачивает несколько входов одного узла в один нормализованный порт (KI-034)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'text'), node('B', 'text'), node('C', 'llm')],
+        edges: [
+          {
+            id: 'e1',
+            source: 'A',
+            target: 'C',
+            sourceHandle: 'text-output',
+            targetHandle: 'text-input',
+          },
+          {
+            id: 'e2',
+            source: 'B',
+            target: 'C',
+            sourceHandle: 'text-output',
+            targetHandle: 'text-input',
+          },
+        ],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      // Ограничение контракта R3: у llm-узла один входной порт 'prompt',
+      // поэтому multi-input (merge/condition) потребует per-handle контракта
+      // в R4 — сейчас обе связи пишут в один ключ и вторая перекрывает первую.
+      expect(Object.keys(plan.executionMap.C.inputs)).toEqual(['prompt']);
+      expect(plan.executionMap.C.inputs.prompt).toEqual({
+        fromNode: 'B',
+        fromPort: 'text',
       });
     });
 
@@ -485,8 +582,23 @@ describe('EngineService', () => {
       const plan = await service.buildExecutionPlanAsync(graph);
 
       expect(plan.executionMap.B.inputs).toEqual({
-        in: { fromNode: 'A', fromPort: 'output' },
+        prompt: { fromNode: 'A', fromPort: 'output' },
       });
+    });
+
+    it('inferInputPortName: text/llm/image_generation', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'text'), node('B', 'text'), node('C', 'image_generation')],
+        edges: [
+          { id: 'e1', source: 'A', target: 'B', targetHandle: 'text-input' },
+          { id: 'e2', source: 'B', target: 'C', targetHandle: 'text-input' },
+        ],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      expect(Object.keys(plan.executionMap.B.inputs)).toEqual(['text']);
+      expect(Object.keys(plan.executionMap.C.inputs)).toEqual(['prompt']);
     });
 
     it('собирает dependents узлов diamond', async () => {

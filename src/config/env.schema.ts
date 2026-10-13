@@ -21,6 +21,13 @@ export const EnvSchema = z.object({
    * IPv6 `::1`, который не проброшен контейнером (RULES 4.31).
    */
   REDIS_URL: z.url('REDIS_URL должен быть валидным URL'),
+  /**
+   * Ключ Anthropic (R3). Опционален: приложение и тесты поднимаются без ключа,
+   * а провайдер отдаёт `LlmProviderException` только при реальном вызове.
+   */
+  ANTHROPIC_API_KEY: z.string().optional(),
+  /** Ключ OpenAI (R3). Опционален по той же причине, что и Anthropic. */
+  OPENAI_API_KEY: z.string().optional(),
 });
 
 /** Валидированная конфигурация окружения (с применёнными значениями по умолчанию). */

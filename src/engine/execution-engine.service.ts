@@ -8,12 +8,12 @@ import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { nodeRuns, workflowRuns } from '../db/schema.js';
 import { RunEventsService } from '../runs/run-events.service.js';
+import { LlmNodeExecutor } from '../llm/llm-node-executor.service.js';
 import type { GraphDto, NodeDto } from './dto/index.js';
 import { EngineService, type ExecutionPlanDto } from './engine.service.js';
 import {
   UnsupportedNodeTypeException,
   executeImageGenNodeStub,
-  executeLlmNodeStub,
   executeTextNode,
 } from './node-executors.js';
 
@@ -55,7 +55,8 @@ export interface ExecutionResult {
  * Executor графа workflow: реально выполняет узлы уровнями и пишет прогресс.
  *
  * Работает внутри BullMQ-worker'а (RULES 4.21), поэтому не знает про HTTP.
- * Узлы `llm`/`image_generation` пока заглушки — реальные провайдеры в R3.
+ * Узлы `llm` выполняются через LLM-провайдеров (R3), `image_generation` —
+ * пока заглушка (R4).
  */
 @Injectable()
 export class ExecutionEngineService {
@@ -65,6 +66,7 @@ export class ExecutionEngineService {
     @Inject(DRIZZLE) private readonly db: Database,
     private readonly engineService: EngineService,
     private readonly runEvents: RunEventsService,
+    private readonly llmExecutor: LlmNodeExecutor,
   ) {}
 
   /**
@@ -205,7 +207,7 @@ export class ExecutionEngineService {
         startedAt: new Date().toISOString(),
       });
 
-      const outputs = this.runNode(node);
+      const outputs = await this.runNodeAsync(node, inputs);
       const durationMs = Date.now() - startedAt;
 
       await this.db
@@ -288,21 +290,24 @@ export class ExecutionEngineService {
   /**
    * Выполняет узел в зависимости от его типа.
    *
-   * Заглушки `llm`/`image_generation` заменятся реальными провайдерами в R3,
-   * поэтому метод пока синхронный: как только появятся сетевые вызовы, он
-   * станет `runNodeAsync` (RULES 1.4; ср. KI-002 — суффикс `Async` у
-   * синхронного метода сбивает с толку).
+   * Метод асинхронный (RULES 1.4): `llm`-узел ходит в провайдера через
+   * {@link LlmNodeExecutor}. `image_generation` пока заглушка (R4).
    *
    * @param node - узел графа
+   * @param inputs - нормализованные входы узла (KI-034: ключ `prompt`/`text`)
    * @returns выходы узла
    * @throws UnsupportedNodeTypeException если тип узла неизвестен
+   * @throws LlmProviderException если вызов LLM-провайдера упал
    */
-  private runNode(node: NodeDto): Record<string, unknown> {
+  private async runNodeAsync(
+    node: NodeDto,
+    inputs: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
     switch (node.type) {
       case 'text':
         return executeTextNode(node);
       case 'llm':
-        return executeLlmNodeStub(node);
+        return this.llmExecutor.executeAsync(node, inputs);
       case 'image_generation':
         return executeImageGenNodeStub(node);
       default:
