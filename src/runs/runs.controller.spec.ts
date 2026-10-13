@@ -1,9 +1,11 @@
 import { NotFoundException } from '@nestjs/common';
-import type { INestApplication } from '@nestjs/common';
+import type { INestApplication, MessageEvent } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { of } from 'rxjs';
 import request from 'supertest';
 import { RunsController } from './runs.controller.js';
 import { RunsService, type RunResponse } from './runs.service.js';
+import { RunsStreamService } from './runs-stream.service.js';
 
 /** Стабильные идентификаторы тестовых данных. */
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
@@ -23,6 +25,10 @@ describe('RunsController', () => {
     createRunAsync: ReturnType<typeof vi.fn>;
     getRunAsync: ReturnType<typeof vi.fn>;
   };
+  let stream: {
+    assertRunExistsAsync: ReturnType<typeof vi.fn>;
+    streamAsync: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
     service = {
@@ -30,9 +36,35 @@ describe('RunsController', () => {
       getRunAsync: vi.fn(() => Promise.resolve(runResponse)),
     };
 
+    const streamMessages: MessageEvent[] = [
+      {
+        data: {
+          type: 'snapshot',
+          run: { ...runResponse, createdAt: '2024-01-01T00:00:00.000Z' },
+          nodes: [],
+        },
+      },
+      {
+        data: {
+          type: 'run_completed',
+          runId: RUN_ID,
+          status: 'completed',
+          finishedAt: '2024-01-01T00:00:03.000Z',
+        },
+      },
+    ];
+
+    stream = {
+      assertRunExistsAsync: vi.fn(() => Promise.resolve()),
+      streamAsync: vi.fn(() => of(...streamMessages)),
+    };
+
     const moduleRef = await Test.createTestingModule({
       controllers: [RunsController],
-      providers: [{ provide: RunsService, useValue: service }],
+      providers: [
+        { provide: RunsService, useValue: service },
+        { provide: RunsStreamService, useValue: stream },
+      ],
     }).compile();
 
     controller = moduleRef.get(RunsController);
@@ -87,6 +119,36 @@ describe('RunsController', () => {
       service.getRunAsync.mockRejectedValue(new NotFoundException('Запуск не найден'));
 
       await request(app.getHttpServer()).get(`/runs/${RUN_ID}`).expect(404);
+    });
+  });
+
+  describe('streamRun', () => {
+    it('GET /runs/:id/stream отвечает 200 text/event-stream со snapshot первым', async () => {
+      const response = await request(app.getHttpServer())
+        .get(`/runs/${RUN_ID}/stream`)
+        .expect(200)
+        .expect('Content-Type', /text\/event-stream/);
+
+      expect(stream.assertRunExistsAsync).toHaveBeenCalledWith(RUN_ID);
+      expect(stream.streamAsync).toHaveBeenCalledWith(RUN_ID, expect.anything());
+      expect(response.text).toContain('data: {"type":"snapshot"');
+      expect(response.text).toContain('"type":"run_completed"');
+    });
+
+    it('GET /runs/:id/stream отвечает 404 и не открывает поток, если запуска нет', async () => {
+      stream.assertRunExistsAsync.mockRejectedValue(
+        new NotFoundException('Запуск не найден'),
+      );
+
+      await request(app.getHttpServer()).get(`/runs/${RUN_ID}/stream`).expect(404);
+
+      expect(stream.streamAsync).not.toHaveBeenCalled();
+    });
+
+    it('GET /runs/:id/stream отвечает 400 на невалидный uuid', async () => {
+      await request(app.getHttpServer()).get('/runs/not-a-uuid/stream').expect(400);
+
+      expect(stream.assertRunExistsAsync).not.toHaveBeenCalled();
     });
   });
 });

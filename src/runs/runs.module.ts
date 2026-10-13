@@ -8,6 +8,7 @@ import { WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 import { RunsController } from './runs.controller.js';
 import { RunsProcessor } from './runs.processor.js';
 import { RunsService } from './runs.service.js';
+import { RunsStreamService } from './runs-stream.service.js';
 
 /**
  * Модуль запусков workflow (R1: очередь BullMQ, R2.2: executor графа).
@@ -36,7 +37,13 @@ import { RunsService } from './runs.service.js';
     }),
   ],
   controllers: [RunsController],
-  providers: [RunsService, RunsProcessor, RunEventsService, ExecutionEngineService],
+  providers: [
+    RunsService,
+    RunsStreamService,
+    RunsProcessor,
+    RunEventsService,
+    ExecutionEngineService,
+  ],
   exports: [RunsService, RunEventsService],
 })
 export class RunsModule {}
