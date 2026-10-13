@@ -19,6 +19,27 @@
 ## [Unreleased]
 
 ### Fixed
+- **KI-030** — React Flow handle id (`text-output` / `image-output`)
+  не совпадали с именами портов исполнителей (`text` / `url`);
+  `collectInputsAsync` молча клал `null` для **всех** UI-графов.
+  Введён единый реестр `NODE_PORT_CONTRACT` (`sourceHandleId` +
+  `outputPortName` + `targetHandleId`) и `handleIdToOutputPort()`
+  (`src/engine/node-ports.ts`). `fromPort = handleIdToOutputPort(...)
+  ?? inferDefaultOutputPort(...)`. `DEFAULT_OUTPUT_PORT_BY_NODE_TYPE`
+  теперь **выводится** из контракта — рассинхрон имён невозможен.
+  +8 тестов (116 → 124). Smoke: UI-граф (`sourceHandle='text-output'`) —
+  `B.inputs` не пустой. Остаток — KI-033 (неизвестный хэндл) и
+  KI-034 (асимметрия входов/выходов).
+- **KI-030** — React Flow handle id (`text-output` / `image-output`)
+  не совпадали с именами портов исполнителей (`text` / `url`);
+  `collectInputsAsync` молча клал `null` для **всех** UI-графов.
+  Введён единый реестр `NODE_PORT_CONTRACT` (`sourceHandleId` +
+  `outputPortName` + `targetHandleId`) и `handleIdToOutputPort()`
+  (`src/engine/node-ports.ts`). `fromPort = handleIdToOutputPort(...)
+  ?? inferDefaultOutputPort(...)`. `DEFAULT_OUTPUT_PORT_BY_NODE_TYPE`
+  теперь **выводится** из контракта — рассинхрон имён невозможен.
+  +8 тестов. Остаток — KI-033 (неизвестный хэндл) и KI-034
+  (асимметрия входов/выходов).
 - **KI-022** — `executionMap` подставлял несуществующий порт `output`
   для связей без `sourceHandle`; `collectInputsAsync` молча клал `null`
   (R2.2). Теперь `fromPort = sourceHandle ??

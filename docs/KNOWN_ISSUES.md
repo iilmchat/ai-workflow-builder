@@ -344,7 +344,7 @@
 
 ### KI-022 — Дефолтный выходной порт `output` не существует ни у одного исполнителя
 - **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-13
-- **Исправлено в:** v0.3.3 (коммит `<hash KI-022>`)
+- **Исправлено в:** v0.3.3 (коммит `d2a06ed`)
 - **Файлы:** `src/engine/engine.service.ts`, `src/engine/node-executors.ts`
 - **Описание:** `executionMap` подставляет `fromPort = sourceHandle ?? 'output'`,
   а узлы отдают `text` (text/llm) или `url` (image_generation). Если у связи
@@ -449,9 +449,10 @@
 ---
 
 ### KI-030 — Хендлы фронтенда не совпадают с портами бэкенда
-- **Приоритет:** 🔴 Critical | **Статус:** Open | **Обнаружено:** 2026-10-13
-- **Файлы:** `web/src/components/nodes/*.tsx`, `src/engine/node-ports.ts`,
-  `src/engine/node-executors.ts`, `src/engine/execution-engine.service.ts`
+- **Приоритет:** 🔴 Critical | **Статус:** Fixed | **Обнаружено:** 2026-10-13
+- **Исправлено в:** v0.3.3 (коммит `a7a9da0`)
+- **Файлы:** `src/engine/node-ports.ts`, `src/engine/engine.service.ts`,
+  `src/engine/engine.service.spec.ts`, `src/engine/node-ports.spec.ts`
 - **Описание:** UI рисует handle id `text-output` / `image-output` /
   `text-input`, а исполнители отдают порты `text` / `url`. React Flow
   пишет id хендла в `edge.sourceHandle`, поэтому для любой связи,
@@ -467,6 +468,15 @@
      и `handleId`, и имя порта) и маппить на границе. **Выбрано.**
 - **Когда чинить:** до R3 (LLM-вызовы). Нужен единый контракт до R3/R4.
 - **Связанные:** KI-022.
+- **Fix:** единый реестр `NODE_PORT_CONTRACT` (`sourceHandleId` +
+  `outputPortName` + `targetHandleId`) и `handleIdToOutputPort()` в
+  `src/engine/node-ports.ts`. `fromPort = handleIdToOutputPort(sourceHandle)
+  ?? inferDefaultOutputPort(sourceNode.type)`. `DEFAULT_OUTPUT_PORT_BY_NODE_TYPE`
+  теперь **выводится** из `NODE_PORT_CONTRACT` — рассинхрон имён невозможен.
+  +8 тестов. Smoke: UI-граф (`sourceHandle='text-output'`) — `B.inputs`
+  не пустой.
+- **Остаток:** KI-033 (неизвестный хэндл → тип-дефолт), KI-034
+  (асимметрия входов/выходов).
 
 ---
 
@@ -503,18 +513,67 @@
 
 ---
 
+### KI-033 — Неизвестный `sourceHandle` подменяется дефолтом по типу узла
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/engine/engine.service.ts`, `src/engine/node-ports.ts`
+- **Описание:** После KI-030 формула стала
+  `handleIdToOutputPort(sourceHandle) ?? inferDefaultOutputPort(type)`.
+  Для «явного, но неизвестного» хэндла (`'custom'`, `'result'`) это
+  молча подменяет порт на тип-дефолт: если узел-источник отдаёт
+  не-дефолтный порт, вход снова получит `null`. До KI-030 такое значение
+  проходило насквозь.
+  Дополнительный риск: `handleIdToOutputPort` ищет хэндл по **всем**
+  контрактам без сверки с типом узла-источника — узел `image_generation`
+  с чужим `sourceHandle='text-output'` получит `fromPort='text'`, хотя
+  у него в `outputs` только `url`.
+- **Возможные решения:**
+  1. Type-aware резолвер: сначала сверить `edge.sourceHandle` с
+     контрактом именно `sourceNode.type`, потом fallback на тип,
+     потом — на пропуск насквозь.
+  2. Валидировать принадлежность `sourceHandle`/`targetHandle` типам
+     концов связи в `EngineService.validateGraphAsync` и отдавать
+     в `errors`.
+- **Когда чинить:** R4 (multi-input) или раньше, если кейс всплывёт.
+  Понижено с 🟠 High до 🟡 Medium: текущие типы узлов (`text`, `llm`,
+  `image_generation`) имеют только дефолтный хэндл, экзотических графов
+  нет.
+- **Связанные:** KI-030, KI-034.
+
+---
+
+### KI-034 — Асимметрия входов и выходов
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/engine/node-ports.ts`, `src/engine/engine.service.ts`,
+  `src/engine/execution-engine.service.ts`
+- **Описание:** Выходы нормализованы в имена портов (`text` / `url`),
+  а входы остаются в UI-id: ключ в `node_runs.inputs` = `targetHandle`
+  = `'text-input'` (видно в smoke KI-030). `NodePortContract.targetHandleId`
+  объявлен, но нигде не используется. Из-за этого LLM-узлу в R3 придётся
+  вытаскивать prompt эвристикой («первое не-null строковое значение»),
+  а не по контракту. При multi-input (R4) эвристика сломается.
+- **Возможные решения:**
+  1. Симметричная нормализация: ключ `plan.inputs` = имя порта
+     (`'prompt'`), не UI-id — тогда `inputs['prompt']` читается прямо.
+  2. Официально закрепить UI-id как контракт входа и читать по
+     `NODE_PORT_CONTRACT[type].targetHandleId`.
+- **Когда чинить:** **в R3** (первый реальный потребитель `inputs` —
+  LLM-узел). Не откладывать до R4.
+- **Связанные:** KI-030, KI-033.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 7 |
+| Fixed | 8 |
 | In Progress | 0 |
 | Planned | 2 |
 | Deferred | 0 |
 | Documented | 6 |
-| Open | 17 |
+| Open | 18 |
 | Won't Fix | 0 |
-| **Всего** | **32** |
+| **Всего** | **34** |
 
 
 ---
