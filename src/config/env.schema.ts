@@ -134,6 +134,25 @@ export const EnvSchema = z.object({
     .preprocess(emptyToUndefined, z.string().optional())
     .default(''),
 
+  // === GPTunnel CreativeLab (media — IMAGE/VIDEO/AUDIO/MUSIC/3D) ===
+  /**
+   * Ключ GPTunnel для media API. Может совпадать с ключом chat или быть
+   * отдельным (в личном кабинете они выдаются независимо).
+   */
+  GPTUNNEL_MEDIA_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Base URL media API GPTunnel CreativeLab. */
+  GPTUNNEL_MEDIA_BASE_URL: z
+    .preprocess(emptyToUndefined, httpUrl.optional())
+    .default('https://gptunnel.ru/api/v2/media'),
+  /**
+   * TTL кэша моделей media-провайдера (мс). Список моделей ~200KB,
+   * ходить в upstream на каждый GET /media/models — расточительно.
+   * 15 минут — компромисс между свежестью и нагрузкой (RULES 1.18).
+   */
+  GPTUNNEL_MEDIA_CACHE_TTL_MS: z
+    .preprocess(emptyToUndefined, z.coerce.number().int().min(10_000).optional())
+    .default(900_000),
+
   // === DeepSeek (OpenAI-совместимый) ===
   /** Ключ DeepSeek. Без него провайдер не регистрируется. */
   DEEPSEEK_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),

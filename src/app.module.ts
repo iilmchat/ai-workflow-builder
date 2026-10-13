@@ -6,6 +6,7 @@ import { AppService } from './app.service.js';
 import { validateEnv } from './config/env.schema.js';
 import { DbModule } from './db/db.module.js';
 import { LlmModule } from './llm/llm.module.js';
+import { MediaModule } from './media/media.module.js';
 import { WorkflowModule } from './workflow/workflow.module.js';
 import { EngineModule } from './engine/engine.module.js';
 import { NodesModule } from './nodes/nodes.module.js';
@@ -32,6 +33,7 @@ import { RunsModule } from './runs/runs.module.js';
     DbModule,
     RedisModule,
     LlmModule,
+    MediaModule,
     WorkflowModule,
     EngineModule,
     NodesModule,
