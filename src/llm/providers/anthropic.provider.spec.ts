@@ -22,6 +22,36 @@ function configStub(apiKey?: string): ConfigService {
   return { get: () => apiKey } as unknown as ConfigService;
 }
 
+/**
+ * Вызывает провайдера и возвращает пойманную ошибку.
+ *
+ * @param provider - провайдер под тестом
+ * @returns ошибка, которую бросил вызов
+ */
+async function catchGenerateError(provider: AnthropicProvider): Promise<unknown> {
+  try {
+    await provider.generateAsync('x', { model: 'm' });
+  } catch (error: unknown) {
+    return error;
+  }
+
+  throw new Error('ожидалась ошибка провайдера');
+}
+
+/**
+ * Достаёт флаг `retryable` из ошибки.
+ *
+ * @param error - пойманная ошибка
+ * @returns признак повторяемости вызова
+ */
+function retryableOf(error: unknown): boolean {
+  if (!(error instanceof LlmProviderException)) {
+    throw new Error(`ожидалась LlmProviderException, получено: ${String(error)}`);
+  }
+
+  return error.retryable;
+}
+
 describe('AnthropicProvider', () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -79,5 +109,39 @@ describe('AnthropicProvider', () => {
     await expect(provider.generateAsync('x', { model: 'm' })).rejects.toThrow(
       'ANTHROPIC_API_KEY не задан',
     );
+  });
+
+  it('помечает 429 как повторяемую ошибку (KI-036)', async () => {
+    createMock.mockRejectedValue(
+      Object.assign(new Error('rate limited'), { status: 429 }),
+    );
+
+    const provider = new AnthropicProvider(configStub('sk-ant-test'));
+
+    expect(retryableOf(await catchGenerateError(provider))).toBe(true);
+  });
+
+  it('помечает 400 как неповторяемую ошибку (KI-036)', async () => {
+    createMock.mockRejectedValue(
+      Object.assign(new Error('bad request'), { status: 400 }),
+    );
+
+    const provider = new AnthropicProvider(configStub('sk-ant-test'));
+
+    expect(retryableOf(await catchGenerateError(provider))).toBe(false);
+  });
+
+  it('помечает таймаут и сетевой сбой как повторяемые (KI-036)', async () => {
+    const provider = new AnthropicProvider(configStub('sk-ant-test'));
+
+    createMock.mockRejectedValue(
+      Object.assign(new Error('aborted'), { name: 'AbortError' }),
+    );
+    expect(retryableOf(await catchGenerateError(provider))).toBe(true);
+
+    createMock.mockRejectedValue(
+      Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' }),
+    );
+    expect(retryableOf(await catchGenerateError(provider))).toBe(true);
   });
 });

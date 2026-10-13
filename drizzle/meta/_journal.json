@@ -15,6 +15,13 @@
       "when": 1791882821496,
       "tag": "0001_flippant_lockjaw",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791889159546,
+      "tag": "0002_steady_molecule_man",
+      "breakpoints": true
     }
   ]
 }

@@ -8,6 +8,7 @@ import type { EdgeDto, GraphDto, NodeDto } from './dto/index.js';
 import { EngineService } from './engine.service.js';
 import { ExecutionEngineService } from './execution-engine.service.js';
 import { LlmNodeExecutor } from '../llm/llm-node-executor.service.js';
+import { LlmProviderException } from '../llm/llm-provider.interface.js';
 import { UnsupportedNodeTypeException } from './node-executors.js';
 
 /** Стабильный uuid запуска. */
@@ -33,6 +34,7 @@ interface FakeNodeRun {
   inputs: Record<string, unknown>;
   outputs: Record<string, unknown> | null;
   error: string | null;
+  logs: string[] | null;
   durationMs: number | null;
   startedAt: Date | null;
   finishedAt: Date | null;
@@ -138,8 +140,22 @@ function createFakeDb(runId: string) {
     transaction: async <T>(callback: (tx: unknown) => Promise<T>): Promise<T> =>
       callback(db),
     insert: (_table: unknown) => ({
-      values: (values: Record<string, unknown>) => ({
-        returning: async (): Promise<unknown[]> => {
+      values: (values: Record<string, unknown>) => {
+        /** Вставляет строку или (при конфликте) обновляет существующую — как ON CONFLICT DO UPDATE. */
+        const upsert = async (set?: Record<string, unknown>): Promise<unknown[]> => {
+          const existing = rows.find(
+            (candidate) =>
+              candidate.runId === values.runId && candidate.nodeId === values.nodeId,
+          );
+
+          if (existing) {
+            if (set) {
+              Object.assign(existing, set);
+            }
+
+            return [{ id: existing.id }];
+          }
+
           sequence += 1;
 
           const row = {
@@ -147,6 +163,7 @@ function createFakeDb(runId: string) {
             error: null,
             outputs: null,
             durationMs: null,
+            logs: null,
             finishedAt: null,
             ...values,
           } as FakeNodeRun;
@@ -154,8 +171,15 @@ function createFakeDb(runId: string) {
           rows.push(row);
 
           return [{ id: row.id }];
-        },
-      }),
+        };
+
+        return {
+          returning: (): Promise<unknown[]> => upsert(),
+          onConflictDoUpdate: (config: { set?: Record<string, unknown> }) => ({
+            returning: (): Promise<unknown[]> => upsert(config.set),
+          }),
+        };
+      },
     }),
     update: (table: unknown) => ({
       set: (values: Record<string, unknown>) => ({
@@ -210,6 +234,26 @@ describe('ExecutionEngineService', () => {
 
   /** Типы опубликованных событий в порядке публикации. */
   const eventTypes = (): string[] => publish.mock.calls.map(([, event]) => event.type);
+
+  /**
+   * Подменяет приватный `runNodeAsync` (проверка падений узла).
+   *
+   * @param impl - реализация-заглушка для выполнения узла
+   */
+  const spyRunNode = (
+    impl: (node: NodeDto) => Promise<Record<string, unknown>>,
+  ): void => {
+    const internals = service as unknown as {
+      runNodeAsync: (
+        node: NodeDto,
+        inputs: Record<string, unknown>,
+      ) => Promise<Record<string, unknown>>;
+    };
+
+    vi.spyOn(internals, 'runNodeAsync').mockImplementation((current: NodeDto) =>
+      impl(current),
+    );
+  };
 
   beforeEach(async () => {
     publish = vi.fn((_runId: string, _event: RunEventDto) => Promise.resolve());
@@ -382,12 +426,9 @@ describe('ExecutionEngineService', () => {
       },
     );
 
-    const result = await service.executeAsync(RUN_ID, graph);
-
-    expect(result.status).toBe('failed');
-    expect(result.failedNodeId).toBe('B');
-    expect(result.error).toBe('узел упал');
-    expect(result.executedNodes).toBe(1);
+    // KI-036: после исчерпания попыток узла executeAsync пробрасывает ошибку
+    // (job-level retry), но запуск уже закрыт 'failed' в БД.
+    await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow('узел упал');
 
     // Строка A закрыта, строка B — failed, узел C не выполнялся вовсе.
     expect(fake.rows.map((row) => [row.nodeId, row.status])).toEqual([
@@ -423,10 +464,10 @@ describe('ExecutionEngineService', () => {
   it('падает с UnsupportedNodeTypeException на неизвестном типе узла', async () => {
     const graph: GraphDto = { nodes: [node('A', 'merge')], edges: [] };
 
-    const result = await service.executeAsync(RUN_ID, graph);
+    await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow(
+      UnsupportedNodeTypeException,
+    );
 
-    expect(result.status).toBe('failed');
-    expect(result.error).toContain('Неподдерживаемый тип узла: merge');
     expect(fake.rows[0].status).toBe('failed');
     expect(fake.rows[0].error).toContain('Неподдерживаемый тип узла: merge');
     expect(fake.run.status).toBe('failed');
@@ -461,5 +502,133 @@ describe('ExecutionEngineService', () => {
     expect(fake.rows).toHaveLength(0);
     expect(fake.run.status).toBe('completed');
     expect(eventTypes()).toEqual(['run_started', 'run_completed']);
+  });
+
+  it('KI-037: ошибка планирования закрывает запуск failed, а не оставляет pending', async () => {
+    const graph: GraphDto = {
+      nodes: [node('A', 'text'), node('B', 'text')],
+      edges: [edge('e1', 'A', 'B'), edge('e2', 'B', 'A')],
+    };
+
+    const result = await service.executeAsync(RUN_ID, graph);
+
+    expect(result.status).toBe('failed');
+    expect(result.executedNodes).toBe(0);
+    expect(result.error).toContain('цикл');
+    expect(fake.run.status).toBe('failed');
+    expect(fake.run.error).toContain('цикл');
+    expect(fake.run.finishedAt).toBeInstanceOf(Date);
+    expect(fake.rows).toHaveLength(0);
+    // run_started не публиковался (планирование упало раньше), но терминальное
+    // событие есть — потребитель (R4) не останется в ожидании.
+    expect(eventTypes()).toEqual(['run_completed']);
+    expect(publish).toHaveBeenLastCalledWith(
+      RUN_ID,
+      expect.objectContaining({ type: 'run_completed', status: 'failed' }),
+    );
+  });
+
+  it('KI-036: повторяет «временную» ошибку и завершает узел с третьей попытки', async () => {
+    const graph: GraphDto = { nodes: [node('A', 'llm')], edges: [] };
+    let calls = 0;
+
+    spyRunNode(async () => {
+      calls += 1;
+
+      if (calls < 3) {
+        throw new LlmProviderException('anthropic', 'rate limit', { retryable: true });
+      }
+
+      return { text: 'ответ после повтора' };
+    });
+
+    vi.useFakeTimers();
+
+    try {
+      const promise = service.executeAsync(RUN_ID, graph);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      await expect(promise).resolves.toEqual(
+        expect.objectContaining({ status: 'completed', executedNodes: 1 }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(calls).toBe(3);
+    expect(fake.rows[0].status).toBe('completed');
+    expect(fake.rows[0].outputs).toEqual({ text: 'ответ после повтора' });
+    expect(fake.rows[0].error).toBeNull();
+    // В logs остались две неудачные попытки (KI-036).
+    expect(fake.rows[0].logs).toHaveLength(2);
+    expect(fake.rows[0].logs?.[0]).toContain('попытка 1/3');
+    expect(fake.rows[0].logs?.[1]).toContain('попытка 2/3');
+  });
+
+  it('KI-036: после исчерпания попыток бросает наружу для job-level retry', async () => {
+    const graph: GraphDto = { nodes: [node('A', 'llm')], edges: [] };
+    let calls = 0;
+
+    spyRunNode(async () => {
+      calls += 1;
+      throw new LlmProviderException('anthropic', 'overloaded', { retryable: true });
+    });
+
+    vi.useFakeTimers();
+
+    try {
+      const promise = service.executeAsync(RUN_ID, graph);
+      const rejection = expect(promise).rejects.toThrow('overloaded');
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(calls).toBe(3);
+    expect(fake.run.status).toBe('failed');
+    expect(fake.rows[0].status).toBe('failed');
+    expect(fake.rows[0].logs).toHaveLength(2);
+    expect(eventTypes().at(-1)).toBe('run_completed');
+  });
+
+  it('KI-036: не повторяет детерминированную ошибку провайдера', async () => {
+    const graph: GraphDto = { nodes: [node('A', 'llm')], edges: [] };
+    let calls = 0;
+
+    spyRunNode(async () => {
+      calls += 1;
+      throw new LlmProviderException('anthropic', 'invalid api key', {
+        retryable: false,
+      });
+    });
+
+    await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow(
+      'invalid api key',
+    );
+
+    expect(calls).toBe(1);
+    expect(fake.rows[0].status).toBe('failed');
+    expect(fake.rows[0].logs).toEqual([]);
+  });
+
+  it('KI-031: повторный прогон графа не создаёт дубли node_runs (upsert)', async () => {
+    const graph: GraphDto = {
+      nodes: [node('A', 'text', { value: 'a' }), node('B', 'text', { value: 'b' })],
+      edges: [edge('e1', 'A', 'B', 'text')],
+    };
+
+    await service.executeAsync(RUN_ID, graph);
+
+    const idsAfterFirstRun = fake.rows.map((row) => row.id);
+
+    await service.executeAsync(RUN_ID, graph);
+
+    // Те же строки обновлены, новых не появилось.
+    expect(fake.rows).toHaveLength(2);
+    expect(fake.rows.map((row) => row.id)).toEqual(idsAfterFirstRun);
+    expect(fake.rows.every((row) => row.status === 'completed')).toBe(true);
   });
 });

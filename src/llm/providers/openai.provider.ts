@@ -6,21 +6,12 @@ import {
   type ILlmProvider,
   type LlmGenerateOptions,
 } from '../llm-provider.interface.js';
+import { toProviderException } from '../provider-errors.js';
 
 /** Таймаут вызова по умолчанию, если свой signal не передан (RULES 4.19). */
 const DEFAULT_TIMEOUT_MS = 60_000;
 /** Лимит токенов ответа по умолчанию. */
 const DEFAULT_MAX_TOKENS = 1024;
-
-/**
- * Приводит неизвестную ошибку к тексту.
- *
- * @param error - значение из `catch` (тип `unknown`)
- * @returns текст ошибки
- */
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * Провайдер OpenAI (GPT) — R3.
@@ -91,29 +82,7 @@ export class OpenAiProvider implements ILlmProvider {
 
       return completion.choices[0]?.message.content ?? '';
     } catch (error: unknown) {
-      throw this.toProviderException(error, signal);
+      throw toProviderException(this.name, error, signal);
     }
-  }
-
-  /**
-   * Оборачивает ошибку SDK в {@link LlmProviderException}.
-   *
-   * @param error - ошибка из `catch`
-   * @param signal - сигнал вызова (позволяет отличить таймаут/отмену)
-   * @returns ошибка провайдера с сохранённой причиной
-   */
-  private toProviderException(
-    error: unknown,
-    signal: AbortSignal,
-  ): LlmProviderException {
-    if (signal.aborted) {
-      return new LlmProviderException(
-        this.name,
-        'вызов отменён или истёк таймаут',
-        error,
-      );
-    }
-
-    return new LlmProviderException(this.name, toErrorMessage(error), error);
   }
 }

@@ -9,6 +9,7 @@ import { DRIZZLE, type Database } from '../db/db.module.js';
 import { nodeRuns, workflowRuns } from '../db/schema.js';
 import { RunEventsService } from '../runs/run-events.service.js';
 import { LlmNodeExecutor } from '../llm/llm-node-executor.service.js';
+import { LlmProviderException } from '../llm/llm-provider.interface.js';
 import type { GraphDto, NodeDto } from './dto/index.js';
 import { EngineService, type ExecutionPlanDto } from './engine.service.js';
 import {
@@ -35,6 +36,62 @@ function toMessage(error: unknown): string {
  */
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Собирает читаемый текст ошибки планирования.
+ *
+ * `EngineService` бросает `BadRequestException` с объектом ответа: общая фраза
+ * лежит в `message` («Граф не может быть выполнен»), а причина — в `errors`
+ * («Граф содержит цикл…»). Без склейки деталей пользователь увидел бы только
+ * общую фразу, поэтому `errors` добавляются к тексту (KI-037).
+ *
+ * @param error - значение из `catch`
+ * @returns текст ошибки с деталями, если они есть
+ */
+function describePlanError(error: unknown): string {
+  const base = toMessage(error);
+
+  if (typeof error !== 'object' || error === null) {
+    return base;
+  }
+
+  const getResponse = (error as { getResponse?: unknown }).getResponse;
+
+  if (typeof getResponse !== 'function') {
+    return base;
+  }
+
+  const payload = (error as { getResponse: () => unknown }).getResponse();
+
+  if (typeof payload !== 'object' || payload === null) {
+    return base;
+  }
+
+  const errors = (payload as { errors?: unknown }).errors;
+
+  if (!Array.isArray(errors) || errors.length === 0) {
+    return base;
+  }
+
+  return `${base}: ${errors.map((item) => String(item)).join('; ')}`;
+}
+
+/** Сколько раз пробовать узел при «временной» ошибке провайдера (KI-036). */
+const NODE_MAX_ATTEMPTS = 3;
+/** Базовая задержка перед повтором узла, мс (далее — экспоненциально). */
+const NODE_RETRY_BASE_DELAY_MS = 500;
+
+/**
+ * Пауза перед повтором узла.
+ *
+ * @param ms - длительность паузы в миллисекундах
+ * @returns промис, который завершится через `ms` мс
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 /** Итог выполнения запуска. */
@@ -82,24 +139,51 @@ export class ExecutionEngineService {
    * успешно завершившихся узлов (а не только последнего уровня): так при
    * падении сохраняется частичный результат, а UI (R4) видит полную картину.
    *
+   * Две разные стратегии обработки ошибок:
+   * - **фаза планирования** (KI-037): ошибки детерминированы (цикл, битые
+   *   связи), поэтому запуск закрывается `failed` и исключение НЕ
+   *   пробрасывается — иначе строка осталась бы в `pending` навсегда;
+   * - **фаза выполнения узлов** (KI-036): после исчерпания node-level попыток
+   *   запуск тоже закрывается `failed`, но исключение пробрасывается наружу,
+   *   чтобы BullMQ зафиксировал провал job'а и задействовал `attempts` (KI-016).
+   *
    * @param runId - uuid запуска (строка в workflow_runs уже создана)
    * @param graph - граф из `workflow_runs.snapshot`
    * @returns итог выполнения: статус, число отработавших узлов, outputs
+   * @throws Error если узел исчерпал попытки (KI-036) либо не удалось завершить запуск
    * @throws InternalServerErrorException если не удалось обновить запись запуска в БД
-   * @throws BadRequestException если граф неисполним (цикл, битые связи)
    */
   async executeAsync(runId: string, graph: GraphDto): Promise<ExecutionResult> {
-    const plan = await this.engineService.buildExecutionPlanAsync(graph);
+    let plan: ExecutionPlanDto;
 
-    await this.markRunRunningAsync(runId);
-    await this.runEvents.publishAsync(runId, {
-      type: 'run_started',
-      runId,
-      startedAt: new Date().toISOString(),
-    });
+    try {
+      plan = await this.engineService.buildExecutionPlanAsync(graph);
+
+      await this.markRunRunningAsync(runId);
+      await this.runEvents.publishAsync(runId, {
+        type: 'run_started',
+        runId,
+        startedAt: new Date().toISOString(),
+      });
+    } catch (error: unknown) {
+      // KI-037: запуск не должен остаться в 'pending'. Планирование падает до
+      // простановки любого статуса, поэтому закрываем запуск явно.
+      const message = describePlanError(error);
+
+      this.logger.error(`Запуск ${runId}: планирование не удалось — ${message}`);
+      await this.failRunAsync(runId, message, {});
+
+      return {
+        status: 'failed',
+        executedNodes: 0,
+        failedNodeId: null,
+        error: message,
+        outputs: {},
+      };
+    }
 
     const outputs: Record<string, Record<string, unknown>> = {};
-    const failures: Array<{ nodeId: string; error: string }> = [];
+    const failures: Array<{ nodeId: string; error: string; reason: unknown }> = [];
 
     for (const [levelIndex, level] of plan.levels.entries()) {
       const results = await Promise.allSettled(
@@ -116,7 +200,11 @@ export class ExecutionEngineService {
         }
 
         // Фиксируем падение узла: уровни после первого падения не выполняются.
-        failures.push({ nodeId, error: toMessage(result.reason) });
+        failures.push({
+          nodeId,
+          error: toMessage(result.reason),
+          reason: result.reason,
+        });
       });
 
       if (failures.length > 0) {
@@ -145,11 +233,23 @@ export class ExecutionEngineService {
         (failed ? `, ошибка: ${failed.error}` : ''),
     );
 
+    if (failed) {
+      // KI-036: запуск уже закрыт 'failed' в БД и событие опубликовано, но
+      // исключение бросаем осознанно — так BullMQ видит провал job'а и
+      // применяет attempts/backoff (KI-016). Повторную доставку терминального
+      // запуска RunsProcessor пропускает (guard KI-023), поэтому граф не
+      // выполняется дважды и LLM не вызывается повторно; на случай, когда
+      // повтор всё же произойдёт, node_runs идемпотентен (KI-031).
+      throw failed.reason instanceof Error
+        ? failed.reason
+        : new Error(`Запуск ${runId} упал: ${failed.error}`);
+    }
+
     return {
       status,
       executedNodes,
-      failedNodeId: failed?.nodeId ?? null,
-      error: failed?.error ?? null,
+      failedNodeId: null,
+      error: null,
       outputs,
     };
   }
@@ -157,18 +257,21 @@ export class ExecutionEngineService {
   /**
    * Выполняет один узел: пишет `node_runs`, публикует события, обновляет статус.
    *
-   * Сначала создаётся строка `node_runs` со статусом `running`, затем
-   * выполняется сам узел, затем статус закрывается. Любой сбой (включая
-   * падение самой публикации события) переводит строку в `failed` — записи
-   * не остаются «висящими» в `running`, а исходная ошибка пробрасывается
-   * наружу без подмены (RULES 1.7).
+   * Строка `node_runs` создаётся один раз (идемпотентный upsert по
+   * `run_id`+`node_id`, KI-031): повторный прогон графа обновляет ту же запись,
+   * а не плодит дубли. «Временные» ошибки провайдера (KI-036) повторяются до
+   * {@link NODE_MAX_ATTEMPTS} раз с экспоненциальной задержкой; каждая неудачная
+   * попытка попадает в `node_runs.logs`, а `duration_ms` считается от первой
+   * попытки. Любой сбой (включая падение публикации события) переводит строку в
+   * `failed` — записи не остаются «висящими» в `running`, а исходная ошибка
+   * пробрасывается наружу без подмены (RULES 1.7).
    *
    * @param runId - uuid запуска
    * @param nodeId - `id` узла в графе
    * @param graph - граф запуска
    * @param plan - план выполнения графа
    * @returns выходы узла
-   * @throws Error если узел отсутствует в графе, упал или не удалось записать статус
+   * @throws Error если узел отсутствует в графе, исчерпал попытки или не удалось записать статус
    */
   private async executeNodeAsync(
     runId: string,
@@ -184,6 +287,9 @@ export class ExecutionEngineService {
 
     const inputs = await this.collectInputsAsync(runId, nodeId, plan);
 
+    // KI-031: идемпотентный upsert по (run_id, node_id) — повторный прогон
+    // графа (job-level retry после падения worker'а) обновляет ту же строку
+    // истории, а не плодит дубли.
     const [nodeRun] = await this.db
       .insert(nodeRuns)
       .values({
@@ -192,11 +298,25 @@ export class ExecutionEngineService {
         nodeType: node.type,
         status: 'running',
         inputs,
+        logs: [],
         startedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: [nodeRuns.runId, nodeRuns.nodeId],
+        set: {
+          status: 'running',
+          inputs,
+          error: null,
+          logs: [],
+          startedAt: new Date(),
+          finishedAt: null,
+        },
       })
       .returning({ id: nodeRuns.id });
 
     const startedAt = Date.now();
+    const logs: string[] = [];
+    let failure: unknown = null;
 
     try {
       await this.runEvents.publishAsync(runId, {
@@ -207,35 +327,70 @@ export class ExecutionEngineService {
         startedAt: new Date().toISOString(),
       });
 
-      const outputs = await this.runNodeAsync(node, inputs);
-      const durationMs = Date.now() - startedAt;
+      for (let attempt = 1; attempt <= NODE_MAX_ATTEMPTS; attempt += 1) {
+        try {
+          const outputs = await this.runNodeAsync(node, inputs);
+          const durationMs = Date.now() - startedAt;
 
-      await this.db
-        .update(nodeRuns)
-        .set({ status: 'completed', outputs, durationMs, finishedAt: new Date() })
-        .where(eq(nodeRuns.id, nodeRun.id));
+          await this.db
+            .update(nodeRuns)
+            .set({
+              status: 'completed',
+              outputs,
+              durationMs,
+              logs,
+              finishedAt: new Date(),
+            })
+            .where(eq(nodeRuns.id, nodeRun.id));
 
-      await this.runEvents.publishAsync(runId, {
-        type: 'node_completed',
-        runId,
-        nodeId,
-        outputs,
-        durationMs,
-        finishedAt: new Date().toISOString(),
-      });
+          await this.runEvents.publishAsync(runId, {
+            type: 'node_completed',
+            runId,
+            nodeId,
+            outputs,
+            durationMs,
+            finishedAt: new Date().toISOString(),
+          });
 
-      return outputs;
+          return outputs;
+        } catch (error: unknown) {
+          failure = error;
+
+          // KI-036: повторяем только «временные» ошибки провайдера
+          // (429/5xx/таймаут/сеть) и только пока не исчерпаны попытки.
+          const retryable = error instanceof LlmProviderException && error.retryable;
+
+          if (!retryable || attempt === NODE_MAX_ATTEMPTS) {
+            break;
+          }
+
+          const delayMs = NODE_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+          const logLine =
+            `попытка ${attempt}/${NODE_MAX_ATTEMPTS} упала: ${toMessage(error)} — ` +
+            `повтор через ${delayMs} мс`;
+
+          logs.push(logLine);
+          this.logger.warn(`Узел ${nodeId} запуска ${runId}: ${logLine}`);
+
+          await sleep(delayMs);
+        }
+      }
     } catch (error: unknown) {
-      const message = toMessage(error);
-
-      this.logger.error(`Узел ${nodeId} запуска ${runId} упал: ${message}`);
-
-      await this.markNodeFailedAsync(nodeRun.id, message);
-      await this.publishNodeFailedAsync(runId, nodeId, message);
-
-      // Стек не гасим: ошибку ловит Promise.allSettled в executeAsync (RULES 1.7).
-      throw error;
+      // Сбой до цикла (публикация node_started) или иная инфраструктурная
+      // ошибка: фиксируем как падение узла.
+      failure = error;
     }
+
+    const message = toMessage(failure);
+    const durationMs = Date.now() - startedAt;
+
+    this.logger.error(`Узел ${nodeId} запуска ${runId} упал: ${message}`);
+
+    await this.markNodeFailedAsync(nodeRun.id, message, logs, durationMs);
+    await this.publishNodeFailedAsync(runId, nodeId, message);
+
+    // Стек не гасим: ошибку ловит Promise.allSettled в executeAsync (RULES 1.7).
+    throw failure instanceof Error ? failure : new Error(message);
   }
 
   /**
@@ -368,6 +523,44 @@ export class ExecutionEngineService {
   }
 
   /**
+   * Закрывает запуск как `failed` «по возможности» (фаза планирования, KI-037).
+   *
+   * Сбои самого UPDATE и публикации только логируются: наружу должна уйти
+   * исходная ошибка планирования, иначе причина потеряется (RULES 4.18).
+   *
+   * @param runId - uuid запуска
+   * @param message - текст ошибки планирования
+   * @param outputs - частичные выходы (для фазы планирования — пусто)
+   * @returns промис без значения
+   */
+  private async failRunAsync(
+    runId: string,
+    message: string,
+    outputs: Record<string, Record<string, unknown>>,
+  ): Promise<void> {
+    try {
+      await this.finishRunAsync(runId, 'failed', outputs, message);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Не удалось пометить запуск ${runId} как failed: ${toMessage(error)}`,
+      );
+    }
+
+    try {
+      await this.runEvents.publishAsync(runId, {
+        type: 'run_completed',
+        runId,
+        status: 'failed',
+        finishedAt: new Date().toISOString(),
+      });
+    } catch (error: unknown) {
+      this.logger.error(
+        `Не удалось опубликовать run_completed запуска ${runId}: ${toMessage(error)}`,
+      );
+    }
+  }
+
+  /**
    * Помечает строку `node_runs` как `failed`.
    *
    * Сбой самого UPDATE только логируется: наружу должна уйти исходная ошибка
@@ -375,13 +568,20 @@ export class ExecutionEngineService {
    *
    * @param nodeRunId - uuid строки `node_runs`
    * @param reason - текст ошибки узла
+   * @param logs - накопленные записи о попытках (KI-036)
+   * @param durationMs - суммарное время работы узла со всеми попытками
    * @returns промис без значения
    */
-  private async markNodeFailedAsync(nodeRunId: string, reason: string): Promise<void> {
+  private async markNodeFailedAsync(
+    nodeRunId: string,
+    reason: string,
+    logs: string[],
+    durationMs: number,
+  ): Promise<void> {
     try {
       await this.db
         .update(nodeRuns)
-        .set({ status: 'failed', error: reason, finishedAt: new Date() })
+        .set({ status: 'failed', error: reason, logs, durationMs, finishedAt: new Date() })
         .where(eq(nodeRuns.id, nodeRunId));
     } catch (error: unknown) {
       this.logger.error(

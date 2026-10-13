@@ -38,16 +38,30 @@ export interface ILlmProvider {
  */
 export class LlmProviderException extends Error {
   /**
+   * Признак «временной» ошибки: имеет ли смысл повторять вызов (KI-036).
+   *
+   * `true` — 429/5xx, таймаут, сетевой сбой; `false` — детерминированные
+   * ошибки (400/401/403/404, пустой prompt, неизвестная модель).
+   */
+  readonly retryable: boolean;
+
+  /**
    * @param provider - идентификатор провайдера ('anthropic' | 'openai' | 'llm' | 'registry')
    * @param message - текст ошибки
-   * @param cause - исходная ошибка (если есть)
+   * @param options.cause - исходная ошибка (если есть)
+   * @param options.retryable - можно ли повторять вызов (по умолчанию `false`)
    */
-  constructor(provider: string, message: string, cause?: unknown) {
+  constructor(
+    provider: string,
+    message: string,
+    options: { cause?: unknown; retryable?: boolean } = {},
+  ) {
     super(`[${provider}] ${message}`);
     this.name = 'LlmProviderException';
+    this.retryable = options.retryable ?? false;
 
-    if (cause !== undefined) {
-      this.cause = cause;
+    if (options.cause !== undefined) {
+      this.cause = options.cause;
     }
   }
 }

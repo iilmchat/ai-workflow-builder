@@ -6,6 +6,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { EdgeDto, GraphSnapshotDto, NodeDto } from '../engine/dto/index.js';
@@ -59,25 +60,33 @@ export const workflowRuns = pgTable('workflow_runs', {
  * node_runs — выполнение отдельного узла внутри запуска workflow.
  * nodeId ссылается на id узла внутри snapshot, а не на отдельную таблицу.
  */
-export const nodeRuns = pgTable('node_runs', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  runId: uuid('run_id')
-    .notNull()
-    .references(() => workflowRuns.id, { onDelete: 'cascade' }),
-  nodeId: text('node_id').notNull(),
-  nodeType: text('node_type').notNull(),
-  status: text('status').notNull().default('pending').$type<RunStatus>(),
-  inputs: jsonb('inputs').$type<Record<string, unknown>>().default({}),
-  outputs: jsonb('outputs').$type<Record<string, unknown>>().default({}),
-  error: text('error'),
-  logs: jsonb('logs').$type<string[]>().default([]),
-  tokensIn: integer('tokens_in'),
-  tokensOut: integer('tokens_out'),
-  costUsd: numeric('cost_usd', { precision: 10, scale: 6 }),
-  durationMs: integer('duration_ms'),
-  startedAt: timestamp('started_at'),
-  finishedAt: timestamp('finished_at'),
-});
+export const nodeRuns = pgTable(
+  'node_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => workflowRuns.id, { onDelete: 'cascade' }),
+    nodeId: text('node_id').notNull(),
+    nodeType: text('node_type').notNull(),
+    status: text('status').notNull().default('pending').$type<RunStatus>(),
+    inputs: jsonb('inputs').$type<Record<string, unknown>>().default({}),
+    outputs: jsonb('outputs').$type<Record<string, unknown>>().default({}),
+    error: text('error'),
+    logs: jsonb('logs').$type<string[]>().default([]),
+    tokensIn: integer('tokens_in'),
+    tokensOut: integer('tokens_out'),
+    costUsd: numeric('cost_usd', { precision: 10, scale: 6 }),
+    durationMs: integer('duration_ms'),
+    startedAt: timestamp('started_at'),
+    finishedAt: timestamp('finished_at'),
+  },
+  (table) => [
+    // KI-031: ключ идемпотентности для UPSERT при повторном прогоне графа —
+    // на один запуск узел имеет ровно одну строку истории.
+    uniqueIndex('node_runs_run_id_node_id_uniq').on(table.runId, table.nodeId),
+  ],
+);
 
 export const workflowsRelations = relations(workflows, ({ many }) => ({
   runs: many(workflowRuns),

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "node_runs_run_id_node_id_uniq" ON "node_runs" USING btree ("run_id","node_id");
