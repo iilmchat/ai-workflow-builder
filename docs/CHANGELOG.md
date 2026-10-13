@@ -42,6 +42,12 @@
     заполнен; prompt в логи не попадает (RULES § 5.9).
 
 ### Changed
+- **Husky pre-commit hook** (`d8a642d`) — блокирует коммиты, в которых
+  встречается подстрока с реальным ключом Anthropic или OpenAI,
+  (`ANTHROPIC_API_KEY=`, `OPENAI_API_KEY=`). Заменяет ручную проверку
+  из RULES § 3.12. Дополняет GitHub Push Protection.
+  `husky 9.1.7` + `lint-staged 17.6.0` (lint-staged пока не
+  сконфигурирован — KI-044).
 - **KI-034** — входы узлов нормализованы: ключ в `executionMap.inputs`
   и `node_runs.inputs` теперь **имя порта** (`prompt` / `text`),
   не UI-id хендла. Fallback на `targetHandle → sourceHandle → edge.id`
@@ -55,6 +61,20 @@
   убивает run без повторов.
 
 ### Fixed
+- **KI-031** — повторный запуск зависшего run дублировал `node_runs`.
+  Добавлен `unique (run_id, node_id)` + `ON CONFLICT DO UPDATE` в
+  `executeNodeAsync`; повторный прогон обновляет ту же строку.
+  Миграция `drizzle/0002_steady_molecule_man.sql`.
+- **KI-036** — падение LLM-узла не ретраилось (`attempts: 3` покрывал
+  только инфраструктурные сбои). `LlmProviderException.retryable` +
+  классификация 429/5xx/таймаут/сеть vs 400/401/403/404
+  (`src/llm/provider-errors.ts`). Node-level retry: 3 попытки,
+  backoff 500ms × 2^(n−1), только для `retryable`. После исчерпания
+  — `throw` наружу. +5 тестов.
+- **KI-037** — ошибка `buildExecutionPlanAsync` оставляла run в
+  `pending` навсегда. Обёрнуто в try/catch; при ошибке — `failRunAsync`
+  (status='failed' + `error` с деталями цикла через
+  `describePlanError`). +1 тест.
 - **KI-030** — React Flow handle id (`text-output` / `image-output`)
   не совпадали с именами портов исполнителей (`text` / `url`);
   `collectInputsAsync` молча клал `null` для **всех** UI-графов.
