@@ -20,19 +20,6 @@ import {
 } from './node-executors.js';
 
 /**
- * Контекст попытки выполнения задания BullMQ (KI-059).
- *
- * Нужен, чтобы клиент SSE отличил промежуточный провал запуска (будет retry,
- * KI-040) от финального — когда попытки задания исчерпаны.
- */
-export interface RunAttemptContext {
-  /** Сколько попыток уже сделал BullMQ (0 для первой доставки). */
-  attemptsMade: number;
-  /** Максимум попыток из `defaultJobOptions`; `null`, если лимит не задан. */
-  attempts: number | null;
-}
-
-/**
  * Приводит неизвестную ошибку к тексту для логов и колонки `error`.
  *
  * @param error - значение из `catch` (тип `unknown`)
@@ -196,17 +183,15 @@ export class ExecutionEngineService {
    *
    * @param runId - uuid запуска (строка в workflow_runs уже создана)
    * @param graph - граф из `workflow_runs.snapshot`
-   * @param context - номера попыток задания BullMQ (KI-059): попадают в событие
-   *   `run_completed`, чтобы клиент SSE понял, будет ли ещё retry
    * @returns итог выполнения: статус, число отработавших узлов, outputs
    * @throws Error если узел исчерпал попытки (KI-036) либо не удалось завершить запуск
    * @throws InternalServerErrorException если не удалось обновить запись запуска в БД
+   *
+   * Событие `run_completed` здесь НЕ публикуется (KI-060): признак финальности
+   * зависит от того, сделает ли BullMQ ещё попытку, а это знает только
+   * `RunsProcessor` — он и публикует событие после возврата или проброса.
    */
-  async executeAsync(
-    runId: string,
-    graph: GraphDto,
-    context?: RunAttemptContext,
-  ): Promise<ExecutionResult> {
+  async executeAsync(runId: string, graph: GraphDto): Promise<ExecutionResult> {
     let plan: ExecutionPlanDto;
 
     try {
@@ -224,7 +209,7 @@ export class ExecutionEngineService {
       const message = describePlanError(error);
 
       this.logger.error(`Запуск ${runId}: планирование не удалось — ${message}`);
-      await this.failRunAsync(runId, message, {}, context);
+      await this.failRunAsync(runId, message, {});
 
       return {
         status: 'failed',
@@ -274,16 +259,6 @@ export class ExecutionEngineService {
     const status = failed === null ? 'completed' : 'failed';
 
     await this.finishRunAsync(runId, status, outputs, failed?.error ?? null);
-    await this.runEvents.publishAsync(runId, {
-      type: 'run_completed',
-      runId,
-      status,
-      // KI-059: клиент SSE по этим полям отличает промежуточный провал
-      // (будет retry от BullMQ) от финального.
-      attemptsMade: context?.attemptsMade ?? 0,
-      attempts: context?.attempts ?? null,
-      finishedAt: new Date().toISOString(),
-    });
 
     this.logger.log(
       `Запуск ${runId} завершён: status=${status}, узлов=${executedNodes}` +
@@ -673,41 +648,26 @@ export class ExecutionEngineService {
   /**
    * Закрывает запуск как `failed` «по возможности» (фаза планирования, KI-037).
    *
-   * Сбои самого UPDATE и публикации только логируются: наружу должна уйти
-   * исходная ошибка планирования, иначе причина потеряется (RULES 4.18).
+   * Пишет только статус в БД: событие `run_completed` публикует
+   * {@link RunsProcessor} — он знает, будет ли ещё попытка (KI-060). Сбой самого
+   * UPDATE только логируется: наружу должна уйти исходная ошибка планирования,
+   * иначе причина потеряется (RULES 4.18).
    *
    * @param runId - uuid запуска
    * @param message - текст ошибки планирования
    * @param outputs - частичные выходы (для фазы планирования — пусто)
-   * @param context - номера попыток задания BullMQ (KI-059)
    * @returns промис без значения
    */
   private async failRunAsync(
     runId: string,
     message: string,
     outputs: Record<string, Record<string, unknown>>,
-    context?: RunAttemptContext,
   ): Promise<void> {
     try {
       await this.finishRunAsync(runId, 'failed', outputs, message);
     } catch (error: unknown) {
       this.logger.error(
         `Не удалось пометить запуск ${runId} как failed: ${toMessage(error)}`,
-      );
-    }
-
-    try {
-      await this.runEvents.publishAsync(runId, {
-        type: 'run_completed',
-        runId,
-        status: 'failed',
-        attemptsMade: context?.attemptsMade ?? 0,
-        attempts: context?.attempts ?? null,
-        finishedAt: new Date().toISOString(),
-      });
-    } catch (error: unknown) {
-      this.logger.error(
-        `Не удалось опубликовать run_completed запуска ${runId}: ${toMessage(error)}`,
       );
     }
   }

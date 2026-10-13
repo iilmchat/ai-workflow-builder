@@ -22,10 +22,10 @@ const SSE_KEEP_ALIVE_MS = 15_000;
  * Сервис отвечает за три вещи:
  * 1. снимок состояния (`snapshot`) — первое сообщение потока (KI-049);
  * 2. трансляцию событий из Redis pub/sub (`RunEventsService.subscribeAsync`);
- * 3. завершение потока: финальное `run_completed` (KI-059), отключение
- *    клиента (`AbortSignal` от `@SseSignal()`) или ошибка. Промежуточный
- *    провал запуска поток не закрывает — запуск может быть переигран
- *    job-level retry (KI-040).
+ * 3. завершение потока: `run_completed` с `final: true` (KI-060), отключение
+ *    клиента (`AbortSignal` от `@SseSignal()`) или ошибка. Промежуточный провал
+ *    запуска поток не закрывает — запуск может быть переигран job-level retry
+ *    (KI-040).
  *
  * Подписка на Redis стартует **до** чтения снимка: иначе события, опубликованные
  * за время запроса к БД, потерялись бы.
@@ -131,13 +131,9 @@ export class RunsStreamService {
         while (!next.done && !signal.aborted) {
           subscriber.next({ data: next.value });
 
-          // KI-059: закрываем поток только на ФИНАЛЬНОМ run_completed.
-          // Промежуточный провал не финален: BullMQ переиграет запуск (KI-040),
-          // и клиент должен увидеть новую попытку того же runId.
-          if (
-            next.value.type === 'run_completed' &&
-            this.isFinalCompletion(next.value)
-          ) {
+          // KI-060: поток закрывается по явному признаку финальности `final`,
+          // который выставляет процессор (он знает, будет ли ещё попытка).
+          if (next.value.type === 'run_completed' && next.value.final) {
             break;
           }
 
@@ -158,31 +154,6 @@ export class RunsStreamService {
     } finally {
       await iterator.return?.();
     }
-  }
-
-  /**
-   * Определяет, был ли `run_completed` финальным для запуска (KI-059).
-   *
-   * `completed` — финал всегда. Для `failed` финал наступает, когда попытки
-   * задания исчерпаны: BullMQ передаёт в `attemptsMade` число **предыдущих**
-   * попыток, поэтому на последней попытке `attemptsMade === attempts - 1`
-   * (при `attempts: 3` — 0, 1, 2).
-   *
-   * Если лимит попыток неизвестен (`attempts === null`), поток остаётся
-   * открытым: оборвать клиента и потерять возможный retry (KI-040) хуже, чем
-   * лишнее соединение, а клиент уже получил статус `failed` из события.
-   *
-   * @param event - событие `run_completed`
-   * @returns `true`, если поток можно закрывать
-   */
-  private isFinalCompletion(
-    event: Extract<RunEventDto, { type: 'run_completed' }>,
-  ): boolean {
-    if (event.status === 'completed') {
-      return true;
-    }
-
-    return event.attempts !== null && event.attemptsMade >= event.attempts - 1;
   }
 
   /**

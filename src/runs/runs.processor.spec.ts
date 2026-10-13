@@ -3,7 +3,8 @@ import type { Job } from 'bullmq';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { workflowRuns } from '../db/schema.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
-import type { ExecuteRunJobDto } from './dto/index.js';
+import type { ExecuteRunJobDto, RunEventDto } from './dto/index.js';
+import { RunEventsService } from './run-events.service.js';
 import { RunsProcessor } from './runs.processor.js';
 
 /** Стабильный uuid запуска. */
@@ -71,6 +72,11 @@ describe('RunsProcessor', () => {
   let updateChain: ReturnType<typeof chain>;
   let db: Record<string, ReturnType<typeof vi.fn>>;
   let executor: { executeAsync: ReturnType<typeof vi.fn> };
+  let events: {
+    publishAsync: ReturnType<
+      typeof vi.fn<(runId: string, event: RunEventDto) => Promise<void>>
+    >;
+  };
 
   beforeEach(async () => {
     selectChain = chain([{ status: 'pending', snapshot }]);
@@ -93,11 +99,14 @@ describe('RunsProcessor', () => {
       ),
     };
 
+    events = { publishAsync: vi.fn(() => Promise.resolve()) };
+
     const moduleRef = await Test.createTestingModule({
       providers: [
         RunsProcessor,
         { provide: DRIZZLE, useValue: db as unknown as Database },
         { provide: ExecutionEngineService, useValue: executor },
+        { provide: RunEventsService, useValue: events },
       ],
     }).compile();
 
@@ -108,19 +117,26 @@ describe('RunsProcessor', () => {
     vi.restoreAllMocks();
   });
 
+  /**
+   * Последнее опубликованное событие заданного типа.
+   *
+   * @param type - тип события прогресса
+   * @returns событие либо `undefined`, если такого не публиковалось
+   */
+  const publishedEvent = (type: RunEventDto['type']): RunEventDto | undefined =>
+    events.publishAsync.mock.calls
+      .map(([, event]) => event)
+      .filter((event) => event.type === type)
+      .at(-1);
+
   it('делегирует выполнение executor-сервису с валидированным снимком графа', async () => {
     await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
 
     expect(selectChain.from).toHaveBeenCalledWith(workflowRuns);
-    expect(executor.executeAsync).toHaveBeenCalledWith(
-      RUN_ID,
-      {
-        nodes: [{ id: 'A', type: 'text', data: { value: 'x' } }],
-        edges: [],
-      },
-      // KI-059: контекст попытки задания уходит в executor.
-      { attemptsMade: 0, attempts: 3 },
-    );
+    expect(executor.executeAsync).toHaveBeenCalledWith(RUN_ID, {
+      nodes: [{ id: 'A', type: 'text', data: { value: 'x' } }],
+      edges: [],
+    });
   });
 
   it('помечает запуск failed и бросает при битом snapshot', async () => {
@@ -172,7 +188,6 @@ describe('RunsProcessor', () => {
     expect(executor.executeAsync).toHaveBeenCalledWith(
       RUN_ID,
       expect.objectContaining({ nodes: expect.any(Array) }),
-      { attemptsMade: 0, attempts: 3 },
     );
   });
 
@@ -222,8 +237,6 @@ describe('RunsProcessor', () => {
     expect(executor.executeAsync).toHaveBeenCalledWith(
       RUN_ID,
       expect.objectContaining({ nodes: expect.any(Array) }),
-      // KI-059: на retry-доставке видно, сколько попыток уже сделано.
-      { attemptsMade: 2, attempts: 3 },
     );
   });
 
@@ -273,5 +286,123 @@ describe('RunsProcessor', () => {
       'Некорректный payload',
     );
     expect(db.select).not.toHaveBeenCalled();
+  });
+
+  describe('run_completed и признак финальности (KI-060)', () => {
+    it('публикует final=true при успешном запуске', async () => {
+      await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
+
+      expect(publishedEvent('run_completed')).toEqual(
+        expect.objectContaining({
+          status: 'completed',
+          attemptsMade: 0,
+          attempts: 3,
+          final: true,
+        }),
+      );
+    });
+
+    it('публикует final=true при детерминированном провале без проброса (KI-037)', async () => {
+      // Так ведёт себя executeAsync на графе с циклом: статус failed в БД,
+      // исключения нет → BullMQ повторять не будет.
+      executor.executeAsync.mockResolvedValue({
+        status: 'failed',
+        executedNodes: 0,
+        failedNodeId: null,
+        error: 'Граф содержит цикл',
+        outputs: {},
+      });
+
+      await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
+
+      expect(publishedEvent('run_completed')).toEqual(
+        expect.objectContaining({
+          status: 'failed',
+          attemptsMade: 0,
+          attempts: 3,
+          final: true,
+        }),
+      );
+    });
+
+    it('публикует final=false, когда проброс есть, а попытки остались', async () => {
+      executor.executeAsync.mockRejectedValue(new Error('граф упал'));
+
+      await expect(processor.process(job({ runId: RUN_ID }, 0))).rejects.toThrow(
+        'граф упал',
+      );
+
+      expect(publishedEvent('run_completed')).toEqual(
+        expect.objectContaining({
+          status: 'failed',
+          attemptsMade: 0,
+          attempts: 3,
+          final: false,
+        }),
+      );
+    });
+
+    it('публикует final=true, когда проброс есть и попытки исчерпаны', async () => {
+      executor.executeAsync.mockRejectedValue(new Error('граф упал'));
+
+      await expect(processor.process(job({ runId: RUN_ID }, 2))).rejects.toThrow(
+        'граф упал',
+      );
+
+      expect(publishedEvent('run_completed')).toEqual(
+        expect.objectContaining({
+          status: 'failed',
+          attemptsMade: 2,
+          attempts: 3,
+          final: true,
+        }),
+      );
+    });
+
+    it('публикует final=true, когда лимит попыток не задан (BullMQ не ретраит)', async () => {
+      executor.executeAsync.mockRejectedValue(new Error('граф упал'));
+
+      const noLimitJob = {
+        id: 'job-1',
+        data: { runId: RUN_ID },
+        attemptsMade: 0,
+        opts: {},
+      } as unknown as Job<ExecuteRunJobDto>;
+
+      await expect(processor.process(noLimitJob)).rejects.toThrow('граф упал');
+
+      expect(publishedEvent('run_completed')).toEqual(
+        expect.objectContaining({
+          status: 'failed',
+          attemptsMade: 0,
+          attempts: null,
+          final: true,
+        }),
+      );
+    });
+
+    it('публикует run_completed и при битом snapshot (проброс, попытки остались)', async () => {
+      selectChain.limit.mockImplementation(() => [
+        { status: 'pending', snapshot: { nodes: 'не-массив' } },
+      ]);
+
+      await expect(processor.process(job({ runId: RUN_ID }))).rejects.toThrow(
+        'Некорректный snapshot',
+      );
+
+      expect(publishedEvent('run_completed')).toEqual(
+        expect.objectContaining({ status: 'failed', final: false }),
+      );
+    });
+
+    it('не публикует run_completed, если задание отброшено guard-ом', async () => {
+      selectChain.limit.mockImplementation(() => [
+        { status: 'completed', snapshot, startedAt: new Date(Date.now() - 60_000) },
+      ]);
+
+      await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
+
+      expect(events.publishAsync).not.toHaveBeenCalled();
+    });
   });
 });

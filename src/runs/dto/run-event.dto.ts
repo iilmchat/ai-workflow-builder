@@ -58,6 +58,16 @@ export const RunEventSchema = z.discriminatedUnion('type', [
      * `null`, если лимит не задан.
      */
     attempts: z.number().int().positive().nullable(),
+    /**
+     * Явный признак финала запуска (KI-060).
+     *
+     * `true` — ждать больше нечего, поток SSE можно закрывать. `false` — запуск
+     * провалился, но BullMQ сделает ещё попытку (job пробросил исключение и
+     * лимит попыток не исчерпан). Эвристика по `attemptsMade`/`attempts` не
+     * годится: детерминированный провал планирования закрывает запуск `failed`
+     * без проброса исключения, поэтому retry не будет (KI-037).
+     */
+    final: z.boolean(),
     finishedAt: z.iso.datetime(),
   }),
 ]);

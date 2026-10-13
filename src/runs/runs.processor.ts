@@ -8,6 +8,7 @@ import { workflowRuns, type RunStatus } from '../db/schema.js';
 import { GraphSnapshotSchema, type GraphSnapshotDto } from '../engine/dto/index.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import { ExecuteRunJobSchema, type ExecuteRunJobDto } from './dto/index.js';
+import { RunEventsService } from './run-events.service.js';
 import { RUN_STALE_THRESHOLD_MS, WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 
 /**
@@ -33,9 +34,16 @@ interface RunForExecution {
  *
  * Достаёт снимок графа из `workflow_runs.snapshot`, валидирует его (данные из
  * JSONB — внешние, RULES 1.17) и передаёт выполнение
- * {@link ExecutionEngineService}. Итоговый статус и `run_completed` пишет сам
- * executor; здесь остаётся только логирование и проброс ошибки, чтобы BullMQ
- * сделал retry согласно `defaultJobOptions` (attempts: 3).
+ * {@link ExecutionEngineService}.
+ *
+ * Событие `run_completed` публикует **здесь**, а не в executor'е (KI-060): только
+ * процессор знает, пробросил ли executor исключение, а значит — будет ли BullMQ
+ * делать retry. Это даёт явный признак финальности `final` вместо эвристики по
+ * `attemptsMade`, которая ломалась на детерминированных провалах планирования
+ * (KI-037): там исключения нет, retry не будет, а лимит попыток не исчерпан.
+ *
+ * Статус запуска в БД по-прежнему пишет executor (он владеет `workflow_runs`
+ * и `node_runs`).
  */
 @Processor(WORKFLOW_RUNS_QUEUE)
 export class RunsProcessor extends WorkerHost {
@@ -44,6 +52,7 @@ export class RunsProcessor extends WorkerHost {
   constructor(
     @Inject(DRIZZLE) private readonly db: Database,
     private readonly executionEngine: ExecutionEngineService,
+    private readonly runEvents: RunEventsService,
   ) {
     super();
   }
@@ -132,33 +141,92 @@ export class RunsProcessor extends WorkerHost {
       );
     }
 
-    const snapshot = GraphSnapshotSchema.safeParse(run.snapshot);
-
-    if (!snapshot.success) {
-      const details = z.prettifyError(snapshot.error);
-
-      this.logger.error(`Некорректный snapshot запуска ${runId}: ${details}`);
-      await this.markRunFailedAsync(runId, `Некорректный snapshot запуска: ${details}`);
-
-      throw new Error(`Некорректный snapshot запуска ${runId}: ${details}`);
-    }
-
-    this.logger.log(
-      `Запуск ${runId}: старт выполнения (узлов: ${snapshot.data.nodes.length})`,
-    );
+    const attemptsMade = job.attemptsMade;
+    const attempts = job.opts.attempts ?? null;
+    // Останется ли у BullMQ ещё одна попытка, если job пробросит исключение.
+    // `attempts = null` — лимит не задан, а BullMQ без лимита не ретраит.
+    const willRetry = attempts !== null && attemptsMade < attempts - 1;
 
     try {
-      await this.executionEngine.executeAsync(runId, snapshot.data, {
-        // KI-059: клиент SSE узнаёт из run_completed, остались ли попытки.
-        attemptsMade: job.attemptsMade,
-        attempts: job.opts.attempts ?? null,
+      const snapshot = GraphSnapshotSchema.safeParse(run.snapshot);
+
+      if (!snapshot.success) {
+        const details = z.prettifyError(snapshot.error);
+
+        this.logger.error(`Некорректный snapshot запуска ${runId}: ${details}`);
+        await this.markRunFailedAsync(
+          runId,
+          `Некорректный snapshot запуска: ${details}`,
+        );
+
+        throw new Error(`Некорректный snapshot запуска ${runId}: ${details}`);
+      }
+
+      this.logger.log(
+        `Запуск ${runId}: старт выполнения (узлов: ${snapshot.data.nodes.length})`,
+      );
+
+      const result = await this.executionEngine.executeAsync(runId, snapshot.data);
+
+      // KI-060: исключение не проброшено — повторять запуск нечего (успех либо
+      // детерминированный провал фазы планирования, KI-037), это финал.
+      await this.publishRunCompletedAsync(runId, {
+        status: result.status,
+        attemptsMade,
+        attempts,
+        final: true,
       });
     } catch (error: unknown) {
-      // Итог в БД и событие run_completed проставляет сам executor; здесь
-      // только логируем и пробрасываем — стек не гасим, job уйдёт в retry.
+      // Проброс исключения означает провал job'а: BullMQ сделает retry, если
+      // попытки остались. Публикуем итог попытки и пробрасываем дальше — стек
+      // не гасим (RULES 1.7).
       this.logger.error(`Запуск ${runId} упал: ${toMessage(error)}`);
 
+      await this.publishRunCompletedAsync(runId, {
+        status: 'failed',
+        attemptsMade,
+        attempts,
+        final: !willRetry,
+      });
+
       throw error;
+    }
+  }
+
+  /**
+   * Публикует событие завершения попытки запуска (KI-060).
+   *
+   * Сбой публикации не подменяет исходную ошибку выполнения и не превращает
+   * успешный запуск в упавший job (RULES 4.18): он только логируется. Клиент
+   * в этом случае узнает о состоянии из `GET /runs/:id`.
+   *
+   * @param runId - uuid запуска
+   * @param completion - статус попытки, номера попыток и признак финала
+   * @returns промис без значения
+   */
+  private async publishRunCompletedAsync(
+    runId: string,
+    completion: {
+      status: 'completed' | 'failed';
+      attemptsMade: number;
+      attempts: number | null;
+      final: boolean;
+    },
+  ): Promise<void> {
+    try {
+      await this.runEvents.publishAsync(runId, {
+        type: 'run_completed',
+        runId,
+        status: completion.status,
+        attemptsMade: completion.attemptsMade,
+        attempts: completion.attempts,
+        final: completion.final,
+        finishedAt: new Date().toISOString(),
+      });
+    } catch (error: unknown) {
+      this.logger.error(
+        `Не удалось опубликовать run_completed запуска ${runId}: ${toMessage(error)}`,
+      );
     }
   }
 

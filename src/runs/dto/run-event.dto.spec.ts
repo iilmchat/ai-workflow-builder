@@ -37,6 +37,7 @@ describe('RunEventSchema', () => {
         status: 'failed',
         attemptsMade: 1,
         attempts: 3,
+        final: false,
         finishedAt: ISO_NOW,
       },
     ];
@@ -58,19 +59,55 @@ describe('RunEventSchema', () => {
 
     // Лимит попыток неизвестен: клиент трактует это как «не финал».
     expect(
-      RunEventSchema.safeParse({ ...base, attemptsMade: 0, attempts: null }).success,
+      RunEventSchema.safeParse({
+        ...base,
+        attemptsMade: 0,
+        attempts: null,
+        final: true,
+      }).success,
     ).toBe(true);
 
     // attemptMade обязателен: без него нельзя понять, будет ли retry.
-    expect(RunEventSchema.safeParse({ ...base, attempts: 3 }).success).toBe(false);
+    expect(
+      RunEventSchema.safeParse({ ...base, attempts: 3, final: false }).success,
+    ).toBe(false);
 
     // attempts = 0 невалиден (положительное число), отрицательный attemptsMade тоже.
     expect(
-      RunEventSchema.safeParse({ ...base, attemptsMade: 0, attempts: 0 }).success,
+      RunEventSchema.safeParse({
+        ...base,
+        attemptsMade: 0,
+        attempts: 0,
+        final: false,
+      }).success,
     ).toBe(false);
     expect(
-      RunEventSchema.safeParse({ ...base, attemptsMade: -1, attempts: 3 }).success,
+      RunEventSchema.safeParse({
+        ...base,
+        attemptsMade: -1,
+        attempts: 3,
+        final: false,
+      }).success,
     ).toBe(false);
+  });
+
+  it('требует явный признак финальности final (KI-060)', () => {
+    const base = {
+      type: 'run_completed',
+      runId: RUN_ID,
+      status: 'failed',
+      attemptsMade: 0,
+      attempts: 3,
+      finishedAt: ISO_NOW,
+    };
+
+    expect(RunEventSchema.safeParse({ ...base, final: true }).success).toBe(true);
+    expect(RunEventSchema.safeParse({ ...base, final: false }).success).toBe(true);
+
+    // Без final событие невалидно: эвристика по attemptsMade убрана (KI-060).
+    expect(RunEventSchema.safeParse(base).success).toBe(false);
+    // final обязан быть boolean.
+    expect(RunEventSchema.safeParse({ ...base, final: 'true' }).success).toBe(false);
   });
 
   it('отклоняет событие с неизвестным дискриминатором type', () => {

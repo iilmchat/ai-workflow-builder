@@ -421,7 +421,6 @@ describe('ExecutionEngineService', () => {
       'node_completed',
       'node_started',
       'node_completed',
-      'run_completed',
     ]);
 
     const startedOrder = publish.mock.calls.flatMap(([, event]) =>
@@ -433,10 +432,8 @@ describe('ExecutionEngineService', () => {
       RUN_ID,
       expect.objectContaining({ type: 'run_started', runId: RUN_ID }),
     );
-    expect(publish).toHaveBeenLastCalledWith(
-      RUN_ID,
-      expect.objectContaining({ type: 'run_completed', status: 'completed' }),
-    );
+    // KI-060: run_completed публикует процессор, а не executor.
+    expect(eventTypes()).not.toContain('run_completed');
   });
 
   it('выполняет diamond: B и C на одном уровне, D — последним', async () => {
@@ -521,11 +518,8 @@ describe('ExecutionEngineService', () => {
     expect(fake.run.status).toBe('failed');
     expect(fake.run.error).toBe('узел упал');
     expect(eventTypes()).toContain('node_failed');
-    expect(eventTypes().at(-1)).toBe('run_completed');
-    expect(publish).toHaveBeenLastCalledWith(
-      RUN_ID,
-      expect.objectContaining({ type: 'run_completed', status: 'failed' }),
-    );
+    // KI-060: запуск закрыт в БД, но run_completed отдаёт процессор.
+    expect(eventTypes()).not.toContain('run_completed');
   });
 
   it('прокидывает null, когда выход предшественника пуст (url = null)', async () => {
@@ -581,7 +575,7 @@ describe('ExecutionEngineService', () => {
     });
     expect(fake.rows).toHaveLength(0);
     expect(fake.run.status).toBe('completed');
-    expect(eventTypes()).toEqual(['run_started', 'run_completed']);
+    expect(eventTypes()).toEqual(['run_started']);
   });
 
   it('KI-037: ошибка планирования закрывает запуск failed, а не оставляет pending', async () => {
@@ -599,13 +593,9 @@ describe('ExecutionEngineService', () => {
     expect(fake.run.error).toContain('цикл');
     expect(fake.run.finishedAt).toBeInstanceOf(Date);
     expect(fake.rows).toHaveLength(0);
-    // run_started не публиковался (планирование упало раньше), но терминальное
-    // событие есть — потребитель (R4) не останется в ожидании.
-    expect(eventTypes()).toEqual(['run_completed']);
-    expect(publish).toHaveBeenLastCalledWith(
-      RUN_ID,
-      expect.objectContaining({ type: 'run_completed', status: 'failed' }),
-    );
+    // KI-037 + KI-060: планирование упало до run_started, а run_completed
+    // публикует процессор (он же увидит, что исключения нет → final=true).
+    expect(eventTypes()).toEqual([]);
   });
 
   it('KI-036: повторяет «временную» ошибку и завершает узел с третьей попытки', async () => {
@@ -671,7 +661,7 @@ describe('ExecutionEngineService', () => {
     expect(fake.run.status).toBe('failed');
     expect(fake.rows[0].status).toBe('failed');
     expect(fake.rows[0].logs).toHaveLength(2);
-    expect(eventTypes().at(-1)).toBe('run_completed');
+    expect(eventTypes()).not.toContain('run_completed');
   });
 
   it('KI-036: не повторяет детерминированную ошибку провайдера', async () => {
@@ -822,7 +812,7 @@ describe('ExecutionEngineService', () => {
     expect(runSpy).not.toHaveBeenCalled();
     expect(llmExecute).not.toHaveBeenCalled();
     // События переиспользованного узла повторно не публикуются.
-    expect(eventTypes()).toEqual(['run_started', 'run_completed']);
+    expect(eventTypes()).toEqual(['run_started']);
     // Строка осталась от прошлой попытки — upsert не выполнялся.
     expect(fake.upserts).toHaveLength(0);
     expect(fake.rows[0].durationMs).toBe(42);
@@ -985,31 +975,30 @@ describe('ExecutionEngineService', () => {
     expect(row?.costUsd).toBeNull();
   });
 
-  it('KI-059: без контекста публикует run_completed с attemptsMade=0 и attempts=null', async () => {
-    await service.executeAsync(RUN_ID, { nodes: [node('A', 'text')], edges: [] });
+  it('KI-060: не публикует run_completed — это ответственность процессора', async () => {
+    const result = await service.executeAsync(RUN_ID, {
+      nodes: [node('A', 'text')],
+      edges: [],
+    });
 
-    expect(lastEventOfType('run_completed')).toEqual(
-      expect.objectContaining({
-        status: 'completed',
-        attemptsMade: 0,
-        attempts: null,
-      }),
-    );
+    expect(result.status).toBe('completed');
+    // Executor отдаёт события узлов и старт, но не финал запуска.
+    expect(eventTypes()).toEqual(['run_started', 'node_started', 'node_completed']);
+    expect(eventTypes()).not.toContain('run_completed');
   });
 
-  it('KI-059: пробрасывает attemptsMade/attempts задания в run_completed', async () => {
-    await service.executeAsync(
-      RUN_ID,
-      { nodes: [node('A', 'text')], edges: [] },
-      { attemptsMade: 2, attempts: 3 },
+  it('KI-060: не публикует run_completed и на детерминированном провале планирования', async () => {
+    const graph: GraphDto = {
+      nodes: [node('A', 'text'), node('B', 'text')],
+      edges: [edge('e1', 'A', 'B'), edge('e2', 'B', 'A')],
+    };
+
+    await expect(service.executeAsync(RUN_ID, graph)).resolves.toEqual(
+      expect.objectContaining({ status: 'failed' }),
     );
 
-    expect(lastEventOfType('run_completed')).toEqual(
-      expect.objectContaining({
-        status: 'completed',
-        attemptsMade: 2,
-        attempts: 3,
-      }),
-    );
+    // Ни run_started (планирование не дошло), ни run_completed (это процессор).
+    expect(eventTypes()).toEqual([]);
+    expect(lastEventOfType('run_completed')).toBeUndefined();
   });
 });
