@@ -19,6 +19,18 @@
 ## [Unreleased]
 
 ### Added
+- **Runner — KI-059: сигнал исчерпания попыток (v0.3.8):**
+  - `RunEventSchema.run_completed` несёт `attemptsMade` и `attempts`
+    (из job в процессоре). SSE-поток закрывается только на
+    **финальном** `run_completed`: `completed`, или `failed` с
+    `attemptsMade >= attempts - 1`. `attempts=null` — поток остаётся
+    открытым (неизвестный лимит ≠ «повторов не будет»).
+  - Smoke: 3 job-retry (мёртвый `ANTHROPIC_BASE_URL`) — поток
+    открыт на 0/3 и 1/3, закрывается после 2/3.
+  - 7 новых тестов (202 → 209).
+  - **Остаток:** KI-060 (финальность нельзя надёжно вывести из
+    attemptsMade/attempts при детерминированных провалах),
+    KI-061 (причина провала недоступна клиенту).
 - **Runner — R4.1: SSE + список моделей (v0.3.7):**
   - `GET /runs/:id/stream` — SSE-поток прогресса запуска
     (`@Sse()` + `@SseSignal()`). Первым сообщением — `snapshot`
