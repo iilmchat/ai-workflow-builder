@@ -1,0 +1,30 @@
+name: Sync KNOWN_ISSUES.md with GitHub Issues
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/KNOWN_ISSUES.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify gh CLI
+        run: gh --version
+
+      - name: Sync Issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          pwsh -File scripts/sync-known-issues.ps1 -Repo "${{ github.repository }}"
