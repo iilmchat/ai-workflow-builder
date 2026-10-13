@@ -21,15 +21,15 @@ import { EXECUTE_RUN_JOB, WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 /**
  * Публичное представление запуска workflow, которое отдаёт API.
  *
- * `createdAt` — это `workflow_runs.started_at`: отдельной колонки `created_at`
- * в схеме нет (R1 не меняет существующие таблицы), а `started_at`
- * проставляется БД при INSERT. Колонка nullable, поэтому тип `Date | null`.
+ * `createdAt` — это `workflow_runs.created_at` (KI-015): колонка `NOT NULL
+ * DEFAULT now()`, поэтому дата создания всегда есть и не зависит от старта
+ * выполнения (`started_at`).
  */
 export interface RunResponse {
   id: string;
   workflowId: string;
   status: RunStatus;
-  createdAt: Date | null;
+  createdAt: Date;
 }
 
 /**
@@ -158,7 +158,7 @@ export class RunsService {
       id: run.id,
       workflowId: run.workflowId,
       status: run.status,
-      createdAt: run.startedAt,
+      createdAt: run.createdAt,
     };
   }
 }

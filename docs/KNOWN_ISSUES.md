@@ -255,6 +255,71 @@
 
 ---
 
+### KI-017 — CRUD не валидирует форму графа
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/workflow/dto/create-workflow.dto.ts`,
+  `src/workflow/dto/update-workflow.dto.ts`,
+  `src/workflow/workflow.service.ts`
+- **Описание:** `CreateWorkflowSchema.nodes/edges = z.array(z.any())` —
+  нарушение RULES 4.15 (any запрещён). `UpdateWorkflowSchema` —
+  `z.array(z.unknown())`. После KI-014 в `updateAsync` появился каст
+  `unknown[] as NodeDto[]`. Тип `NodeDto[]` в БД — обещание, а не гарантия.
+- **Решение:** валидировать граф на записи через `z.looseObject` /
+  `.passthrough()`, чтобы не терять UI-поля React Flow (`selected`,
+  `dragging`, `measured`).
+- **Когда чинить:** R4 (перед интеграцией с UI).
+- **Связанные:** KI-014.
+
+---
+
+### KI-018 — Разнобой типов времени в таблицах
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/db/schema.ts`, `drizzle/`
+- **Описание:** `workflow_runs.created_at` — `timestamptz`, а
+  `started_at`/`finished_at` — `timestamp without time zone`. Та же
+  картина в `workflows.created_at/updated_at`, `node_runs`.
+  Сравнения и сериализация будут расходиться.
+- **Решение:** отдельная миграция — привести всё к `timestamptz`.
+- **Когда чинить:** до R4 (UI начнёт показывать даты).
+- **Связанные:** KI-015.
+
+---
+
+### KI-019 — RedisModule не проверяет доступность Redis на старте
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/redis/redis.module.ts`
+- **Описание:** ioredis ретраит в фоне, приложение поднимается при мёртвом
+  Redis. Ошибка всплывёт только на первой публикации / первом job'е.
+  Fail-fast сейчас только по env (validateEnv).
+- **Решение:** `onModuleInit` → `await redis.ping()` с таймаутом.
+- **Когда чинить:** R2.2 или вместе с KI-011 (e2e в CI).
+- **Связанные:** KI-011.
+
+---
+
+### KI-020 — Мёртвое поле `executionMap` во фронтенде
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `web/src/lib/api.ts`
+- **Описание:** `ExecutionPlan.executionMap` объявлено, но рантайм его не
+  читает (используется только `levels` через `web/src/lib/plan.ts`).
+  После KI-003 тип остаётся совместимым (`inputs: Record<string, unknown>`),
+  но поле стоит убрать в R4, чтобы не расходилось с бэком.
+- **Когда чинить:** R4.
+- **Связанные:** KI-003.
+
+---
+
+### KI-021 — У `node_runs` нет `created_at`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/db/schema.ts`
+- **Описание:** В отличие от `workflow_runs` (после KI-015), у `node_runs`
+  нет `created_at` — только `started_at`/`finished_at`. Решить до R4:
+  нужен ли столбцу «создан».
+- **Когда чинить:** до R4.
+- **Связанные:** KI-015, KI-018.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
@@ -265,7 +330,7 @@
 | Deferred | 0 |
 | Documented | 1 |
 | Won't Fix | 0 |
-| **Всего** | **1** |
+| **Всего** | **13** |
 
 ---
 

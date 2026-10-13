@@ -1,7 +1,8 @@
 import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
 import { and, desc, eq } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { workflows, type Workflow } from '../db/schema.js';
+import { workflows, type NewWorkflow, type Workflow } from '../db/schema.js';
+import type { EdgeDto, NodeDto } from '../engine/dto/index.js';
 import type { CreateWorkflowDto, UpdateWorkflowDto } from './dto/index.js';
 
 /** Значение limit по умолчанию для постраничного списка. */
@@ -106,7 +107,16 @@ export class WorkflowService {
     dto: UpdateWorkflowDto,
     userId?: string,
   ): Promise<Workflow | null> {
-    const values = { ...dto, updatedAt: new Date() };
+    // KI-014: колонки типизированы через `$type<NodeDto[]>()` / `$type<EdgeDto[]>()`,
+    // а DTO обновления принимает `unknown[]`: узлы сохраняются «как есть»
+    // (включая UI-поля React Flow), поэтому приведение сужено до двух полей
+    // и не меняет поведение. Валидация формы графа — на входе в engine.
+    const values: Partial<NewWorkflow> = {
+      ...dto,
+      nodes: dto.nodes as NodeDto[] | undefined,
+      edges: dto.edges as EdgeDto[] | undefined,
+      updatedAt: new Date(),
+    };
 
     if (Object.keys(dto).length === 0) {
       throw new BadRequestException('Не передано ни одного поля для обновления');

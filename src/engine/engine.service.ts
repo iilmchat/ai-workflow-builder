@@ -140,9 +140,11 @@ export class EngineService {
    * друг от друга, поэтому внутри уровня их можно запускать параллельно.
    *
    * Для каждого узла строится `executionMap`:
-   * - `inputs` — что подать на вход: имя порта (`targetHandle`) → откуда
-   *   приходит значение (`fromNode`, `fromPort` = `sourceHandle`). Если
-   *   `sourceHandle` не задан, используется имя `output`;
+   * - `inputs` — что подать на вход: ключ → откуда приходит значение
+   *   (`fromNode`, `fromPort` = `sourceHandle`, по умолчанию `output`).
+   *   Ключ выбирается по приоритету `targetHandle` → `sourceHandle` → `edge.id`:
+   *   несколько входов без заданных портов больше не перезаписывают друг
+   *   друга (KI-003);
    * - `dependents` — `id` узлов, которые ждут завершения этого узла.
    *
    * @param graph - валидированный DTO графа
@@ -168,7 +170,7 @@ export class EngineService {
       const plan = executionMap[edge.target];
 
       if (plan) {
-        plan.inputs[edge.targetHandle ?? 'input'] = {
+        plan.inputs[edge.targetHandle ?? edge.sourceHandle ?? edge.id] = {
           fromNode: edge.source,
           fromPort: edge.sourceHandle ?? 'output',
         };

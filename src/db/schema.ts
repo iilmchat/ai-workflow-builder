@@ -8,6 +8,7 @@ import {
   timestamp,
   uuid,
 } from 'drizzle-orm/pg-core';
+import type { EdgeDto, GraphSnapshotDto, NodeDto } from '../engine/dto/index.js';
 
 /** Значения колонки workflow_runs.status / node_runs.status. */
 export const RUN_STATUSES = [
@@ -28,8 +29,8 @@ export const workflows = pgTable('workflows', {
   userId: text('user_id').notNull(),
   name: text('name').notNull(),
   description: text('description'),
-  nodes: jsonb('nodes').notNull().default([]),
-  edges: jsonb('edges').notNull().default([]),
+  nodes: jsonb('nodes').$type<NodeDto[]>().notNull().default([]),
+  edges: jsonb('edges').$type<EdgeDto[]>().notNull().default([]),
   version: integer('version').notNull().default(1),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
@@ -45,10 +46,11 @@ export const workflowRuns = pgTable('workflow_runs', {
     .notNull()
     .references(() => workflows.id, { onDelete: 'cascade' }),
   status: text('status').notNull().default('pending').$type<RunStatus>(),
-  inputs: jsonb('inputs').notNull().default({}),
-  outputs: jsonb('outputs').default({}),
+  inputs: jsonb('inputs').$type<Record<string, unknown>>().notNull().default({}),
+  outputs: jsonb('outputs').$type<Record<string, unknown>>().default({}),
   error: text('error'),
-  snapshot: jsonb('snapshot').notNull(),
+  snapshot: jsonb('snapshot').$type<GraphSnapshotDto>().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   startedAt: timestamp('started_at').defaultNow(),
   finishedAt: timestamp('finished_at'),
 });
@@ -65,10 +67,10 @@ export const nodeRuns = pgTable('node_runs', {
   nodeId: text('node_id').notNull(),
   nodeType: text('node_type').notNull(),
   status: text('status').notNull().default('pending').$type<RunStatus>(),
-  inputs: jsonb('inputs').default({}),
-  outputs: jsonb('outputs').default({}),
+  inputs: jsonb('inputs').$type<Record<string, unknown>>().default({}),
+  outputs: jsonb('outputs').$type<Record<string, unknown>>().default({}),
   error: text('error'),
-  logs: jsonb('logs').default([]),
+  logs: jsonb('logs').$type<string[]>().default([]),
   tokensIn: integer('tokens_in'),
   tokensOut: integer('tokens_out'),
   costUsd: numeric('cost_usd', { precision: 10, scale: 6 }),

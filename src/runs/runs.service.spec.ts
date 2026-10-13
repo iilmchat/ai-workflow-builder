@@ -16,14 +16,16 @@ import { RunsService } from './runs.service.js';
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
 const RUN_ID = '22222222-2222-4222-8222-222222222222';
 const STARTED_AT = new Date('2024-01-01T00:00:00.000Z');
+/** KI-015: дата создания намеренно отличается от даты старта. */
+const CREATED_AT = new Date('2023-12-31T23:00:00.000Z');
 
 const baseWorkflow: Workflow = {
   id: WORKFLOW_ID,
   userId: 'user-1',
   name: 'My workflow',
   description: null,
-  nodes: [{ id: 'n1', type: 'llm' }],
-  edges: [{ from: 'n1', to: 'n2' }],
+  nodes: [{ id: 'n1', type: 'llm', data: {} }],
+  edges: [{ id: 'e1', source: 'n1', target: 'n2' }],
   version: 1,
   createdAt: STARTED_AT,
   updatedAt: STARTED_AT,
@@ -37,6 +39,7 @@ const baseRun: WorkflowRun = {
   outputs: {},
   error: null,
   snapshot: { nodes: baseWorkflow.nodes, edges: baseWorkflow.edges },
+  createdAt: CREATED_AT,
   startedAt: STARTED_AT,
   finishedAt: null,
 };
@@ -142,7 +145,7 @@ describe('RunsService', () => {
         id: RUN_ID,
         workflowId: WORKFLOW_ID,
         status: 'pending',
-        createdAt: STARTED_AT,
+        createdAt: CREATED_AT,
       });
     });
 
@@ -184,8 +187,17 @@ describe('RunsService', () => {
         id: RUN_ID,
         workflowId: WORKFLOW_ID,
         status: 'pending',
-        createdAt: STARTED_AT,
+        createdAt: CREATED_AT,
       });
+    });
+
+    it('берёт createdAt из created_at, а не из started_at (KI-015)', async () => {
+      selectChain.limit.mockImplementation(() => [baseRun]);
+
+      const result = await service.getRunAsync(RUN_ID);
+
+      expect(result.createdAt).toBe(CREATED_AT);
+      expect(result.createdAt).not.toEqual(STARTED_AT);
     });
 
     it('бросает NotFoundException, если запуск не найден', async () => {

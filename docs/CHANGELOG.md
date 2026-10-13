@@ -18,6 +18,47 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Runner — R2.1: подготовка executor'а (v0.3.2):**
+  - **KI-016:** очередь `workflow-runs` получила `defaultJobOptions`:
+    `attempts: 3`, `backoff: exponential 2000ms`, `removeOnComplete`
+    (count 100, age 24ч), `removeOnFail` (count 500, age 7д).
+  - **KI-014:** jsonb-колонки типизированы через `$type<T>()`:
+    `workflows.nodes/edges`, `workflow_runs.snapshot/inputs/outputs`,
+    `node_runs.inputs/outputs/logs`. Тип snapshot — `GraphSnapshotDto`
+    (новая Zod-схема в `src/engine/dto/graph-snapshot.dto.ts`).
+  - **KI-015:** в `workflow_runs` добавлен `created_at timestamptz NOT NULL
+    DEFAULT now()` + backfill из `started_at` (миграция
+    `drizzle/0001_flippant_lockjaw.sql`). `RunResponse.createdAt` теперь
+    читает из `created_at`, а не из `started_at`.
+  - **KI-003:** `EngineService.buildExecutionPlanAsync` — ключ в
+    `executionMap.inputs` теперь `targetHandle ?? sourceHandle ?? edge.id`
+    (было `targetHandle ?? 'input'`). Multi-input узлы без заданных
+    портов больше не перезаписывают друг друга.
+  - Pub/sub-инфраструктура:
+    - `src/redis/redis.module.ts` — `@Global()` `RedisModule` +
+      `InjectRedis()`, отдельный ioredis-клиент (не пул BullMQ).
+    - `src/runs/dto/run-event.dto.ts` — `RunEventSchema` (discriminated
+      union): `run_started`, `node_started`, `node_completed`,
+      `node_failed`, `run_completed`.
+    - `src/runs/run-events.service.ts` — `RunEventsService`
+      (`publishAsync`, `subscribeAsync` с `AbortSignal`).
+    - `src/runs/runs.constants.ts` — `runEventsChannel(runId)`.
+  - 13 новых тестов (82 → 95): engine (+2, KI-003), runs.service
+    (+1, KI-015), run-event.dto (3), run-events.service (3),
+    schema.spec (4).
+  - `src/workflow/workflow.service.ts` — точечный каст `nodes`/`edges`
+    в `updateAsync` (следствие KI-014, см. KI-017).
+
+### Changed
+- **Контракт `executionMap`** (KI-003): ключи внутри узла больше не
+  схлопываются в `'input'`, если `targetHandle` не задан. Frontend это
+  поле не использует (KI-020), executor R2.2 — будет.
+
+### Known Issues
+- Заведены KI-017…KI-021. Ключевые: KI-017 (CRUD без Zod-валидации
+  графа + `z.any()`), KI-018 (разнобой timestamptz / timestamp).
+
 ### Added
 - **Runner — R1: BullMQ-инфраструктура (v0.3.1):**
   - `docker-compose.yml` — сервис `redis` (`redis:7-alpine`, порт 6379,

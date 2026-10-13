@@ -8,6 +8,7 @@ import { DbModule } from './db/db.module.js';
 import { WorkflowModule } from './workflow/workflow.module.js';
 import { EngineModule } from './engine/engine.module.js';
 import { NodesModule } from './nodes/nodes.module.js';
+import { RedisModule } from './redis/redis.module.js';
 import { RunsModule } from './runs/runs.module.js';
 
 @Module({
@@ -28,6 +29,7 @@ import { RunsModule } from './runs/runs.module.js';
       }),
     }),
     DbModule,
+    RedisModule,
     WorkflowModule,
     EngineModule,
     NodesModule,

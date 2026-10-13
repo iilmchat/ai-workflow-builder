@@ -277,7 +277,7 @@ describe('EngineService', () => {
       });
     });
 
-    it('использует порты input/output по умолчанию', async () => {
+    it('использует edge.id как ключ и output как порт по умолчанию', async () => {
       const graph: GraphDto = {
         nodes: [node('A'), node('B')],
         edges: [edge('A', 'B')],
@@ -285,8 +285,48 @@ describe('EngineService', () => {
 
       const plan = await service.buildExecutionPlanAsync(graph);
 
+      // KI-003: без targetHandle ключом становится edge.id, а не 'input'.
       expect(plan.executionMap.B.inputs).toEqual({
-        input: { fromNode: 'A', fromPort: 'output' },
+        'A->B': { fromNode: 'A', fromPort: 'output' },
+      });
+    });
+
+    it('не теряет входы при нескольких связях без targetHandle (KI-003)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A'), node('B'), node('C')],
+        edges: [edge('A', 'C', 'e1'), edge('B', 'C', 'e2')],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      expect(plan.executionMap.C.inputs).toEqual({
+        e1: { fromNode: 'A', fromPort: 'output' },
+        e2: { fromNode: 'B', fromPort: 'output' },
+      });
+    });
+
+    it('выбирает ключ inputs по приоритету targetHandle → sourceHandle → edge.id', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A'), node('B'), node('C')],
+        edges: [
+          {
+            id: 'e1',
+            source: 'A',
+            target: 'C',
+            sourceHandle: 'out',
+            targetHandle: 'in',
+          },
+          { id: 'e2', source: 'B', target: 'C', sourceHandle: 'out' },
+          edge('A', 'C', 'e3'),
+        ],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      expect(plan.executionMap.C.inputs).toEqual({
+        in: { fromNode: 'A', fromPort: 'out' },
+        out: { fromNode: 'B', fromPort: 'out' },
+        e3: { fromNode: 'A', fromPort: 'output' },
       });
     });
 
