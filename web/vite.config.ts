@@ -39,6 +39,10 @@ export default defineConfig({
         timeout: 0,
         proxyTimeout: 0,
       },
+      // v0.6.0b.2.3: каталог media-моделей (`GET /media/models?type=IMAGE`).
+      // KI-072: префиксы перечисляются вручную — /media забыли при
+      // добавлении узла Image Generation.
+      '/media': 'http://localhost:3000',
     },
   },
 });
