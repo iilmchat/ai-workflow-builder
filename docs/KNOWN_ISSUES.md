@@ -146,17 +146,26 @@
 ---
 
 ### KI-010 — pnpm 12 перезаписывает `pnpm-lock.yaml` при каждом запуске
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-13
-- **Файлы:** `pnpm-lock.yaml`, `package.json` (`packageManager`)
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-13
+- **Исправлено в:** v0.3.2 (коммит `37cabba`) | **Исправлено:** 2026-10-13
+- **Файлы:** `pnpm-workspace.yaml`, `pnpm-lock.yaml`, `package.json` (`packageManager`)
 - **Описание:** pnpm 12 c полем `packageManager` в `package.json` при каждом
-  запуске добавляет в lockfile служебную запись `@pnpm/exe@12.11.2`
-  (self-management). При попадании в коммит ломает CI-шаг
+  запуске не-install команды (`build`, `test`, `exec`, `db:generate`) добавляет
+  в `pnpm-lock.yaml` служебную запись `@pnpm/exe@12.11.2` (self-management,
+  pnpm/pnpm#14575). `install` пишет один набор ключей в
+  `packageManagerDependencies`, остальные команды — другой; lockfile
+  «мерцает» в обе стороны, и любой коммит с ним ломает CI-шаг
   `pnpm install --frozen-lockfile`.
-- **Возможные решения:**
-  1. Зафиксировать версию pnpm без self-management (`.npmrc` + `use-node-version`).
-  2. Добавить в CI шаг `pnpm install --no-frozen-lockfile` — плохо.
-  3. Перейти на corepack (`corepack enable && corepack prepare pnpm@12.11.2 --activate`).
-- **Не блокер:** R1. Проверять `git diff pnpm-lock.yaml` перед каждым коммитом.
+- **Fix:** `pmOnFail: ignore` в `pnpm-workspace.yaml` — официальная замена
+  удалённого `managePackageManagerVersions: false`. Отключает проверку версии
+  и переключение на заявленную в `packageManager` → pnpm не пишет
+  `@pnpm/exe` → lockfile стабилен.
+- **Проверено:** `pnpm config list` показывает `pmOnFail: ignore`;
+  после `pnpm build` и `pnpm test` `git status --short pnpm-lock.yaml` пуст.
+- **Альтернатива (не использована):** `corepack enable` — падает с
+  `EPERM` на Windows без прав администратора (shim-файлы создаются в
+  `C:\Program Files\nodejs\`). В CI на ubuntu-latest работает, но для
+  локальной разработки неприменим.
 - **Связанные:** —
 
 ---
