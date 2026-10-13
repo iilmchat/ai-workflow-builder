@@ -1,0 +1,17 @@
+#!/bin/sh
+# KI-044: блокируем коммит, если в staged-файлах есть паттерны API-ключей.
+# Заменяет ручную проверку из RULES 3.12.
+#
+# Сам этот файл исключается из проверки: в нём есть regex-паттерн
+# 'sk-ant-...', который иначе self-match'ится и блокирует любой коммит,
+# трогающий .husky/pre-commit (включая сам hook).
+
+KEY_PATTERN='sk-ant-[a-zA-Z0-9_-]{20,}|sk-[a-zA-Z0-9]{20,}|ANTHROPIC_API_KEY=sk-|OPENAI_API_KEY=sk-'
+
+if git diff --cached --diff-filter=ACM -- ':!.husky/pre-commit' | grep -E "($KEY_PATTERN)"; then
+  echo ""
+  echo "❌ Обнаружен API-ключ в staged-изменениях."
+  echo "   Убери его из файла и добавь в .env (в .gitignore)."
+  echo "   Если ключ уже был в истории git — ротируй его немедленно (RULES 5.7)."
+  exit 1
+fi
