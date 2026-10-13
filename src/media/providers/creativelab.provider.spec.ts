@@ -194,6 +194,10 @@ describe('CreativeLabProvider', () => {
       type: 'IMAGE',
       price: 0.6,
       priceUnit: 'per_generation',
+      // KI-112: mapper всегда отдаёт ставку за входные данные; в фикстуре
+      // upstream полей price_input/price_input_unit нет, поэтому null.
+      priceInput: null,
+      priceInputUnit: null,
       moderation: 'auto',
       prompt: 'required',
       params: [
@@ -503,7 +507,7 @@ describe('CreativeLabProvider', () => {
     const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
     mockFetchWith(
-      { ...taskPayload, status: 'done', price: 0.6, result: ['https://cdn/img.png'] },
+      { ...taskPayload, status: 'done', price: 0.6, result: [{ url: 'https://cdn/img.png' }] },
       200,
       { Deprecation: 'true', 'x-model-served': 'flux-pro' },
     );
@@ -533,7 +537,8 @@ describe('CreativeLabProvider', () => {
       ...taskPayload,
       status: 'done',
       price: 0.6,
-      result: ['https://cdn/img.png'],
+      // KI-111: upstream отдаёт result как массив объектов { url }.
+      result: [{ url: 'https://cdn/img.png' }],
     });
 
     const provider = new CreativeLabProvider(
