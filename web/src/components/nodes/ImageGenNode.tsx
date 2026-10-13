@@ -18,6 +18,8 @@ import {
 export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
   // Уровень выполнения появляется после Run (/engine/plan).
   const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
+  // Статус выполнения приходит из SSE-потока (R4.2).
+  const status = useWorkflowStore((state) => state.nodeStatuses[id]);
 
   return (
     <>
@@ -33,6 +35,7 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
         icon={NODE_TYPE_ICONS.image}
         title={NODE_TYPE_LABELS.image}
         executionLevel={executionLevel}
+        status={status}
       >
         {data.imageUrl ? (
           <img

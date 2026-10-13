@@ -21,6 +21,8 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
   const { updateNodeData } = useReactFlow();
   // Уровень выполнения появляется после Run (/engine/plan).
   const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
+  // Статус выполнения приходит из SSE-потока (R4.2).
+  const status = useWorkflowStore((state) => state.nodeStatuses[id]);
 
   return (
     <>
@@ -36,6 +38,7 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
         icon={NODE_TYPE_ICONS.llm}
         title={NODE_TYPE_LABELS.llm}
         executionLevel={executionLevel}
+        status={status}
       >
         <select
           value={data.model}

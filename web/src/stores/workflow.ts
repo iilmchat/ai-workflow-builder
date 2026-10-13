@@ -9,6 +9,7 @@ import {
 } from '@xyflow/react';
 import { create } from 'zustand';
 import {
+  createRunAsync,
   createWorkflowAsync,
   getWorkflowAsync,
   planWorkflowAsync,
@@ -17,6 +18,7 @@ import {
   type ApiGraphNode,
   type ApiWorkflow,
 } from '@/lib/api';
+import { subscribeToRunStream } from '@/lib/run-stream';
 import { levelsToMap } from '@/lib/plan';
 import {
   LLM_MODELS,
@@ -27,9 +29,54 @@ import {
   type NodeType,
   type TextNodeData,
 } from '@/types/graph';
+import type {
+  RunEventMessage,
+  RunStatus,
+  SnapshotMessage,
+} from '@/types/run-stream';
 
 /** Позиция узла на холсте. */
 type Position = { x: number; y: number };
+
+/**
+ * Закрытие текущего SSE-потока запуска.
+ *
+ * Хранится в модульной переменной, а не в состоянии стора: это не данные для
+ * рендера, и лишние обновления подписчиков при каждой подписке/отписке не нужны.
+ */
+let closeRunStream: (() => void) | null = null;
+
+/** Закрывает текущий поток запуска, если он открыт. */
+function closeStreamIfAny(): void {
+  closeRunStream?.();
+  closeRunStream = null;
+}
+
+/**
+ * Проверяет, что статус запуска финальный.
+ *
+ * @param status - статус запуска либо `null`
+ * @returns `true`, если запуск завершён и поток больше не нужен
+ */
+function isFinalStatus(status: RunStatus | null): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+/**
+ * Возвращает патч состояния с новым статусом узла.
+ *
+ * @param state - текущее состояние стора
+ * @param nodeId - id узла графа
+ * @param status - новый статус узла
+ * @returns патч `nodeStatuses` для `set`
+ */
+function withNodeStatus(
+  state: WorkflowState,
+  nodeId: string,
+  status: RunStatus,
+): Pick<WorkflowState, 'nodeStatuses'> {
+  return { nodeStatuses: { ...state.nodeStatuses, [nodeId]: status } };
+}
 
 /** Владелец графа: авторизации пока нет, поэтому значение фиксированное. */
 export const DEFAULT_USER_ID = 'demo-user';
@@ -58,6 +105,29 @@ export interface WorkflowState {
   /** id узла → номер уровня выполнения из `/engine/plan`. */
   executionLevels: Record<string, number>;
 
+  /** id текущего запуска (`null` — запусков ещё не было). */
+  runId: string | null;
+  /** Статус запуска из SSE (`null` — запуск не стартовал). */
+  runStatus: RunStatus | null;
+  /** Текст последней ошибки запуска (для панели результата R4.3). */
+  runError: string | null;
+  /** id узла → статус выполнения (snapshot + события потока). */
+  nodeStatuses: Record<string, RunStatus>;
+  /** id узла → последние выходы узла из `node_completed`. */
+  nodeOutputs: Record<string, Record<string, unknown>>;
+  /**
+   * Номер текущей попытки job'а (1-based) для подписи «попытка N/M».
+   *
+   * Контракт не несёт `attemptsMade` в `run_started`, поэтому счёт ведётся по
+   * числу стартов; `attemptsMade` из `run_completed` (KI-059) остаётся
+   * авторитетным значением о завершённых попытках.
+   */
+  attemptNumber: number;
+  /** Сколько попыток уже завершил BullMQ (из `run_completed`, KI-059). */
+  attemptsMade: number;
+  /** Лимит попыток job'а (из `run_completed`; `null` — неизвестен). */
+  attempts: number | null;
+
   isSaving: boolean;
   isLoading: boolean;
   error: string | null;
@@ -81,6 +151,30 @@ export interface WorkflowState {
   loadWorkflowAsync: (id: string) => Promise<void>;
   /** Строит план выполнения и раскладывает уровни по узлам. */
   runPlanAsync: () => Promise<void>;
+
+  /**
+   * Запускает workflow: `POST /runs` + подписка на SSE-поток прогресса.
+   *
+   * @param workflowId - id сохранённого workflow
+   */
+  startRunAsync: (workflowId: string) => Promise<void>;
+  /**
+   * Применяет снимок состояния: **заменяет** `nodeStatuses`/`nodeOutputs`.
+   *
+   * Snapshot — источник истины на момент подключения, поэтому слияние с прошлым
+   * состоянием неверно (после переподключения остались бы устаревшие статусы).
+   *
+   * @param snapshot - сообщение-снимок из потока
+   */
+  applySnapshot: (snapshot: SnapshotMessage) => void;
+  /**
+   * Применяет событие прогресса запуска.
+   *
+   * @param event - событие из потока (кроме snapshot)
+   */
+  applyEvent: (event: RunEventMessage) => void;
+  /** Сбрасывает состояние запуска и закрывает поток (Load / Save / новый Run). */
+  resetRunState: () => void;
 
   setCurrentWorkflowId: (id: string | null, name?: string) => void;
   setCurrentWorkflowName: (name: string) => void;
@@ -249,6 +343,15 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   executionLevels: {},
 
+  runId: null,
+  runStatus: null,
+  runError: null,
+  nodeStatuses: {},
+  nodeOutputs: {},
+  attemptNumber: 0,
+  attemptsMade: 0,
+  attempts: null,
+
   isSaving: false,
   isLoading: false,
   error: null,
@@ -313,6 +416,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         isSaving: false,
         notice: { kind: 'success', text: `Workflow сохранён: ${saved.name}` },
       });
+      // Сохранён другой граф — прежнее состояние запуска к нему не относится.
+      get().resetRunState();
     } catch (error) {
       const message = messageOf(error);
       set({ isSaving: false, error: message, notice: { kind: 'error', text: message } });
@@ -338,6 +443,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           ? { kind: 'error', text: warning }
           : { kind: 'success', text: `Workflow загружен: ${workflow.name}` },
       });
+      // Загружен другой граф: состояние прошлого запуска сбрасываем.
+      get().resetRunState();
     } catch (error) {
       const message = messageOf(error);
       set({ isLoading: false, error: message, notice: { kind: 'error', text: message } });
@@ -383,12 +490,155 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }
   },
 
+  startRunAsync: async (workflowId) => {
+    // Новый запуск не должен смешиваться с состоянием предыдущего.
+    get().resetRunState();
+    set({ runStatus: 'pending', error: null });
+
+    let runId: string;
+
+    try {
+      const run = await createRunAsync(workflowId);
+
+      runId = run.id;
+      set({ runId: run.id, runStatus: run.status });
+    } catch (error) {
+      const message = messageOf(error);
+
+      set({
+        runStatus: 'failed',
+        runError: message,
+        notice: { kind: 'error', text: message },
+      });
+
+      return;
+    }
+
+    closeRunStream = subscribeToRunStream(runId, {
+      onMessage: (message) => {
+        if (message.type === 'snapshot') {
+          get().applySnapshot(message);
+
+          return;
+        }
+
+        get().applyEvent(message);
+      },
+      onError: () => {
+        // EventSource переподключается сам; закрываем только завершённый запуск:
+        // иначе повторное подключение принесёт новый snapshot и состояние
+        // восстановится (KI-049).
+        if (isFinalStatus(get().runStatus)) {
+          closeStreamIfAny();
+        }
+      },
+      onFatalError: (attempts) => {
+        const text = `Поток запуска не отвечает (ошибок подряд: ${attempts})`;
+
+        set({ runError: text, notice: { kind: 'error', text } });
+      },
+    });
+  },
+
+  applySnapshot: (snapshot) => {
+    const nodeStatuses: Record<string, RunStatus> = {};
+    const nodeOutputs: Record<string, Record<string, unknown>> = {};
+
+    for (const node of snapshot.nodes) {
+      nodeStatuses[node.nodeId] = node.status;
+
+      if (node.outputs) {
+        nodeOutputs[node.nodeId] = node.outputs;
+      }
+    }
+
+    // Snapshot — источник истины на момент подключения: карты заменяются
+    // целиком, а не сливаются с прошлым состоянием.
+    set({
+      runId: snapshot.run.id,
+      runStatus: snapshot.run.status,
+      nodeStatuses,
+      nodeOutputs,
+    });
+  },
+
+  applyEvent: (event) => {
+    switch (event.type) {
+      case 'run_started':
+        set((state) => ({
+          runStatus: 'running',
+          // Первый старт — попытка 1. Дальше номер уточняется из run_completed
+          // (`attemptsMade`): run_started не несёт этой информации, и первое
+          // событие может быть пропущено, если клиент подписался позже старта.
+          attemptNumber: state.attemptNumber === 0 ? 1 : state.attemptNumber,
+        }));
+
+        return;
+
+      case 'node_started':
+        set((state) => withNodeStatus(state, event.nodeId, 'running'));
+
+        return;
+
+      case 'node_completed':
+        set((state) => ({
+          ...withNodeStatus(state, event.nodeId, 'completed'),
+          nodeOutputs: { ...state.nodeOutputs, [event.nodeId]: event.outputs },
+        }));
+
+        return;
+
+      case 'node_failed':
+        set((state) => ({
+          ...withNodeStatus(state, event.nodeId, 'failed'),
+          // Текст падения узла доступен сразу — пригодится в панели R4.3.
+          runError: event.error,
+        }));
+
+        return;
+
+      case 'run_completed':
+        set((state) => ({
+          runStatus: event.status,
+          attemptsMade: event.attemptsMade,
+          attempts: event.attempts,
+          // `attemptsMade` — сколько попыток BullMQ сделал ДО текущей доставки
+          // (KI-059), значит следующая попытка имеет номер attemptsMade + 2.
+          attemptNumber: event.attemptsMade + 2,
+          runError:
+            event.status === 'failed'
+              ? (state.runError ?? 'Запуск завершился с ошибкой')
+              : null,
+        }));
+
+        // KI-060: `final` — признак того, что retry не будет: поток закрываем.
+        if (event.final) {
+          closeStreamIfAny();
+        }
+
+        return;
+    }
+  },
+
+  resetRunState: () => {
+    closeStreamIfAny();
+    set({
+      runId: null,
+      runStatus: null,
+      runError: null,
+      nodeStatuses: {},
+      nodeOutputs: {},
+      attemptNumber: 0,
+      attemptsMade: 0,
+      attempts: null,
+    });
+  },
+
   setCurrentWorkflowId: (id, name) =>
     set((state) => ({
       currentWorkflowId: id,
       currentWorkflowName: name ?? state.currentWorkflowName,
     })),
-
   setCurrentWorkflowName: (name) => set({ currentWorkflowName: name }),
 
   setExecutionLevels: (levels) => set({ executionLevels: levelsToMap(levels) }),

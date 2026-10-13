@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useWorkflowStore } from '@/stores/workflow';
+import type { RunStatus } from '@/types/run-stream';
 import { LoadModal } from './LoadModal';
 
 /** Простой индикатор занятости для кнопок. */
@@ -12,9 +13,64 @@ function Spinner() {
   );
 }
 
+/** Статусы, при которых запуск уже идёт и повторный запуск запрещён. */
+const ACTIVE_RUN_STATUSES: ReadonlySet<RunStatus> = new Set(['pending', 'running']);
+
+/** Подпись и цвет бейджа статуса запуска. */
+const RUN_STATUS_STYLE: Record<RunStatus, { text: string; className: string }> = {
+  pending: { text: 'Создаётся…', className: 'bg-slate-100 text-slate-600' },
+  running: { text: 'Выполняется…', className: 'bg-blue-100 text-blue-700' },
+  completed: { text: 'Готово', className: 'bg-green-100 text-green-700' },
+  failed: { text: 'Ошибка', className: 'bg-red-100 text-red-700' },
+  cancelled: { text: 'Отменён', className: 'bg-slate-100 text-slate-600' },
+};
+
+/**
+ * Собирает подпись статуса запуска.
+ *
+ * @param status - статус запуска (null — запуск не выполнялся)
+ * @param attemptNumber - номер текущей попытки job'а (1-based)
+ * @param attempts - лимит попыток job'а (null — неизвестен)
+ * @returns текст для кнопки Run
+ */
+function runStatusText(
+  status: RunStatus | null,
+  attemptNumber: number,
+  attempts: number | null,
+): string {
+  if (status === null) {
+    return 'Run';
+  }
+
+  const base = RUN_STATUS_STYLE[status].text;
+
+  if (status === 'running' && attempts !== null) {
+    return `${base} (попытка ${Math.max(attemptNumber, 1)}/${attempts})`;
+  }
+
+  return base;
+}
+
+/**
+ * Пишет id workflow в адресную строку.
+ *
+ * После перезагрузки страница вернётся к тому же workflow (App читает
+ * `?workflowId=`).
+ *
+ * @param workflowId - id сохранённого workflow
+ */
+function syncWorkflowUrlParam(workflowId: string): void {
+  const url = new URL(window.location.href);
+
+  url.searchParams.set('workflowId', workflowId);
+  window.history.replaceState(null, '', url);
+}
+
 /**
  * Верхняя панель редактора: имя workflow и действия Save / Load / Run.
  *
+ * Run запускает реальный прогон (`POST /runs` + SSE, R4.2) и показывает статус:
+ * «Создаётся…», «Выполняется… (попытка N/M)», «Готово», «Ошибка».
  * Позиционируется фиксированно (56px), канвас занимает остальное место.
  */
 export function TopBar() {
@@ -27,9 +83,15 @@ export function TopBar() {
   const isSaving = useWorkflowStore((state) => state.isSaving);
   const isLoading = useWorkflowStore((state) => state.isLoading);
   const saveWorkflowAsync = useWorkflowStore((state) => state.saveWorkflowAsync);
-  const runPlanAsync = useWorkflowStore((state) => state.runPlanAsync);
+  const startRunAsync = useWorkflowStore((state) => state.startRunAsync);
+  const runStatus = useWorkflowStore((state) => state.runStatus);
+  const runError = useWorkflowStore((state) => state.runError);
+  const attemptNumber = useWorkflowStore((state) => state.attemptNumber);
+  const attempts = useWorkflowStore((state) => state.attempts);
 
   const isBusy = isSaving || isLoading;
+  const isRunActive = runStatus !== null && ACTIVE_RUN_STATUSES.has(runStatus);
+  const runLabel = runStatusText(runStatus, attemptNumber, attempts);
 
   /**
    * Сохраняет граф. После первого сохранения id попадает в URL, чтобы
@@ -43,10 +105,32 @@ export function TopBar() {
     const idAfter = useWorkflowStore.getState().currentWorkflowId;
 
     if (!idBefore && idAfter) {
-      const url = new URL(window.location.href);
-      url.searchParams.set('workflowId', idAfter);
-      window.history.replaceState(null, '', url);
+      syncWorkflowUrlParam(idAfter);
     }
+  };
+
+  /**
+   * Запускает workflow. Несохранённый граф сначала сохраняется: `POST /runs`
+   * требует id из БД, а backend выполняет снимок графа из сохранённого workflow.
+   */
+  const handleRun = async () => {
+    let workflowId = useWorkflowStore.getState().currentWorkflowId;
+
+    if (!workflowId) {
+      await saveWorkflowAsync();
+      workflowId = useWorkflowStore.getState().currentWorkflowId;
+
+      if (workflowId) {
+        syncWorkflowUrlParam(workflowId);
+      }
+    }
+
+    if (!workflowId) {
+      // Сохранение не удалось: причина уже показана уведомлением из стора.
+      return;
+    }
+
+    await startRunAsync(workflowId);
   };
 
   return (
@@ -64,6 +148,16 @@ export function TopBar() {
           // nodrag: единое правило для всех input внутри редактора.
           className="nodrag w-64 rounded-lg border border-transparent px-2 py-1 text-sm font-medium text-slate-700 outline-none hover:border-slate-200 focus:border-slate-300"
         />
+
+        {runStatus !== null && (
+          <span
+            data-run-badge={runStatus}
+            title={runError ?? undefined}
+            className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${RUN_STATUS_STYLE[runStatus].className}`}
+          >
+            {runLabel}
+          </span>
+        )}
 
         <div className="ml-auto flex items-center gap-2">
           <button
@@ -88,12 +182,14 @@ export function TopBar() {
 
           <button
             type="button"
-            onClick={() => void runPlanAsync()}
-            disabled={isBusy}
+            onClick={() => void handleRun()}
+            disabled={isBusy || isRunActive}
+            // Атрибут для e2e/smoke: статус запуска виден без разбора текста.
+            data-run-status={runStatus ?? 'idle'}
             className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isLoading ? <Spinner /> : <span aria-hidden="true">▶️</span>}
-            Run
+            {isRunActive ? <Spinner /> : <span aria-hidden="true">▶️</span>}
+            {runLabel}
           </button>
         </div>
       </header>

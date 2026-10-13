@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RunStatusSchema } from '@/types/run-stream';
 
 /** База API: пустая строка — запросы идут на dev-сервер и проксируются Vite. */
 const API_BASE = '';
@@ -50,6 +51,22 @@ export interface ExecutionPlan {
     { inputs: Record<string, unknown>; dependents: string[] }
   >;
 }
+
+/**
+ * Схема запуска, возвращаемого `POST /runs`.
+ *
+ * Поля совпадают с backend `RunResponse`; `createdAt` приходит ISO-строкой
+ * после сериализации `Date`, `status` — тот же набор значений, что и в SSE.
+ */
+export const ApiRunSchema = z.object({
+  id: z.string(),
+  workflowId: z.string(),
+  status: RunStatusSchema,
+  createdAt: z.string(),
+});
+
+/** Запуск в терминах API. */
+export type ApiRun = z.infer<typeof ApiRunSchema>;
 
 /** Ошибка обращения к API (сеть, HTTP-статус или неожиданный формат ответа). */
 export class ApiError extends Error {
@@ -234,4 +251,21 @@ export async function planWorkflowAsync(
     method: 'POST',
     body: JSON.stringify({ nodes, edges }),
   });
+}
+
+/**
+ * Создаёт запуск workflow: backend фиксирует snapshot графа и ставит задание
+ * в очередь (`POST /runs`, R1).
+ *
+ * @param workflowId - id сохранённого workflow
+ * @returns созданный запуск (нужен `id` для подписки на SSE)
+ * @throws ApiError при сетевой ошибке, не-2xx статусе или неожиданном формате
+ */
+export async function createRunAsync(workflowId: string): Promise<ApiRun> {
+  const data = await requestAsync<unknown>('/runs', {
+    method: 'POST',
+    body: JSON.stringify({ workflowId }),
+  });
+
+  return ApiRunSchema.parse(data);
 }
