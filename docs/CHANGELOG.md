@@ -55,12 +55,26 @@
   (multi-input схлопывается в один ключ).
 
 ### Known Issues
+- KI-049 (reused nodes invisible in SSE stream), KI-050
+  (deep-equal over full JSONB, prefer inputs_hash), KI-051
+  (cache scoped to a single runId).
 - Заведены KI-035…KI-039. Ключевой: **KI-036** (🟠 High) — падение
   узла не ретраится, `attempts: 3` из KI-016 работает только для
   инфраструктурных сбоев. Транзиентная ошибка LLM (429/500/таймаут)
   убивает run без повторов.
 
 ### Fixed
+- **KI-046** — job-level replay (KI-040) переигрывал весь граф,
+  включая завершённые узлы, — повторные **платные** вызовы LLM при
+  неизменных входах. `findReusableNodeRunAsync` проверяет
+  `node_runs` на `status='completed'` + `isDeepStrictEqual(inputs)`
+  **до** UPSERT и, если совпало, возвращает сохранённые `outputs`,
+  не вызывая узел и не публикуя события. +8 тестов, включая
+  интеграционный A→B→C (только C переигрывается).
+- **KI-047** — UPSERT не сбрасывал `outputs`/`duration_ms`, из-за чего
+  «running» показывал результат прошлой попытки. Добавлены
+  `outputs: null, durationMs: null`; при попадании в кэш (KI-046)
+  строка не перезаписывается вовсе.
 - **KI-040** — job-level retry (BullMQ `attempts: 3` из KI-016) был
   декоративен: guard в `RunsProcessor` отклонял повторную доставку
   после того, как `executeAsync` ставил `failed` и бросал исключение.
