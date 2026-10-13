@@ -24,6 +24,14 @@ const STATUS_BACKGROUND: Record<RunStatus, string> = {
   cancelled: 'bg-white',
 };
 
+/** Бейдж-подпись в правом верхнем углу карточки (например, capability модели). */
+export interface NodeBadge {
+  /** Короткий текст бейджа (`V`, `IMG`). */
+  text: string;
+  /** Классы Tailwind для фона и цвета текста. */
+  className: string;
+}
+
 interface BaseNodeProps {
   /** Иконка типа узла (эмодзи). */
   icon: string;
@@ -33,6 +41,8 @@ interface BaseNodeProps {
   executionLevel?: number;
   /** Статус выполнения узла из SSE (`undefined` — запуск не идёт). */
   status?: RunStatus;
+  /** Дополнительные бейджи (capabilities модели, v0.6.0a). */
+  badges?: NodeBadge[];
   /** Содержимое тела карточки. */
   children: ReactNode;
 }
@@ -43,6 +53,8 @@ interface BaseNodeProps {
  * Используется всеми кастомными узлами, чтобы визуально они были одинаковыми.
  * Если передан `executionLevel`, в правом верхнем углу показывается бейдж
  * с номером уровня — узлы одного уровня можно запускать параллельно.
+ * `badges` рисуются там же, левее уровня: так видно, что модель умеет
+ * (например, `V` — понимает картинки на входе).
  *
  * Рамка и фон зависят от `status` (R4.2): серый — узел не выполнялся, синий —
  * выполняется, зелёный — успех, красный — ошибка.
@@ -52,6 +64,7 @@ export function BaseNode({
   title,
   executionLevel,
   status,
+  badges,
   children,
 }: BaseNodeProps) {
   const border = STATUS_BORDER[status ?? 'pending'];
@@ -62,6 +75,19 @@ export function BaseNode({
       data-status={status ?? 'idle'}
       className={`relative w-60 rounded-xl border-2 ${border} ${background} shadow-sm`}
     >
+      {badges !== undefined && badges.length > 0 && (
+        <span className="absolute -top-2 right-5 flex gap-1">
+          {badges.map((badge) => (
+            <span
+              key={badge.text}
+              className={`rounded px-1.5 py-0.5 text-[9px] font-semibold shadow-sm ${badge.className}`}
+            >
+              {badge.text}
+            </span>
+          ))}
+        </span>
+      )}
+
       {executionLevel !== undefined && (
         <span
           className="absolute -right-2 -top-2 flex size-5 items-center justify-center rounded-full bg-slate-500 text-[10px] font-semibold text-white shadow-sm"

@@ -80,9 +80,6 @@ export const DATA_TYPE_COLORS: Record<DataType, string> = {
  */
 export const DEFAULT_LLM_MODEL_ID = 'claude-sonnet-4-20250514';
 
-/** Модель генерации изображений (пока одна и неактивная). */
-export const IMAGE_MODEL = 'Grom Nova 1K';
-
 /** Данные узла Text. */
 export interface TextNodeData extends Record<string, unknown> {
   label?: string;
@@ -103,6 +100,14 @@ export interface ImageGenNodeData extends Record<string, unknown> {
   label?: string;
   kind?: 'image';
   imageUrl?: string;
+  /**
+   * id выбранной image-модели (v0.6.0a).
+   *
+   * Пока пусто: провайдеров с `image-generation` на выходе нет, селект узла
+   * заблокирован. Поле заведено заранее, чтобы v0.6.0b (image-провайдер) не
+   * менял форму данных узла.
+   */
+  model?: string;
 }
 
 /** Узел Text в терминах React Flow. */

@@ -7,6 +7,7 @@ import {
   type LlmGenerateOptions,
   type LlmGenerateResult,
   type LlmUsage,
+  type ModelInfo,
 } from '../llm-provider.interface.js';
 import { toProviderException } from '../provider-errors.js';
 
@@ -61,9 +62,19 @@ function extractUsage(
 export class AnthropicProvider implements ILlmProvider {
   readonly name = 'anthropic';
 
-  readonly models: ReadonlyArray<{ id: string; label: string }> = [
-    { id: 'claude-opus-4-20250514', label: 'Claude Opus 4' },
-    { id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
+  readonly models: readonly ModelInfo[] = [
+    {
+      id: 'claude-opus-4-20250514',
+      label: 'Claude Opus 4',
+      inputModalities: ['text', 'vision'],
+      outputModalities: ['text'],
+    },
+    {
+      id: 'claude-sonnet-4-20250514',
+      label: 'Claude Sonnet 4',
+      inputModalities: ['text', 'vision'],
+      outputModalities: ['text'],
+    },
   ];
 
   private readonly logger = new Logger(AnthropicProvider.name);

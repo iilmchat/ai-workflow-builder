@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { ILlmProvider } from './llm-provider.interface.js';
+import {
+  MODEL_MODALITIES,
+  type ILlmProvider,
+  type ModelInfo,
+  type ModelModality,
+} from './llm-provider.interface.js';
 import { AnthropicProvider } from './providers/anthropic.provider.js';
 import { OpenAiCompatibleProvider } from './providers/openai-compatible.provider.js';
 
@@ -15,29 +20,79 @@ const LMSTUDIO_PLACEHOLDER_KEY = 'not-needed';
  */
 const LMSTUDIO_DEFAULT_BASE_URL = 'http://localhost:1234/v1';
 
-/** Модели OpenAI (v0.5.0: список фиксирован в коде). */
-const OPENAI_MODELS: ReadonlyArray<{ id: string; label: string }> = [
-  { id: 'gpt-4o', label: 'GPT-4o' },
-  { id: 'gpt-4o-mini', label: 'GPT-4o mini' },
+/** Модальности по умолчанию для моделей LM Studio (без суффикса в env). */
+const LMSTUDIO_DEFAULT_INPUT: readonly ModelModality[] = ['text'];
+/** LM Studio — локальный инференс текста, картинки он не генерирует. */
+const LMSTUDIO_OUTPUT: readonly ModelModality[] = ['text'];
+
+/** Модели OpenAI (список фиксирован в коде). */
+const OPENAI_MODELS: readonly ModelInfo[] = [
+  {
+    id: 'gpt-4o',
+    label: 'GPT-4o',
+    inputModalities: ['text', 'vision'],
+    outputModalities: ['text'],
+  },
+  {
+    id: 'gpt-4o-mini',
+    label: 'GPT-4o mini',
+    inputModalities: ['text', 'vision'],
+    outputModalities: ['text'],
+  },
 ];
 
 /** Модели, доступные через RouterAI (OpenAI-совместимый прокси). */
-const ROUTERAI_MODELS: ReadonlyArray<{ id: string; label: string }> = [
-  { id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4 (RouterAI)' },
-  { id: 'anthropic/claude-opus-4', label: 'Claude Opus 4 (RouterAI)' },
-  { id: 'openai/gpt-4o', label: 'GPT-4o (RouterAI)' },
-  { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro (RouterAI)' },
+const ROUTERAI_MODELS: readonly ModelInfo[] = [
+  {
+    id: 'anthropic/claude-sonnet-4',
+    label: 'Claude Sonnet 4 (RouterAI)',
+    inputModalities: ['text', 'vision'],
+    outputModalities: ['text'],
+  },
+  {
+    id: 'anthropic/claude-opus-4',
+    label: 'Claude Opus 4 (RouterAI)',
+    inputModalities: ['text', 'vision'],
+    outputModalities: ['text'],
+  },
+  {
+    id: 'openai/gpt-4o',
+    label: 'GPT-4o (RouterAI)',
+    inputModalities: ['text', 'vision'],
+    outputModalities: ['text'],
+  },
+  {
+    id: 'google/gemini-2.5-pro',
+    label: 'Gemini 2.5 Pro (RouterAI)',
+    inputModalities: ['text', 'vision'],
+    outputModalities: ['text'],
+  },
 ];
 
-/** Модели DeepSeek. */
-const DEEPSEEK_MODELS: ReadonlyArray<{ id: string; label: string }> = [
-  { id: 'deepseek-chat', label: 'DeepSeek V3 (chat)' },
-  { id: 'deepseek-reasoner', label: 'DeepSeek R1 (reasoner)' },
+/** Модели DeepSeek (текстовые, vision у них нет). */
+const DEEPSEEK_MODELS: readonly ModelInfo[] = [
+  {
+    id: 'deepseek-chat',
+    label: 'DeepSeek V3 (chat)',
+    inputModalities: ['text'],
+    outputModalities: ['text'],
+  },
+  {
+    id: 'deepseek-reasoner',
+    label: 'DeepSeek R1 (reasoner)',
+    inputModalities: ['text'],
+    outputModalities: ['text'],
+  },
 ];
 
 /** Модели Yandex AI Studio. */
-const YANDEX_MODELS: ReadonlyArray<{ id: string; label: string }> = [
-  { id: 'qwen3.6-35b-a3b/latest', label: 'Qwen3.6-35B (Yandex)' },
+const YANDEX_MODELS: readonly ModelInfo[] = [
+  {
+    id: 'qwen3.6-35b-a3b/latest',
+    label: 'Qwen3.6-35B (Yandex)',
+    inputModalities: ['text', 'vision'],
+    outputModalities: ['text'],
+  },
 ];
 
 /**
@@ -219,6 +274,8 @@ export class LlmProviderFactory {
    *
    * Ключ не нужен, поэтому единственное условие — непустой список моделей
    * `LMSTUDIO_MODELS`: без него провайдер не знает, что предлагать в UI.
+   * Модальности у моделей берутся из того же значения (см.
+   * {@link parseModelIds}).
    *
    * @returns провайдер либо `null`, если список моделей пуст
    */
@@ -242,17 +299,91 @@ export class LlmProviderFactory {
   }
 
   /**
-   * Разбирает список id моделей из строки через запятую.
+   * Разбирает список моделей LM Studio из строки окружения.
+   *
+   * Формат: `<id>[:<модальность>[+<модальность>...]]` через запятую, например
+   * `qwen2.5-coder-7b-instruct:text,qwen/qwen2.5-vl-7b:text+vision`.
+   * Без суффикса модель считается текстовой. `outputModalities` всегда
+   * `['text']`: локальный LM Studio картинки не генерирует.
+   *
+   * Невалидная модальность не роняет старт: модель пропускается, а в лог
+   * уходит предупреждение — стартовать с опечаткой в env полезнее, чем не
+   * стартовать вовсе.
    *
    * @param raw - сырое значение `LMSTUDIO_MODELS`
-   * @returns модели с человекочитаемыми подписями; пустой массив, если
-   *   значений нет
+   * @returns модели с модальностями; пустой массив, если валидных записей нет
    */
-  private parseModelIds(raw: string): Array<{ id: string; label: string }> {
-    return raw
-      .split(',')
-      .map((id) => id.trim())
-      .filter((id) => id.length > 0)
-      .map((id) => ({ id, label: `${id} (local)` }));
+  private parseModelIds(raw: string): ModelInfo[] {
+    const models: ModelInfo[] = [];
+
+    for (const entry of raw.split(',')) {
+      const trimmed = entry.trim();
+
+      if (trimmed.length === 0) {
+        continue;
+      }
+
+      const separatorIndex = trimmed.indexOf(':');
+      const id =
+        separatorIndex === -1 ? trimmed : trimmed.slice(0, separatorIndex).trim();
+      const modalitiesRaw =
+        separatorIndex === -1 ? '' : trimmed.slice(separatorIndex + 1).trim();
+
+      if (id.length === 0) {
+        this.logger.warn(`LMSTUDIO_MODELS: пропущена запись без id: "${trimmed}"`);
+        continue;
+      }
+
+      const inputModalities = this.parseModalities(id, modalitiesRaw);
+
+      if (!inputModalities) {
+        continue;
+      }
+
+      models.push({
+        id,
+        label: `${id} (local)`,
+        inputModalities,
+        outputModalities: LMSTUDIO_OUTPUT,
+      });
+    }
+
+    return models;
+  }
+
+  /**
+   * Разбирает список модальностей через `+`.
+   *
+   * @param modelId - id модели (для сообщения в логе)
+   * @param raw - строка модальностей; пустая — дефолт `['text']`
+   * @returns модальности либо `null`, если встречена неизвестная
+   */
+  private parseModalities(
+    modelId: string,
+    raw: string,
+  ): readonly ModelModality[] | null {
+    if (raw.length === 0) {
+      return LMSTUDIO_DEFAULT_INPUT;
+    }
+
+    const parsed: ModelModality[] = [];
+
+    for (const part of raw.split('+')) {
+      const candidate = part.trim();
+      const modality = MODEL_MODALITIES.find((item) => item === candidate);
+
+      if (!modality) {
+        this.logger.warn(
+          `LMSTUDIO_MODELS: у модели ${modelId} неизвестная модальность "${candidate}", модель пропущена`,
+        );
+        return null;
+      }
+
+      if (!parsed.includes(modality)) {
+        parsed.push(modality);
+      }
+    }
+
+    return parsed.length > 0 ? parsed : LMSTUDIO_DEFAULT_INPUT;
   }
 }

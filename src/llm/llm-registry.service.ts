@@ -1,5 +1,9 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { LlmProviderException, type ILlmProvider } from './llm-provider.interface.js';
+import {
+  LlmProviderException,
+  type ILlmProvider,
+  type ModelModality,
+} from './llm-provider.interface.js';
 
 /** Токен DI со списком сконфигурированных провайдеров (см. `LlmModule`). */
 export const LLM_PROVIDERS = 'LLM_PROVIDERS';
@@ -12,6 +16,10 @@ export interface LlmModelInfo {
   id: string;
   /** Человекочитаемое имя модели. */
   label: string;
+  /** Модальности входа (для фильтра и группировки в UI). */
+  inputModalities: readonly ModelModality[];
+  /** Модальности выхода (для фильтра и бейджей в UI). */
+  outputModalities: readonly ModelModality[];
 }
 
 /**
@@ -107,6 +115,10 @@ export class LlmRegistryService {
           provider: provider.name,
           id: model.id,
           label: model.label,
+          // Модальности пробрасываются в UI (v0.6.0a): по ним селект
+          // группирует модели, а карточка узла рисует бейджи.
+          inputModalities: model.inputModalities,
+          outputModalities: model.outputModalities,
         })),
       );
   }

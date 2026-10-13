@@ -68,14 +68,34 @@ export const ApiRunSchema = z.object({
 /** Запуск в терминах API. */
 export type ApiRun = z.infer<typeof ApiRunSchema>;
 
-/** Модель, доступная для выбора в LLM-узле (R4.1b, KI-056). */
+/**
+ * Модальность модели: что она принимает или отдаёт (v0.6.0a).
+ *
+ * Список совпадает с backend `ModelModality` — порядок и значения обязаны
+ * совпадать, иначе Zod отклонит ответ `GET /llm/models`.
+ */
+export const ModelModalitySchema = z.enum([
+  'text',
+  'vision',
+  'image-generation',
+  'audio',
+  'video',
+  'embedding',
+]);
+
+/** Модальность модели. */
+export type ModelModality = z.infer<typeof ModelModalitySchema>;
+
+/** Модель, доступная для выбора в LLM-узле (R4.1b, KI-056; capabilities — v0.6.0a). */
 export const LlmModelInfoSchema = z.object({
   provider: z.string(),
   id: z.string(),
   label: z.string(),
+  inputModalities: z.array(ModelModalitySchema),
+  outputModalities: z.array(ModelModalitySchema),
 });
 
-/** Модель в терминах API: id для вызова + label для интерфейса. */
+/** Модель в терминах API: id для вызова, label и модальности для интерфейса. */
 export type LlmModelInfo = z.infer<typeof LlmModelInfoSchema>;
 
 /** Ошибка обращения к API (сеть, HTTP-статус или неожиданный формат ответа). */

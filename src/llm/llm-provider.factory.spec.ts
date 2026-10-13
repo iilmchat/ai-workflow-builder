@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LlmProviderFactory } from './llm-provider.factory.js';
 import { OpenAiCompatibleProvider } from './providers/openai-compatible.provider.js';
@@ -76,13 +77,42 @@ describe('LlmProviderFactory', () => {
     expect(providers.map((provider) => provider.name)).toEqual(['anthropic']);
   });
 
+  it('объявляет у Anthropic модели с text+vision на входе (v0.6.0a)', () => {
+    const anthropic = createProviders({ ANTHROPIC_API_KEY: 'sk-ant-test' })[0];
+
+    expect(anthropic.models).toEqual([
+      {
+        id: 'claude-opus-4-20250514',
+        label: 'Claude Opus 4',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
+      {
+        id: 'claude-sonnet-4-20250514',
+        label: 'Claude Sonnet 4',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
+    ]);
+  });
+
   it('создаёт OpenAI-провайдера с ключом и дефолтным baseURL', () => {
     const openai = byName({ OPENAI_API_KEY: 'sk-test' }, 'openai');
 
     expect(openai?.name).toBe('openai');
     expect(openai?.models).toEqual([
-      { id: 'gpt-4o', label: 'GPT-4o' },
-      { id: 'gpt-4o-mini', label: 'GPT-4o mini' },
+      {
+        id: 'gpt-4o',
+        label: 'GPT-4o',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
+      {
+        id: 'gpt-4o-mini',
+        label: 'GPT-4o mini',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
     ]);
     expect(openai?.isConfigured).toBe(true);
   });
@@ -109,10 +139,64 @@ describe('LlmProviderFactory', () => {
     );
 
     expect(lmstudio?.isConfigured).toBe(true);
+    // Без суффикса модальностей модель считается текстовой (v0.6.0a).
     expect(lmstudio?.models).toEqual([
-      { id: 'qwen2.5-7b-instruct', label: 'qwen2.5-7b-instruct (local)' },
-      { id: 'llama-3.3-70b', label: 'llama-3.3-70b (local)' },
+      {
+        id: 'qwen2.5-7b-instruct',
+        label: 'qwen2.5-7b-instruct (local)',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      },
+      {
+        id: 'llama-3.3-70b',
+        label: 'llama-3.3-70b (local)',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      },
     ]);
+  });
+
+  it('разбирает модальности LM Studio из суффикса (v0.6.0a)', () => {
+    const lmstudio = byName(
+      {
+        LMSTUDIO_MODELS:
+          'qwen2.5-coder-7b-instruct:text,qwen/qwen2.5-vl-7b:text+vision',
+      },
+      'lmstudio',
+    );
+
+    expect(lmstudio?.models).toEqual([
+      {
+        id: 'qwen2.5-coder-7b-instruct',
+        label: 'qwen2.5-coder-7b-instruct (local)',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      },
+      {
+        id: 'qwen/qwen2.5-vl-7b',
+        label: 'qwen/qwen2.5-vl-7b (local)',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
+    ]);
+  });
+
+  it('пропускает модель LM Studio с неизвестной модальностью (v0.6.0a)', () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const lmstudio = byName(
+      { LMSTUDIO_MODELS: 'good-model:text,broken-model:foo' },
+      'lmstudio',
+    );
+
+    // Невалидная запись пропускается, валидная остаётся: опечатка в env
+    // не должна оставлять пользователя без провайдера целиком.
+    expect(lmstudio?.models.map((model) => model.id)).toEqual(['good-model']);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('broken-model неизвестная модальность "foo"'),
+    );
+
+    warn.mockRestore();
   });
 
   it('не включает LM Studio без списка моделей', () => {
@@ -168,7 +252,12 @@ describe('LlmProviderFactory', () => {
     const yandex = byName({ YANDEX_API_KEY: 'sk-yandex' }, 'yandex');
 
     expect(yandex?.models).toEqual([
-      { id: 'qwen3.6-35b-a3b/latest', label: 'Qwen3.6-35B (Yandex)' },
+      {
+        id: 'qwen3.6-35b-a3b/latest',
+        label: 'Qwen3.6-35B (Yandex)',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
     ]);
   });
 });

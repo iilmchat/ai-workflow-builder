@@ -30,6 +30,57 @@ export interface LlmGenerateResult {
   usage: LlmUsage | null;
 }
 
+/**
+ * Модальность: что модель принимает или отдаёт.
+ *
+ * 'text' — текстовая (вход и/или выход);
+ * 'vision' — понимает изображения на входе;
+ * 'image-generation' — генерирует изображения на выходе;
+ * 'audio' — TTS/STT;
+ * 'video' — генерирует или понимает видео;
+ * 'embedding' — векторное представление.
+ */
+export type ModelModality =
+  | 'text'
+  | 'vision'
+  | 'image-generation'
+  | 'audio'
+  | 'video'
+  | 'embedding';
+
+/**
+ * Полный список модальностей для рантайм-проверок (Zod-схемы, парсеры).
+ *
+ * Дублирует {@link ModelModality}: тип живёт только на этапе компиляции, а
+ * валидация внешних данных (env) нуждается в списке значений во время работы.
+ */
+export const MODEL_MODALITIES: readonly ModelModality[] = [
+  'text',
+  'vision',
+  'image-generation',
+  'audio',
+  'video',
+  'embedding',
+];
+
+/** Декларация модели: id, label, модальности. */
+export interface ModelInfo {
+  /** id для API-вызова (уходит в upstream как есть). */
+  readonly id: string;
+  /** Человекочитаемое имя для UI. */
+  readonly label: string;
+  /**
+   * Что модель принимает на входе.
+   * Минимум один: `['text']` для чисто текстовых.
+   */
+  readonly inputModalities: readonly ModelModality[];
+  /**
+   * Что модель отдаёт на выходе.
+   * Минимум один: `['text']` для чисто текстовых.
+   */
+  readonly outputModalities: readonly ModelModality[];
+}
+
 /** Провайдер LLM. */
 export interface ILlmProvider {
   /**
@@ -37,8 +88,8 @@ export interface ILlmProvider {
    * `yandex`, `lmstudio`.
    */
   readonly name: string;
-  /** Модели, доступные у провайдера. */
-  readonly models: ReadonlyArray<{ id: string; label: string }>;
+  /** Модели, доступные у провайдера, с их модальностями (v0.6.0a). */
+  readonly models: readonly ModelInfo[];
   /**
    * Готов ли провайдер к вызовам.
    *

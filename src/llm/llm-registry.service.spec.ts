@@ -52,8 +52,18 @@ function createProviders(keys: Record<string, string>): {
       apiKey: keys.OPENAI_API_KEY ?? '',
       baseURL: 'https://api.openai.com/v1',
       models: [
-        { id: 'gpt-4o', label: 'GPT-4o' },
-        { id: 'gpt-4o-mini', label: 'GPT-4o mini' },
+        {
+          id: 'gpt-4o',
+          label: 'GPT-4o',
+          inputModalities: ['text', 'vision'],
+          outputModalities: ['text'],
+        },
+        {
+          id: 'gpt-4o-mini',
+          label: 'GPT-4o mini',
+          inputModalities: ['text', 'vision'],
+          outputModalities: ['text'],
+        },
       ],
       envKey: 'OPENAI_API_KEY',
     }),
@@ -147,16 +157,36 @@ describe('LlmRegistryService', () => {
     );
   });
 
-  it('listModels возвращает модели обоих провайдеров', () => {
+  it('listModels возвращает модели обоих провайдеров с модальностями', () => {
     expect(registry.listModels()).toEqual([
-      { provider: 'anthropic', id: 'claude-opus-4-20250514', label: 'Claude Opus 4' },
+      {
+        provider: 'anthropic',
+        id: 'claude-opus-4-20250514',
+        label: 'Claude Opus 4',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
       {
         provider: 'anthropic',
         id: 'claude-sonnet-4-20250514',
         label: 'Claude Sonnet 4',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
       },
-      { provider: 'openai', id: 'gpt-4o', label: 'GPT-4o' },
-      { provider: 'openai', id: 'gpt-4o-mini', label: 'GPT-4o mini' },
+      {
+        provider: 'openai',
+        id: 'gpt-4o',
+        label: 'GPT-4o',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
+      {
+        provider: 'openai',
+        id: 'gpt-4o-mini',
+        label: 'GPT-4o mini',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
     ]);
   });
 
@@ -166,11 +196,19 @@ describe('LlmRegistryService', () => {
 
     expect(providers.openai.isConfigured).toBe(false);
     expect(local.listModels()).toEqual([
-      { provider: 'anthropic', id: 'claude-opus-4-20250514', label: 'Claude Opus 4' },
+      {
+        provider: 'anthropic',
+        id: 'claude-opus-4-20250514',
+        label: 'Claude Opus 4',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
       {
         provider: 'anthropic',
         id: 'claude-sonnet-4-20250514',
         label: 'Claude Sonnet 4',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
       },
     ]);
   });

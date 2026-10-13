@@ -6,6 +6,7 @@ import {
   type LlmGenerateOptions,
   type LlmGenerateResult,
   type LlmUsage,
+  type ModelInfo,
 } from '../llm-provider.interface.js';
 import { toProviderException } from '../provider-errors.js';
 
@@ -59,7 +60,7 @@ export interface OpenAiCompatibleConfig {
   /** Base URL, например https://api.openai.com/v1. */
   baseURL: string;
   /** Список моделей, доступных у провайдера. */
-  models: ReadonlyArray<{ id: string; label: string }>;
+  models: readonly ModelInfo[];
   /**
    * Имя переменной окружения с ключом — попадает в текст ошибки, когда ключ
    * не задан (например, `OPENAI_API_KEY`). Для LM Studio ключ не нужен.
@@ -89,7 +90,7 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
   readonly name: string;
 
   /** Модели, объявленные у провайдера. */
-  readonly models: ReadonlyArray<{ id: string; label: string }>;
+  readonly models: readonly ModelInfo[];
 
   private readonly logger: Logger;
   /** Клиент SDK: создаётся всегда, кроме случая отсутствия ключа. */

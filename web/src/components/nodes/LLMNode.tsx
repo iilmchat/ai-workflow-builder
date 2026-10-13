@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
-import { BaseNode } from '@/components/nodes/BaseNode';
+import { BaseNode, type NodeBadge } from '@/components/nodes/BaseNode';
+import { groupLlmModelsForSelect } from '@/lib/llm-models';
+import type { LlmModelInfo } from '@/lib/api';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
   DATA_TYPE_COLORS,
@@ -11,12 +13,54 @@ import {
 } from '@/types/graph';
 
 /**
+ * Бейджи возможностей модели (v0.6.0a).
+ *
+ * Классы — литералы: Tailwind v4 ищет их сканированием исходников, поэтому
+ * динамическая склейка имён не сработала бы.
+ */
+const BADGE_VISION: NodeBadge = {
+  text: 'V',
+  className: 'bg-purple-100 text-purple-700',
+};
+const BADGE_IMAGE_OUT: NodeBadge = {
+  text: 'IMG',
+  className: 'bg-emerald-100 text-emerald-700',
+};
+
+/**
+ * Собирает бейджи для выбранной модели.
+ *
+ * @param model - выбранная модель либо `undefined`, если её нет в списке
+ * @returns бейджи для карточки; пустой массив, если модель текстовая
+ */
+function badgesForModel(model: LlmModelInfo | undefined): NodeBadge[] {
+  if (!model) {
+    return [];
+  }
+
+  const badges: NodeBadge[] = [];
+
+  if (model.inputModalities.includes('vision')) {
+    badges.push(BADGE_VISION);
+  }
+
+  if (model.outputModalities.includes('image-generation')) {
+    badges.push(BADGE_IMAGE_OUT);
+  }
+
+  return badges;
+}
+
+/**
  * Узел вызова языковой модели.
  *
  * Вход и выход — типизированные порты `text` (синие). Список моделей берётся с
  * backend (`GET /llm/models`, R4.1b) и кэшируется в сторе: в `data.model`
  * хранится **id** модели (`claude-sonnet-4-20250514`), а в селекте показывается
  * её человекочитаемый label (KI-069).
+ *
+ * Селект группируется по возможностям (v0.6.0a): «Текст» и «Текст + Vision»,
+ * чтобы vision-модель не выбирали для чисто текстовой задачи.
  */
 export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
   const { updateNodeData } = useReactFlow();
@@ -38,6 +82,7 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
   // провайдера пропал): показываем как есть, но помечаем недоступной —
   // молчаливой подмены модели больше нет (KI-069).
   const isUnavailable = data.model !== '' && selected === undefined;
+  const groups = groupLlmModelsForSelect(llmModels);
 
   return (
     <>
@@ -54,6 +99,7 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
         title={NODE_TYPE_LABELS.llm}
         executionLevel={executionLevel}
         status={status}
+        badges={badgesForModel(selected)}
       >
         <select
           value={data.model}
@@ -73,10 +119,14 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
             </option>
           )}
 
-          {llmModels.map((model) => (
-            <option key={model.id} value={model.id}>
-              {model.label}
-            </option>
+          {groups.map((group) => (
+            <optgroup key={group.label} label={group.label}>
+              {group.models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.label} ({model.provider})
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
 
