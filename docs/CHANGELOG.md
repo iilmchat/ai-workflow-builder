@@ -15,59 +15,67 @@
 - **Documented** — задокументированные баги
 
 ---
-
 ## [Unreleased]
 
-### Fixed
-- **KI-120** — Vite proxy не знал про `/media`: UI получал HTML
-  (SPA fallback) со статусом 200, `requestAsync` падал на
-  `JSON.parse`, селект моделей оставался disabled. `'/media'` в
-  `web/vite.config.ts`.
-- **Контракт типа узла** (v0.6.0b.2.5) — frontend отправлял
-  `type: 'image'`, backend ждёт `'image_generation'` (NodeDto,
-  executor, engine). Каждый Run падал с «Неподдерживаемый тип узла:
-  image». Переименовано во frontend: `NodeType`, `createNode`,
-  `nodeDataFromApi`, `fromApiWorkflow`, registry `nodeTypes`,
-  `Toolbar`. `kind: 'image'` (UI-метка) сохранён.
+---
+
+## [0.6.0] — 2026-10-14
+
+**Media: генерация изображений через GPTunnel CreativeLab.**
+
+Полный цикл «нарисовал → сохранил → запустил → LLM выполнил → картинка в узле». Провайдеры: 6 LLM (Anthropic, OpenAI, RouterAI, GPTunnel, DeepSeek, Yandex, LM Studio) + media-провайдер CreativeLab (57 IMAGE-моделей, Flux / DALL·E / Gemini Image / Nano Banana / Midjourney).
 
 ### Added
-- **Frontend — v0.6.0b.2.3: узел image_generation (2026-10-14):**
-  - `ImageGenNode` — рабочий узел: селект `GET /media/models?type=IMAGE`
-    (55 моделей), `aspect_ratio` из `params` модели, подпись цены
-    («от 0.6 ₽ / генерация»), рендер `<img src={mediaUrl}>` в теле узла.
-  - `isRenderableMediaUrl` — валидация http(s) перед `<img>`
-    (класс KI-006).
-  - Валидация Run — `findImageNodesWithoutModel`.
-  - Store: `mediaModels`, `mediaModelsLoaded`, `loadMediaModelsAsync`
-    (lazy, один fetch за сессию); `NodeRunMetrics.costRub`.
-  - `RunResultPanel`: `formatRub` — `"0.600000"` → `"0.60 ₽"`.
-  - `costRub` в `NodeRunSnapshotSchema` (`.nullable().optional()`).
-  - CDP-smoke: 55 моделей, дефолт `flux-schnell`, `<img>` по URL,
-    метрика `0.60 ₽`, Run заблокирован без модели.
+- **Runner — v0.6.0a: модальности моделей (2026-10-13):**
+  - `ModelModality` (`text` / `vision` / `image-generation` /
+    `audio` / `video` / `embedding`) + `ModelInfo` с
+    `inputModalities` / `outputModalities`. Рантайм-константа
+    `MODEL_MODALITIES` — для валидации env.
+  - `GET /llm/models` возвращает модальности каждой модели.
+  - `LMSTUDIO_MODELS` — суффикс модальностей:
+    `id:modality+modality,id:modality`. Без суффикса — `text`.
+  - UI: селект LLM-ноды **сгруппирован** (`Текст` /
+    `Текст + Vision`), карточка узла показывает badge `[V]` для
+    vision-моделей.
+  - `web/src/lib/llm-models.ts` — `filterModelsByInput`,
+    `filterModelsByOutput`, `groupLlmModelsForSelect`.
+  - ImageGen-нода фильтрует модели по `output: image-generation`
+    (пусто до v0.6.0b — image-провайдера ещё нет).
+  - +3 теста (257 → 260).
+  - Smoke: 9 моделей от 4 провайдеров, группы в селекте, badge
+    `[V]` на `qwen/qwen2.5-vl-7b`.
 
-### Fixed
-- **KI-114** — `node_runs.cost_rub` заполнялся executor'ом, но не
-  попадал в SSE snapshot: панель показывала длительность без цены
-  у media-узлов. `costRub: z.string().nullable().optional()` в
-  `NodeRunSnapshotSchema` + `row.costRub ?? null` в `toNodeSnapshot`.
-  Фронтенд уже готов (v0.6.0b.2.3). +1 тест.
-- **KI-110** — WSL2 Docker proxy (`wslrelay.exe`) рвал idle TCP:
-  `pg.Pool` переиспользовал мёртвый сокет, `POST /workflow` падал с
-  500, ioredis сыпал `ECONNABORTED`. `pg.Pool` — `idleTimeoutMillis:
-  5s`, `maxLifetimeSeconds: 30s`, `connectionTimeoutMillis: 5s`.
-  `ioredis` — `keepAlive: 10s`, bounded `retryStrategy`.
-- **KI-111** — `MediaTaskResponseSchema.result` — массив
-  **объектов** `{ url }`, не массив строк. Схема ждала
-  `z.array(z.url())`, узел `image_generation` падал за ~300 мс до
-  первого poll. Схема — `z.array(z.object({ url: z.url() }))`,
-  mapper — `dto.result.map(item => item.url)`.
-- **KI-112** — у моделей с тарифом «по входу» (`tts2`) нет
-  `price_unit`, есть `price_input`/`price_input_unit`. Схема
-  требовала `price_unit: z.string()`, один такой элемент в
-  коллекции ломал `safeParse` → вся пачка моделей не грузилась.
-  Поле — `.optional()`, добавлены `price_input`/`price_input_unit`.
+- **Runner — v0.6.0b.1: GPTunnel chat (2026-10-13):**
+  - GPTunnel (`https://gptunnel.ru/v1`) — OpenAI-совместимый chat.
+    Два независимых API: `/v1` (chat) и `/api/v2/media` (image/
+    video/audio, добавляется в v0.6.0b.2).
+  - `GPTUNNEL_API_KEY`, `GPTUNNEL_BASE_URL`, `GPTUNNEL_MODELS`
+    (формат `id:modality+modality,id:modality` — как
+    `LMSTUDIO_MODELS`; парсер общий).
+  - Провайдер включается при **ключе** и **непустом списке** —
+    в отличие от LM Studio (только список).
+  - Парсер `parseModelIds` обобщён: `{ envKey, labelSuffix }` в
+    опциях — предупреждения называют правильную переменную.
+  - +11 тестов (260 → 271).
 
-### Added
+- **Runner — v0.6.0b.2.1: media-провайдер CreativeLab (2026-10-13):**
+  - `src/media/` — новый модуль для media-провайдеров, отдельный
+    от `LlmModule`.
+  - `IMediaProvider` + `MediaProviderException` (с `retryable`, как
+    в `LlmProviderException`).
+  - `CreativeLabProvider` (GPTunnel `/api/v2/media`):
+    `GET /media/models?type=IMAGE` через встроенный `fetch` (Node 22),
+    Zod-валидация ответа, snake_case → camelCase, кэш по типу
+    (TTL 15 мин, `GPTUNNEL_MEDIA_CACHE_TTL_MS`).
+  - `MediaRegistryService` + `MEDIA_PROVIDERS` токен (паттерн как
+    `LLM_PROVIDERS`). Пустой список при отсутствии провайдера —
+    не 404. Дедупликация id: первое побеждает.
+  - `GET /media/models?type=IMAGE` — контроллер.
+    `retryable` → 503, иначе → 502.
+  - env: `GPTUNNEL_MEDIA_API_KEY`, `GPTUNNEL_MEDIA_BASE_URL`,
+    `GPTUNNEL_MEDIA_CACHE_TTL_MS`.
+  - +26 тестов (271 → 297).
+
 - **Runner — v0.6.0b.2.2: executor для media (2026-10-14):**
   - Узел `image_generation` выполняет **реальный** CreativeLab:
     `createTask → poll → URLs`. Стаб удалён.
@@ -90,91 +98,58 @@
     `cost_rub` (KI-047).
   - +27 тестов (297 → 324).
 
-- **Runner — v0.6.0b.2.1: media-провайдер CreativeLab (2026-10-13):**
-  - `src/media/` — новый модуль для media-провайдеров, отдельный
-    от `LlmModule`.
-  - `IMediaProvider` + `MediaProviderException` (с `retryable`, как
-    в `LlmProviderException`).
-  - `CreativeLabProvider` (GPTunnel `/api/v2/media`):
-    `GET /media/models?type=IMAGE` через встроенный `fetch` (Node 22),
-    Zod-валидация ответа, snake_case → camelCase, кэш по типу
-    (TTL 15 мин, `GPTUNNEL_MEDIA_CACHE_TTL_MS`).
-  - `MediaRegistryService` + `MEDIA_PROVIDERS` токен (паттерн как
-    `LLM_PROVIDERS`). Пустой список при отсутствии провайдера —
-    не 404. Дедупликация id: первое побеждает.
-  - `GET /media/models?type=IMAGE` — контроллер.
-    `retryable` → 503, иначе → 502.
-  - env: `GPTUNNEL_MEDIA_API_KEY`, `GPTUNNEL_MEDIA_BASE_URL`,
-    `GPTUNNEL_MEDIA_CACHE_TTL_MS`.
-  - +26 тестов (271 → 297).
+- **Frontend — v0.6.0b.2.3: узел image_generation (2026-10-14):**
+  - `ImageGenNode` — рабочий узел: селект `GET /media/models?type=IMAGE`,
+    `aspect_ratio` из `params` модели, подпись цены
+    («от 0.6 ₽ / генерация»), рендер `<img src={mediaUrl}>` в теле узла.
+  - `isRenderableMediaUrl` — валидация http(s) перед `<img>`
+    (класс KI-006).
+  - Валидация Run — `findImageNodesWithoutModel`.
+  - Store: `mediaModels`, `mediaModelsLoaded`, `loadMediaModelsAsync`
+    (lazy, один fetch за сессию); `NodeRunMetrics.costRub`.
+  - `RunResultPanel`: `formatRub` — `"0.600000"` → `"0.60 ₽"`.
+  - `costRub` в `NodeRunSnapshotSchema` (`.nullable().optional()`).
+  - CDP-smoke: 55 моделей, дефолт `flux-schnell`, `<img>` по URL,
+    метрика `0.60 ₽`, Run заблокирован без модели.
 
-- **Runner — v0.6.0b.1: GPTunnel chat (2026-10-13):**
-  - GPTunnel (`https://gptunnel.ru/v1`) — OpenAI-совместимый chat.
-    Два независимых API: `/v1` (chat) и `/api/v2/media` (image/
-    video/audio, добавляется в v0.6.0b.2).
-  - `GPTUNNEL_API_KEY`, `GPTUNNEL_BASE_URL`, `GPTUNNEL_MODELS`
-    (формат `id:modality+modality,id:modality` — как
-    `LMSTUDIO_MODELS`; парсер общий).
-  - Провайдер включается при **ключе** и **непустом списке** —
-    в отличие от LM Studio (только список).
-  - Парсер `parseModelIds` обобщён: `{ envKey, labelSuffix }` в
-    опциях — предупреждения называют правильную переменную.
-  - +11 тестов (260 → 271).
+- **Runner — v0.6.0b.2.4: `cost_rub` в SSE snapshot (2026-10-14):**
+  - `costRub: z.string().nullable().optional()` в
+    `NodeRunSnapshotSchema` (backend-схема).
+  - `toNodeSnapshot` — `costRub: row.costRub ?? null`.
+  - +1 тест (324 → 325).
 
-- **Runner — v0.6.0a: модальности моделей (2026-10-13):**
-  - `ModelModality` (`text` / `vision` / `image-generation` /
-    `audio` / `video` / `embedding`) + `ModelInfo` с
-    `inputModalities` / `outputModalities`. Рантайм-константа
-    `MODEL_MODALITIES` — для валидации env.
-  - `GET /llm/models` возвращает модальности каждой модели.
-  - `LMSTUDIO_MODELS` — суффикс модальностей:
-    `id:modality+modality,id:modality`. Без суффикса — `text`.
-  - UI: селект LLM-ноды **сгруппирован** (`Текст` /
-    `Текст + Vision`), карточка узла показывает badge `[V]` для
-    vision-моделей.
-  - `web/src/lib/llm-models.ts` — `filterModelsByInput`,
-    `filterModelsByOutput`, `groupLlmModelsForSelect`.
-  - ImageGen-нода фильтрует модели по `output: image-generation`
-    (пусто до v0.6.0b — image-провайдера ещё нет).
-  - +3 теста (257 → 260).
-  - Smoke: 9 моделей от 4 провайдеров, группы в селекте, badge
-    `[V]` на `qwen/qwen2.5-vl-7b`.
-
-- **Runner — v0.5.0: мультипровайдерная поддержка LLM (2026-10-13):**
-  - `LlmProviderFactory` — конфиг-массив провайдеров из env.
-    Провайдер попадает в список **только если задан его ключ**
-    (LM Studio — при непустом `LMSTUDIO_MODELS`).
-  - `OpenAiCompatibleProvider` — единый класс для любого
-    OpenAI-совместимого API (`/chat/completions`): OpenAI,
-    RouterAI, DeepSeek, Yandex AI Studio, LM Studio.
-  - `AnthropicProvider` — без изменений (свой SDK).
-  - Конфликт id моделей: **первый провайдер побеждает**,
-    `logger.warn`. Порядок фабрики — единственный источник
-    приоритета.
-  - **KI-084:** `emptyToUndefined` через `z.preprocess` — пустая
-    строка в env = undefined. `.env.example` копируется как есть.
-  - **KI-085:** `httpUrl = z.url({ protocol: /^https?$/ })` —
-    только http/https.
-  - `.env.example` — секции Anthropic / OpenAI / RouterAI /
-    DeepSeek / Yandex / LM Studio.
-  - +21 тест (236 → 257).
-  - Smoke: `GET /llm/models` возвращает модели нескольких
-    провайдеров одновременно.
+- **Frontend — v0.6.0b.2.5: `image` → `image_generation` (2026-10-14):**
+  - Контракт типа узла приведён к backend: `NodeType`, `createNode`,
+    `nodeDataFromApi`, `fromApiWorkflow`, registry `nodeTypes`,
+    `Toolbar`, `NODE_TYPE_ICONS/LABELS`. `kind: 'image'` (UI-метка)
+    сохранён.
+  - CDP-smoke: Save отправляет `type: 'image_generation'`, Load
+    отрисовывает узел нашим компонентом, `data.kind` не подменён.
 
 ### Fixed
-- **KI-084** — пустой `OPENAI_BASE_URL=` больше не роняет старт.
-- **KI-085** — `z.url()` теперь отсекает не-http(s) схемы.
-
-- **Runner — R5.0: `OPENAI_BASE_URL` (2026-10-13):**
-  - `OPENAI_BASE_URL` в env — для OpenAI-совместимых API (RouterAI,
-    DeepSeek, Yandex, LM Studio). Прокидывается в SDK `openai`
-    как `baseURL`; без переменной — дефолт SDK.
-  - `.env.example` — примеры URL для RouterAI / DeepSeek / Yandex.
-  - +7 тестов (229 → 236).
-
-### Known Issues
-- KI-084 (пустой `OPENAI_BASE_URL=` в `.env` роняет старт),
-  KI-085 (`z.url()` не ограничивает схему http/https).
+- **KI-110** — WSL2 Docker proxy (`wslrelay.exe`) рвал idle TCP:
+  `pg.Pool` переиспользовал мёртвый сокет, `POST /workflow` падал с
+  500, ioredis сыпал `ECONNABORTED`. `pg.Pool` — `idleTimeoutMillis:
+  5s`, `maxLifetimeSeconds: 30s`, `connectionTimeoutMillis: 5s`.
+  `ioredis` — `keepAlive: 10s`, bounded `retryStrategy`.
+- **KI-111** — `MediaTaskResponseSchema.result` — массив
+  **объектов** `{ url }`, не массив строк. Схема ждала
+  `z.array(z.url())`, узел `image_generation` падал за ~300 мс до
+  первого poll. Схема — `z.array(z.object({ url: z.url() }))`,
+  mapper — `dto.result.map(item => item.url)`.
+- **KI-112** — у моделей с тарифом «по входу» (`tts2`) нет
+  `price_unit`, есть `price_input`/`price_input_unit`. Схема
+  требовала `price_unit: z.string()`, один такой элемент в
+  коллекции ломал `safeParse` → вся пачка моделей не грузилась.
+  Поле — `.optional()`, добавлены `price_input`/`price_input_unit`.
+- **KI-120** — Vite proxy не знал про `/media`: UI получал HTML
+  (SPA fallback) со статусом 200, `requestAsync` падал на
+  `JSON.parse`, селект моделей оставался disabled. `'/media'` в
+  `web/vite.config.ts`.
+- **Контракт типа узла** (v0.6.0b.2.5) — frontend отправлял
+  `type: 'image'`, backend ждёт `'image_generation'` (NodeDto,
+  executor, engine). Каждый Run падал с «Неподдерживаемый тип узла:
+  image».
 
 ---
 

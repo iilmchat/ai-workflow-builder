@@ -17,8 +17,13 @@ Frontend (React 19 + @xyflow/react + Vite + Tailwind v4).
   типизированные порты и связи.
 - **Реальное выполнение в фоне** — BullMQ + Redis, история в PostgreSQL
   (`workflow_runs`, `node_runs`) с ретраями job'а и узлов.
-- **LLM-провайдеры** — Anthropic (Claude) и OpenAI (GPT); список моделей
-  отдаётся через `GET /llm/models` (только сконфигурированные провайдеры).
+- **LLM-workflow: 6 провайдеров** (Anthropic, OpenAI, RouterAI, GPTunnel,
+  DeepSeek, Yandex, LM Studio) — список моделей отдаётся через
+  `GET /llm/models` (только сконфигурированные провайдеры).
+- **Генерация изображений** через GPTunnel CreativeLab
+  (Flux, DALL·E, Gemini Image, Nano Banana, Midjourney) — узел Image
+  Generation с селектом media-модели, `aspect_ratio` и превью результата
+  прямо в узле; стоимость в рублях (`cost_rub`).
 - **SSE-стриминг прогресса** — `GET /runs/:id/stream`: snapshot состояния и
   события узлов в реальном времени.
 - **Подсветка нод по статусу** — серый → синий → зелёный/красный прямо на
@@ -31,7 +36,10 @@ Frontend (React 19 + @xyflow/react + Vite + Tailwind v4).
 - **Backend**: NestJS 12, TypeScript 6 (strict, ESM), Vitest
 - **Database**: PostgreSQL 17 + Drizzle ORM
 - **Queue**: BullMQ + Redis
-- **LLM**: Anthropic (Claude), OpenAI (GPT)
+- **LLM**: 6 провайдеров (chat) — Anthropic (Claude), OpenAI (GPT), RouterAI,
+  GPTunnel, DeepSeek, Yandex AI Studio, LM Studio
+- **Media**: GPTunnel CreativeLab — IMAGE / VIDEO / AUDIO / MUSIC / 3D
+  (в v0.6.0 — генерация изображений)
 - **Frontend**: React 19 + Vite + @xyflow/react v12 + Zustand + Tailwind v4
 
 ## Getting Started
