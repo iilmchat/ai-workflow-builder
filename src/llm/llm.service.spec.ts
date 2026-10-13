@@ -3,6 +3,7 @@ import {
   LlmProviderException,
   type ILlmProvider,
   type LlmGenerateOptions,
+  type LlmGenerateResult,
 } from './llm-provider.interface.js';
 import { LlmRegistryService } from './llm-registry.service.js';
 import { LlmService } from './llm.service.js';
@@ -10,12 +11,15 @@ import { LlmService } from './llm.service.js';
 describe('LlmService', () => {
   let service: LlmService;
   let generateAsync: ReturnType<
-    typeof vi.fn<(prompt: string, options: LlmGenerateOptions) => Promise<string>>
+    typeof vi.fn<(prompt: string, options: LlmGenerateOptions) => Promise<LlmGenerateResult>>
   >;
 
   beforeEach(async () => {
     generateAsync = vi.fn((_prompt: string, _options: LlmGenerateOptions) =>
-      Promise.resolve('ответ провайдера'),
+      Promise.resolve({
+        text: 'ответ провайдера',
+        usage: { inputTokens: 3, outputTokens: 2, model: 'fake-model' },
+      }),
     );
 
     const provider: ILlmProvider = {
@@ -43,10 +47,11 @@ describe('LlmService', () => {
     vi.restoreAllMocks();
   });
 
-  it('делегирует вызов провайдеру, найденному по модели, и ставит таймаут', async () => {
-    await expect(service.generateAsync('привет', 'fake-model')).resolves.toBe(
-      'ответ провайдера',
-    );
+  it('делегирует вызов провайдеру и пробрасывает usage наверх (KI-038)', async () => {
+    await expect(service.generateAsync('привет', 'fake-model')).resolves.toEqual({
+      text: 'ответ провайдера',
+      usage: { inputTokens: 3, outputTokens: 2, model: 'fake-model' },
+    });
 
     expect(generateAsync).toHaveBeenCalledTimes(1);
 
@@ -56,6 +61,15 @@ describe('LlmService', () => {
     expect(options.model).toBe('fake-model');
     // RULES 4.19: вызов не может висеть без таймаута.
     expect(options.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('пробрасывает usage: null, если провайдер не отдал метрики (KI-038)', async () => {
+    generateAsync.mockResolvedValue({ text: 'без метрик', usage: null });
+
+    await expect(service.generateAsync('привет', 'fake-model')).resolves.toEqual({
+      text: 'без метрик',
+      usage: null,
+    });
   });
 
   it('пробрасывает LlmProviderException от провайдера, не гася стек', async () => {

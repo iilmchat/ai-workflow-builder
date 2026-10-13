@@ -12,6 +12,24 @@ export interface LlmGenerateOptions {
   signal?: AbortSignal;
 }
 
+/** Метрики вызова LLM. */
+export interface LlmUsage {
+  /** Токенов на входе (null, если провайдер не отдал значение). */
+  inputTokens: number | null;
+  /** Токенов на выходе (null, если провайдер не отдал значение). */
+  outputTokens: number | null;
+  /** Модель, фактически использованная провайдером. */
+  model: string;
+}
+
+/** Результат вызова LLM. */
+export interface LlmGenerateResult {
+  /** Текст ответа. */
+  text: string;
+  /** Метрики вызова (null, если провайдер их не отдал). */
+  usage: LlmUsage | null;
+}
+
 /** Провайдер LLM. */
 export interface ILlmProvider {
   /** Идентификатор провайдера: 'anthropic' | 'openai'. */
@@ -23,10 +41,10 @@ export interface ILlmProvider {
    *
    * @param prompt - пользовательский промпт (целиком не логируется, RULES 5.9)
    * @param options - модель, лимиты, отмена
-   * @returns текст ответа
+   * @returns текст ответа и метрики вызова (KI-038)
    * @throws LlmProviderException при ошибке провайдера, таймауте или отсутствии ключа
    */
-  generateAsync(prompt: string, options: LlmGenerateOptions): Promise<string>;
+  generateAsync(prompt: string, options: LlmGenerateOptions): Promise<LlmGenerateResult>;
 }
 
 /**

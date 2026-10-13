@@ -5,6 +5,8 @@ import {
   LlmProviderException,
   type ILlmProvider,
   type LlmGenerateOptions,
+  type LlmGenerateResult,
+  type LlmUsage,
 } from '../llm-provider.interface.js';
 import { toProviderException } from '../provider-errors.js';
 
@@ -12,6 +14,42 @@ import { toProviderException } from '../provider-errors.js';
 const DEFAULT_TIMEOUT_MS = 60_000;
 /** Лимит токенов ответа по умолчанию. */
 const DEFAULT_MAX_TOKENS = 1024;
+
+/**
+ * Извлекает метрики использования токенов из ответа OpenAI.
+ *
+ * `usage` в ответе необязателен, поэтому значение проверяется явно (RULES 1.17).
+ *
+ * @param completion - ответ `chat.completions.create`
+ * @param fallbackModel - модель, запрошенная вызывающим кодом
+ * @returns метрики либо `null`, если usage в ответе нет
+ */
+function extractUsage(
+  completion: { model?: unknown; usage?: unknown },
+  fallbackModel: string,
+): LlmUsage | null {
+  const usage = completion.usage;
+
+  if (typeof usage !== 'object' || usage === null) {
+    return null;
+  }
+
+  const candidate = usage as { prompt_tokens?: unknown; completion_tokens?: unknown };
+  const model =
+    typeof completion.model === 'string' && completion.model.length > 0
+      ? completion.model
+      : fallbackModel;
+
+  return {
+    inputTokens:
+      typeof candidate.prompt_tokens === 'number' ? candidate.prompt_tokens : null,
+    outputTokens:
+      typeof candidate.completion_tokens === 'number'
+        ? candidate.completion_tokens
+        : null,
+    model,
+  };
+}
 
 /**
  * Провайдер OpenAI (GPT) — R3.
@@ -53,10 +91,13 @@ export class OpenAiProvider implements ILlmProvider {
    *
    * @param prompt - пользовательский промпт
    * @param options - модель, system, лимиты, отмена
-   * @returns текст первого варианта ответа (пустая строка, если контента нет)
+   * @returns текст первого варианта ответа и метрики использования токенов
    * @throws LlmProviderException если ключ не задан, вызов упал или истёк таймаут
    */
-  async generateAsync(prompt: string, options: LlmGenerateOptions): Promise<string> {
+  async generateAsync(
+    prompt: string,
+    options: LlmGenerateOptions,
+  ): Promise<LlmGenerateResult> {
     if (!this.client) {
       throw new LlmProviderException(this.name, 'OPENAI_API_KEY не задан');
     }
@@ -80,7 +121,10 @@ export class OpenAiProvider implements ILlmProvider {
         { signal },
       );
 
-      return completion.choices[0]?.message.content ?? '';
+      return {
+        text: completion.choices[0]?.message.content ?? '',
+        usage: extractUsage(completion, options.model),
+      };
     } catch (error: unknown) {
       throw toProviderException(this.name, error, signal);
     }

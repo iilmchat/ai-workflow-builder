@@ -5,6 +5,8 @@ import {
   LlmProviderException,
   type ILlmProvider,
   type LlmGenerateOptions,
+  type LlmGenerateResult,
+  type LlmUsage,
 } from '../llm-provider.interface.js';
 import { toProviderException } from '../provider-errors.js';
 
@@ -12,6 +14,41 @@ import { toProviderException } from '../provider-errors.js';
 const DEFAULT_TIMEOUT_MS = 60_000;
 /** Лимит токенов ответа по умолчанию. */
 const DEFAULT_MAX_TOKENS = 1024;
+
+/**
+ * Извлекает метрики использования токенов из ответа Anthropic.
+ *
+ * Поля читаются через явное сужение: ответ SDK — внешние данные, а в тестах
+ * `usage` может отсутствовать вовсе (RULES 1.17).
+ *
+ * @param response - ответ `messages.create`
+ * @param fallbackModel - модель, запрошенная вызывающим кодом
+ * @returns метрики либо `null`, если usage в ответе нет
+ */
+function extractUsage(
+  response: { model?: unknown; usage?: unknown },
+  fallbackModel: string,
+): LlmUsage | null {
+  const usage = response.usage;
+
+  if (typeof usage !== 'object' || usage === null) {
+    return null;
+  }
+
+  const candidate = usage as { input_tokens?: unknown; output_tokens?: unknown };
+  const model =
+    typeof response.model === 'string' && response.model.length > 0
+      ? response.model
+      : fallbackModel;
+
+  return {
+    inputTokens:
+      typeof candidate.input_tokens === 'number' ? candidate.input_tokens : null,
+    outputTokens:
+      typeof candidate.output_tokens === 'number' ? candidate.output_tokens : null,
+    model,
+  };
+}
 
 /**
  * Провайдер Anthropic (Claude) — R3.
@@ -53,10 +90,13 @@ export class AnthropicProvider implements ILlmProvider {
    *
    * @param prompt - пользовательский промпт
    * @param options - модель, system, лимиты, отмена
-   * @returns склеенный текст всех text-блоков ответа
+   * @returns текст всех text-блоков ответа и метрики использования токенов
    * @throws LlmProviderException если ключ не задан, вызов упал или истёк таймаут
    */
-  async generateAsync(prompt: string, options: LlmGenerateOptions): Promise<string> {
+  async generateAsync(
+    prompt: string,
+    options: LlmGenerateOptions,
+  ): Promise<LlmGenerateResult> {
     if (!this.client) {
       throw new LlmProviderException(this.name, 'ANTHROPIC_API_KEY не задан');
     }
@@ -83,7 +123,7 @@ export class AnthropicProvider implements ILlmProvider {
         }
       }
 
-      return parts.join('');
+      return { text: parts.join(''), usage: extractUsage(response, options.model) };
     } catch (error: unknown) {
       throw toProviderException(this.name, error, signal);
     }

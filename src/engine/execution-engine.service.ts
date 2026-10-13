@@ -30,6 +30,20 @@ function toMessage(error: unknown): string {
 }
 
 /**
+ * Приводит стоимость к виду колонки `numeric`.
+ *
+ * Drizzle-колонка `cost_usd` объявлена без `mode`, поэтому в TS это строка
+ * (RULES 4.23 — snake_case в БД, camelCase в TS). Формат — 6 знаков, как
+ * в `numeric(10, 6)`.
+ *
+ * @param costUsd - стоимость в USD или `null`/`undefined`
+ * @returns строка с 6 знаками после запятой либо `null`
+ */
+function toNumericString(costUsd: number | null | undefined): string | null {
+  return typeof costUsd === 'number' ? costUsd.toFixed(6) : null;
+}
+
+/**
  * Проверяет, что значение из JSONB — обычный объект (а не массив/скаляр).
  *
  * @param value - значение типа `unknown`
@@ -93,6 +107,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+/** Метрики выполнения узла для записи в `node_runs` (KI-038). */
+interface NodeStepMetrics {
+  /** Токенов на входе. */
+  inputTokens: number | null;
+  /** Токенов на выходе. */
+  outputTokens: number | null;
+  /** Стоимость вызова в USD. */
+  costUsd: number | null;
+  /** Модель, фактически использованная провайдером. */
+  model: string;
+}
+
+/** Результат выполнения узла: выходы и (для LLM-узлов) метрики вызова. */
+interface NodeStepResult {
+  /** Выходы узла. */
+  outputs: Record<string, unknown>;
+  /** Метрики вызова либо `null`, если узел не обращался к провайдеру. */
+  metrics: NodeStepMetrics | null;
 }
 
 /** Итог выполнения запуска. */
@@ -381,6 +415,10 @@ export class ExecutionEngineService {
           logs: [],
           outputs: null,
           durationMs: null,
+          // KI-038: метрики прошлой попытки тоже не должны «прилипать».
+          tokensIn: null,
+          tokensOut: null,
+          costUsd: null,
           startedAt: new Date(),
           finishedAt: null,
         },
@@ -402,16 +440,20 @@ export class ExecutionEngineService {
 
       for (let attempt = 1; attempt <= NODE_MAX_ATTEMPTS; attempt += 1) {
         try {
-          const outputs = await this.runNodeAsync(node, inputs);
+          const step = await this.runNodeAsync(node, inputs);
           const durationMs = Date.now() - startedAt;
 
           await this.db
             .update(nodeRuns)
             .set({
               status: 'completed',
-              outputs,
+              outputs: step.outputs,
               durationMs,
               logs,
+              // KI-038: метрики провайдера (у не-LLM узлов — null).
+              tokensIn: step.metrics?.inputTokens ?? null,
+              tokensOut: step.metrics?.outputTokens ?? null,
+              costUsd: toNumericString(step.metrics?.costUsd),
               finishedAt: new Date(),
             })
             .where(eq(nodeRuns.id, nodeRun.id));
@@ -420,12 +462,12 @@ export class ExecutionEngineService {
             type: 'node_completed',
             runId,
             nodeId,
-            outputs,
+            outputs: step.outputs,
             durationMs,
             finishedAt: new Date().toISOString(),
           });
 
-          return outputs;
+          return step.outputs;
         } catch (error: unknown) {
           failure = error;
 
@@ -519,25 +561,26 @@ export class ExecutionEngineService {
    * Выполняет узел в зависимости от его типа.
    *
    * Метод асинхронный (RULES 1.4): `llm`-узел ходит в провайдера через
-   * {@link LlmNodeExecutor}. `image_generation` пока заглушка (R4).
+   * {@link LlmNodeExecutor} и возвращает вместе с выходами метрики вызова
+   * (KI-038). `image_generation` пока заглушка (R4), метрик у неё нет.
    *
    * @param node - узел графа
    * @param inputs - нормализованные входы узла (KI-034: ключ `prompt`/`text`)
-   * @returns выходы узла
+   * @returns выходы узла и метрики вызова (`null` для не-LLM узлов)
    * @throws UnsupportedNodeTypeException если тип узла неизвестен
    * @throws LlmProviderException если вызов LLM-провайдера упал
    */
   private async runNodeAsync(
     node: NodeDto,
     inputs: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<NodeStepResult> {
     switch (node.type) {
       case 'text':
-        return executeTextNode(node);
+        return { outputs: executeTextNode(node), metrics: null };
       case 'llm':
         return this.llmExecutor.executeAsync(node, inputs);
       case 'image_generation':
-        return executeImageGenNodeStub(node);
+        return { outputs: executeImageGenNodeStub(node), metrics: null };
       default:
         throw new UnsupportedNodeTypeException(node.type);
     }

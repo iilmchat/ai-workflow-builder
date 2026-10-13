@@ -19,7 +19,14 @@ describe('LlmNodeExecutor', () => {
   let llm: { generateAsync: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
-    llm = { generateAsync: vi.fn(() => Promise.resolve('ответ модели')) };
+    llm = {
+      generateAsync: vi.fn(() =>
+        Promise.resolve({
+          text: 'ответ модели',
+          usage: { inputTokens: 1000, outputTokens: 500, model: 'gpt-4o' },
+        }),
+      ),
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [LlmNodeExecutor, { provide: LlmService, useValue: llm }],
@@ -32,13 +39,59 @@ describe('LlmNodeExecutor', () => {
     vi.restoreAllMocks();
   });
 
-  it('возвращает { text } с ответом модели и моделью из data', async () => {
+  it('возвращает выходы и метрики с посчитанной стоимостью (KI-038)', async () => {
     const result = await executor.executeAsync(node({ model: 'gpt-4o' }), {
       prompt: 'привет',
     });
 
-    expect(result).toEqual({ text: 'ответ модели' });
     expect(llm.generateAsync).toHaveBeenCalledWith('привет', 'gpt-4o', {});
+    expect(result).toEqual({
+      outputs: { text: 'ответ модели' },
+      // gpt-4o: 1000 входных токенов * 2.5/1M + 500 выходных * 10/1M = 0.0075
+      metrics: {
+        inputTokens: 1000,
+        outputTokens: 500,
+        costUsd: 0.0075,
+        model: 'gpt-4o',
+      },
+    });
+  });
+
+  it('возвращает метрики с null, если провайдер не отдал usage (KI-038)', async () => {
+    llm.generateAsync.mockResolvedValue({ text: 'без метрик', usage: null });
+
+    const result = await executor.executeAsync(node({ model: 'gpt-4o' }), {
+      prompt: 'привет',
+    });
+
+    expect(result).toEqual({
+      outputs: { text: 'без метрик' },
+      // Токены неизвестны, но модель известна — стоимость считается нулевой.
+      metrics: {
+        inputTokens: null,
+        outputTokens: null,
+        costUsd: 0,
+        model: 'gpt-4o',
+      },
+    });
+  });
+
+  it('возвращает costUsd: null для модели вне прайс-листа (KI-038)', async () => {
+    llm.generateAsync.mockResolvedValue({
+      text: 'ответ',
+      usage: { inputTokens: 10, outputTokens: 20, model: 'unknown-model' },
+    });
+
+    const result = await executor.executeAsync(node({ model: 'unknown-model' }), {
+      prompt: 'привет',
+    });
+
+    expect(result.metrics).toEqual({
+      inputTokens: 10,
+      outputTokens: 20,
+      costUsd: null,
+      model: 'unknown-model',
+    });
   });
 
   it('берёт модель по умолчанию, если data.model не задана', async () => {

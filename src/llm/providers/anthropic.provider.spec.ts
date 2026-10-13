@@ -59,6 +59,8 @@ describe('AnthropicProvider', () => {
 
   it('склеивает text-блоки ответа и передаёт параметры в SDK', async () => {
     createMock.mockResolvedValue({
+      model: 'claude-sonnet-4-20250514',
+      usage: { input_tokens: 12, output_tokens: 5 },
       content: [
         { type: 'text', text: 'привет' },
         { type: 'tool_use', id: 't1', name: 'tool', input: {} },
@@ -73,7 +75,15 @@ describe('AnthropicProvider', () => {
         model: 'claude-sonnet-4-20250514',
         maxTokens: 10,
       }),
-    ).resolves.toBe('привет, мир');
+    ).resolves.toEqual({
+      text: 'привет, мир',
+      // KI-038: метрики вызова прокидываются наверх.
+      usage: {
+        inputTokens: 12,
+        outputTokens: 5,
+        model: 'claude-sonnet-4-20250514',
+      },
+    });
 
     const [body, options] = createMock.mock.calls[0];
 
@@ -86,6 +96,20 @@ describe('AnthropicProvider', () => {
     );
     // RULES 4.19: у вызова всегда есть signal (таймаут или внешний).
     expect(options.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('возвращает usage: null, если провайдер не отдал метрики (KI-038)', async () => {
+    createMock.mockResolvedValue({
+      model: 'claude-sonnet-4-20250514',
+      content: [{ type: 'text', text: 'без метрик' }],
+    });
+
+    const provider = new AnthropicProvider(configStub('sk-ant-test'));
+
+    await expect(provider.generateAsync('x', { model: 'm' })).resolves.toEqual({
+      text: 'без метрик',
+      usage: null,
+    });
   });
 
   it('оборачивает ошибку SDK в LlmProviderException', async () => {

@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import type { LlmGenerateOptions } from './llm-provider.interface.js';
+import type {
+  LlmGenerateOptions,
+  LlmGenerateResult,
+} from './llm-provider.interface.js';
 import { LlmRegistryService } from './llm-registry.service.js';
 
 /** Таймаут вызова LLM по умолчанию (RULES 4.19). */
@@ -22,14 +25,14 @@ export class LlmService {
    * @param prompt - пользовательский промпт
    * @param model - id модели (из `node.data.model`)
    * @param options - дополнительные параметры (`system`, лимиты, свой signal)
-   * @returns текст ответа провайдера
+   * @returns текст ответа и метрики вызова (KI-038)
    * @throws LlmProviderException если модель не поддерживается или вызов упал
    */
   async generateAsync(
     prompt: string,
     model: string,
     options: Omit<LlmGenerateOptions, 'model'> = {},
-  ): Promise<string> {
+  ): Promise<LlmGenerateResult> {
     const provider = this.registry.resolveByModel(model);
 
     return provider.generateAsync(prompt, {

@@ -59,6 +59,8 @@ describe('OpenAiProvider', () => {
 
   it('возвращает content ответа и передаёт параметры в SDK', async () => {
     createMock.mockResolvedValue({
+      model: 'gpt-4o',
+      usage: { prompt_tokens: 20, completion_tokens: 7 },
       choices: [{ message: { content: 'ответ gpt' } }],
     });
 
@@ -66,7 +68,11 @@ describe('OpenAiProvider', () => {
 
     await expect(
       provider.generateAsync('вопрос', { model: 'gpt-4o', maxTokens: 5, system: 'ты кот' }),
-    ).resolves.toBe('ответ gpt');
+    ).resolves.toEqual({
+      text: 'ответ gpt',
+      // KI-038: метрики вызова прокидываются наверх.
+      usage: { inputTokens: 20, outputTokens: 7, model: 'gpt-4o' },
+    });
 
     const [body, options] = createMock.mock.calls[0];
 
@@ -83,12 +89,15 @@ describe('OpenAiProvider', () => {
     expect(options.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('возвращает пустую строку, если контента нет', async () => {
+  it('возвращает пустой текст и usage: null, если контента и метрик нет (KI-038)', async () => {
     createMock.mockResolvedValue({ choices: [] });
 
     const provider = new OpenAiProvider(configStub('sk-test'));
 
-    await expect(provider.generateAsync('x', { model: 'gpt-4o' })).resolves.toBe('');
+    await expect(provider.generateAsync('x', { model: 'gpt-4o' })).resolves.toEqual({
+      text: '',
+      usage: null,
+    });
   });
 
   it('оборачивает ошибку SDK и падает без ключа', async () => {

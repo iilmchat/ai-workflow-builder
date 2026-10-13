@@ -24,6 +24,17 @@ interface FakeRun {
   finishedAt: Date | null;
 }
 
+/** Результат выполнения узла в моке исполнителя (выходы и метрики, KI-038). */
+interface FakeNodeStep {
+  outputs: Record<string, unknown>;
+  metrics: {
+    inputTokens: number | null;
+    outputTokens: number | null;
+    costUsd: number | null;
+    model: string;
+  } | null;
+}
+
 /** Строка `node_runs` в тестовом двойнике БД. */
 interface FakeNodeRun {
   id: string;
@@ -36,6 +47,9 @@ interface FakeNodeRun {
   error: string | null;
   logs: string[] | null;
   durationMs: number | null;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  costUsd: string | null;
   startedAt: Date | null;
   finishedAt: Date | null;
 }
@@ -171,6 +185,9 @@ function createFakeDb(runId: string) {
             outputs: null,
             durationMs: null,
             logs: null,
+            tokensIn: null,
+            tokensOut: null,
+            costUsd: null,
             finishedAt: null,
             ...values,
           } as FakeNodeRun;
@@ -273,16 +290,16 @@ describe('ExecutionEngineService', () => {
   /**
    * Подменяет приватный `runNodeAsync` (проверка падений узла).
    *
-   * @param impl - реализация-заглушка для выполнения узла
+   * @param impl - реализация-заглушка для выполнения узла (выходы + метрики)
    */
   const spyRunNode = (
-    impl: (node: NodeDto) => Promise<Record<string, unknown>>,
+    impl: (node: NodeDto) => Promise<FakeNodeStep>,
   ): void => {
     const internals = service as unknown as {
       runNodeAsync: (
         node: NodeDto,
         inputs: Record<string, unknown>,
-      ) => Promise<Record<string, unknown>>;
+      ) => Promise<FakeNodeStep>;
     };
 
     vi.spyOn(internals, 'runNodeAsync').mockImplementation((current: NodeDto) =>
@@ -290,10 +307,26 @@ describe('ExecutionEngineService', () => {
     );
   };
 
+  /**
+   * Собирает результат LLM-узла для мока исполнителя (KI-038).
+   *
+   * @param text - текст ответа модели
+   * @returns результат с выходом `{ text }` и метриками по умолчанию
+   */
+  const llmNodeResult = (text: string) => ({
+    outputs: { text },
+    metrics: {
+      inputTokens: 10,
+      outputTokens: 5,
+      costUsd: 0.0001,
+      model: 'fake-model',
+    },
+  });
+
   beforeEach(async () => {
     publish = vi.fn((_runId: string, _event: RunEventDto) => Promise.resolve());
     llmExecute = vi.fn((_node: NodeDto, _inputs: Record<string, unknown>) =>
-      Promise.resolve({ text: 'ответ модели' }),
+      Promise.resolve(llmNodeResult('ответ модели')),
     );
     fake = createFakeDb(RUN_ID);
 
@@ -448,7 +481,7 @@ describe('ExecutionEngineService', () => {
       runNodeAsync: (
         node: NodeDto,
         inputs: Record<string, unknown>,
-      ) => Promise<Record<string, unknown>>;
+      ) => Promise<FakeNodeStep>;
     };
 
     vi.spyOn(internals, 'runNodeAsync').mockImplementation(
@@ -457,7 +490,7 @@ describe('ExecutionEngineService', () => {
           throw new Error('узел упал');
         }
 
-        return { text: 'ok' };
+        return { outputs: { text: 'ok' }, metrics: null };
       },
     );
 
@@ -513,7 +546,7 @@ describe('ExecutionEngineService', () => {
       runNodeAsync: (
         node: NodeDto,
         inputs: Record<string, unknown>,
-      ) => Promise<Record<string, unknown>>;
+      ) => Promise<FakeNodeStep>;
     };
 
     await expect(internals.runNodeAsync(node('A', 'merge'), {})).rejects.toThrow(
@@ -574,7 +607,7 @@ describe('ExecutionEngineService', () => {
         throw new LlmProviderException('anthropic', 'rate limit', { retryable: true });
       }
 
-      return { text: 'ответ после повтора' };
+      return { outputs: { text: 'ответ после повтора' }, metrics: null };
     });
 
     vi.useFakeTimers();
@@ -705,6 +738,9 @@ describe('ExecutionEngineService', () => {
       error: row.error ?? null,
       logs: row.logs ?? null,
       durationMs: row.durationMs ?? null,
+      tokensIn: row.tokensIn ?? null,
+      tokensOut: row.tokensOut ?? null,
+      costUsd: row.costUsd ?? null,
       startedAt: row.startedAt ?? null,
       finishedAt: row.finishedAt ?? null,
     });
@@ -760,7 +796,7 @@ describe('ExecutionEngineService', () => {
       runNodeAsync: (
         node: NodeDto,
         inputs: Record<string, unknown>,
-      ) => Promise<Record<string, unknown>>;
+      ) => Promise<FakeNodeStep>;
     };
     const runSpy = vi.spyOn(internals, 'runNodeAsync');
 
@@ -869,7 +905,7 @@ describe('ExecutionEngineService', () => {
               retryable: false,
             }),
           )
-        : Promise.resolve({ text: `ответ ${current.id}` }),
+        : Promise.resolve(llmNodeResult(`ответ ${current.id}`)),
     );
 
     // Первая попытка: A и B успешны, C падает (неповторяемо).
@@ -891,7 +927,7 @@ describe('ExecutionEngineService', () => {
       runNodeAsync: (
         node: NodeDto,
         inputs: Record<string, unknown>,
-      ) => Promise<Record<string, unknown>>;
+      ) => Promise<FakeNodeStep>;
     };
     const runSpy = vi.spyOn(internals, 'runNodeAsync');
 
@@ -904,5 +940,36 @@ describe('ExecutionEngineService', () => {
     expect(llmExecute.mock.calls[0][0]).toEqual(expect.objectContaining({ id: 'C' }));
     expect(fake.rows).toHaveLength(3);
     expect(fake.rows.every((row) => row.status === 'completed')).toBe(true);
+  });
+
+  it('KI-038: пишет tokens_in/tokens_out/cost_usd в node_runs', async () => {
+    llmExecute.mockResolvedValue({
+      outputs: { text: 'ответ с метриками' },
+      metrics: {
+        inputTokens: 1234,
+        outputTokens: 56,
+        costUsd: 0.0045,
+        model: 'claude-sonnet-4-20250514',
+      },
+    });
+
+    await service.executeAsync(RUN_ID, { nodes: [node('A', 'llm')], edges: [] });
+
+    const row = fake.rows.find((candidate) => candidate.nodeId === 'A');
+
+    expect(row?.tokensIn).toBe(1234);
+    expect(row?.tokensOut).toBe(56);
+    // Drizzle-колонка numeric без mode — значение хранится строкой (6 знаков).
+    expect(row?.costUsd).toBe('0.004500');
+  });
+
+  it('KI-038: у не-LLM узла метрики остаются null', async () => {
+    await service.executeAsync(RUN_ID, { nodes: [node('A', 'text')], edges: [] });
+
+    const row = fake.rows.find((candidate) => candidate.nodeId === 'A');
+
+    expect(row?.tokensIn).toBeNull();
+    expect(row?.tokensOut).toBeNull();
+    expect(row?.costUsd).toBeNull();
   });
 });
