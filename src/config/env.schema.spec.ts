@@ -79,3 +79,42 @@ describe('EnvSchema и validateEnv', () => {
     expect(result.WORKFLOW_RUNS_CONCURRENCY).toBe(5);
   });
 });
+
+describe('OPENAI_BASE_URL (R5.0)', () => {
+  it('опционален: без него окружение валидно', () => {
+    const parsed = EnvSchema.parse(baseEnv);
+
+    expect(parsed.OPENAI_BASE_URL).toBeUndefined();
+  });
+
+  it('принимает URL OpenAI-совместимого прокси (RouterAI)', () => {
+    const parsed = EnvSchema.parse({
+      ...baseEnv,
+      OPENAI_BASE_URL: 'https://routerai.ru/api/v1',
+    });
+
+    expect(parsed.OPENAI_BASE_URL).toBe('https://routerai.ru/api/v1');
+  });
+
+  it('отклоняет не-URL и пустое значение', () => {
+    // Пустая строка — частая ошибка при копировании .env.example
+    // (там `OPENAI_BASE_URL=`), поэтому она обязана падать fail-fast.
+    expect(EnvSchema.safeParse({ ...baseEnv, OPENAI_BASE_URL: 'not-a-url' }).success).toBe(
+      false,
+    );
+    expect(EnvSchema.safeParse({ ...baseEnv, OPENAI_BASE_URL: '' }).success).toBe(false);
+  });
+
+  it('валидирует значение через validateEnv при старте', () => {
+    expect(() => validateEnv({ ...baseEnv, OPENAI_BASE_URL: 'routerai.ru' })).toThrow(
+      'Некорректная конфигурация окружения',
+    );
+
+    const result = validateEnv({
+      ...baseEnv,
+      OPENAI_BASE_URL: 'https://routerai.ru/api/v1',
+    });
+
+    expect(result.OPENAI_BASE_URL).toBe('https://routerai.ru/api/v1');
+  });
+});

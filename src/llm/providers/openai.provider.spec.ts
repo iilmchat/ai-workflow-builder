@@ -2,24 +2,47 @@ import { ConfigService } from '@nestjs/config';
 import { LlmProviderException } from '../llm-provider.interface.js';
 import { OpenAiProvider } from './openai.provider.js';
 
-const { createMock } = vi.hoisted(() => ({ createMock: vi.fn() }));
+const { createMock, constructorMock } = vi.hoisted(() => ({
+  createMock: vi.fn(),
+  constructorMock: vi.fn(),
+}));
 
 // Реальный SDK в юнит-тестах не вызывается: подменяем клиент целиком
-// (RULES: никаких сетевых вызовов в тестах).
+// (RULES: никаких сетевых вызовов в тестах). Опции конструктора запоминаем,
+// чтобы проверять проброс baseURL (R5.0).
 vi.mock('openai', () => ({
   default: class MockOpenAI {
     readonly chat = { completions: { create: createMock } };
+
+    constructor(options: unknown) {
+      constructorMock(options);
+    }
   },
 }));
 
 /**
  * Создаёт заглушку `ConfigService`.
  *
- * @param apiKey - значение `OPENAI_API_KEY` (или `undefined`)
+ * @param values - значения переменных окружения по ключам
  * @returns заглушка ConfigService
  */
-function configStub(apiKey?: string): ConfigService {
-  return { get: () => apiKey } as unknown as ConfigService;
+function configStub(values: Record<string, string | undefined>): ConfigService {
+  return { get: (key: string) => values[key] } as unknown as ConfigService;
+}
+
+/**
+ * Возвращает опции, с которыми был создан клиент SDK.
+ *
+ * @returns опции конструктора OpenAI
+ */
+function lastConstructorOptions(): Record<string, unknown> {
+  const call = constructorMock.mock.calls.at(-1);
+
+  if (!call) {
+    throw new Error('конструктор OpenAI не вызывался');
+  }
+
+  return call[0] as Record<string, unknown>;
 }
 
 /**
@@ -57,6 +80,39 @@ describe('OpenAiProvider', () => {
     vi.clearAllMocks();
   });
 
+  it('создаёт клиент без baseURL, если OPENAI_BASE_URL не задан (R5.0)', () => {
+    new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' }));
+
+    expect(constructorMock).toHaveBeenCalledTimes(1);
+    expect(lastConstructorOptions()).toEqual({ apiKey: 'sk-test' });
+    expect(lastConstructorOptions()).not.toHaveProperty('baseURL');
+  });
+
+  it('прокидывает baseURL из OPENAI_BASE_URL (R5.0)', () => {
+    new OpenAiProvider(
+      configStub({
+        OPENAI_API_KEY: 'sk-router',
+        OPENAI_BASE_URL: 'https://routerai.ru/api/v1',
+      }),
+    );
+
+    expect(lastConstructorOptions()).toEqual({
+      apiKey: 'sk-router',
+      baseURL: 'https://routerai.ru/api/v1',
+    });
+  });
+
+  it('игнорирует пустой OPENAI_BASE_URL и берёт дефолт SDK (R5.0)', () => {
+    new OpenAiProvider(
+      configStub({ OPENAI_API_KEY: 'sk-test', OPENAI_BASE_URL: '' }),
+    );
+
+    // Пустая строка (частый случай в .env) не должна попадать в SDK:
+    // иначе baseURL перекроет дефолт https://api.openai.com/v1.
+    expect(lastConstructorOptions()).toEqual({ apiKey: 'sk-test' });
+    expect(lastConstructorOptions()).not.toHaveProperty('baseURL');
+  });
+
   it('возвращает content ответа и передаёт параметры в SDK', async () => {
     createMock.mockResolvedValue({
       model: 'gpt-4o',
@@ -64,7 +120,7 @@ describe('OpenAiProvider', () => {
       choices: [{ message: { content: 'ответ gpt' } }],
     });
 
-    const provider = new OpenAiProvider(configStub('sk-test'));
+    const provider = new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' }));
 
     await expect(
       provider.generateAsync('вопрос', { model: 'gpt-4o', maxTokens: 5, system: 'ты кот' }),
@@ -90,14 +146,14 @@ describe('OpenAiProvider', () => {
   });
 
   it('isConfigured отражает наличие ключа (KI-039)', () => {
-    expect(new OpenAiProvider(configStub('sk-test')).isConfigured).toBe(true);
-    expect(new OpenAiProvider(configStub(undefined)).isConfigured).toBe(false);
+    expect(new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' })).isConfigured).toBe(true);
+    expect(new OpenAiProvider(configStub({ OPENAI_API_KEY: undefined })).isConfigured).toBe(false);
   });
 
   it('возвращает пустой текст и usage: null, если контента и метрик нет (KI-038)', async () => {
     createMock.mockResolvedValue({ choices: [] });
 
-    const provider = new OpenAiProvider(configStub('sk-test'));
+    const provider = new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' }));
 
     await expect(provider.generateAsync('x', { model: 'gpt-4o' })).resolves.toEqual({
       text: '',
@@ -106,7 +162,7 @@ describe('OpenAiProvider', () => {
   });
 
   it('оборачивает ошибку SDK и падает без ключа', async () => {
-    const failing = new OpenAiProvider(configStub('sk-test'));
+    const failing = new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' }));
 
     createMock.mockRejectedValue(new Error('boom'));
 
@@ -114,7 +170,7 @@ describe('OpenAiProvider', () => {
       LlmProviderException,
     );
 
-    const withoutKey = new OpenAiProvider(configStub(undefined));
+    const withoutKey = new OpenAiProvider(configStub({ OPENAI_API_KEY: undefined }));
 
     await expect(withoutKey.generateAsync('x', { model: 'gpt-4o' })).rejects.toThrow(
       'OPENAI_API_KEY не задан',
@@ -126,7 +182,7 @@ describe('OpenAiProvider', () => {
       Object.assign(new Error('service unavailable'), { status: 503 }),
     );
 
-    const provider = new OpenAiProvider(configStub('sk-test'));
+    const provider = new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' }));
 
     expect(retryableOf(await catchGenerateError(provider))).toBe(true);
   });
@@ -136,13 +192,13 @@ describe('OpenAiProvider', () => {
       Object.assign(new Error('unauthorized'), { status: 401 }),
     );
 
-    const provider = new OpenAiProvider(configStub('sk-test'));
+    const provider = new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' }));
 
     expect(retryableOf(await catchGenerateError(provider))).toBe(false);
   });
 
   it('помечает таймаут сигнала как повторяемую ошибку (KI-036)', async () => {
-    const provider = new OpenAiProvider(configStub('sk-test'));
+    const provider = new OpenAiProvider(configStub({ OPENAI_API_KEY: 'sk-test' }));
 
     createMock.mockRejectedValue(
       Object.assign(new Error('aborted'), { name: 'AbortError' }),

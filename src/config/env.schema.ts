@@ -79,6 +79,12 @@ export const EnvSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   /** Ключ OpenAI (R3). Опционален по той же причине, что и Anthropic. */
   OPENAI_API_KEY: z.string().optional(),
+  /**
+   * Base URL для OpenAI-совместимого API (RouterAI, DeepSeek, Yandex
+   * и т.п.). Если не задан — используется дефолт SDK
+   * (https://api.openai.com/v1).
+   */
+  OPENAI_BASE_URL: z.url().optional(),
   // Настройки воркера очереди (KI-065) и lease-порог (KI-032).
   ...WorkerEnvSchema.shape,
 });

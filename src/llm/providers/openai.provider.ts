@@ -57,6 +57,12 @@ function extractUsage(
  * Клиент SDK создаётся лениво-терпимо: без `OPENAI_API_KEY` провайдер не роняет
  * старт приложения (ключи объявлены опциональными в `EnvSchema`), а отдаёт
  * `LlmProviderException` при вызове. Промпты в логи не пишутся (RULES 5.9).
+ *
+ * Если задан `OPENAI_BASE_URL`, клиент SDK работает с любым
+ * OpenAI-совместимым API (RouterAI, DeepSeek, Yandex и т.п.).
+ * Провайдер тогда отдаёт модели, объявленные в его `models`,
+ * но фактически может проксировать другие — id модели уходит
+ * как есть в upstream.
  */
 @Injectable()
 export class OpenAiProvider implements ILlmProvider {
@@ -83,7 +89,11 @@ export class OpenAiProvider implements ILlmProvider {
       return;
     }
 
-    this.client = new OpenAI({ apiKey });
+    const baseURL = config.get<string>('OPENAI_BASE_URL');
+    this.client = new OpenAI({
+      apiKey,
+      ...(baseURL ? { baseURL } : {}),
+    });
   }
 
   /** Готов ли провайдер к вызовам (задан ли `OPENAI_API_KEY`, KI-039). */
