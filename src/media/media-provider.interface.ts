@@ -1,11 +1,12 @@
 /**
- * Типы и интерфейс media-провайдеров (v0.6.0b.2.1).
+ * Типы и интерфейс media-провайдеров (v0.6.0b.2.1, задачи — v0.6.0b.2.2).
  *
  * Отличие от LLM-провайдеров (`ILlmProvider`): результат генерации — не текст,
  * а URL-ы файлов, а сама генерация асинхронная (создание задачи → опрос
- * статуса). Поэтому интерфейс работает со списком моделей и (в v0.6.0b.2.2)
- * с задачами, а не с `generateAsync`.
+ * статуса). Поэтому интерфейс работает с задачами, а не с `generateAsync`.
  */
+
+import type { MediaTaskResult } from './dto/media-task.mapper.js';
 
 /** Тип media-модели (совпадает с полем `type` у GPTunnel CreativeLab). */
 export type MediaType = 'IMAGE' | 'VIDEO' | 'AUDIO' | 'MUSIC' | '3D';
@@ -139,6 +140,26 @@ export interface MediaModelInfo {
   deprecationRedirectTo?: string;
 }
 
+/** Входные данные для создания задачи генерации. */
+export interface CreateMediaTaskInput {
+  /** id модели из {@link IMediaProvider.listModelsAsync}. */
+  model: string;
+  /** Текстовый промпт (обязателен для моделей с `prompt: 'required'`). */
+  prompt?: string;
+  /** Динамические параметры модели (см. {@link MediaParam}). */
+  params: Record<string, string | number | boolean>;
+  /**
+   * Стабильный ключ идемпотентности (обычно `runId:nodeId`): повторная
+   * попытка с тем же ключом не создаёт вторую платную генерацию.
+   */
+  idempotencyKey: string;
+  /**
+   * Если `true` — upstream держит соединение до 30 секунд, ожидая
+   * `done`/`failed`. Для длинных генераций (video) лучше `false` и опрос.
+   */
+  wait?: boolean;
+}
+
 /**
  * Media-провайдер.
  *
@@ -158,6 +179,30 @@ export interface IMediaProvider {
    * @throws MediaProviderException если ключ не задан или upstream ответил ошибкой
    */
   listModelsAsync(type?: MediaType): Promise<readonly MediaModelInfo[]>;
+
+  /**
+   * Создаёт задачу генерации.
+   *
+   * При `wait: true` upstream держит соединение до 30 секунд, ожидая финала, и
+   * задача может вернуться уже `done`; иначе — `queued`/`running`, и статус
+   * нужно опрашивать через {@link IMediaProvider.getTaskAsync}.
+   *
+   * @param input - модель, промпт, параметры и ключ идемпотентности
+   * @returns задача с `taskId`; при `done` — с `resultUrls` и `costRub`
+   * @throws MediaProviderException если ключ не задан, вход отклонён (400/402/410),
+   *   upstream недоступен или ответил ошибкой
+   */
+  createTaskAsync(input: CreateMediaTaskInput): Promise<MediaTaskResult>;
+
+  /**
+   * Возвращает актуальное состояние задачи.
+   *
+   * @param taskId - id, полученный из {@link IMediaProvider.createTaskAsync}
+   * @returns текущее состояние задачи с URL-ами и стоимостью, если она завершена
+   * @throws MediaProviderException если ключ не задан, задача не найдена или
+   *   upstream ответил ошибкой
+   */
+  getTaskAsync(taskId: string): Promise<MediaTaskResult>;
 }
 
 /**
@@ -168,11 +213,14 @@ export interface IMediaProvider {
  * контроллера.
  */
 export class MediaProviderException extends Error {
+  /** Идентификатор провайдера, у которого произошла ошибка. */
+  readonly provider: string;
+
   /**
    * Признак «временной» ошибки: имеет ли смысл повторять вызов.
    *
    * `true` — 429/5xx, таймаут, сетевой сбой; `false` — детерминированные
-   * ошибки (400/401/403/404, отсутствие ключа).
+   * ошибки (400/401/402/403/404/410, отсутствие ключа).
    */
   readonly retryable: boolean;
 
@@ -189,6 +237,7 @@ export class MediaProviderException extends Error {
   ) {
     super(`[${provider}] ${message}`);
     this.name = 'MediaProviderException';
+    this.provider = provider;
     this.retryable = options.retryable ?? false;
 
     if (options.cause !== undefined) {

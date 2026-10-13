@@ -22,6 +22,13 @@
       "when": 1791889159546,
       "tag": "0002_steady_molecule_man",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791923563229,
+      "tag": "0003_acoustic_ironclad",
+      "breakpoints": true
     }
   ]
 }

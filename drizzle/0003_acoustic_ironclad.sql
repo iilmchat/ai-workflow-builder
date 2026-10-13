@@ -1,0 +1,1 @@
+ALTER TABLE "node_runs" ADD COLUMN "cost_rub" numeric(10, 6);

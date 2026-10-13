@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { EngineModule } from '../engine/engine.module.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import { LlmModule } from '../llm/llm.module.js';
+import { MediaModule } from '../media/media.module.js';
 import { RunEventsService } from './run-events.service.js';
 import { WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 import { RunsController } from './runs.controller.js';
@@ -24,6 +25,8 @@ import { RunsStreamService } from './runs-stream.service.js';
     EngineModule,
     // ExecutionEngineService получает из него LlmNodeExecutor (R3).
     LlmModule,
+    // ...а из него MediaNodeExecutor для узлов image_generation (v0.6.0b.2.2).
+    MediaModule,
     BullModule.registerQueue({
       name: WORKFLOW_RUNS_QUEUE,
       // KI-016: без attempts/backoff упавший job не ретраится, а без

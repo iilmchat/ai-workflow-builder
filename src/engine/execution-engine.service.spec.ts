@@ -8,6 +8,7 @@ import type { EdgeDto, GraphDto, NodeDto } from './dto/index.js';
 import { EngineService } from './engine.service.js';
 import { ExecutionEngineService } from './execution-engine.service.js';
 import { LlmNodeExecutor } from '../llm/llm-node-executor.service.js';
+import { MediaNodeExecutor } from '../media/media-node-executor.service.js';
 import { LlmProviderException } from '../llm/llm-provider.interface.js';
 import { UnsupportedNodeTypeException } from './node-executors.js';
 
@@ -50,6 +51,7 @@ interface FakeNodeRun {
   tokensIn: number | null;
   tokensOut: number | null;
   costUsd: string | null;
+  costRub: string | null;
   startedAt: Date | null;
   finishedAt: Date | null;
 }
@@ -188,6 +190,7 @@ function createFakeDb(runId: string) {
             tokensIn: null,
             tokensOut: null,
             costUsd: null,
+            costRub: null,
             finishedAt: null,
             ...values,
           } as FakeNodeRun;
@@ -282,6 +285,7 @@ describe('ExecutionEngineService', () => {
   let engineService: EngineService;
   let publish: ReturnType<typeof vi.fn>;
   let llmExecute: ReturnType<typeof vi.fn>;
+  let mediaExecute: ReturnType<typeof vi.fn>;
   let fake: ReturnType<typeof createFakeDb>;
 
   /** Типы опубликованных событий в порядке публикации. */
@@ -335,10 +339,24 @@ describe('ExecutionEngineService', () => {
     },
   });
 
+  /**
+   * Собирает результат media-узла для мока исполнителя (v0.6.0b.2.2).
+   *
+   * @param url - URL сгенерированного файла
+   * @returns результат с выходом `{ mediaUrl }` и метриками в рублях
+   */
+  const mediaNodeResult = (url: string) => ({
+    outputs: { mediaUrl: url, mediaType: 'IMAGE', taskId: 'task-1' },
+    metrics: { costRub: 0.6, mediaType: 'IMAGE', taskId: 'task-1' },
+  });
+
   beforeEach(async () => {
     publish = vi.fn((_runId: string, _event: RunEventDto) => Promise.resolve());
     llmExecute = vi.fn((_node: NodeDto, _inputs: Record<string, unknown>) =>
       Promise.resolve(llmNodeResult('ответ модели')),
+    );
+    mediaExecute = vi.fn((_node: NodeDto, _inputs: Record<string, unknown>, _runId: string) =>
+      Promise.resolve(mediaNodeResult('https://cdn/img.png')),
     );
     fake = createFakeDb(RUN_ID);
 
@@ -350,6 +368,8 @@ describe('ExecutionEngineService', () => {
         { provide: RunEventsService, useValue: { publishAsync: publish } },
         // R3: llm-узел ходит в провайдера — в юнит-тесте он замокан.
         { provide: LlmNodeExecutor, useValue: { executeAsync: llmExecute } },
+        // v0.6.0b.2.2: media-узел ходит в CreativeLab — тоже замокан.
+        { provide: MediaNodeExecutor, useValue: { executeAsync: mediaExecute } },
       ],
     }).compile();
 
@@ -383,7 +403,9 @@ describe('ExecutionEngineService', () => {
     expect(result.outputs).toEqual({
       A: { text: 'привет' },
       B: { text: 'ответ модели' },
-      C: { url: null },
+      // v0.6.0b.2.2: раньше здесь был стаб `{ url: null }`, теперь узел
+      // реально ходит в media-провайдера (в тесте он замокан).
+      C: { mediaUrl: 'https://cdn/img.png', mediaType: 'IMAGE', taskId: 'task-1' },
     });
 
     // R3: llm-узел получил нормализованный вход prompt и ушёл в LLM-исполнитель.
@@ -522,7 +544,7 @@ describe('ExecutionEngineService', () => {
     expect(eventTypes()).not.toContain('run_completed');
   });
 
-  it('прокидывает null, когда выход предшественника пуст (url = null)', async () => {
+  it('прокидывает null, когда выход предшественника пуст (prompt = null)', async () => {
     const graph: GraphDto = {
       nodes: [node('A', 'image_generation'), node('B', 'llm')],
       edges: [edge('e1', 'A', 'B', 'image-output', 'prompt')],
@@ -531,7 +553,14 @@ describe('ExecutionEngineService', () => {
     const result = await service.executeAsync(RUN_ID, graph);
 
     expect(result.status).toBe('completed');
-    expect(fake.rows[0].outputs).toEqual({ url: null });
+    // v0.6.0b.2.2: media-узел отдаёт mediaUrl (стаб отдавал `{ url: null }`).
+    expect(fake.rows[0].outputs).toEqual({
+      mediaUrl: 'https://cdn/img.png',
+      mediaType: 'IMAGE',
+      taskId: 'task-1',
+    });
+    // Порт `image-output` не совпадает с реальным выходом узла, поэтому
+    // зависимый узел получает null — это и проверяем.
     expect(fake.rows[1].inputs).toEqual({ prompt: null });
   });
 
@@ -743,6 +772,7 @@ describe('ExecutionEngineService', () => {
       tokensIn: row.tokensIn ?? null,
       tokensOut: row.tokensOut ?? null,
       costUsd: row.costUsd ?? null,
+      costRub: row.costRub ?? null,
       startedAt: row.startedAt ?? null,
       finishedAt: row.finishedAt ?? null,
     });
@@ -973,6 +1003,93 @@ describe('ExecutionEngineService', () => {
     expect(row?.tokensIn).toBeNull();
     expect(row?.tokensOut).toBeNull();
     expect(row?.costUsd).toBeNull();
+    expect(row?.costRub).toBeNull();
+  });
+
+  it('v0.6.0b.2.2: media-узел пишет cost_rub, а не cost_usd', async () => {
+    await service.executeAsync(RUN_ID, {
+      nodes: [node('A', 'image_generation', { model: 'flux-schnell' })],
+      edges: [],
+    });
+
+    const row = fake.rows.find((candidate) => candidate.nodeId === 'A');
+
+    // Стоимость media приходит в рублях: numeric(10,6) → строка с 6 знаками.
+    expect(row?.costRub).toBe('0.600000');
+    // USD-колонка не заполняется: валюты не смешиваются (RULES 4.23).
+    expect(row?.costUsd).toBeNull();
+    expect(row?.tokensIn).toBeNull();
+    expect(row?.tokensOut).toBeNull();
+    expect(row?.status).toBe('completed');
+    expect(row?.outputs).toEqual({
+      mediaUrl: 'https://cdn/img.png',
+      mediaType: 'IMAGE',
+      taskId: 'task-1',
+    });
+  });
+
+  it('v0.6.0b.2.2: media-исполнитель получает runId для ключа идемпотентности', async () => {
+    await service.executeAsync(RUN_ID, {
+      nodes: [node('A', 'image_generation', { model: 'flux-schnell' })],
+      edges: [],
+    });
+
+    expect(mediaExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'A', type: 'image_generation' }),
+      expect.any(Object),
+      RUN_ID,
+    );
+  });
+
+  it('v0.6.0b.2.2: падение media-узла помечает его failed с текстом ошибки', async () => {
+    // Свежий reject на каждый вызов: узел повторяется до NODE_MAX_ATTEMPTS раз,
+    // и общий rejected-промис давал бы unhandled rejection между попытками.
+    mediaExecute.mockImplementation(() =>
+      Promise.reject(new Error('задача генерации упала')),
+    );
+    const result = await service
+      .executeAsync(RUN_ID, {
+        nodes: [node('A', 'image_generation'), node('B', 'text')],
+        edges: [edge('e1', 'A', 'B', 'media', 'prompt')],
+      })
+      // KI-036: запуск закрыт 'failed' в БД, но исключение бросается наружу,
+      // чтобы BullMQ увидел провал job'а. Ловим его, чтобы проверить строку.
+      .catch((caught: unknown) => caught);
+
+    expect(result).toBeInstanceOf(Error);
+
+    const row = fake.rows.find((candidate) => candidate.nodeId === 'A');
+
+    expect(fake.run.status).toBe('failed');
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toContain('задача генерации упала');
+  });
+
+  it('KI-047: UPSERT сбрасывает cost_rub прошлой попытки (v0.6.0b.2.2)', async () => {
+    // Строка прошлой попытки — failed: completed-строку узел переиспользовал бы
+    // (KI-046) и до UPSERT дело бы не дошло.
+    seedNodeRun({
+      nodeId: 'A',
+      nodeType: 'image_generation',
+      status: 'failed',
+      costRub: '9.990000',
+    });
+    mediaExecute.mockImplementation(() =>
+      Promise.reject(new Error('задача генерации упала')),
+    );
+
+    await service
+      .executeAsync(RUN_ID, {
+        nodes: [node('A', 'image_generation')],
+        edges: [],
+      })
+      // Узел падает, поэтому запуск закрывается 'failed' и бросает наружу
+      // (KI-036); строка node_runs при этом уже обновлена.
+      .catch(() => undefined);
+
+    expect(fake.upserts[0].set).toEqual(
+      expect.objectContaining({ costRub: null, costUsd: null }),
+    );
   });
 
   it('KI-060: не публикует run_completed — это ответственность процессора', async () => {

@@ -9,13 +9,16 @@ import { isDeepStrictEqual } from 'node:util';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { nodeRuns, workflowRuns } from '../db/schema.js';
 import { RunEventsService } from '../runs/run-events.service.js';
-import { LlmNodeExecutor } from '../llm/llm-node-executor.service.js';
+import { LlmNodeExecutor, type LlmNodeMetrics } from '../llm/llm-node-executor.service.js';
 import { LlmProviderException } from '../llm/llm-provider.interface.js';
+import {
+  MediaNodeExecutor,
+  type MediaNodeMetrics,
+} from '../media/media-node-executor.service.js';
 import type { GraphDto, NodeDto } from './dto/index.js';
 import { EngineService, type ExecutionPlanDto } from './engine.service.js';
 import {
   UnsupportedNodeTypeException,
-  executeImageGenNodeStub,
   executeTextNode,
 } from './node-executors.js';
 
@@ -109,24 +112,30 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-/** Метрики выполнения узла для записи в `node_runs` (KI-038). */interface NodeStepMetrics {
-  /** Токенов на входе. */
-  inputTokens: number | null;
-  /** Токенов на выходе. */
-  outputTokens: number | null;
-  /** Стоимость вызова в USD. */
-  costUsd: number | null;
-  /** Модель, фактически использованная провайдером. */
-  model: string;
-}
-
-/** Результат выполнения узла: выходы и (для LLM-узлов) метрики вызова. */
-interface NodeStepResult {
-  /** Выходы узла. */
-  outputs: Record<string, unknown>;
-  /** Метрики вызова либо `null`, если узел не обращался к провайдеру. */
-  metrics: NodeStepMetrics | null;
-}
+/**
+ * Результат выполнения узла: выходы и метрики вызова.
+ *
+ * Размеченное объединение (v0.6.0b.2.2): у LLM-узлов метрики в USD, у
+ * media-узлов — в рублях, а у чистых преобразований (`text`) метрик нет вовсе.
+ * Валюты не смешиваются: при записи в `node_runs` заполняется либо `cost_usd`,
+ * либо `cost_rub` (RULES 4.23).
+ */
+type NodeStepResult =
+  | {
+      kind: 'plain';
+      outputs: Record<string, unknown>;
+      metrics: null;
+    }
+  | {
+      kind: 'llm';
+      outputs: Record<string, unknown>;
+      metrics: LlmNodeMetrics;
+    }
+  | {
+      kind: 'media';
+      outputs: Record<string, unknown>;
+      metrics: MediaNodeMetrics;
+    };
 
 /** Итог выполнения запуска. */
 export interface ExecutionResult {
@@ -158,6 +167,7 @@ export class ExecutionEngineService {
     private readonly engineService: EngineService,
     private readonly runEvents: RunEventsService,
     private readonly llmExecutor: LlmNodeExecutor,
+    private readonly mediaExecutor: MediaNodeExecutor,
   ) {}
 
   /**
@@ -416,6 +426,7 @@ export class ExecutionEngineService {
           tokensIn: null,
           tokensOut: null,
           costUsd: null,
+          costRub: null,
           startedAt: new Date(),
           finishedAt: null,
         },
@@ -437,7 +448,7 @@ export class ExecutionEngineService {
 
       for (let attempt = 1; attempt <= NODE_MAX_ATTEMPTS; attempt += 1) {
         try {
-          const step = await this.runNodeAsync(node, inputs);
+          const step = await this.runNodeAsync(node, inputs, runId);
           const durationMs = Date.now() - startedAt;
 
           await this.db
@@ -447,10 +458,15 @@ export class ExecutionEngineService {
               outputs: step.outputs,
               durationMs,
               logs,
-              // KI-038: метрики провайдера (у не-LLM узлов — null).
-              tokensIn: step.metrics?.inputTokens ?? null,
-              tokensOut: step.metrics?.outputTokens ?? null,
-              costUsd: toNumericString(step.metrics?.costUsd),
+              // KI-038: метрики провайдера раздельно по валютам. У LLM-узла
+              // заполняется cost_usd, у media-узла — cost_rub, у чистого
+              // преобразования обе колонки остаются NULL (RULES 4.23).
+              tokensIn: step.kind === 'llm' ? step.metrics.inputTokens : null,
+              tokensOut: step.kind === 'llm' ? step.metrics.outputTokens : null,
+              costUsd:
+                step.kind === 'llm' ? toNumericString(step.metrics.costUsd) : null,
+              costRub:
+                step.kind === 'media' ? toNumericString(step.metrics.costRub) : null,
               finishedAt: new Date(),
             })
             .where(eq(nodeRuns.id, nodeRun.id));
@@ -558,26 +574,44 @@ export class ExecutionEngineService {
    * Выполняет узел в зависимости от его типа.
    *
    * Метод асинхронный (RULES 1.4): `llm`-узел ходит в провайдера через
-   * {@link LlmNodeExecutor} и возвращает вместе с выходами метрики вызова
-   * (KI-038). `image_generation` пока заглушка (R4), метрик у неё нет.
+   * {@link LlmNodeExecutor} и возвращает метрики в USD, `image_generation` —
+   * через {@link MediaNodeExecutor} с метриками в рублях, `text` — чистое
+   * преобразование без метрик.
    *
    * @param node - узел графа
    * @param inputs - нормализованные входы узла (KI-034: ключ `prompt`/`text`)
-   * @returns выходы узла и метрики вызова (`null` для не-LLM узлов)
+   * @param runId - id запуска (нужен media-узлу для ключа идемпотентности)
+   * @returns выходы узла и метрики вызова (`null` для чистых преобразований)
    * @throws UnsupportedNodeTypeException если тип узла неизвестен
    * @throws LlmProviderException если вызов LLM-провайдера упал
+   * @throws MediaProviderException если генерация media упала
    */
   private async runNodeAsync(
     node: NodeDto,
     inputs: Record<string, unknown>,
+    runId: string,
   ): Promise<NodeStepResult> {
     switch (node.type) {
       case 'text':
-        return { outputs: executeTextNode(node), metrics: null };
-      case 'llm':
-        return this.llmExecutor.executeAsync(node, inputs);
-      case 'image_generation':
-        return { outputs: executeImageGenNodeStub(node), metrics: null };
+        return { kind: 'plain', outputs: executeTextNode(node), metrics: null };
+      case 'llm': {
+        const result = await this.llmExecutor.executeAsync(node, inputs);
+
+        return {
+          kind: 'llm',
+          outputs: result.outputs,
+          metrics: result.metrics,
+        };
+      }
+      case 'image_generation': {
+        const result = await this.mediaExecutor.executeAsync(node, inputs, runId);
+
+        return {
+          kind: 'media',
+          outputs: result.outputs,
+          metrics: result.metrics,
+        };
+      }
       default:
         throw new UnsupportedNodeTypeException(node.type);
     }

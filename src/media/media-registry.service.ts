@@ -1,8 +1,11 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type {
-  IMediaProvider,
-  MediaModelInfo,
-  MediaType,
+import type { MediaTaskResult } from './dto/media-task.mapper.js';
+import {
+  MediaProviderException,
+  type CreateMediaTaskInput,
+  type IMediaProvider,
+  type MediaModelInfo,
+  type MediaType,
 } from './media-provider.interface.js';
 
 /** Токен DI со списком media-провайдеров (см. `MediaModule`). */
@@ -66,6 +69,76 @@ export class MediaRegistryService {
     );
 
     return this.deduplicate(configured, results);
+  }
+
+  /**
+   * Создаёт задачу генерации у провайдера, которому принадлежит модель.
+   *
+   * Маршрутизация идёт по id модели: реестр просматривает каталоги
+   * сконфигурированных провайдеров и берёт первого, кто объявил модель. Так
+   * исполнитель узла не знает, какой провайдер её обслуживает, и добавление
+   * второго провайдера не требует правок в executor'е.
+   *
+   * @param input - модель, промпт, параметры и ключ идемпотентности
+   * @returns задача с `taskId`; при `done` — с `resultUrls` и `costRub`
+   * @throws MediaProviderException если ни один провайдер не сконфигурирован,
+   *   модель никем не объявлена или провайдер ответил ошибкой
+   */
+  async createTaskAsync(input: CreateMediaTaskInput): Promise<MediaTaskResult> {
+    const provider = await this.resolveByModelAsync(input.model);
+
+    return provider.createTaskAsync(input);
+  }
+
+  /**
+   * Возвращает состояние задачи у подходящего провайдера.
+   *
+   * @param taskId - id задачи в upstream
+   * @param model - id модели, если известен: сужает круг провайдеров
+   * @returns текущее состояние задачи
+   * @throws MediaProviderException если подходящий провайдер не найден или
+   *   ответил ошибкой
+   */
+  async getTaskAsync(taskId: string, model?: string): Promise<MediaTaskResult> {
+    const provider = model
+      ? await this.resolveByModelAsync(model)
+      : this.providers.find((candidate) => candidate.isConfigured);
+
+    if (!provider) {
+      throw new MediaProviderException(
+        'media',
+        'Нет сконфигурированных media-провайдеров',
+      );
+    }
+
+    return provider.getTaskAsync(taskId);
+  }
+
+  /**
+   * Находит провайдера, объявившего модель.
+   *
+   * @param modelId - id модели из каталога
+   * @returns провайдер, обслуживающий модель
+   * @throws MediaProviderException если модель не объявлена ни одним
+   *   сконфигурированным провайдером
+   */
+  private async resolveByModelAsync(modelId: string): Promise<IMediaProvider> {
+    const configured = this.providers.filter(
+      (provider) => provider.isConfigured,
+    );
+
+    for (const provider of configured) {
+      const models = await provider.listModelsAsync();
+
+      if (models.some((model) => model.id === modelId)) {
+        return provider;
+      }
+    }
+
+    throw new MediaProviderException(
+      'media',
+      `Модель не поддерживается ни одним media-провайдером: ${modelId}`,
+    );
   }
 
   /**

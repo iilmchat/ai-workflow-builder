@@ -6,14 +6,30 @@ import {
   type MediaModelsResponseDto,
 } from '../dto/media-model.dto.js';
 import {
+  CreateMediaTaskSchema,
+  MediaTaskResponseSchema,
+} from '../dto/media-task.dto.js';
+import { toMediaTaskResult, type MediaTaskResult } from '../dto/media-task.mapper.js';
+import {
   MediaProviderException,
+  type CreateMediaTaskInput,
   type IMediaProvider,
   type MediaModelInfo,
   type MediaType,
 } from '../media-provider.interface.js';
 
-/** Таймаут HTTP-запроса к upstream (RULES 4.19). */
+/** Таймаут запроса каталога моделей (RULES 4.19). */
 const REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * Таймаут создания задачи.
+ *
+ * Upstream при `wait: true` держит соединение до 30 секунд, поэтому лимит
+ * выше — 45 секунд с запасом; иначе клиент обрывал бы соединение раньше, чем
+ * задача успевала завершиться.
+ */
+const CREATE_TASK_TIMEOUT_MS = 45_000;
+/** Таймаут опроса статуса задачи. */
+const GET_TASK_TIMEOUT_MS = 15_000;
 /** Дефолтный адрес media API GPTunnel (совпадает с дефолтом env-схемы). */
 const DEFAULT_BASE_URL = 'https://gptunnel.ru/api/v2/media';
 /** Дефолтный TTL кэша моделей (совпадает с дефолтом env-схемы). */
@@ -146,6 +162,286 @@ export class CreativeLabProvider implements IMediaProvider {
   }
 
   /**
+   * Создаёт задачу генерации.
+   *
+   * Тело собирается через `CreateMediaTaskSchema` — валидация на выходе:
+   * неверный вход отсекается до платного запроса, а не после него.
+   *
+   * Обработка ответов upstream:
+   * - `200` — задача создана (при `wait: true` может быть сразу `done`);
+   * - `401`/`403` — ключ не принят, повтор бессмыслен;
+   * - `402` — закончился баланс, повтор бессмыслен;
+   * - `409` + `code: 23` — сработала идемпотентность: upstream вернул **ту же**
+   *   задачу, что и в прошлый раз с этим ключом (новой генерации не было);
+   * - `400` + `code: 25` — невалидный вход;
+   * - `410` + `code: 21` — модель снята без аналога;
+   * - `429`/`5xx` — временная ошибка, повтор имеет смысл.
+   *
+   * Если upstream ответил заголовком `Deprecation: true`, модель снята с
+   * обслуживания, но запрос перенаправлен на аналог (`x-model-served`): задача
+   * выполняется, поэтому пишем предупреждение и продолжаем.
+   *
+   * @param input - модель, промпт, параметры и ключ идемпотентности
+   * @returns задача с `taskId`; при `done` — с `resultUrls` и `costRub`
+   * @throws MediaProviderException если ключ не задан, вход отклонён, upstream
+   *   недоступен или ответил ошибкой
+   */
+  async createTaskAsync(input: CreateMediaTaskInput): Promise<MediaTaskResult> {
+    if (!this.apiKey) {
+      throw new MediaProviderException(
+        this.name,
+        'GPTUNNEL_MEDIA_API_KEY не задан',
+      );
+    }
+
+    const body = CreateMediaTaskSchema.parse({
+      model: input.model,
+      prompt: input.prompt,
+      params: input.params,
+      idempotency_key: input.idempotencyKey,
+    });
+
+    const response = await this.sendAsync(
+      `${this.baseUrl}/tasks`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input.wait ? { ...body, wait: true } : body),
+      },
+      CREATE_TASK_TIMEOUT_MS,
+    );
+
+    this.logDeprecation(response);
+
+    if (!response.ok) {
+      // 409 + code:23 — идемпотентный конфликт: upstream вернул ту же задачу,
+      // что создавалась с этим ключом ранее. Тело читается один раз, поэтому
+      // сначала пробуем разобрать его как задачу, и только потом — как ошибку.
+      if (response.status === 409) {
+        const existing = await this.tryParseTaskAsync(response);
+
+        if (existing) {
+          this.logger.log(
+            `Задача с ключом идемпотентности уже существует: ${existing.id} (новой генерации не было)`,
+          );
+
+          return toMediaTaskResult(existing);
+        }
+      }
+
+      throw await this.taskErrorAsync(response, 'не удалось создать задачу');
+    }
+
+    const parsed = await this.parseTaskAsync(response);
+
+    return toMediaTaskResult(parsed);
+  }
+
+  /**
+   * Возвращает актуальное состояние задачи.
+   *
+   * @param taskId - id, полученный из {@link createTaskAsync}
+   * @returns состояние задачи; при `done` — с URL-ами и стоимостью
+   * @throws MediaProviderException если ключ не задан, задача не найдена или
+   *   upstream ответил ошибкой
+   */
+  async getTaskAsync(taskId: string): Promise<MediaTaskResult> {
+    if (!this.apiKey) {
+      throw new MediaProviderException(
+        this.name,
+        'GPTUNNEL_MEDIA_API_KEY не задан',
+      );
+    }
+
+    const response = await this.sendAsync(
+      `${this.baseUrl}/tasks/${encodeURIComponent(taskId)}`,
+      { method: 'GET' },
+      GET_TASK_TIMEOUT_MS,
+    );
+
+    if (!response.ok) {
+      throw await this.taskErrorAsync(
+        response,
+        `не удалось получить задачу ${taskId}`,
+      );
+    }
+
+    const parsed = await this.parseTaskAsync(response);
+
+    return toMediaTaskResult(parsed);
+  }
+
+  /**
+   * Отправляет запрос в upstream с авторизацией и таймаутом.
+   *
+   * @param url - полный URL запроса
+   * @param init - метод и (для POST) тело
+   * @param timeoutMs - таймаут запроса
+   * @returns HTTP-ответ
+   * @throws MediaProviderException при сетевой ошибке или таймауте
+   */
+  private async sendAsync(
+    url: string,
+    init: { method: string; body?: string },
+    timeoutMs: number,
+  ): Promise<Response> {
+    const signal = AbortSignal.timeout(timeoutMs);
+
+    try {
+      return await fetch(url, {
+        method: init.method,
+        headers: {
+          // Upstream принимает и «сырой» ключ, и Bearer; отправляем как есть.
+          Authorization: this.apiKey ?? '',
+          Accept: 'application/json',
+          ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        body: init.body,
+        signal,
+      });
+    } catch (error: unknown) {
+      throw new MediaProviderException(
+        this.name,
+        signal.aborted
+          ? 'запрос к media API истёк по таймауту'
+          : 'не удалось обратиться к media API',
+        { cause: error, retryable: true },
+      );
+    }
+  }
+
+  /**
+   * Разбирает ответ upstream по задаче.
+   *
+   * @param response - успешный HTTP-ответ
+   * @returns разобранная задача
+   * @throws MediaProviderException если тело не JSON или не по схеме
+   */
+  private async parseTaskAsync(
+    response: Response,
+  ): Promise<ReturnType<typeof MediaTaskResponseSchema.parse>> {
+    let payload: unknown;
+
+    try {
+      payload = await response.json();
+    } catch (error: unknown) {
+      throw new MediaProviderException(
+        this.name,
+        'media API вернул ответ не в формате JSON',
+        { cause: error },
+      );
+    }
+
+    const parsed = MediaTaskResponseSchema.safeParse(payload);
+
+    if (!parsed.success) {
+      throw new MediaProviderException(
+        this.name,
+        `неожиданный формат ответа media API: ${parsed.error.issues.length} ошибок схемы`,
+        { cause: parsed.error },
+      );
+    }
+
+    return parsed.data;
+  }
+
+  /**
+   * Пытается разобрать ответ как задачу, не бросая исключение.
+   *
+   * Нужен для идемпотентного конфликта (409): тело может содержать как
+   * исходную задачу, так и ошибку, и решать это должен вызывающий код.
+   *
+   * @param response - ещё не прочитанный ответ upstream
+   * @returns задача либо `null`, если тело не является задачей
+   */
+  private async tryParseTaskAsync(
+    response: Response,
+  ): Promise<ReturnType<typeof MediaTaskResponseSchema.parse> | null> {
+    try {
+      const payload: unknown = await response.json();
+      const parsed = MediaTaskResponseSchema.safeParse(payload);
+
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Превращает неуспешный ответ upstream в ошибку провайдера.
+   *
+   * Разбирает тело (`code`, `error`), чтобы отличить причины друг от друга, и
+   * выставляет `retryable` по статусу.
+   *
+   * @param response - ответ с не-2xx статусом
+   * @param fallback - текст ошибки, если upstream не объяснил причину
+   * @returns ошибка провайдера
+   */
+  private async taskErrorAsync(
+    response: Response,
+    fallback: string,
+  ): Promise<MediaProviderException> {
+    const status = response.status;
+    const { upstreamCode, upstreamError } = await readErrorBody(response);
+
+    switch (status) {
+      case 401:
+      case 403:
+        return new MediaProviderException(this.name, 'ключ media API не принят');
+      case 402:
+        return new MediaProviderException(
+          this.name,
+          'на балансе GPTunnel закончились средства',
+        );
+      case 409:
+        return new MediaProviderException(
+          this.name,
+          upstreamCode === IDEMPOTENCY_CONFLICT_CODE
+            ? 'идемпотентный конфликт: задача с этим ключом уже создана'
+            : (upstreamError ?? 'конфликт при создании задачи'),
+        );
+      case 400:
+        return new MediaProviderException(
+          this.name,
+          upstreamCode === INVALID_INPUT_CODE
+            ? `невалидный вход media API: ${upstreamError ?? 'проверьте параметры модели'}`
+            : (upstreamError ?? 'media API отклонил запрос'),
+        );
+      case 410:
+        return new MediaProviderException(
+          this.name,
+          upstreamCode === MODEL_RETIRED_CODE
+            ? 'модель снята с обслуживания и аналога нет'
+            : (upstreamError ?? 'модель недоступна'),
+        );
+      default:
+        return new MediaProviderException(
+          this.name,
+          upstreamError ?? `${fallback}: media API ответил ${status}`,
+          { retryable: isRetryableStatus(status) },
+        );
+    }
+  }
+
+  /**
+   * Логирует предупреждение, если upstream пометил модель снятой.
+   *
+   * Запрос при этом выполняется: upstream перенаправляет его на аналог
+   * (заголовок `x-model-served`), поэтому это именно предупреждение.
+   *
+   * @param response - ответ upstream
+   */
+  private logDeprecation(response: Response): void {
+    if (response.headers.get('deprecation') !== 'true') {
+      return;
+    }
+
+    const served = response.headers.get('x-model-served') ?? 'аналог';
+    this.logger.warn(
+      `Модель снята с обслуживания, запрос обслужен моделью ${served} (upstream вернул Deprecation: true)`,
+    );
+  }
+
+  /**
    * Читает кэш, удаляя устаревшую запись.
    *
    * @param key - ключ кэша (тип модели или `ALL`)
@@ -259,4 +555,45 @@ export class CreativeLabProvider implements IMediaProvider {
  */
 function isRetryableStatus(status: number): boolean {
   return status === 429 || status >= 500;
+}
+
+/** Код upstream: идемпотентный конфликт (задача с этим ключом уже создана). */
+const IDEMPOTENCY_CONFLICT_CODE = 23;
+/** Код upstream: невалидный вход (параметры модели). */
+const INVALID_INPUT_CODE = 25;
+/** Код upstream: модель снята с обслуживания и аналога нет. */
+const MODEL_RETIRED_CODE = 21;
+
+/**
+ * Читает тело ошибки upstream.
+ *
+ * Тело может быть не JSON или отсутствовать, поэтому любые проблемы разбора
+ * приводятся к «нет данных», а не роняют обработку статуса.
+ *
+ * @param response - ответ upstream с ошибкой
+ * @returns код и текст ошибки, если upstream их отдал
+ */
+async function readErrorBody(
+  response: Response,
+): Promise<{ upstreamCode: number | null; upstreamError: string | null }> {
+  try {
+    const payload: unknown = await response.json();
+
+    if (typeof payload !== 'object' || payload === null) {
+      return { upstreamCode: null, upstreamError: null };
+    }
+
+    const candidate = payload as { code?: unknown; error?: unknown; message?: unknown };
+    const code = typeof candidate.code === 'number' ? candidate.code : null;
+    const text =
+      typeof candidate.error === 'string'
+        ? candidate.error
+        : typeof candidate.message === 'string'
+          ? candidate.message
+          : null;
+
+    return { upstreamCode: code, upstreamError: text };
+  } catch {
+    return { upstreamCode: null, upstreamError: null };
+  }
 }

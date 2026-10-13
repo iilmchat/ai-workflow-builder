@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MediaController } from './media.controller.js';
+import { MediaNodeExecutor } from './media-node-executor.service.js';
 import { MEDIA_PROVIDERS, MediaRegistryService } from './media-registry.service.js';
 import { CreativeLabProvider } from './providers/creativelab.provider.js';
 
@@ -15,9 +16,9 @@ import { CreativeLabProvider } from './providers/creativelab.provider.js';
  * как LLM-провайдеры в `LlmModule`: реестр не знает о конкретных классах, а
  * подключение второго media-провайдера сводится к правке этого массива.
  *
- * `MediaRegistryService` экспортируется: исполнитель media-узлов
- * (v0.6.0b.2.2) будет брать модели и создавать задачи через него.
- * `ConfigService` приходит из глобального `ConfigModule`.
+ * `MediaRegistryService` и `MediaNodeExecutor` экспортируются: исполнитель
+ * графа (`ExecutionEngineService` в `RunsModule`) выполняет media-узлы через
+ * них. `ConfigService` приходит из глобального `ConfigModule`.
  */
 @Module({
   controllers: [MediaController],
@@ -29,7 +30,8 @@ import { CreativeLabProvider } from './providers/creativelab.provider.js';
       useFactory: (creativelab: CreativeLabProvider) => [creativelab],
     },
     MediaRegistryService,
+    MediaNodeExecutor,
   ],
-  exports: [MediaRegistryService],
+  exports: [MediaRegistryService, MediaNodeExecutor],
 })
 export class MediaModule {}

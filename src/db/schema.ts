@@ -77,6 +77,12 @@ export const nodeRuns = pgTable(
     tokensIn: integer('tokens_in'),
     tokensOut: integer('tokens_out'),
     costUsd: numeric('cost_usd', { precision: 10, scale: 6 }),
+    /**
+     * Стоимость media-генерации в рублях (RUB). У LLM-узлов — NULL:
+     * media-провайдеры (CreativeLab) тарифицируют в рублях, и сводить их с
+     * USD в одной колонке нельзя (RULES 4.23 — валюты не смешиваются).
+     */
+    costRub: numeric('cost_rub', { precision: 10, scale: 6 }),
     durationMs: integer('duration_ms'),
     startedAt: timestamp('started_at'),
     finishedAt: timestamp('finished_at'),

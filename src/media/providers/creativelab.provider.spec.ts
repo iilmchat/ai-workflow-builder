@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MediaProviderException } from '../media-provider.interface.js';
 import { CreativeLabProvider } from './creativelab.provider.js';
@@ -72,6 +73,65 @@ function mockFetch(
   vi.stubGlobal('fetch', mock);
 
   return mock as ReturnType<typeof vi.fn> & { mock: { calls: unknown[][] } };
+}
+
+/** Минимальный валидный ответ upstream по задаче (snake_case). */
+const taskPayload = {
+  code: 0,
+  id: 'task-1',
+  model: 'flux-schnell',
+  status: 'queued',
+  created_at: 1_791_923_563_229,
+};
+
+/** Валидный вход создания задачи. */
+const taskInput = {
+  model: 'flux-schnell',
+  prompt: 'кот в шляпе, акварель',
+  params: { aspect_ratio: '1:1' },
+  idempotencyKey: 'run-1:node-1',
+};
+
+/**
+ * Подменяет глобальный `fetch` ответом с заданным телом, статусом и заголовками.
+ *
+ * @param body - тело ответа (сериализуется в JSON)
+ * @param status - HTTP-статус
+ * @param headers - дополнительные заголовки ответа
+ * @returns мок fetch
+ */
+function mockFetchWith(
+  body: unknown,
+  status = 200,
+  headers: Record<string, string> = {},
+): ReturnType<typeof vi.fn> & { mock: { calls: unknown[][] } } {
+  const mock = vi.fn(() =>
+    Promise.resolve(
+      new Response(status === 204 ? null : JSON.stringify(body), {
+        status,
+        headers: { 'Content-Type': 'application/json', ...headers },
+      }),
+    ),
+  );
+
+  vi.stubGlobal('fetch', mock);
+
+  return mock as ReturnType<typeof vi.fn> & { mock: { calls: unknown[][] } };
+}
+
+/**
+ * Достаёт тело запроса из мока `fetch`.
+ *
+ * `RequestInit.body` имеет широкий тип (`BodyInit | null`), поэтому значение
+ * сужается явно: в этих тестах тело всегда JSON-строка.
+ *
+ * @param init - опции запроса из мока
+ * @returns разобранное тело запроса
+ */
+function bodyOf(init: RequestInit): unknown {
+  const body = init.body;
+
+  return typeof body === 'string' ? JSON.parse(body) : null;
 }
 
 describe('CreativeLabProvider', () => {
@@ -291,6 +351,214 @@ describe('CreativeLabProvider', () => {
     expect((error as MediaProviderException).retryable).toBe(true);
     expect((error as MediaProviderException).message).toContain(
       'не удалось обратиться к media API',
+    );
+  });
+  it('createTaskAsync: POST на /tasks с ключом, телом и idempotency_key', async () => {
+    const fetchMock = mockFetchWith(taskPayload);
+
+    const provider = new CreativeLabProvider(
+      configStub({
+        GPTUNNEL_MEDIA_API_KEY: 'media-key',
+        GPTUNNEL_MEDIA_BASE_URL: 'https://example.test/api/v2/media',
+      }),
+    );
+
+    const task = await provider.createTaskAsync(taskInput);
+
+    expect(task).toEqual({
+      taskId: 'task-1',
+      model: 'flux-schnell',
+      status: 'queued',
+      resultUrls: [],
+      costRub: null,
+      error: null,
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    expect(url).toBe('https://example.test/api/v2/media/tasks');
+    expect(init.method).toBe('POST');
+    expect(init.headers).toEqual(
+      expect.objectContaining({
+        Authorization: 'media-key',
+        'Content-Type': 'application/json',
+      }),
+    );
+    expect(bodyOf(init)).toEqual({
+      model: 'flux-schnell',
+      prompt: 'кот в шляпе, акварель',
+      params: { aspect_ratio: '1:1' },
+      idempotency_key: 'run-1:node-1',
+    });
+  });
+
+  it('createTaskAsync: wait=true добавляет флаг в тело', async () => {
+    const fetchMock = mockFetchWith(taskPayload);
+
+    const provider = new CreativeLabProvider(
+      configStub({ GPTUNNEL_MEDIA_API_KEY: 'media-key' }),
+    );
+
+    await provider.createTaskAsync({ ...taskInput, wait: true });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    expect(bodyOf(init)).toEqual(
+      expect.objectContaining({ wait: true }),
+    );
+  });
+
+  it('createTaskAsync: 401 → ключ не принят, повтор бессмыслен', async () => {
+    mockFetchWith({ code: 401, error: 'unauthorized' }, 401);
+
+    const provider = new CreativeLabProvider(
+      configStub({ GPTUNNEL_MEDIA_API_KEY: 'media-key' }),
+    );
+
+    const error = await provider
+      .createTaskAsync(taskInput)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(MediaProviderException);
+    expect((error as MediaProviderException).retryable).toBe(false);
+    expect((error as MediaProviderException).message).toContain('ключ media API не принят');
+    // KI-103 закрыт: провайдер виден в самом исключении.
+    expect((error as MediaProviderException).provider).toBe('creativelab');
+  });
+
+  it('createTaskAsync: 402 → закончился баланс, повтор бессмыслен', async () => {
+    mockFetchWith({ code: 402, error: 'no money' }, 402);
+
+    const provider = new CreativeLabProvider(
+      configStub({ GPTUNNEL_MEDIA_API_KEY: 'media-key' }),
+    );
+
+    const error = await provider
+      .createTaskAsync(taskInput)
+      .catch((caught: unknown) => caught);
+
+    expect((error as MediaProviderException).retryable).toBe(false);
+    expect((error as MediaProviderException).message).toContain('закончились средства');
+  });
+
+  it('createTaskAsync: 429 → повторяемая ошибка', async () => {
+    mockFetchWith({ code: 429 }, 429);
+
+    const provider = new CreativeLabProvider(
+      configStub({ GPTUNNEL_MEDIA_API_KEY: 'media-key' }),
+    );
+
+    const error = await provider
+      .createTaskAsync(taskInput)
+      .catch((caught: unknown) => caught);
+
+    expect((error as MediaProviderException).retryable).toBe(true);
+  });
+
+  it('createTaskAsync: 409 + code:23 → возвращает существующую задачу', async () => {
+    // Идемпотентный конфликт: upstream вернул ту же задачу, новой генерации нет.
+    mockFetchWith({ ...taskPayload, status: 'running' }, 409);
+
+    const provider = new CreativeLabProvider(
+      configStub({ GPTUNNEL_MEDIA_API_KEY: 'media-key' }),
+    );
+
+    const task = await provider.createTaskAsync(taskInput);
+
+    expect(task.taskId).toBe('task-1');
+    expect(task.status).toBe('running');
+  });
+
+  it('createTaskAsync: 400 + code:25 → невалидный вход, повтор бессмыслен', async () => {
+    mockFetchWith({ code: 25, error: 'bad param' }, 400);
+
+    const provider = new CreativeLabProvider(
+      configStub({ GPTUNNEL_MEDIA_API_KEY: 'media-key' }),
+    );
+
+    const error = await provider
+      .createTaskAsync(taskInput)
+      .catch((caught: unknown) => caught);
+
+    expect((error as MediaProviderException).retryable).toBe(false);
+    expect((error as MediaProviderException).message).toContain('невалидный вход');
+  });
+
+  it('createTaskAsync: 410 + code:21 → модель снята без аналога', async () => {
+    mockFetchWith({ code: 21 }, 410);
+
+    const provider = new CreativeLabProvider(
+      configStub({ GPTUNNEL_MEDIA_API_KEY: 'media-key' }),
+    );
+
+    const error = await provider
+      .createTaskAsync(taskInput)
+      .catch((caught: unknown) => caught);
+
+    expect((error as MediaProviderException).retryable).toBe(false);
+    expect((error as MediaProviderException).message).toContain('снята с обслуживания');
+  });
+
+  it('createTaskAsync: Deprecation: true → warning, задача выполняется', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    mockFetchWith(
+      { ...taskPayload, status: 'done', price: 0.6, result: ['https://cdn/img.png'] },
+      200,
+      { Deprecation: 'true', 'x-model-served': 'flux-pro' },
+    );
+
+    const provider = new CreativeLabProvider(
+      configStub({ GPTUNNEL_MEDIA_API_KEY: 'media-key' }),
+    );
+
+    const task = await provider.createTaskAsync(taskInput);
+
+    // Запрос прошёл через аналог, поэтому это предупреждение, а не ошибка.
+    expect(task.status).toBe('done');
+    expect(task.resultUrls).toEqual(['https://cdn/img.png']);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('flux-pro'));
+  });
+
+  it('createTaskAsync: без ключа бросает', async () => {
+    const provider = new CreativeLabProvider(configStub({}));
+
+    await expect(provider.createTaskAsync(taskInput)).rejects.toThrow(
+      'GPTUNNEL_MEDIA_API_KEY не задан',
+    );
+  });
+
+  it('getTaskAsync: возвращает состояние задачи и стоимость', async () => {
+    const fetchMock = mockFetchWith({
+      ...taskPayload,
+      status: 'done',
+      price: 0.6,
+      result: ['https://cdn/img.png'],
+    });
+
+    const provider = new CreativeLabProvider(
+      configStub({ GPTUNNEL_MEDIA_API_KEY: 'media-key' }),
+    );
+
+    const task = await provider.getTaskAsync('task-1');
+
+    expect(task.status).toBe('done');
+    expect(task.costRub).toBe(0.6);
+    expect(task.resultUrls).toEqual(['https://cdn/img.png']);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://gptunnel.ru/api/v2/media/tasks/task-1',
+    );
+  });
+
+  it('getTaskAsync: 404 → задача не найдена', async () => {
+    mockFetchWith({ code: 404, error: 'not found' }, 404);
+
+    const provider = new CreativeLabProvider(
+      configStub({ GPTUNNEL_MEDIA_API_KEY: 'media-key' }),
+    );
+
+    await expect(provider.getTaskAsync('missing')).rejects.toThrow(
+      MediaProviderException,
     );
   });
 });
