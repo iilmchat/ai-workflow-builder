@@ -19,6 +19,21 @@
 ## [Unreleased]
 
 ### Added
+- **Runner — KI-038: метрики LLM-узлов (v0.3.6):**
+  - `ILlmProvider.generateAsync` теперь возвращает
+    `LlmGenerateResult` (`{ text, usage }`) вместо `Promise<string>`.
+    Breaking change, dev-only.
+  - `src/llm/providers/anthropic.provider.ts` и `openai.provider.ts` —
+    `extractUsage` с явным narrowing из `unknown` (RULES § 1.17).
+  - `src/llm/model-pricing.ts` (новый) — `MODEL_PRICING` +
+    `calculateCostUsd`.
+  - `LlmNodeExecutor.executeAsync` возвращает `{ outputs, metrics }`;
+    метрики пишет `ExecutionEngineService` (вариант A: executor не
+    трогает БД, БД-запись остаётся в engine — он владеет `node_runs`
+    и UPSERT'ом из KI-031/KI-047).
+  - `node_runs.tokens_in/tokens_out/cost_usd` заполняются; в UPSERT
+    сбрасываются (не «прилипают» к новой попытке).
+  - 11 новых тестов (172 → 183).
 - **Runner — R3: LLM-провайдеры (v0.3.4):**
   - `src/llm/llm-provider.interface.ts` — `ILlmProvider`,
     `LlmGenerateOptions`, `LlmProviderException`.
@@ -55,6 +70,9 @@
   (multi-input схлопывается в один ключ).
 
 ### Known Issues
+- KI-052 (cost 0 when usage missing), KI-053 (failed-attempt tokens
+  unaccounted), KI-054 (no workflow_runs aggregate),
+  KI-055 (static price list).
 - KI-049 (reused nodes invisible in SSE stream), KI-050
   (deep-equal over full JSONB, prefer inputs_hash), KI-051
   (cache scoped to a single runId).
