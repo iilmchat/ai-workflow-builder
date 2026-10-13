@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type { EdgeDto, GraphDto } from './dto/index.js';
+import { inferDefaultOutputPort } from './node-ports.js';
 
 /** Результат проверки графа: ошибки блокируют запуск, warnings — нет. */
 export interface GraphValidationResult {
@@ -141,10 +142,12 @@ export class EngineService {
    *
    * Для каждого узла строится `executionMap`:
    * - `inputs` — что подать на вход: ключ → откуда приходит значение
-   *   (`fromNode`, `fromPort` = `sourceHandle`, по умолчанию `output`).
-   *   Ключ выбирается по приоритету `targetHandle` → `sourceHandle` → `edge.id`:
-   *   несколько входов без заданных портов больше не перезаписывают друг
-   *   друга (KI-003);
+   *   (`fromNode`, `fromPort`). Ключ выбирается по приоритету `targetHandle` →
+   *   `sourceHandle` → `edge.id`: несколько входов без заданных портов больше
+   *   не перезаписывают друг друга (KI-003). `fromPort` — это `sourceHandle`,
+   *   а если он не задан, порт выводится из типа узла-источника
+   *   (`inferDefaultOutputPort`), а не подставляется несуществующий `output`
+   *   (KI-022);
    * - `dependents` — `id` узлов, которые ждут завершения этого узла.
    *
    * @param graph - валидированный DTO графа
@@ -166,13 +169,19 @@ export class EngineService {
       executionMap[node.id] = { inputs: {}, dependents: [] };
     }
 
+    // Индекс «id узла → узел»: нужен, чтобы вывести выходной порт источника
+    // (KI-022) без повторного прохода по массиву узлов на каждую связь.
+    const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+
     for (const edge of index.edges) {
       const plan = executionMap[edge.target];
 
       if (plan) {
+        const sourceNode = nodesById.get(edge.source);
+
         plan.inputs[edge.targetHandle ?? edge.sourceHandle ?? edge.id] = {
           fromNode: edge.source,
-          fromPort: edge.sourceHandle ?? 'output',
+          fromPort: edge.sourceHandle ?? inferDefaultOutputPort(sourceNode?.type ?? ''),
         };
       }
 

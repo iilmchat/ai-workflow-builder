@@ -330,6 +330,66 @@ describe('EngineService', () => {
       });
     });
 
+    it('выводит порт источника из типа узла, если sourceHandle не задан (KI-022)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'text'), node('B', 'llm')],
+        edges: [{ id: 'e1', source: 'A', target: 'B', targetHandle: 'prompt' }],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      expect(plan.executionMap.B.inputs).toEqual({
+        prompt: { fromNode: 'A', fromPort: 'text' },
+      });
+    });
+
+    it('выводит порт url для источника типа image_generation (KI-022)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'image_generation'), node('B', 'text')],
+        edges: [{ id: 'e1', source: 'A', target: 'B', targetHandle: 'in' }],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      expect(plan.executionMap.B.inputs).toEqual({
+        in: { fromNode: 'A', fromPort: 'url' },
+      });
+    });
+
+    it('не перекрывает явный sourceHandle дефолтом по типу узла (KI-022)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'text'), node('B', 'llm')],
+        edges: [
+          {
+            id: 'e1',
+            source: 'A',
+            target: 'B',
+            sourceHandle: 'custom',
+            targetHandle: 'in',
+          },
+        ],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      expect(plan.executionMap.B.inputs).toEqual({
+        in: { fromNode: 'A', fromPort: 'custom' },
+      });
+    });
+
+    it('оставляет output как fallback для неизвестного типа узла (KI-022)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'merge'), node('B', 'llm')],
+        edges: [{ id: 'e1', source: 'A', target: 'B', targetHandle: 'in' }],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      expect(plan.executionMap.B.inputs).toEqual({
+        in: { fromNode: 'A', fromPort: 'output' },
+      });
+    });
+
     it('собирает dependents узлов diamond', async () => {
       const plan = await service.buildExecutionPlanAsync(diamondGraph());
 
