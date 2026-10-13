@@ -19,6 +19,28 @@
 ## [Unreleased]
 
 ### Added
+- **Runner — v0.6.0b.2.2: executor для media (2026-10-14):**
+  - Узел `image_generation` выполняет **реальный** CreativeLab:
+    `createTask → poll → URLs`. Стаб удалён.
+  - **Миграция `0003`:** `node_runs.cost_rub numeric(10,6)`.
+    LLM → `cost_usd` (USD), media → `cost_rub` (RUB). Не смешиваются.
+  - `src/media/dto/media-task.dto.ts` — Zod-схемы задачи.
+  - `CreativeLabProvider.createTaskAsync` / `getTaskAsync` с
+    `idempotency_key` (защита от двойной оплаты при retry),
+    `wait: true`, таймауты 45с/15с. Классификация ошибок:
+    401/403, 402, 409+code:23 (идемпотентный конфликт → возврат
+    существующей задачи), 400+code:25, 410+code:21 (без
+    аналога), 429/5xx — retryable. Заголовок `Deprecation: true`
+    + `x-model-served` → logger.warn, запрос продолжается.
+  - `MediaNodeExecutor` — DI-исполнитель с poll'ом (backoff
+    2s ×1.5, cap 15s, общий таймаут 5 мин). Outputs:
+    `{ mediaUrl, mediaType, taskId }`.
+  - `ExecutionEngineService`: `NodeStepResult` — discriminated
+    union (`plain | llm | media`). UPDATE пишет `tokens_in/out` +
+    `cost_usd` для LLM, `cost_rub` — для media. UPSERT сбрасывает
+    `cost_rub` (KI-047).
+  - +27 тестов (297 → 324).
+
 - **Runner — v0.6.0b.2.1: media-провайдер CreativeLab (2026-10-13):**
   - `src/media/` — новый модуль для media-провайдеров, отдельный
     от `LlmModule`.
