@@ -6,6 +6,7 @@ import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import type { ExecuteRunJobDto, RunEventDto } from './dto/index.js';
 import { RunEventsService } from './run-events.service.js';
 import { RunsProcessor } from './runs.processor.js';
+import { WORKFLOW_RUNS_WORKER_OPTIONS } from './runs.worker-options.js';
 
 /** Стабильный uuid запуска. */
 const RUN_ID = '22222222-2222-4222-8222-222222222222';
@@ -286,6 +287,30 @@ describe('RunsProcessor', () => {
       'Некорректный payload',
     );
     expect(db.select).not.toHaveBeenCalled();
+  });
+
+  describe('настройки воркера (KI-065)', () => {
+    it('опции concurrency/lockDuration/maxStalledCount доезжают до @Processor', () => {
+      // Ключ метаданных из @nestjs/bullmq (bull.constants.js): публичного
+      // аксессора в пакете нет, поэтому читаем метаданные напрямую. Если
+      // декоратор перестанет получать опции — тест упадёт.
+      const options: unknown = Reflect.getMetadata(
+        'bullmq:worker_metadata',
+        RunsProcessor,
+      );
+
+      expect(options).toEqual(
+        expect.objectContaining({
+          concurrency: WORKFLOW_RUNS_WORKER_OPTIONS.concurrency,
+          lockDuration: WORKFLOW_RUNS_WORKER_OPTIONS.lockDuration,
+          maxStalledCount: WORKFLOW_RUNS_WORKER_OPTIONS.maxStalledCount,
+        }),
+      );
+    });
+
+    it('concurrency больше 1 — очередь не блокируется одним заданием', () => {
+      expect(WORKFLOW_RUNS_WORKER_OPTIONS.concurrency).toBeGreaterThan(1);
+    });
   });
 
   describe('run_completed и признак финальности (KI-060)', () => {

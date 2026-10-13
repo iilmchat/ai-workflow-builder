@@ -1,6 +1,57 @@
 import { z } from 'zod';
 
 /**
+ * Zod-схема настроек воркера очереди workflow-runs (KI-065) и порога
+ * «зависшего» запуска (KI-032).
+ *
+ * Вынесена отдельным объектом, потому что эти значения нужны в двух местах:
+ * - `ConfigModule` (DI, fail-fast при старте — как часть {@link EnvSchema});
+ * - декоратор `@Processor` в `RunsProcessor`: декораторы выполняются вне DI и не
+ *   могут инжектить `ConfigService`, поэтому настройки читаются из `process.env`
+ *   в момент объявления класса.
+ *
+ * Схема — единственный источник истины для дефолтов и границ, чтобы оба пути
+ * проверяли одно и то же.
+ */
+export const WorkerEnvSchema = z.object({
+  /**
+   * Число одновременных заданий очереди workflow-runs, которые обрабатывает один
+   * воркер (KI-065). Дефолт 5 — компромисс между throughput и нагрузкой на
+   * БД/Redis/провайдера.
+   */
+  WORKFLOW_RUNS_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(5),
+  /**
+   * Длительность удержания job'а BullMQ (мс). Если job не завершился за это
+   * время и не продлил lock, BullMQ считает его зависшим (stalled) и переотдаёт
+   * другому воркеру. Дефолт BullMQ — 30 000, но реальные LLM-вызовы бывают
+   * дольше, поэтому по умолчанию 5 минут — как `RUN_STALE_THRESHOLD_MS` (KI-023).
+   */
+  WORKFLOW_RUNS_LOCK_DURATION_MS: z.coerce
+    .number()
+    .int()
+    .min(10_000)
+    .default(300_000),
+  /**
+   * Сколько раз BullMQ может переотдать job при истечении lock'а, прежде чем
+   * пометит его failed. Дефолт BullMQ — 1; при `concurrency > 1` и долгих узлах
+   * значение повышено, иначе параллельный воркер «украдёт» job у медленного.
+   */
+  WORKFLOW_RUNS_MAX_STALLED_COUNT: z.coerce.number().int().min(0).max(10).default(2),
+  /**
+   * Порог «зависшего» запуска (мс, lease-проверка KI-023). Раньше был
+   * захардкожен в `runs.constants.ts` — вынесен в окружение (KI-032).
+   */
+  WORKFLOW_RUNS_STALE_THRESHOLD_MS: z.coerce
+    .number()
+    .int()
+    .min(10_000)
+    .default(300_000),
+});
+
+/** Валидированные настройки воркера очереди workflow-runs и lease-порога. */
+export type WorkerEnv = z.infer<typeof WorkerEnvSchema>;
+
+/**
  * Zod-схема переменных окружения, обязательных для запуска приложения.
  *
  * Проверяется ровно один раз при инициализации `ConfigModule` (fail-fast):
@@ -28,6 +79,8 @@ export const EnvSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   /** Ключ OpenAI (R3). Опционален по той же причине, что и Anthropic. */
   OPENAI_API_KEY: z.string().optional(),
+  // Настройки воркера очереди (KI-065) и lease-порог (KI-032).
+  ...WorkerEnvSchema.shape,
 });
 
 /** Валидированная конфигурация окружения (с применёнными значениями по умолчанию). */

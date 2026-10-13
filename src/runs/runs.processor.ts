@@ -9,7 +9,11 @@ import { GraphSnapshotSchema, type GraphSnapshotDto } from '../engine/dto/index.
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import { ExecuteRunJobSchema, type ExecuteRunJobDto } from './dto/index.js';
 import { RunEventsService } from './run-events.service.js';
-import { RUN_STALE_THRESHOLD_MS, WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
+import { WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
+import {
+  RUN_STALE_THRESHOLD_MS,
+  WORKFLOW_RUNS_WORKER_OPTIONS,
+} from './runs.worker-options.js';
 
 /**
  * Приводит неизвестную ошибку к тексту для логов и колонки `error`.
@@ -44,8 +48,14 @@ interface RunForExecution {
  *
  * Статус запуска в БД по-прежнему пишет executor (он владеет `workflow_runs`
  * и `node_runs`).
+ *
+ * Настройки воркера (`concurrency`, `lockDuration`, `maxStalledCount`) приходят
+ * из {@link WORKFLOW_RUNS_WORKER_OPTIONS} — они разобраны из окружения в момент
+ * загрузки модуля, потому что декоратор `@Processor` статичен и не может
+ * инжектить `ConfigService` (KI-065). `concurrency > 1` снимает head-of-line
+ * blocking: раньше один медленный запуск блокировал очередь целиком.
  */
-@Processor(WORKFLOW_RUNS_QUEUE)
+@Processor(WORKFLOW_RUNS_QUEUE, WORKFLOW_RUNS_WORKER_OPTIONS)
 export class RunsProcessor extends WorkerHost {
   private readonly logger = new Logger(RunsProcessor.name);
 

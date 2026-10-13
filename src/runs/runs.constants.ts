@@ -9,16 +9,6 @@ export const WORKFLOW_RUNS_QUEUE = 'workflow-runs';
 /** Имя задания (job name) внутри очереди {@link WORKFLOW_RUNS_QUEUE}. */
 export const EXECUTE_RUN_JOB = 'execute';
 
-/**
- * Порог «зависшего» запуска (мс).
- *
- * Если запуск висит в статусе `running` дольше этого порога, считается, что
- * выполнявший его worker умер, и повторное задание BullMQ разрешает выполнить
- * граф заново (KI-023). Пока порог не истёк, запуск считается живым
- * (аренда/lease), и дублирующее задание пропускается.
- */
-export const RUN_STALE_THRESHOLD_MS = 5 * 60 * 1000;
-
 /** Префикс канала Redis pub/sub, в который публикуются события запуска. */
 export const RUN_EVENTS_CHANNEL_PREFIX = 'run:';
 
