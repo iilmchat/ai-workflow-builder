@@ -20,10 +20,32 @@ const LMSTUDIO_PLACEHOLDER_KEY = 'not-needed';
  */
 const LMSTUDIO_DEFAULT_BASE_URL = 'http://localhost:1234/v1';
 
-/** Модальности по умолчанию для моделей LM Studio (без суффикса в env). */
-const LMSTUDIO_DEFAULT_INPUT: readonly ModelModality[] = ['text'];
-/** LM Studio — локальный инференс текста, картинки он не генерирует. */
-const LMSTUDIO_OUTPUT: readonly ModelModality[] = ['text'];
+/**
+ * Дефолтный адрес GPTunnel.
+ *
+ * Дублирует дефолт env-схемы по той же причине, что и у LM Studio.
+ */
+const GPTUNNEL_DEFAULT_BASE_URL = 'https://gptunnel.ru/v1';
+
+/** Модальности по умолчанию для моделей из env-списка (запись без суффикса). */
+const ENV_LIST_DEFAULT_INPUT: readonly ModelModality[] = ['text'];
+/**
+ * Выходная модальность для моделей, объявленных через env-список.
+ *
+ * И GPTunnel, и LM Studio в этом релизе используются как chat-провайдеры, а
+ * картинки/аудио в списке не выражаются: формат описывает только вход.
+ * Когда появится media-провайдер (v0.6.0b.2), выход тоже нужно будет
+ * параметризовать.
+ */
+const ENV_LIST_OUTPUT: readonly ModelModality[] = ['text'];
+
+/** Настройки разбора env-списка моделей. */
+interface EnvModelListOptions {
+  /** Имя переменной окружения — попадает в предупреждения. */
+  envKey: string;
+  /** Суффикс подписи модели, например ` (local)`. */
+  labelSuffix: string;
+}
 
 /** Модели OpenAI (список фиксирован в коде). */
 const OPENAI_MODELS: readonly ModelInfo[] = [
@@ -96,21 +118,22 @@ const YANDEX_MODELS: readonly ModelInfo[] = [
 ];
 
 /**
- * Фабрика LLM-провайдеров (v0.5.0).
+ * Фабрика LLM-провайдеров (v0.5.0; GPTunnel — v0.6.0b.1).
  *
  * Заменяет прежний хардкод `AnthropicProvider + OpenAiProvider` в
  * {@link LlmModule}: состав провайдеров собирается из окружения, поэтому
- * OpenAI и RouterAI (и DeepSeek, Yandex, LM Studio) могут работать
+ * OpenAI, RouterAI, GPTunnel (и DeepSeek, Yandex, LM Studio) могут работать
  * одновременно, каждый со своим ключом и baseURL.
  *
  * Провайдеры создаются **только если сконфигурированы**: без ключа запись в
  * список не попадает, и `GET /llm/models` не показывает заведомо нерабочие
- * модели. Единственное исключение — LM Studio: ему ключ не нужен, но он
- * включается лишь при непустом `LMSTUDIO_MODELS`.
+ * модели. Исключения: LM Studio (ключ не нужен, но включается лишь при
+ * непустом `LMSTUDIO_MODELS`) и GPTunnel (нужны и ключ, и непустой
+ * `GPTUNNEL_MODELS` — он играет роль каталога моделей).
  *
  * Порядок провайдеров в массиве — приоритет при конфликте id моделей
  * (см. {@link LlmRegistryService}): первым идёт Anthropic, затем OpenAI,
- * RouterAI, DeepSeek, Yandex, LM Studio.
+ * RouterAI, GPTunnel, DeepSeek, Yandex, LM Studio.
  */
 @Injectable()
 export class LlmProviderFactory {
@@ -149,6 +172,12 @@ export class LlmProviderFactory {
 
     if (routerai) {
       providers.push(routerai);
+    }
+
+    const gptunnel = this.createGptunnelProvider();
+
+    if (gptunnel) {
+      providers.push(gptunnel);
     }
 
     const deepseek = this.createDeepSeekProvider();
@@ -270,6 +299,44 @@ export class LlmProviderFactory {
   }
 
   /**
+   * Создаёт провайдера GPTunnel.
+   *
+   * GPTunnel отдаёт ~200 моделей, но без метаданных о vision — только `id` и
+   * `title`. Поэтому список для UI задаётся в `GPTUNNEL_MODELS` тем же
+   * форматом, что и `LMSTUDIO_MODELS`, а роль «каталога» играет env.
+   *
+   * Нужны **и** ключ, **и** непустой список: без ключа вызовы упадут, без
+   * списка провайдеру нечего показывать в UI.
+   *
+   * @returns провайдер либо `null`, если ключ или список моделей пусты
+   */
+  private createGptunnelProvider(): OpenAiCompatibleProvider | null {
+    const apiKey = this.config.get<string>('GPTUNNEL_API_KEY');
+
+    if (!apiKey) {
+      return null;
+    }
+
+    const models = this.parseModelIds(
+      this.config.get<string>('GPTUNNEL_MODELS') ?? '',
+      { envKey: 'GPTUNNEL_MODELS', labelSuffix: '' },
+    );
+
+    if (models.length === 0) {
+      return null;
+    }
+
+    return new OpenAiCompatibleProvider({
+      name: 'gptunnel',
+      apiKey,
+      baseURL:
+        this.config.get<string>('GPTUNNEL_BASE_URL') ?? GPTUNNEL_DEFAULT_BASE_URL,
+      models,
+      envKey: 'GPTUNNEL_API_KEY',
+    });
+  }
+
+  /**
    * Создаёт провайдера локального LM Studio.
    *
    * Ключ не нужен, поэтому единственное условие — непустой список моделей
@@ -284,6 +351,7 @@ export class LlmProviderFactory {
       this.config.get<string>('LMSTUDIO_BASE_URL') ?? LMSTUDIO_DEFAULT_BASE_URL;
     const models = this.parseModelIds(
       this.config.get<string>('LMSTUDIO_MODELS') ?? '',
+      { envKey: 'LMSTUDIO_MODELS', labelSuffix: ' (local)' },
     );
 
     if (models.length === 0) {
@@ -299,21 +367,25 @@ export class LlmProviderFactory {
   }
 
   /**
-   * Разбирает список моделей LM Studio из строки окружения.
+   * Разбирает список моделей из переменной окружения.
    *
    * Формат: `<id>[:<модальность>[+<модальность>...]]` через запятую, например
    * `qwen2.5-coder-7b-instruct:text,qwen/qwen2.5-vl-7b:text+vision`.
-   * Без суффикса модель считается текстовой. `outputModalities` всегда
-   * `['text']`: локальный LM Studio картинки не генерирует.
+   * Без суффикса модель считается текстовой. Парсер общий для GPTunnel и
+   * LM Studio: у них одинаковый формат env-списка.
    *
    * Невалидная модальность не роняет старт: модель пропускается, а в лог
    * уходит предупреждение — стартовать с опечаткой в env полезнее, чем не
    * стартовать вовсе.
    *
-   * @param raw - сырое значение `LMSTUDIO_MODELS`
+   * @param raw - сырое значение переменной со списком моделей
+   * @param options - имя переменной (для логов) и суффикс подписи модели
    * @returns модели с модальностями; пустой массив, если валидных записей нет
    */
-  private parseModelIds(raw: string): ModelInfo[] {
+  private parseModelIds(
+    raw: string,
+    options: EnvModelListOptions,
+  ): ModelInfo[] {
     const models: ModelInfo[] = [];
 
     for (const entry of raw.split(',')) {
@@ -330,11 +402,13 @@ export class LlmProviderFactory {
         separatorIndex === -1 ? '' : trimmed.slice(separatorIndex + 1).trim();
 
       if (id.length === 0) {
-        this.logger.warn(`LMSTUDIO_MODELS: пропущена запись без id: "${trimmed}"`);
+        this.logger.warn(
+          `${options.envKey}: пропущена запись без id: "${trimmed}"`,
+        );
         continue;
       }
 
-      const inputModalities = this.parseModalities(id, modalitiesRaw);
+      const inputModalities = this.parseModalities(id, modalitiesRaw, options);
 
       if (!inputModalities) {
         continue;
@@ -342,9 +416,9 @@ export class LlmProviderFactory {
 
       models.push({
         id,
-        label: `${id} (local)`,
+        label: `${id}${options.labelSuffix}`,
         inputModalities,
-        outputModalities: LMSTUDIO_OUTPUT,
+        outputModalities: ENV_LIST_OUTPUT,
       });
     }
 
@@ -356,14 +430,16 @@ export class LlmProviderFactory {
    *
    * @param modelId - id модели (для сообщения в логе)
    * @param raw - строка модальностей; пустая — дефолт `['text']`
+   * @param options - имя переменной (для логов) и суффикс подписи модели
    * @returns модальности либо `null`, если встречена неизвестная
    */
   private parseModalities(
     modelId: string,
     raw: string,
+    options: EnvModelListOptions,
   ): readonly ModelModality[] | null {
     if (raw.length === 0) {
-      return LMSTUDIO_DEFAULT_INPUT;
+      return ENV_LIST_DEFAULT_INPUT;
     }
 
     const parsed: ModelModality[] = [];
@@ -374,7 +450,7 @@ export class LlmProviderFactory {
 
       if (!modality) {
         this.logger.warn(
-          `LMSTUDIO_MODELS: у модели ${modelId} неизвестная модальность "${candidate}", модель пропущена`,
+          `${options.envKey}: у модели ${modelId} неизвестная модальность "${candidate}", модель пропущена`,
         );
         return null;
       }
@@ -384,6 +460,6 @@ export class LlmProviderFactory {
       }
     }
 
-    return parsed.length > 0 ? parsed : LMSTUDIO_DEFAULT_INPUT;
+    return parsed.length > 0 ? parsed : ENV_LIST_DEFAULT_INPUT;
   }
 }

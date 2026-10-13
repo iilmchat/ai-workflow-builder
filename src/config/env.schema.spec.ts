@@ -193,3 +193,49 @@ describe('переменные провайдеров (v0.5.0)', () => {
     ).toBe(false);
   });
 });
+
+describe('переменные GPTunnel (v0.6.0b.1)', () => {
+  it('все три переменные опциональны', () => {
+    const parsed = EnvSchema.parse(baseEnv);
+
+    expect(parsed.GPTUNNEL_API_KEY).toBeUndefined();
+    // baseURL имеет дефолт, поэтому не undefined.
+    expect(parsed.GPTUNNEL_BASE_URL).toBe('https://gptunnel.ru/v1');
+    expect(parsed.GPTUNNEL_MODELS).toBe('');
+  });
+
+  it('пустые строки уходят в дефолты, а не в ошибку (KI-084)', () => {
+    const parsed = EnvSchema.parse({
+      ...baseEnv,
+      GPTUNNEL_API_KEY: '',
+      GPTUNNEL_BASE_URL: '',
+      GPTUNNEL_MODELS: '',
+    });
+
+    expect(parsed.GPTUNNEL_API_KEY).toBeUndefined();
+    expect(parsed.GPTUNNEL_BASE_URL).toBe('https://gptunnel.ru/v1');
+    expect(parsed.GPTUNNEL_MODELS).toBe('');
+  });
+
+  it('читает список моделей и кастомный baseURL', () => {
+    const parsed = EnvSchema.parse({
+      ...baseEnv,
+      GPTUNNEL_API_KEY: 'sk-gptunnel',
+      GPTUNNEL_BASE_URL: 'https://proxy.example/v1',
+      GPTUNNEL_MODELS: 'claude-5.5-sonnet:text+vision,gpt-5.6-luna:text',
+    });
+
+    expect(parsed.GPTUNNEL_API_KEY).toBe('sk-gptunnel');
+    expect(parsed.GPTUNNEL_BASE_URL).toBe('https://proxy.example/v1');
+    expect(parsed.GPTUNNEL_MODELS).toBe(
+      'claude-5.5-sonnet:text+vision,gpt-5.6-luna:text',
+    );
+  });
+
+  it('отклоняет не-http/https baseURL (KI-085)', () => {
+    expect(
+      EnvSchema.safeParse({ ...baseEnv, GPTUNNEL_BASE_URL: 'ftp://gptunnel.ru/v1' })
+        .success,
+    ).toBe(false);
+  });
+});

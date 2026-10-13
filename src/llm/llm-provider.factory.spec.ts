@@ -260,4 +260,120 @@ describe('LlmProviderFactory', () => {
       },
     ]);
   });
+
+  it('включает GPTunnel с ключом и списком моделей (v0.6.0b.1)', () => {
+    const gptunnel = byName(
+      {
+        GPTUNNEL_API_KEY: 'sk-gptunnel',
+        GPTUNNEL_MODELS:
+          'claude-5.5-sonnet:text+vision,gpt-5.6-luna:text,deepseek-v4-flash',
+      },
+      'gptunnel',
+    );
+
+    expect(gptunnel?.isConfigured).toBe(true);
+    // Подпись без суффикса: провайдер и так виден в UI отдельной группой.
+    expect(gptunnel?.models).toEqual([
+      {
+        id: 'claude-5.5-sonnet',
+        label: 'claude-5.5-sonnet',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
+      {
+        id: 'gpt-5.6-luna',
+        label: 'gpt-5.6-luna',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      },
+      {
+        id: 'deepseek-v4-flash',
+        label: 'deepseek-v4-flash',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      },
+    ]);
+  });
+
+  it('не включает GPTunnel без списка моделей (v0.6.0b.1)', () => {
+    expect(createProviders({ GPTUNNEL_API_KEY: 'sk-gptunnel' })).toEqual([]);
+    expect(
+      createProviders({ GPTUNNEL_API_KEY: 'sk-gptunnel', GPTUNNEL_MODELS: '  ,  ' }),
+    ).toEqual([]);
+  });
+
+  it('не включает GPTunnel без ключа, даже если список задан (v0.6.0b.1)', () => {
+    expect(createProviders({ GPTUNNEL_MODELS: 'gpt-5.6-luna:text' })).toEqual([]);
+  });
+
+  it('берёт baseURL GPTunnel из окружения (v0.6.0b.1)', () => {
+    byName(
+      {
+        GPTUNNEL_API_KEY: 'sk-gptunnel',
+        GPTUNNEL_MODELS: 'gpt-5.6-luna',
+        GPTUNNEL_BASE_URL: 'http://localhost:7777/v1',
+      },
+      'gptunnel',
+    );
+
+    expect(openAiConstructorMock).toHaveBeenCalledWith({
+      apiKey: 'sk-gptunnel',
+      baseURL: 'http://localhost:7777/v1',
+    });
+  });
+
+  it('пропускает модель GPTunnel с неизвестной модальностью (v0.6.0b.1)', () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const gptunnel = byName(
+      {
+        GPTUNNEL_API_KEY: 'sk-gptunnel',
+        GPTUNNEL_MODELS: 'gpt-5.6-luna:text,broken-model:foo',
+      },
+      'gptunnel',
+    );
+
+    expect(gptunnel?.models.map((model) => model.id)).toEqual(['gpt-5.6-luna']);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('GPTUNNEL_MODELS: у модели broken-model неизвестная модальность "foo"'),
+    );
+
+    warn.mockRestore();
+  });
+
+  it('работает с GPTunnel и RouterAI одновременно (v0.6.0b.1)', () => {
+    const providers = createProviders({
+      ROUTERAI_API_KEY: 'sk-router',
+      GPTUNNEL_API_KEY: 'sk-gptunnel',
+      GPTUNNEL_MODELS: 'gpt-5.6-luna:text',
+    });
+
+    expect(providers.map((provider) => provider.name)).toEqual([
+      'routerai',
+      'gptunnel',
+    ]);
+  });
+
+  it('ставит GPTunnel в приоритете после RouterAI (v0.6.0b.1)', () => {
+    const providers = createProviders({
+      ANTHROPIC_API_KEY: 'sk-ant',
+      OPENAI_API_KEY: 'sk-openai',
+      ROUTERAI_API_KEY: 'sk-router',
+      GPTUNNEL_API_KEY: 'sk-gptunnel',
+      GPTUNNEL_MODELS: 'gpt-5.6-luna:text',
+      DEEPSEEK_API_KEY: 'sk-deepseek',
+      YANDEX_API_KEY: 'sk-yandex',
+      LMSTUDIO_MODELS: 'qwen2.5-coder-7b-instruct:text',
+    });
+
+    expect(providers.map((provider) => provider.name)).toEqual([
+      'anthropic',
+      'openai',
+      'routerai',
+      'gptunnel',
+      'deepseek',
+      'yandex',
+      'lmstudio',
+    ]);
+  });
 });

@@ -118,6 +118,22 @@ export const EnvSchema = z.object({
     .preprocess(emptyToUndefined, httpUrl.optional())
     .default('https://routerai.ru/api/v1'),
 
+  // === GPTunnel (OpenAI-совместимый chat) ===
+  /** Ключ GPTunnel. Без него провайдер не регистрируется. */
+  GPTUNNEL_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Base URL GPTunnel. */
+  GPTUNNEL_BASE_URL: z
+    .preprocess(emptyToUndefined, httpUrl.optional())
+    .default('https://gptunnel.ru/v1'),
+  /**
+   * Список моделей GPTunnel для UI: `id:modality+modality,id:modality`.
+   * Формат совпадает с `LMSTUDIO_MODELS` (парсер переиспользуется).
+   * Если пусто — провайдер не включается в список (как LM Studio).
+   */
+  GPTUNNEL_MODELS: z
+    .preprocess(emptyToUndefined, z.string().optional())
+    .default(''),
+
   // === DeepSeek (OpenAI-совместимый) ===
   /** Ключ DeepSeek. Без него провайдер не регистрируется. */
   DEEPSEEK_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
