@@ -18,6 +18,18 @@
 
 ## [Unreleased]
 
+### Added
+- **Runner — R5.0: `OPENAI_BASE_URL` (2026-10-13):**
+  - `OPENAI_BASE_URL` в env — для OpenAI-совместимых API (RouterAI,
+    DeepSeek, Yandex, LM Studio). Прокидывается в SDK `openai`
+    как `baseURL`; без переменной — дефолт SDK.
+  - `.env.example` — примеры URL для RouterAI / DeepSeek / Yandex.
+  - +7 тестов (229 → 236).
+
+### Known Issues
+- KI-084 (пустой `OPENAI_BASE_URL=` в `.env` роняет старт),
+  KI-085 (`z.url()` не ограничивает схему http/https).
+
 ---
 
 ## [0.4.0] — 2026-10-13
