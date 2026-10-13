@@ -542,7 +542,8 @@
 ---
 
 ### KI-034 — Асимметрия входов и выходов
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-13
+- **Исправлено в:** v0.3.4 (коммит `<hash R3>`)
 - **Файлы:** `src/engine/node-ports.ts`, `src/engine/engine.service.ts`,
   `src/engine/execution-engine.service.ts`
 - **Описание:** Выходы нормализованы в имена портов (`text` / `url`),
@@ -559,6 +560,84 @@
 - **Когда чинить:** **в R3** (первый реальный потребитель `inputs` —
   LLM-узел). Не откладывать до R4.
 - **Связанные:** KI-030, KI-033.
+- **Fix:** `NodePortContract.inputPortName` +
+  `inferInputPortName(nodeType)` (`src/engine/node-ports.ts`).
+  `buildExecutionPlanAsync` использует нормализованное имя
+  (`'prompt'` для `llm`/`image_generation`, `'text'` для `text`);
+  fallback на `targetHandle → sourceHandle → edge.id` — для узлов
+  без контракта. `inputs = { prompt: ... }` вместо `{ 'text-input': ... }`.
+  +7 тестов.
+- **Остаток:** KI-035 (multi-input схлопывается в один ключ).
+
+---
+
+### KI-035 — Нормализация входов сворачивает multi-input
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/engine/node-ports.ts`, `src/engine/engine.service.ts`
+- **Описание:** У `llm` / `image_generation` один входной порт (`prompt`),
+  поэтому две связи в один узел пишут в один ключ — вторая перекрывает
+  первую. Зафиксировано тестом «сворачивает несколько входов».
+- **Решение:** per-handle контракт (`inputPortName` по `targetHandleId`).
+- **Когда чинить:** R4, вместе с multi-input UI (`merge`, `condition`).
+- **Связанные:** KI-034, KI-003.
+
+---
+
+### KI-036 — Падение узла не ретраится (attempts: 3 не срабатывает)
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/engine/execution-engine.service.ts`,
+  `src/runs/runs.processor.ts`
+- **Описание:** `executeAsync` при падении узла **возвращает**
+  `status='failed'` (не бросает). BullMQ видит успешное завершение
+  `process(job)` → `attempts: 3` из KI-016 **не срабатывает**.
+  Транзиентная ошибка LLM (429 / 500 / таймаут) убивает весь run
+  без повторов.
+- **Решение:** node-level retry с backoff, **или** явный `throw`
+  после `finishRunAsync('failed')` (тогда сработает `attempts`, но
+  вернётся KI-031 — дубли `node_runs`).
+- **Когда чинить:** микро-шаг перед R4.
+- **Связанные:** KI-016, KI-031, KI-037.
+
+---
+
+### KI-037 — Ошибка `buildExecutionPlanAsync` оставляет run в `pending`
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/engine/execution-engine.service.ts`,
+  `src/runs/runs.processor.ts`
+- **Описание:** Цикл или битые связи в графе бросают исключение **до**
+  `markRunRunningAsync`. `workflow_runs.status` остаётся `pending`
+  навсегда — пользователь не видит ни ошибки, ни завершения.
+- **Решение:** try/catch вокруг `buildExecutionPlanAsync` в
+  `executeAsync` с записью `status='failed'` + `error`.
+- **Когда чинить:** вместе с KI-036.
+- **Связанные:** KI-036.
+
+---
+
+### KI-038 — `tokensIn` / `tokensOut` / `costUsd` / `logs` не заполняются
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/engine/execution-engine.service.ts`,
+  `src/llm/llm-node-executor.service.ts`
+- **Описание:** Провайдеры возвращают `usage` (tokens), но
+  исполнители отдают только `{ text }`. Колонки остаются NULL —
+  биллинг и UI-статистика в R4 без данных.
+- **Решение:** расширенный результат узла (outputs + метрики) и
+  запись метрик в `node_runs`.
+- **Когда чинить:** R4.
+- **Связанные:** —
+
+---
+
+### KI-039 — Неконфигурированные провайдеры попадают в `listModels()`
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/llm/llm-registry.service.ts`,
+  `src/llm/providers/*.provider.ts`
+- **Описание:** `listModels()` возвращает 4 модели, даже если ключ
+  есть только у одного провайдера. UI покажет недоступные модели.
+- **Решение:** добавить `isConfigured` провайдеру и фильтровать
+  список для UI.
+- **Когда чинить:** R4 (вместе с UI выбора модели).
+- **Связанные:** —
 
 ---
 
@@ -566,14 +645,14 @@
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 8 |
+| Fixed | 9 |
 | In Progress | 0 |
 | Planned | 2 |
 | Deferred | 0 |
 | Documented | 6 |
-| Open | 18 |
+| Open | 22 |
 | Won't Fix | 0 |
-| **Всего** | **34** |
+| **Всего** | **39** |
 
 
 ---

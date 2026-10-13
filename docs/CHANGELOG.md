@@ -18,6 +18,42 @@
 
 ## [Unreleased]
 
+### Added
+- **Runner — R3: LLM-провайдеры (v0.3.4):**
+  - `src/llm/llm-provider.interface.ts` — `ILlmProvider`,
+    `LlmGenerateOptions`, `LlmProviderException`.
+  - `src/llm/providers/anthropic.provider.ts` — Claude Opus 4 /
+    Sonnet 4, `@anthropic-ai/sdk`.
+  - `src/llm/providers/openai.provider.ts` — GPT-4o / 4o-mini,
+    `openai`.
+  - `src/llm/llm-registry.service.ts` — `resolveByModel()` +
+    `listModels()`.
+  - `src/llm/llm.service.ts` — единая точка вызова + `AbortSignal`
+    timeout 60s (RULES § 4.19).
+  - `src/llm/llm-node-executor.service.ts` — DI-исполнитель узла `llm`
+    (вариант B: `node-executors.ts` остались чистыми функциями).
+  - `LlmModule` — `exports: [LlmService, LlmNodeExecutor]`.
+  - `ExecutionEngineService`: `runNode` → `runNodeAsync`,
+    `executeLlmNodeStub` удалён.
+  - Зависимости: `@anthropic-ai/sdk@0.133.0`, `openai@7.32.0`.
+  - 17 новых тестов с замоканными SDK (124 → 148).
+  - Smoke: graceful degradation без `ANTHROPIC_API_KEY` — провайдер
+    бросает `LlmProviderException`, run → `failed`, `node_runs.error`
+    заполнен; prompt в логи не попадает (RULES § 5.9).
+
+### Changed
+- **KI-034** — входы узлов нормализованы: ключ в `executionMap.inputs`
+  и `node_runs.inputs` теперь **имя порта** (`prompt` / `text`),
+  не UI-id хендла. Fallback на `targetHandle → sourceHandle → edge.id`
+  сохранён для узлов без контракта. +7 тестов. Остаток — KI-035
+  (multi-input схлопывается в один ключ).
+
+### Known Issues
+- Заведены KI-035…KI-039. Ключевой: **KI-036** (🟠 High) — падение
+  узла не ретраится, `attempts: 3` из KI-016 работает только для
+  инфраструктурных сбоев. Транзиентная ошибка LLM (429/500/таймаут)
+  убивает run без повторов.
+
 ### Fixed
 - **KI-030** — React Flow handle id (`text-output` / `image-output`)
   не совпадали с именами портов исполнителей (`text` / `url`);
