@@ -19,6 +19,30 @@
 ## [Unreleased]
 
 ### Added
+- **Frontend — R4.2: EventSource + подсветка нод (v0.3.11):**
+  - `Run` выполняет реальный `POST /runs` и подписывается на SSE.
+    Ноды подсвечиваются в реальном времени: серые → синие → зелёные
+    (успех) / красные (провал).
+  - `web/src/types/run-stream.ts` — Zod-схемы SSE-сообщений (зеркало
+    backend `RunStreamMessageSchema`).
+  - `web/src/lib/run-stream.ts` — `subscribeToRunStream` со счётчиком
+    ошибок (3 → close). Таймаут «нет сообщений» **не** используется:
+    SSE keep-alive-комментарии не видны в JS, и таймер оборвал бы
+    живой долгий LLM-вызов.
+  - `stores/workflow.ts` — `runId`/`runStatus`/`nodeStatuses`/`nodeOutputs`.
+    `applySnapshot` **заменяет** карты (snapshot — источник истины
+    при переподключении). `final=true` → close.
+  - `BaseNode` — `border-2` + `bg-*-50` по статусу; `data-status`
+    для e2e.
+  - `TopBar` — бейдж статуса, кнопка Run блокируется во время
+    выполнения; авто-Save перед Run, если workflow не сохранён.
+  - `vite.config.ts` — `/runs` proxy с `timeout: 0`/`proxyTimeout: 0`
+    (дефолт убил бы долгий SSE-поток).
+  - Smoke (CDP, headless Chrome): провал — 3 попытки BullMQ
+    (серый → синий → красный × 3, badge «Выполняется… (попытка
+    N/M)» → «Ошибка»), `streamClosed: true` на `final=true`.
+    Успех (text→text) — обе ноды зелёные, badge «Готово», поток
+    закрыт. Zero console errors.
 - **Runner — KI-065 + KI-032: конфигурируемый воркер (v0.3.10):**
   - `WorkerEnvSchema` в `env.schema.ts` — единый источник дефолтов
     и границ; встроена в `EnvSchema` через `.shape`, поэтому
