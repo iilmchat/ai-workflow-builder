@@ -19,6 +19,24 @@
 ## [Unreleased]
 
 ### Added
+- **Runner — v0.6.0b.2.1: media-провайдер CreativeLab (2026-10-13):**
+  - `src/media/` — новый модуль для media-провайдеров, отдельный
+    от `LlmModule`.
+  - `IMediaProvider` + `MediaProviderException` (с `retryable`, как
+    в `LlmProviderException`).
+  - `CreativeLabProvider` (GPTunnel `/api/v2/media`):
+    `GET /media/models?type=IMAGE` через встроенный `fetch` (Node 22),
+    Zod-валидация ответа, snake_case → camelCase, кэш по типу
+    (TTL 15 мин, `GPTUNNEL_MEDIA_CACHE_TTL_MS`).
+  - `MediaRegistryService` + `MEDIA_PROVIDERS` токен (паттерн как
+    `LLM_PROVIDERS`). Пустой список при отсутствии провайдера —
+    не 404. Дедупликация id: первое побеждает.
+  - `GET /media/models?type=IMAGE` — контроллер.
+    `retryable` → 503, иначе → 502.
+  - env: `GPTUNNEL_MEDIA_API_KEY`, `GPTUNNEL_MEDIA_BASE_URL`,
+    `GPTUNNEL_MEDIA_CACHE_TTL_MS`.
+  - +26 тестов (271 → 297).
+
 - **Runner — v0.6.0b.1: GPTunnel chat (2026-10-13):**
   - GPTunnel (`https://gptunnel.ru/v1`) — OpenAI-совместимый chat.
     Два независимых API: `/v1` (chat) и `/api/v2/media` (image/
