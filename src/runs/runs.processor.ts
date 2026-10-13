@@ -8,7 +8,7 @@ import { workflowRuns, type RunStatus } from '../db/schema.js';
 import { GraphSnapshotSchema, type GraphSnapshotDto } from '../engine/dto/index.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import { ExecuteRunJobSchema, type ExecuteRunJobDto } from './dto/index.js';
-import { WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
+import { RUN_STALE_THRESHOLD_MS, WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 
 /**
  * Приводит неизвестную ошибку к тексту для логов и колонки `error`.
@@ -24,6 +24,8 @@ function toMessage(error: unknown): string {
 interface RunForExecution {
   status: RunStatus;
   snapshot: GraphSnapshotDto;
+  /** Время старта выполнения — основа lease-проверки «зависшего» запуска (KI-023). */
+  startedAt: Date | null;
 }
 
 /**
@@ -49,8 +51,19 @@ export class RunsProcessor extends WorkerHost {
   /**
    * Обрабатывает задание на выполнение workflow.
    *
-   * Идемпотентность: повторное задание (ретрай BullMQ) для запуска, который
-   * уже не в статусе `pending`, пропускается без выполнения графа.
+   * Идемпотентность построена на lease-логике (KI-023):
+   * - `pending` — штатный первый запуск задания;
+   * - `running` с `started_at` свежее `RUN_STALE_THRESHOLD_MS` — запуск живой
+   *   (его выполняет этот или другой worker), задание пропускается;
+   * - `running` с истёкшим `started_at` — worker умер и BullMQ перезапустил
+   *   задание, поэтому граф выполняется заново;
+   * - `running` без `started_at` — судить о живости нельзя, поэтому
+   *   консервативно пропускаем;
+   * - любой закрытый статус (`completed`/`failed`/`cancelled`) — пропускаем.
+   *
+   * Статус зависшего запуска намеренно НЕ сбрасывается в `pending`: executor
+   * сам переведёт запуск в `running` со свежим `started_at`, а лишний UPDATE
+   * создал бы окно, в котором запуск выглядит ожидающим задания.
    *
    * @param job - задание BullMQ с payload `{ runId }`
    * @returns промис без значения; итог виден в `workflow_runs`/`node_runs`
@@ -76,12 +89,25 @@ export class RunsProcessor extends WorkerHost {
       throw new Error(`Запуск ${runId} не найден`);
     }
 
-    if (run.status !== 'pending') {
+    const isStale =
+      run.status === 'running' &&
+      run.startedAt !== null &&
+      Date.now() - run.startedAt.getTime() > RUN_STALE_THRESHOLD_MS;
+
+    if (run.status !== 'pending' && !isStale) {
       this.logger.warn(
-        `Запуск ${runId} уже в статусе ${run.status} — задание пропущено`,
+        `Запуск ${runId} в статусе ${run.status} ` +
+          `(started_at=${run.startedAt?.toISOString() ?? 'null'}) — задание пропущено`,
       );
 
       return;
+    }
+
+    if (isStale) {
+      this.logger.warn(
+        `Запуск ${runId} завис в running дольше ${RUN_STALE_THRESHOLD_MS} мс — ` +
+          'выполняем граф заново (KI-023)',
+      );
     }
 
     const snapshot = GraphSnapshotSchema.safeParse(run.snapshot);
@@ -111,14 +137,20 @@ export class RunsProcessor extends WorkerHost {
   }
 
   /**
-   * Достаёт статус и снимок графа запуска.
+   * Достаёт статус, время старта и снимок графа запуска.
+   *
+   * `startedAt` нужен для lease-проверки «зависшего» запуска (KI-023).
    *
    * @param runId - uuid запуска
    * @returns данные запуска либо `null`, если строки нет
    */
   private async findRunAsync(runId: string): Promise<RunForExecution | null> {
     const [run] = await this.db
-      .select({ status: workflowRuns.status, snapshot: workflowRuns.snapshot })
+      .select({
+        status: workflowRuns.status,
+        snapshot: workflowRuns.snapshot,
+        startedAt: workflowRuns.startedAt,
+      })
       .from(workflowRuns)
       .where(eq(workflowRuns.id, runId))
       .limit(1);

@@ -137,6 +137,57 @@ describe('RunsProcessor', () => {
     expect(db.update).not.toHaveBeenCalled();
   });
 
+  it('пропускает свежий running-запуск: аренда ещё жива (KI-023)', async () => {
+    selectChain.limit.mockImplementation(() => [
+      { status: 'running', snapshot, startedAt: new Date(Date.now() - 60_000) },
+    ]);
+
+    await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
+
+    expect(executor.executeAsync).not.toHaveBeenCalled();
+  });
+
+  it('перезапускает граф для зависшего running-запуска (KI-023)', async () => {
+    selectChain.limit.mockImplementation(() => [
+      {
+        status: 'running',
+        snapshot,
+        startedAt: new Date(Date.now() - 10 * 60_000),
+      },
+    ]);
+
+    await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
+
+    expect(executor.executeAsync).toHaveBeenCalledWith(
+      RUN_ID,
+      expect.objectContaining({ nodes: expect.any(Array) }),
+    );
+  });
+
+  it('пропускает running-запуск без started_at (консервативно, KI-023)', async () => {
+    selectChain.limit.mockImplementation(() => [
+      { status: 'running', snapshot, startedAt: null },
+    ]);
+
+    await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
+
+    expect(executor.executeAsync).not.toHaveBeenCalled();
+  });
+
+  it('не перезапускает упавший запуск, даже если started_at старый (KI-023)', async () => {
+    selectChain.limit.mockImplementation(() => [
+      {
+        status: 'failed',
+        snapshot,
+        startedAt: new Date(Date.now() - 10 * 60_000),
+      },
+    ]);
+
+    await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
+
+    expect(executor.executeAsync).not.toHaveBeenCalled();
+  });
+
   it('бросает, если запуск не найден', async () => {
     selectChain.limit.mockImplementation(() => []);
 
