@@ -61,6 +61,15 @@
   убивает run без повторов.
 
 ### Fixed
+- **KI-040** — job-level retry (BullMQ `attempts: 3` из KI-016) был
+  декоративен: guard в `RunsProcessor` отклонял повторную доставку
+  после того, как `executeAsync` ставил `failed` и бросал исключение.
+  Guard расширен: `pending || isStale || isJobRetry`, где
+  `isJobRetry = job.attemptsMade > 0 && status === 'failed'`. Плюс
+  `markRunRunningAsync` сбрасывает `error`/`finishedAt` (иначе UI
+  видел бы «running с ошибкой», а повторная смерть worker'а — «running»
+  со старым `finished_at`). +5 тестов. Smoke с реальным BullMQ retry
+  (backoff 2s/4s, 3 прогона графа, UPSERT идемпотентен).
 - **KI-031** — повторный запуск зависшего run дублировал `node_runs`.
   Добавлен `unique (run_id, node_id)` + `ON CONFLICT DO UPDATE` в
   `executeNodeAsync`; повторный прогон обновляет ту же строку.
