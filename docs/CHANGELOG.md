@@ -19,6 +19,15 @@
 ## [Unreleased]
 
 ### Added
+- **Runner — KI-039 + KI-052: провайдеры и стоимость (v0.3.6):**
+  - `ILlmProvider.isConfigured` (KI-039) — геттер `client !== null`.
+  - `LlmRegistryService.listModels()` фильтрует неконфигурированные
+    провайдеры. `resolveByModel` **не** фильтрует (маршрутизация
+    ≠ готовность; ошибка «API_KEY не задан» всплывает на вызове).
+  - `calculateCostUsd` возвращает `null`, если провайдер не отдал
+    usage (KI-052). `cost_usd = 0` больше не означает «бесплатный
+    вызов» — «неизвестно» отделено от «ноль».
+  - 7 новых тестов (183 → 190).
 - **Runner — KI-038: метрики LLM-узлов (v0.3.6):**
   - `ILlmProvider.generateAsync` теперь возвращает
     `LlmGenerateResult` (`{ text, usage }`) вместо `Promise<string>`.
@@ -70,6 +79,9 @@
   (multi-input схлопывается в один ключ).
 
 ### Known Issues
+- KI-056 (`GET /llm/models` эндпоинт — R4), KI-057 (смена ключа не
+  подхватывается без перезапуска), KI-058 (`isConfigured` = «ключ
+  задан», не «работает»).
 - KI-052 (cost 0 when usage missing), KI-053 (failed-attempt tokens
   unaccounted), KI-054 (no workflow_runs aggregate),
   KI-055 (static price list).
