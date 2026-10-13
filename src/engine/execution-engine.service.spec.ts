@@ -132,6 +132,9 @@ function createFakeDb(runId: string) {
   const rows: FakeNodeRun[] = [];
   /** Payload'ы UPDATE workflow_runs — для проверки сброса полей (KI-040). */
   const runUpdates: Array<Record<string, unknown>> = [];
+  /** Payload'ы UPSERT node_runs — для проверки сброса состояния (KI-047). */
+  const upserts: Array<{ values: Record<string, unknown>; set?: Record<string, unknown> }> =
+    [];
   let sequence = 0;
 
   const applySet = (target: object, values: Record<string, unknown>): void => {
@@ -149,6 +152,8 @@ function createFakeDb(runId: string) {
             (candidate) =>
               candidate.runId === values.runId && candidate.nodeId === values.nodeId,
           );
+
+          upserts.push({ values, set });
 
           if (existing) {
             if (set) {
@@ -211,21 +216,48 @@ function createFakeDb(runId: string) {
           limit: async (): Promise<unknown[]> => {
             const pairs = wherePairs(condition);
 
-            const row = rows.find(
-              (candidate) =>
-                candidate.runId === pairs.get('run_id') &&
-                candidate.nodeId === pairs.get('node_id') &&
-                candidate.status === pairs.get('status'),
+            // Матчим только по тем колонкам, что есть в условии: executor
+            // ищет строку либо по (run_id, node_id, status) для inputs, либо
+            // по (run_id, node_id) для проверки переиспользования (KI-046).
+            const row = rows.find((candidate) =>
+              [...pairs.entries()].every(([column, value]) => {
+                if (column === 'run_id') {
+                  return candidate.runId === value;
+                }
+
+                if (column === 'node_id') {
+                  return candidate.nodeId === value;
+                }
+
+                if (column === 'status') {
+                  return candidate.status === value;
+                }
+
+                if (column === 'id') {
+                  return candidate.id === value;
+                }
+
+                return false;
+              }),
             );
 
-            return row ? [{ outputs: row.outputs }] : [];
+            return row
+              ? [
+                  {
+                    id: row.id,
+                    status: row.status,
+                    inputs: row.inputs,
+                    outputs: row.outputs,
+                  },
+                ]
+              : [];
           },
         }),
       }),
     }),
   };
 
-  return { db: db as unknown as Database, run, rows, runUpdates };
+  return { db: db as unknown as Database, run, rows, runUpdates, upserts };
 }
 
 describe('ExecutionEngineService', () => {
@@ -654,5 +686,223 @@ describe('ExecutionEngineService', () => {
     expect(fake.run.error).toBeNull();
     // `finished_at` на завершении прогона проставляет finishRunAsync, поэтому
     // проверяется именно сброс в момент старта повтора (payload первого UPDATE).
+  });
+
+  /**
+   * Кладёт в фейковую БД готовую строку `node_runs` (имитация прошлой попытки).
+   *
+   * @param row - поля строки (runId по умолчанию — тестовый)
+   */
+  const seedNodeRun = (row: Partial<FakeNodeRun> & { nodeId: string }): void => {
+    fake.rows.push({
+      id: `seeded-${row.nodeId}`,
+      runId: row.runId ?? RUN_ID,
+      nodeId: row.nodeId,
+      nodeType: row.nodeType ?? 'llm',
+      status: row.status ?? 'completed',
+      inputs: row.inputs ?? {},
+      outputs: row.outputs ?? null,
+      error: row.error ?? null,
+      logs: row.logs ?? null,
+      durationMs: row.durationMs ?? null,
+      startedAt: row.startedAt ?? null,
+      finishedAt: row.finishedAt ?? null,
+    });
+  };
+
+  it('KI-047: UPSERT сбрасывает outputs и duration_ms прошлой попытки', async () => {
+    await service.executeAsync(RUN_ID, { nodes: [node('A', 'text')], edges: [] });
+
+    expect(fake.upserts[0].set).toEqual(
+      expect.objectContaining({
+        status: 'running',
+        inputs: {},
+        error: null,
+        logs: [],
+        outputs: null,
+        durationMs: null,
+        startedAt: expect.any(Date),
+        finishedAt: null,
+      }),
+    );
+  });
+
+  it('KI-047: устаревшие outputs не остаются после переигранной попытки', async () => {
+    seedNodeRun({
+      nodeId: 'A',
+      status: 'failed',
+      inputs: {},
+      outputs: { text: 'устаревший результат' },
+      error: 'прошлая ошибка',
+      durationMs: 999,
+    });
+
+    const result = await service.executeAsync(RUN_ID, {
+      nodes: [node('A', 'llm')],
+      edges: [],
+    });
+
+    expect(result.status).toBe('completed');
+    expect(fake.rows[0].outputs).toEqual({ text: 'ответ модели' });
+    expect(fake.rows[0].error).toBeNull();
+  });
+
+  it('KI-046: переиспользует completed-узел с теми же входами и молчит в событиях', async () => {
+    seedNodeRun({
+      nodeId: 'A',
+      status: 'completed',
+      inputs: {},
+      outputs: { text: 'результат прошлой попытки' },
+      durationMs: 42,
+    });
+
+    const internals = service as unknown as {
+      runNodeAsync: (
+        node: NodeDto,
+        inputs: Record<string, unknown>,
+      ) => Promise<Record<string, unknown>>;
+    };
+    const runSpy = vi.spyOn(internals, 'runNodeAsync');
+
+    const result = await service.executeAsync(RUN_ID, {
+      nodes: [node('A', 'llm')],
+      edges: [],
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.outputs).toEqual({ A: { text: 'результат прошлой попытки' } });
+    expect(runSpy).not.toHaveBeenCalled();
+    expect(llmExecute).not.toHaveBeenCalled();
+    // События переиспользованного узла повторно не публикуются.
+    expect(eventTypes()).toEqual(['run_started', 'run_completed']);
+    // Строка осталась от прошлой попытки — upsert не выполнялся.
+    expect(fake.upserts).toHaveLength(0);
+    expect(fake.rows[0].durationMs).toBe(42);
+  });
+
+  it('KI-046: переигрывает узел, если входы изменились', async () => {
+    // A переиспользуется (его входы — {}), но сохранённые входы B отличаются
+    // от того, что A отдаёт сейчас, поэтому B выполняется заново.
+    seedNodeRun({ nodeId: 'A', inputs: {}, outputs: { text: 'привет' } });
+    seedNodeRun({
+      nodeId: 'B',
+      inputs: { prompt: 'другой вход' },
+      outputs: { text: 'старый ответ' },
+    });
+
+    const graph: GraphDto = {
+      nodes: [node('A', 'text', { value: 'привет' }), node('B', 'llm')],
+      edges: [edge('e1', 'A', 'B', 'text', 'prompt')],
+    };
+
+    const result = await service.executeAsync(RUN_ID, graph);
+
+    expect(result.status).toBe('completed');
+    expect(llmExecute).toHaveBeenCalledTimes(1);
+    expect(llmExecute.mock.calls[0][0]).toEqual(expect.objectContaining({ id: 'B' }));
+
+    const nodeB = fake.rows.find((row) => row.nodeId === 'B');
+
+    expect(nodeB?.inputs).toEqual({ prompt: 'привет' });
+    expect(nodeB?.outputs).toEqual({ text: 'ответ модели' });
+  });
+
+  it('KI-046: не переиспользует failed-строку', async () => {
+    seedNodeRun({
+      nodeId: 'A',
+      status: 'failed',
+      inputs: {},
+      outputs: { text: 'устаревшее' },
+      error: 'бум',
+    });
+
+    await service.executeAsync(RUN_ID, { nodes: [node('A', 'llm')], edges: [] });
+
+    expect(llmExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it('KI-046: не переиспользует running-строку (зависшая попытка)', async () => {
+    seedNodeRun({
+      nodeId: 'A',
+      status: 'running',
+      inputs: {},
+      outputs: null,
+      startedAt: new Date(Date.now() - 60_000),
+    });
+
+    await service.executeAsync(RUN_ID, { nodes: [node('A', 'llm')], edges: [] });
+
+    expect(llmExecute).toHaveBeenCalledTimes(1);
+    expect(fake.rows[0].status).toBe('completed');
+  });
+
+  it('KI-046: без строки прошлой попытки узел выполняется как обычно', async () => {
+    const result = await service.executeAsync(RUN_ID, {
+      nodes: [node('A', 'llm')],
+      edges: [],
+    });
+
+    expect(result.status).toBe('completed');
+    expect(llmExecute).toHaveBeenCalledTimes(1);
+    expect(fake.upserts).toHaveLength(1);
+  });
+
+  it('KI-046: при job-retry переиспользует A и B и переигрывает только упавший C', async () => {
+    const graph: GraphDto = {
+      nodes: [
+        node('A', 'text', { value: 'привет' }),
+        node('B', 'llm'),
+        node('C', 'llm'),
+      ],
+      edges: [
+        edge('e1', 'A', 'B', 'text', 'prompt'),
+        edge('e2', 'B', 'C', 'text', 'prompt'),
+      ],
+    };
+
+    let cFails = true;
+
+    llmExecute.mockImplementation((current: NodeDto) =>
+      current.id === 'C' && cFails
+        ? Promise.reject(
+            new LlmProviderException('anthropic', 'invalid api key', {
+              retryable: false,
+            }),
+          )
+        : Promise.resolve({ text: `ответ ${current.id}` }),
+    );
+
+    // Первая попытка: A и B успешны, C падает (неповторяемо).
+    await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow(
+      'invalid api key',
+    );
+
+    expect(fake.rows.map((row) => [row.nodeId, row.status])).toEqual([
+      ['A', 'completed'],
+      ['B', 'completed'],
+      ['C', 'failed'],
+    ]);
+
+    // Job-level retry: C больше не падает.
+    cFails = false;
+    llmExecute.mockClear();
+
+    const internals = service as unknown as {
+      runNodeAsync: (
+        node: NodeDto,
+        inputs: Record<string, unknown>,
+      ) => Promise<Record<string, unknown>>;
+    };
+    const runSpy = vi.spyOn(internals, 'runNodeAsync');
+
+    const result = await service.executeAsync(RUN_ID, graph);
+
+    expect(result.status).toBe('completed');
+    // Выполнялся только C — A и B переиспользованы из прошлой попытки.
+    expect(runSpy.mock.calls.map(([current]) => current.id)).toEqual(['C']);
+    expect(llmExecute).toHaveBeenCalledTimes(1);
+    expect(llmExecute.mock.calls[0][0]).toEqual(expect.objectContaining({ id: 'C' }));
+    expect(fake.rows).toHaveLength(3);
+    expect(fake.rows.every((row) => row.status === 'completed')).toBe(true);
   });
 });

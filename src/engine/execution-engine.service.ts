@@ -5,6 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
+import { isDeepStrictEqual } from 'node:util';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { nodeRuns, workflowRuns } from '../db/schema.js';
 import { RunEventsService } from '../runs/run-events.service.js';
@@ -255,11 +256,65 @@ export class ExecutionEngineService {
   }
 
   /**
+   * Ищет завершённую строку `node_runs` с теми же входами (KI-046).
+   *
+   * Переиспользовать результат можно только если узел уже успешно завершился и
+   * его входы не изменились: тогда повторный вызов узла (в том числе платный
+   * вызов LLM-провайдера) не нужен. Сравнение — `node:util.isDeepStrictEqual`.
+   *
+   * Замечание по стоимости: `inputs` лежат в JSONB, поэтому сравнение
+   * пропорционально их размеру. Для типичных графов (примитивы и небольшие
+   * объекты) это дёшево; при мегабайтных входах стоит перейти на хэш.
+   *
+   * @param runId - uuid запуска
+   * @param nodeId - `id` узла в графе
+   * @param inputs - входы, собранные для текущей попытки
+   * @returns сохранённые outputs, если узел можно не выполнять, иначе `null`
+   */
+  private async findReusableNodeRunAsync(
+    runId: string,
+    nodeId: string,
+    inputs: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | null> {
+    const [previous] = await this.db
+      .select({
+        status: nodeRuns.status,
+        inputs: nodeRuns.inputs,
+        outputs: nodeRuns.outputs,
+      })
+      .from(nodeRuns)
+      .where(and(eq(nodeRuns.runId, runId), eq(nodeRuns.nodeId, nodeId)))
+      .limit(1);
+
+    if (!previous || previous.status !== 'completed') {
+      return null;
+    }
+
+    // `inputs` в БД nullable: отсутствие значения трактуем как пустой словарь.
+    if (!isDeepStrictEqual(previous.inputs ?? {}, inputs)) {
+      return null;
+    }
+
+    return previous.outputs ?? {};
+  }
+
+  /**
    * Выполняет один узел: пишет `node_runs`, публикует события, обновляет статус.
    *
-   * Строка `node_runs` создаётся один раз (идемпотентный upsert по
-   * `run_id`+`node_id`, KI-031): повторный прогон графа обновляет ту же запись,
-   * а не плодит дубли. «Временные» ошибки провайдера (KI-036) повторяются до
+   * Порядок работы:
+   * 1. собрать входы узла;
+   * 2. **KI-046**: если узел уже успешно завершился в предыдущей попытке запуска
+   *    и его входы не изменились — переиспользовать сохранённые outputs, не
+   *    вызывая узел (для LLM это экономит платные вызовы провайдера);
+   * 3. иначе — UPSERT строки `node_runs` (идемпотентно по `run_id`+`node_id`,
+   *    KI-031), выполнение узла и закрытие статуса.
+   *
+   * UPSERT сбрасывает состояние предыдущей попытки целиком — `status`, `inputs`,
+   * `error`, `logs`, `outputs`, `duration_ms`, `started_at`, `finished_at`
+   * (KI-047): пока новая попытка не закрылась, строка не показывает результат
+   * и ошибку прошлой.
+   *
+   * «Временные» ошибки провайдера (KI-036) повторяются до
    * {@link NODE_MAX_ATTEMPTS} раз с экспоненциальной задержкой; каждая неудачная
    * попытка попадает в `node_runs.logs`, а `duration_ms` считается от первой
    * попытки. Любой сбой (включая падение публикации события) переводит строку в
@@ -270,7 +325,7 @@ export class ExecutionEngineService {
    * @param nodeId - `id` узла в графе
    * @param graph - граф запуска
    * @param plan - план выполнения графа
-   * @returns выходы узла
+   * @returns выходы узла (свежие либо переиспользованные)
    * @throws Error если узел отсутствует в графе, исчерпал попытки или не удалось записать статус
    */
   private async executeNodeAsync(
@@ -287,9 +342,25 @@ export class ExecutionEngineService {
 
     const inputs = await this.collectInputsAsync(runId, nodeId, plan);
 
+    // KI-046: узел, успешно завершившийся в предыдущей попытке запуска с теми
+    // же входами, не выполняется повторно — берём сохранённые outputs. Для
+    // LLM-узлов это экономит платные вызовы провайдера при job-level retry.
+    const reusable = await this.findReusableNodeRunAsync(runId, nodeId, inputs);
+
+    if (reusable !== null) {
+      this.logger.log(
+        `Узел ${nodeId} запуска ${runId}: переиспользован результат предыдущей ` +
+          'попытки (KI-046)',
+      );
+
+      return reusable;
+    }
+
     // KI-031: идемпотентный upsert по (run_id, node_id) — повторный прогон
     // графа (job-level retry после падения worker'а) обновляет ту же строку
     // истории, а не плодит дубли.
+    // KI-047: сбрасываем состояние предыдущей попытки целиком (включая outputs
+    // и duration_ms), чтобы «running» не показывал результат прошлого прогона.
     const [nodeRun] = await this.db
       .insert(nodeRuns)
       .values({
@@ -308,6 +379,8 @@ export class ExecutionEngineService {
           inputs,
           error: null,
           logs: [],
+          outputs: null,
+          durationMs: null,
           startedAt: new Date(),
           finishedAt: null,
         },
