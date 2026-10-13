@@ -1822,6 +1822,65 @@
 
 ---
 
+### KI-120 — Vite proxy: `/media` забыт при добавлении узла Image Generation
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.6.0b.2.5
+- **Файлы:** `web/vite.config.ts`
+- **Описание:** При добавлении узла Image Generation (v0.6.0b.2.3)
+  не добавили `/media` в Vite proxy. UI получал HTML (SPA fallback)
+  со статусом 200, `requestAsync` падал на `JSON.parse`, селект
+  оставался disabled с «Нет доступных image-моделей».
+- **Fix:** `'/media': 'http://localhost:3000'` в proxy.
+- **Структурное решение:** закрыть **KI-072** — единый префикс
+  `/api` или общий список префиксов.
+- **Связанные:** KI-072.
+
+---
+
+### KI-121 — Типы узлов дублируются в четырёх местах
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `web/src/types/graph.ts`, `web/src/components/nodes/index.ts`,
+  `web/src/stores/workflow.ts`, `web/src/components/Toolbar.tsx`
+- **Описание:** `NodeType` (graph.ts), ключ registry (`nodes/index.ts`),
+  литерал в `createNode`, литерал в `fromApiWorkflow`, массив
+  `BUTTONS` в `Toolbar` — **пять независимых** написаний одного
+  значения. `tsc` ловит `NODE_TYPE_LABELS/ICONS` (`Record<NodeType,...>`),
+  но **не** цепочку `node.type !== 'text' && ...` в `fromApiWorkflow` —
+  именно там сломался бы Load незамеченным.
+- **Решение:** вывести ключи registry из `NodeType`
+  (`const registry: Record<NodeType, ComponentType<NodeProps>>`),
+  заменить `!==`-цепочку на проверку по набору `NODE_TYPES`.
+- **Когда чинить:** при добавлении следующего типа узла.
+- **Связанные:** KI-120.
+
+---
+
+### KI-122 — `nodeDataFromApi` для image-узла теряет `model` / `aspectRatio`
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `web/src/stores/workflow.ts` (`nodeDataFromApi`)
+- **Описание:** Функция возвращает только `kind`, `label`, `imageUrl`,
+  хотя `ImageGenNodeData` (после v0.6.0b.2.3) содержит ещё `model`
+  и `aspectRatio`. При Load эти поля **не переносятся** из API в стор —
+  у загруженного workflow селект модели и aspect_ratio окажутся
+  пустыми (модель подставится только у нового узла из `mediaModels[0]`).
+- **Решение:** добавить перенос `model`/`aspectRatio` в `nodeDataFromApi`.
+- **Когда чинить:** до v0.6.0 release (иначе Load сломает UI-граф).
+- **Связанные:** KI-069.
+
+---
+
+### KI-123 — `NODE_TYPE_LABELS/ICONS` дублируются в тулбаре
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `web/src/components/Toolbar.tsx`
+- **Описание:** `Toolbar.tsx` держит собственный массив `BUTTONS` с
+  `label` и `icon`, хотя те же строки есть в `NODE_TYPE_LABELS/ICONS`.
+  Согласовано сейчас, но при переименовании легко поправить одно
+  место и забыть второе.
+- **Решение:** строить `BUTTONS` из `NODE_TYPE_LABELS/ICONS`.
+- **Связанные:** KI-121.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |

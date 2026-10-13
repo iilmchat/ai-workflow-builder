@@ -18,6 +18,18 @@
 
 ## [Unreleased]
 
+### Fixed
+- **KI-120** — Vite proxy не знал про `/media`: UI получал HTML
+  (SPA fallback) со статусом 200, `requestAsync` падал на
+  `JSON.parse`, селект моделей оставался disabled. `'/media'` в
+  `web/vite.config.ts`.
+- **Контракт типа узла** (v0.6.0b.2.5) — frontend отправлял
+  `type: 'image'`, backend ждёт `'image_generation'` (NodeDto,
+  executor, engine). Каждый Run падал с «Неподдерживаемый тип узла:
+  image». Переименовано во frontend: `NodeType`, `createNode`,
+  `nodeDataFromApi`, `fromApiWorkflow`, registry `nodeTypes`,
+  `Toolbar`. `kind: 'image'` (UI-метка) сохранён.
+
 ### Added
 - **Frontend — v0.6.0b.2.3: узел image_generation (2026-10-14):**
   - `ImageGenNode` — рабочий узел: селект `GET /media/models?type=IMAGE`
