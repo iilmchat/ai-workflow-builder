@@ -19,6 +19,25 @@
 ## [Unreleased]
 
 ### Added
+- **Runner — v0.6.0a: модальности моделей (2026-10-13):**
+  - `ModelModality` (`text` / `vision` / `image-generation` /
+    `audio` / `video` / `embedding`) + `ModelInfo` с
+    `inputModalities` / `outputModalities`. Рантайм-константа
+    `MODEL_MODALITIES` — для валидации env.
+  - `GET /llm/models` возвращает модальности каждой модели.
+  - `LMSTUDIO_MODELS` — суффикс модальностей:
+    `id:modality+modality,id:modality`. Без суффикса — `text`.
+  - UI: селект LLM-ноды **сгруппирован** (`Текст` /
+    `Текст + Vision`), карточка узла показывает badge `[V]` для
+    vision-моделей.
+  - `web/src/lib/llm-models.ts` — `filterModelsByInput`,
+    `filterModelsByOutput`, `groupLlmModelsForSelect`.
+  - ImageGen-нода фильтрует модели по `output: image-generation`
+    (пусто до v0.6.0b — image-провайдера ещё нет).
+  - +3 теста (257 → 260).
+  - Smoke: 9 моделей от 4 провайдеров, группы в селекте, badge
+    `[V]` на `qwen/qwen2.5-vl-7b`.
+
 - **Runner — v0.5.0: мультипровайдерная поддержка LLM (2026-10-13):**
   - `LlmProviderFactory` — конфиг-массив провайдеров из env.
     Провайдер попадает в список **только если задан его ключ**
