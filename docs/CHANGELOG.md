@@ -19,6 +19,23 @@
 ## [Unreleased]
 
 ### Added
+- **Runner — KI-060: явный признак финальности `run_completed` (v0.3.9):**
+  - `run_completed` несёт `final: boolean` (KI-060) — эвристика
+    `attemptsMade >= attempts - 1` ломалась на детерминированных
+    провалах планирования (цикл: `executeAsync` не пробрасывает,
+    job успешен, retry не будет).
+  - `RunsProcessor` — **единственный** публикатор `run_completed`:
+    только он знает и результат (`return`/`throw`), и состояние
+    попыток job'а. `ExecutionEngineService` больше **не** публикует
+    `run_completed`. `RunAttemptContext` удалён —
+    `executeAsync(runId, graph)` снова с двумя аргументами.
+  - `runs-stream.service` закрывает поток чисто по `event.final`;
+    `isFinalCompletion` удалён.
+  - 8 новых тестов, 5 обновлённых (209 → 217).
+  - Smoke A (job retry): `final=false` на 0/3, 1/3; `final=true`
+    на 2/3 — поток закрыт.
+  - Smoke B (цикл): `run_completed(final=true)` сразу, поток закрыт
+    за 1.3 с (было: curl exit=28, висело).
 - **Runner — KI-059: сигнал исчерпания попыток (v0.3.8):**
   - `RunEventSchema.run_completed` несёт `attemptsMade` и `attempts`
     (из job в процессоре). SSE-поток закрывается только на
