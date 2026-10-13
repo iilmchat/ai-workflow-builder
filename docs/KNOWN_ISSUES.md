@@ -1739,7 +1739,8 @@
 ---
 
 ### KI-114 — `cost_rub` не передаётся в SSE snapshot
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.6.0b.2.4
 - **Файлы:** `src/runs/dto/run-stream-message.dto.ts`,
   `src/runs/runs-stream.service.ts`
 - **Описание:** Колонка `node_runs.cost_rub` заполняется executor'ом
@@ -1751,7 +1752,12 @@
   `NodeRunSnapshotSchema`, передавать `cost_rub` в `toNodeSnapshot`.
 - **Когда чинить:** **до tag'а v0.6.0** (v0.6.0b.2.4, ~5 мин).
 - **Связанные:** KI-038, KI-111.
-
+- **Fix:** `NodeRunSnapshotSchema.costRub: z.string().nullable().optional()`,
+  `toNodeSnapshot: row.costRub ?? null`. +1 тест.
+- **Замечание:** поле `.optional()` — временная защита совместимости;
+  когда фронтенд перестанет поддерживать старые ответы без `costRub`,
+  можно сделать обязательным.
+  
 ---
 
 ### KI-115 — `aspectRatio` не материализуется в `data` до первого изменения

@@ -34,6 +34,11 @@
     метрика `0.60 ₽`, Run заблокирован без модели.
 
 ### Fixed
+- **KI-114** — `node_runs.cost_rub` заполнялся executor'ом, но не
+  попадал в SSE snapshot: панель показывала длительность без цены
+  у media-узлов. `costRub: z.string().nullable().optional()` в
+  `NodeRunSnapshotSchema` + `row.costRub ?? null` в `toNodeSnapshot`.
+  Фронтенд уже готов (v0.6.0b.2.3). +1 тест.
 - **KI-110** — WSL2 Docker proxy (`wslrelay.exe`) рвал idle TCP:
   `pg.Pool` переиспользовал мёртвый сокет, `POST /workflow` падал с
   500, ioredis сыпал `ECONNABORTED`. `pg.Pool` — `idleTimeoutMillis:
