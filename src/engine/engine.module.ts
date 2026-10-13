@@ -4,6 +4,8 @@ import { EngineController } from './engine.controller.js';
 
 @Module({
   providers: [EngineService],
-  controllers: [EngineController]
+  controllers: [EngineController],
+  // EngineService нужен ExecutionEngineService (провайдится в RunsModule) — R2.2.
+  exports: [EngineService],
 })
 export class EngineModule {}

@@ -42,7 +42,8 @@
 ---
 
 ### KI-003 — `executionMap` теряет данные при нескольких входах без `targetHandle`
-- **Приоритет:** 🟡 Medium | **Статус:** Documented | **Обнаружено:** 2026-10-13
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-13
+- **Исправлено в:** v0.3.2 (коммит `4ea0fb4`)
 - **Файлы:** `src/engine/engine.service.ts` (метод `buildExecutionPlanAsync`)
 - **Описание:** Если у узла несколько входящих связей и у них не задан
   `targetHandle`, все они пишутся в ключ `input` (дефолт) и перезаписывают
@@ -55,6 +56,9 @@
   3. Собирать массив: `inputs: { [targetHandle]: InputRef[] }`.
 - **Когда чинить:** перед реализацией Runner (который будет реально исполнять
   граф и потреблять `executionMap`). Не блокер для frontend.
+- **Fix:** ключ = `targetHandle ?? sourceHandle ?? edge.id`
+  (`src/engine/engine.service.ts`). Покрыто тестами (28 в engine.service.spec).
+- **Когда чинить:** — (закрыто)
 
 ---
 
@@ -217,7 +221,8 @@
 ---
 
 ### KI-014 — jsonb-колонки без `$type<T>()` (RULES 4.11)
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-13
+- **Исправлено в:** v0.3.2 (коммит `4ea0fb4`)
 - **Файлы:** `src/db/schema.ts` (`workflows.nodes`, `workflows.edges`,
   `workflow_runs.snapshot`, `workflow_runs.inputs/outputs`,
   `node_runs.inputs/outputs/logs`)
@@ -228,11 +233,14 @@
   Zod-валидация на границе чтения (RULES § 1.17).
 - **Когда чинить:** в R2, до реализации `ExecutionEngineService`.
 - **Связанные:** KI-003 (executionMap), KI-015.
+- **Fix:** `$type<T>()` на всех jsonb (`src/db/schema.ts`) +
+  `GraphSnapshotDto` (`src/engine/dto/graph-snapshot.dto.ts`).
 
 ---
 
 ### KI-015 — В `workflow_runs` нет `created_at`
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-13
+- **Исправлено в:** v0.3.2 (коммит `4ea0fb4`)
 - **Файлы:** `src/db/schema.ts`, `src/runs/runs.service.ts`,
   `src/runs/dto/create-run.dto.ts` (RunResponse)
 - **Описание:** Колонки `created_at` в `workflow_runs` нет. `RunResponse.createdAt`
@@ -245,11 +253,14 @@
      «время создания».
 - **Когда чинить:** в R2 (миграция) или до R4 (переименование в API).
 - **Связанные:** KI-014.
+- **Fix:** `created_at timestamptz NOT NULL DEFAULT now()` + backfill
+  из `started_at`. Миграция `drizzle/0001_flippant_lockjaw.sql`.
 
 ---
 
 ### KI-016 — Очередь BullMQ без `defaultJobOptions`
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-13
+- **Исправлено в:** v0.3.2 (коммит `4ea0fb4`)
 - **Файлы:** `src/runs/runs.module.ts` (`BullModule.registerQueue`)
 - **Описание:** У очереди `workflow-runs` нет `defaultJobOptions` —
   нет `attempts`, `backoff`, `removeOnComplete`, `removeOnFail`. Упавший
@@ -261,6 +272,8 @@
   }})`.
 - **Когда чинить:** в R2, до подключения реального executor'а.
 - **Связанные:** —
+- **Fix:** `defaultJobOptions` — attempts: 3, backoff: exponential 2000ms,
+  removeOnComplete (count 100, age 24ч), removeOnFail (count 500, age 7д).
 
 ---
 
@@ -425,13 +438,14 @@
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 0 |
+| Fixed | 5 |
 | In Progress | 0 |
-| Planned | 0 |
+| Planned | 2 |
 | Deferred | 0 |
-| Documented | 1 |
+| Documented | 9 |
+| Open | 13 |
 | Won't Fix | 0 |
-| **Всего** | **13** |
+| **Всего** | **29** |
 
 ---
 

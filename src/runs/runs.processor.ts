@@ -4,35 +4,57 @@ import type { Job } from 'bullmq';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { workflowRuns } from '../db/schema.js';
+import { workflowRuns, type RunStatus } from '../db/schema.js';
+import { GraphSnapshotSchema, type GraphSnapshotDto } from '../engine/dto/index.js';
+import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import { ExecuteRunJobSchema, type ExecuteRunJobDto } from './dto/index.js';
 import { WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 
 /**
+ * Приводит неизвестную ошибку к тексту для логов и колонки `error`.
+ *
+ * @param error - значение из `catch` (тип `unknown`)
+ * @returns текст ошибки
+ */
+function toMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Данные запуска, нужные обработчику для старта выполнения. */
+interface RunForExecution {
+  status: RunStatus;
+  snapshot: GraphSnapshotDto;
+}
+
+/**
  * Обработчик очереди {@link WORKFLOW_RUNS_QUEUE}.
  *
- * СКЕЛЕТ: реальный executor графа здесь отсутствует — он появится в R2
- * (`EngineService.buildExecutionPlanAsync()` + прогон узлов в `node_runs`).
- * Задача R1 — проверить сквозной путь HTTP → Postgres → BullMQ → worker →
- * Postgres, поэтому обработчик только логирует задание и закрывает запуск
- * статусом `completed`.
- *
- * `EngineService` сознательно НЕ импортируется: подключение executor'а — R2.
+ * Достаёт снимок графа из `workflow_runs.snapshot`, валидирует его (данные из
+ * JSONB — внешние, RULES 1.17) и передаёт выполнение
+ * {@link ExecutionEngineService}. Итоговый статус и `run_completed` пишет сам
+ * executor; здесь остаётся только логирование и проброс ошибки, чтобы BullMQ
+ * сделал retry согласно `defaultJobOptions` (attempts: 3).
  */
 @Processor(WORKFLOW_RUNS_QUEUE)
 export class RunsProcessor extends WorkerHost {
   private readonly logger = new Logger(RunsProcessor.name);
 
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {
+  constructor(
+    @Inject(DRIZZLE) private readonly db: Database,
+    private readonly executionEngine: ExecutionEngineService,
+  ) {
     super();
   }
 
   /**
    * Обрабатывает задание на выполнение workflow.
    *
+   * Идемпотентность: повторное задание (ретрай BullMQ) для запуска, который
+   * уже не в статусе `pending`, пропускается без выполнения графа.
+   *
    * @param job - задание BullMQ с payload `{ runId }`
-   * @returns промис без значения; результат виден в строке `workflow_runs`
-   * @throws Error если payload задания невалиден или обновление статуса не удалось
+   * @returns промис без значения; итог виден в `workflow_runs`/`node_runs`
+   * @throws Error если payload или snapshot невалидны, запуск не найден либо выполнение упало
    */
   async process(job: Job<ExecuteRunJobDto>): Promise<void> {
     const payload = ExecuteRunJobSchema.safeParse(job.data);
@@ -48,25 +70,79 @@ export class RunsProcessor extends WorkerHost {
     }
 
     const { runId } = payload.data;
+    const run = await this.findRunAsync(runId);
 
-    this.logger.log(`Processing run ${runId}`);
+    if (!run) {
+      throw new Error(`Запуск ${runId} не найден`);
+    }
 
+    if (run.status !== 'pending') {
+      this.logger.warn(
+        `Запуск ${runId} уже в статусе ${run.status} — задание пропущено`,
+      );
+
+      return;
+    }
+
+    const snapshot = GraphSnapshotSchema.safeParse(run.snapshot);
+
+    if (!snapshot.success) {
+      const details = z.prettifyError(snapshot.error);
+
+      this.logger.error(`Некорректный snapshot запуска ${runId}: ${details}`);
+      await this.markRunFailedAsync(runId, `Некорректный snapshot запуска: ${details}`);
+
+      throw new Error(`Некорректный snapshot запуска ${runId}: ${details}`);
+    }
+
+    this.logger.log(
+      `Запуск ${runId}: старт выполнения (узлов: ${snapshot.data.nodes.length})`,
+    );
+
+    try {
+      await this.executionEngine.executeAsync(runId, snapshot.data);
+    } catch (error: unknown) {
+      // Итог в БД и событие run_completed проставляет сам executor; здесь
+      // только логируем и пробрасываем — стек не гасим, job уйдёт в retry.
+      this.logger.error(`Запуск ${runId} упал: ${toMessage(error)}`);
+
+      throw error;
+    }
+  }
+
+  /**
+   * Достаёт статус и снимок графа запуска.
+   *
+   * @param runId - uuid запуска
+   * @returns данные запуска либо `null`, если строки нет
+   */
+  private async findRunAsync(runId: string): Promise<RunForExecution | null> {
+    const [run] = await this.db
+      .select({ status: workflowRuns.status, snapshot: workflowRuns.snapshot })
+      .from(workflowRuns)
+      .where(eq(workflowRuns.id, runId))
+      .limit(1);
+
+    return run ?? null;
+  }
+
+  /**
+   * Помечает запуск как `failed` (битый snapshot — выполнять нечего).
+   *
+   * @param runId - uuid запуска
+   * @param reason - текст для колонки `error`
+   * @returns промис без значения
+   */
+  private async markRunFailedAsync(runId: string, reason: string): Promise<void> {
     try {
       await this.db
         .update(workflowRuns)
-        .set({ status: 'completed', finishedAt: new Date() })
+        .set({ status: 'failed', error: reason, finishedAt: new Date() })
         .where(eq(workflowRuns.id, runId));
-
-      this.logger.log(`Запуск ${runId} помечен как completed (скелет R1, executor — R2)`);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-
-      this.logger.error(`Не удалось обновить статус запуска ${runId}: ${message}`);
-
-      // Стек не гасим: job должен уйти в failed и быть виден в мониторинге (RULES 1.7).
-      throw new Error(`Не удалось обновить статус запуска ${runId}: ${message}`, {
-        cause: error,
-      });
+      this.logger.error(
+        `Не удалось пометить запуск ${runId} как failed: ${toMessage(error)}`,
+      );
     }
   }
 }
