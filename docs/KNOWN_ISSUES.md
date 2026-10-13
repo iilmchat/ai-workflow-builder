@@ -329,6 +329,98 @@
 
 ---
 
+### KI-022 — Дефолтный выходной порт `output` не существует ни у одного исполнителя
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/engine/engine.service.ts`, `src/engine/node-executors.ts`
+- **Описание:** `executionMap` подставляет `fromPort = sourceHandle ?? 'output'`,
+  а узлы отдают `text` (text/llm) или `url` (image_generation). Если у связи
+  не задан `sourceHandle` — вход молча получает `null`, данные теряются.
+- **Решение:** `sourceHandle ?? inferDefaultPort(sourceNode.type)` —
+  text/llm → 'text', image_generation → 'url'. Проверить маппинг портов
+  в `web/src/components/nodes/` (T/G badges).
+- **Когда чинить:** до R3 (LLM-вызовы) или отдельным микро-шагом.
+- **Связанные:** KI-003.
+
+---
+
+### KI-023 — Зависший запуск при падении worker'а
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/runs/runs.processor.ts`
+- **Описание:** Если worker умрёт во время выполнения, `workflow_runs.status`
+  останется `running`. BullMQ перезапустит job (attempts: 3, stalled-check),
+  но процессор пропустит его по guard'у `status !== 'pending'` — запуск
+  навсегда останется в `running`.
+- **Решение:** lease-таймаут или `UPDATE ... WHERE status IN
+  ('pending', 'running') AND started_at < now() - interval '...'`.
+- **Когда чинить:** R3 (реальные LLM-вызовы падают чаще).
+- **Связанные:** —
+
+---
+
+### KI-024 — Сбой публикации события роняет узел
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/engine/execution-engine.service.ts`
+- **Описание:** `publishAsync(node_started/node_completed)` внутри try —
+  недоступность Redis помечает узел failed, хотя сам узел отработал.
+- **Решение:** события — best-effort. Разделить «ошибка выполнения» и
+  «ошибка публикации». Узел → completed; publish — только лог.
+- **Когда чинить:** до R4.
+- **Связанные:** —
+
+---
+
+### KI-025 — `workflow_runs.outputs` дублирует выходы всех узлов
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/engine/execution-engine.service.ts`
+- **Описание:** При больших графах раздувает jsonb и дублирует
+  `node_runs.outputs`. Решить: хранить только терминальные выходы или ссылки.
+- **Когда чинить:** до R4.
+- **Связанные:** —
+
+---
+
+### KI-026 — Нет таймаута и отмены выполнения
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/engine/execution-engine.service.ts`, `src/engine/node-executors.ts`
+- **Описание:** `runNode` синхронный, `AbortSignal` не прокинут. Статус
+  `cancelled` есть в схеме, но перевести в него запуск нечем (RULES 4.19).
+- **Когда чинить:** до R3 (LLM-вызовы) и до R4 (кнопка Stop).
+- **Связанные:** KI-024.
+
+---
+
+### KI-027 — Run-level inputs игнорируются
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/runs/runs.service.ts`, `src/engine/execution-engine.service.ts`
+- **Описание:** `createRunAsync` пишет `inputs = {}`, executor читает только
+  snapshot. Пользовательские входные значения запуска некуда передать.
+- **Решение:** контракт `POST /runs { workflowId, inputs }` + прокидывание
+  в узлы-источники.
+- **Когда чинить:** R3 (до реальных LLM-вызовов).
+- **Связанные:** —
+
+---
+
+### KI-028 — Дублирование `toMessage` в 4 файлах
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/runs/runs.service.ts`, `src/runs/run-events.service.ts`,
+  `src/runs/runs.processor.ts`, `src/engine/execution-engine.service.ts`
+- **Решение:** вынести в `src/common/utils/to-message.ts`.
+- **Когда чинить:** при следующей правке одного из файлов.
+- **Связанные:** —
+
+---
+
+### KI-029 — Нет следа узла, если падение до INSERT в `node_runs`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/engine/execution-engine.service.ts`
+- **Описание:** Сбой `collectInputsAsync` или самого INSERT выбрасывается
+  наружу: строки `node_runs` нет, узел не виден в UI, хотя run помечен failed.
+- **Когда чинить:** до R4 (UI начнёт показывать узлы).
+- **Связанные:** —
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |

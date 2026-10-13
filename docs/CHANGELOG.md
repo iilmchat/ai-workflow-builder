@@ -18,6 +18,40 @@
 
 ## [Unreleased]
 
+### Added
+- **Runner — R2.2: Executor (v0.3.3):**
+  - `ExecutionEngineService` (`src/engine/execution-engine.service.ts`):
+    - `executeAsync(runId, graph)` — обход `plan.levels`:
+      `Promise.allSettled` внутри уровня (RULES 4.16), `for...of`
+      между уровнями. Прерывание на первом failed-узле.
+    - `executeNodeAsync` — INSERT `node_runs` (`running`) → выполнение
+      → UPDATE (`completed`/`failed`) + публикация `node_started`,
+      `node_completed`, `node_failed`.
+    - `collectInputsAsync` — чтение `outputs` предшественников
+      параллельно (RULES 4.17), `null` при отсутствии порта.
+    - `markRunRunningAsync` (в transaction), `finishRunAsync`.
+  - `src/engine/node-executors.ts`:
+    - `executeTextNode` — реальный: отдаёт `data.value` как `{ text }`.
+    - `executeLlmNodeStub` — заглушка `{ text: '[LLM stub — R3]' }`.
+    - `executeImageGenNodeStub` — заглушка `{ url: null }`.
+    - `UnsupportedNodeTypeException` (extends Error, не HttpException).
+  - `RunsProcessor` — вместо скелета вызывает `ExecutionEngineService`;
+    валидирует `snapshot` (Zod); идемпотентен (`status !== 'pending'`
+    → return для ретраев BullMQ).
+  - `EngineModule` — `exports: [EngineService]`.
+  - `RunsModule` — `imports: [EngineModule]`, `providers:
+    [..., ExecutionEngineService]`.
+  - 13 новых тестов (95 → 108): executor (7, в т.ч. diamond, падение
+    узла, UnsupportedNodeTypeException, пустой граф), processor (6,
+    в т.ч. идемпотентность, битый snapshot).
+  - Smoke: линейный A→B→C — 3 `node_runs` completed, `inputs[B]`
+    от A, полная цепочка событий в Redis pub/sub (проверено через
+    `redis-cli PSUBSCRIBE run:*` + ioredis-подписчик).
+
+### Known Issues
+- Заведены KI-022…KI-029. Ключевые: KI-022 (дефолтный порт `output`
+  не существует ни у одного узла — тихая потеря данных), KI-023
+  (зависший run при падении worker'а).
 ### Fixed
 - **Runner — R2.1: подготовка executor'а (v0.3.2):**
   - **KI-016:** очередь `workflow-runs` получила `defaultJobOptions`:
