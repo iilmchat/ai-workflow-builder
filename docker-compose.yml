@@ -19,5 +19,21 @@ services:
       timeout: 5s
       retries: 5
 
+  # Redis для очереди BullMQ (R1): фоновое выполнение workflow.
+  redis:
+    image: redis:7-alpine
+    container_name: workflow-builder-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   workflow-builder-db-data:
+  redis-data:

@@ -19,6 +19,36 @@
 ## [Unreleased]
 
 ### Added
+- **Runner — R1: BullMQ-инфраструктура (v0.3.1):**
+  - `docker-compose.yml` — сервис `redis` (`redis:7-alpine`, порт 6379,
+    named volume `redis-data`, healthcheck `redis-cli ping`).
+  - `REDIS_URL=redis://127.0.0.1:6379` в `.env` + `.env.example`
+    (хост — `127.0.0.1`, не `localhost` — RULES 4.31).
+  - `src/config/env.schema.ts` — Zod-схема env + `validateEnv()`
+    (fail-fast при старте, RULES 4.5).
+  - `RunsModule` (`src/runs/`):
+    - `dto/create-run.dto.ts` — `CreateRunSchema` (uuid workflowId).
+    - `dto/execute-run-job.dto.ts` — Zod-payload job (RULES 1.17).
+    - `dto/index.ts` — barrel.
+    - `runs.constants.ts` — `WORKFLOW_RUNS_QUEUE`, job name `execute`.
+    - `runs.service.ts` — `createRunAsync` (INSERT run + snapshot графа +
+      `queue.add('execute', { runId })`), `getRunAsync` (404 при отсутствии).
+    - `runs.controller.ts` — `POST /runs` (201), `GET /runs/:id` (200/404).
+    - `runs.processor.ts` — `@Processor('workflow-runs')` +
+      `extends WorkerHost`, скелет: логирует job и помечает run
+      `status='completed'`. Executor — R2.
+    - `runs.module.ts` — `registerQueue` + providers/controllers.
+  - `src/app.module.ts` — `ConfigModule.forRoot({ isGlobal, cache, validate })` +
+    `BullModule.forRootAsync` (Redis URL из `ConfigService`, без хардкода,
+    RULES 4.9) + `RunsModule`.
+  - `src/main.ts` — `app.enableShutdownHooks()` (RULES 4.12).
+  - 14 новых тестов (68 → 82): DTO (3), Service (6, включая ветку
+    «Redis упал → run.failed»), Controller (5, supertest 201/400/404).
+
+### Known Issues
+- Заведены KI-010…KI-016 (см. `docs/KNOWN_ISSUES.md`).
+  Ключевые: KI-010 (pnpm 12 перезаписывает lockfile), KI-016
+  (очередь без `defaultJobOptions` — нет ретраев).
 - **Frontend — Task 3 (v0.3.0):**
   - `web/src/lib/api.ts` — типизированный клиент API: Zod-валидация ответов,
     `requestAsync<T>` с обработкой сетевых и HTTP-ошибок, 6 endpoints.

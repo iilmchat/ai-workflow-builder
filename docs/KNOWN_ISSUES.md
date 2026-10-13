@@ -142,6 +142,117 @@
   ```
 - **Возможное улучшение:** добавить npm-скрипт stop:dev, который
   убивает процесс на 3000.  
+
+---
+
+### KI-010 — pnpm 12 перезаписывает `pnpm-lock.yaml` при каждом запуске
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `pnpm-lock.yaml`, `package.json` (`packageManager`)
+- **Описание:** pnpm 12 c полем `packageManager` в `package.json` при каждом
+  запуске добавляет в lockfile служебную запись `@pnpm/exe@12.11.2`
+  (self-management). При попадании в коммит ломает CI-шаг
+  `pnpm install --frozen-lockfile`.
+- **Возможные решения:**
+  1. Зафиксировать версию pnpm без self-management (`.npmrc` + `use-node-version`).
+  2. Добавить в CI шаг `pnpm install --no-frozen-lockfile` — плохо.
+  3. Перейти на corepack (`corepack enable && corepack prepare pnpm@12.11.2 --activate`).
+- **Не блокер:** R1. Проверять `git diff pnpm-lock.yaml` перед каждым коммитом.
+- **Связанные:** —
+
+---
+
+### KI-011 — `REDIS_URL` обязателен в `validateEnv()`, но в CI нет Redis
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/config/env.schema.ts`, `.github/workflows/ci.yml`,
+  `test/app.e2e-spec.ts`
+- **Описание:** `EnvSchema.REDIS_URL` объявлен как `z.url()` без default.
+  Unit-тесты (`pnpm test`) проходят — они не поднимают `AppModule` с реальным
+  `ConfigModule`. Но любой e2e (`test/app.e2e-spec.ts` через
+  `Test.createTestingModule({ imports: [AppModule] })`) упадёт с
+  `validateEnv` → `Error` на CI и на чистой машине без Redis.
+- **Возможные решения:**
+  1. `.default('redis://127.0.0.1:6379')` в схеме — теряется fail-fast.
+  2. Service-контейнер Redis в GitHub Actions (правильно, но +30 сек CI).
+  3. Мок `ConfigService` в e2e.
+- **Когда чинить:** при добавлении e2e в CI (R2/R4).
+- **Связанные:** KI-012.
+
+---
+
+### KI-012 — Глобальный `HttpExceptionFilter` отсутствует
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/main.ts`, `src/common/filters/` (нет)
+- **Описание:** RULES § 1.6 / § 4.7 требуют единый формат ошибок
+  `{ success: false, message }` через глобальный `HttpExceptionFilter`.
+  Сейчас работает дефолтный Nest-формат (`{ statusCode, message, error }`).
+  `runs.controller.ts` рассчитывает на глобальный фильтр, но его нет —
+  формат ошибок расходится с RULES.
+- **Fix:** создать `HttpExceptionFilter` + `app.useGlobalFilters(...)`
+  в `main.ts`. ~30 мин.
+- **Когда чинить:** отдельным небольшим шагом до R4 (UI ждёт единый формат).
+- **Связанные:** —
+
+---
+
+### KI-013 — `process.env` читается напрямую в обход `ConfigService`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/db/db.module.ts` (`DATABASE_URL`), `src/main.ts` (`PORT`)
+- **Описание:** RULES § 4.6 требует читать env только через
+  `ConfigService`. Сейчас `DbModule` и `main.ts` используют `process.env.X`
+  напрямую — смешение подходов после добавления `ConfigModule` в R1.
+- **Fix:** рефакторинг `DbModule.forRootAsync` на `ConfigService`,
+  `main.ts` — `app.get(ConfigService).get('PORT')`.
+- **Когда чинить:** рефакторинг при случае, не блокер.
+- **Связанные:** KI-011.
+
+---
+
+### KI-014 — jsonb-колонки без `$type<T>()` (RULES 4.11)
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/db/schema.ts` (`workflows.nodes`, `workflows.edges`,
+  `workflow_runs.snapshot`, `workflow_runs.inputs/outputs`,
+  `node_runs.inputs/outputs/logs`)
+- **Описание:** jsonb-колонки не типизированы через `$type<T>()` — читаются
+  как `unknown`. В R1 `snapshot = { nodes, edges }` копируется как есть,
+  но в R2 executor начнёт **читать** snapshot и упрётся в отсутствие типа.
+- **Fix:** `$type<{ nodes: NodeDto[]; edges: EdgeDto[] }>()` в схеме +
+  Zod-валидация на границе чтения (RULES § 1.17).
+- **Когда чинить:** в R2, до реализации `ExecutionEngineService`.
+- **Связанные:** KI-003 (executionMap), KI-015.
+
+---
+
+### KI-015 — В `workflow_runs` нет `created_at`
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/db/schema.ts`, `src/runs/runs.service.ts`,
+  `src/runs/dto/create-run.dto.ts` (RunResponse)
+- **Описание:** Колонки `created_at` в `workflow_runs` нет. `RunResponse.createdAt`
+  мапится из `started_at` (nullable) — семантически неверно: «когда создан»
+  ≠ «когда запущен». UI (R4) получит nullable-дату и не сможет показать
+  «создан X назад».
+- **Возможные решения:**
+  1. Добавить `created_at` в схему (миграция) — правильно.
+  2. Переименовать поле в API в `startedAt` и не притворяться, что это
+     «время создания».
+- **Когда чинить:** в R2 (миграция) или до R4 (переименование в API).
+- **Связанные:** KI-014.
+
+---
+
+### KI-016 — Очередь BullMQ без `defaultJobOptions`
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Файлы:** `src/runs/runs.module.ts` (`BullModule.registerQueue`)
+- **Описание:** У очереди `workflow-runs` нет `defaultJobOptions` —
+  нет `attempts`, `backoff`, `removeOnComplete`, `removeOnFail`. Упавший
+  job (в R2/R3 — реальный LLM-вызов) **не ретраится** и копится в Redis
+  бесконечно.
+- **Fix:** в `registerQueue({ name, defaultJobOptions: {
+    attempts: 3, backoff: { type: 'exponential', delay: 2000 },
+    removeOnComplete: { count: 100 }, removeOnFail: { count: 500 },
+  }})`.
+- **Когда чинить:** в R2, до подключения реального executor'а.
+- **Связанные:** —
+
 ---
 
 ## Сводка по статусам
