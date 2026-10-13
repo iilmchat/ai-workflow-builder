@@ -42,6 +42,12 @@ export function App() {
     void useWorkflowStore.getState().loadLlmModelsAsync();
   }, []);
 
+  // Каталог media-моделей — та же причина: image-узел создаётся сразу с
+  // первой доступной моделью (v0.6.0b.2.3).
+  useEffect(() => {
+    void useWorkflowStore.getState().loadMediaModelsAsync();
+  }, []);
+
   const handleCanvasReady = useCallback(
     (handler: FindCenterHandler) => {
       setFindCenter(handler);

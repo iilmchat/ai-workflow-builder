@@ -115,6 +115,23 @@ export function TopBar() {
   };
 
   /**
+   * Ищет image-узлы без выбранной media-модели (v0.6.0b.2.3).
+   *
+   * Backend выполнит узел только с известной моделью каталога, поэтому запуск
+   * блокируется: иначе узел упадёт с «Модель не поддерживается».
+   *
+   * @returns подписи узлов без доступной модели (пусто — запускать можно)
+   */
+  const findImageNodesWithoutModel = (): string[] => {
+    const { nodes, mediaModels } = useWorkflowStore.getState();
+
+    return nodes
+      .filter((node) => node.data.kind === 'image')
+      .filter((node) => !mediaModels.some((model) => model.id === node.data.model))
+      .map((node) => node.data.label ?? node.id);
+  };
+
+  /**
    * Сохраняет граф. После первого сохранения id попадает в URL, чтобы
    * страницу можно было перезагрузить и вернуться к тому же workflow.
    */
@@ -144,6 +161,20 @@ export function TopBar() {
         text:
           `Модель недоступна в узлах: ${unavailableNodes.join(', ')}. ` +
           'Выберите модель из списка перед запуском.',
+      });
+
+      return;
+    }
+
+    // v0.6.0b.2.3: у image-узлов должна быть выбрана media-модель.
+    const nodesWithoutMediaModel = findImageNodesWithoutModel();
+
+    if (nodesWithoutMediaModel.length > 0) {
+      setNotice({
+        kind: 'error',
+        text:
+          `Выберите image-модель в узлах: ${nodesWithoutMediaModel.join(', ')}. ` +
+          'Список моделей — в селекте узла Image Generation.',
       });
 
       return;

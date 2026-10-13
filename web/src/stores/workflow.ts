@@ -12,6 +12,7 @@ import {
   createRunAsync,
   createWorkflowAsync,
   fetchLlmModelsAsync,
+  fetchMediaModelsAsync,
   getWorkflowAsync,
   planWorkflowAsync,
   updateWorkflowAsync,
@@ -22,6 +23,7 @@ import {
 } from '@/lib/api';
 import { subscribeToRunStream } from '@/lib/run-stream';
 import { levelsToMap } from '@/lib/plan';
+import type { MediaModelInfo } from '@/types/media';
 import {
   DEFAULT_LLM_MODEL_ID,
   type AppNode,
@@ -90,7 +92,7 @@ export interface Notice {
   text: string;
 }
 
-/** Метрики узла для панели результата (R4.3b). */
+/** Метрики узла для панели результата (R4.3b; costRub — v0.6.0b.2.3). */
 export interface NodeRunMetrics {
   /** Длительность выполнения, мс (`null` — узел ещё не завершался). */
   durationMs: number | null;
@@ -100,6 +102,14 @@ export interface NodeRunMetrics {
   tokensOut: number | null;
   /** Стоимость в USD строкой (как отдаёт backend `numeric`). */
   costUsd: string | null;
+  /**
+   * Стоимость media-генерации в рублях строкой.
+   *
+   * `null` для LLM-узлов, а также пока backend не передаёт `cost_rub` в
+   * SSE-snapshot (см. KI-114 в отчёте): колонка `node_runs.cost_rub` уже
+   * заполняется executor'ом, но в снимок не попадает.
+   */
+  costRub: string | null;
 }
 
 /** Пустые метрики: узел ещё не отдавал ни одного значения. */
@@ -108,6 +118,7 @@ const EMPTY_METRICS: NodeRunMetrics = {
   tokensIn: null,
   tokensOut: null,
   costUsd: null,
+  costRub: null,
 };
 
 /** Функция поиска центра вьюпорта, которую отдаёт Canvas. */
@@ -170,6 +181,12 @@ export interface WorkflowState {
   llmModels: LlmModelInfo[];
   /** Загружен ли список моделей в этой сессии. */
   llmModelsLoaded: boolean;
+  /** Доступные media-модели (`GET /media/models?type=IMAGE`, v0.6.0b.2.3). */
+  mediaModels: MediaModelInfo[];
+  /** Загружен ли список media-моделей в этой сессии. */
+  mediaModelsLoaded: boolean;
+  /** Ленивая загрузка media-моделей (кэшируется в сторе). */
+  loadMediaModelsAsync: () => Promise<void>;
 
   isSaving: boolean;
   isLoading: boolean;
@@ -259,6 +276,7 @@ function createNode(
   position: Position,
   index: number,
   defaultModelId?: string,
+  defaultMediaModelId?: string,
 ): AppNode {
   const shared = { id: `${type}-${index}-${crypto.randomUUID()}`, position };
 
@@ -277,7 +295,13 @@ function createNode(
       return {
         ...shared,
         type: 'image',
-        data: { kind: 'image', label: 'Image Generation' },
+        data: {
+          kind: 'image',
+          label: 'Image Generation',
+          // Модель по умолчанию — первая доступная в каталоге media
+          // (v0.6.0b.2.3): узел сразу запускаем, без выбора вручную.
+          model: defaultMediaModelId ?? '',
+        },
       };
     default:
       return {
@@ -429,6 +453,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   llmModels: [],
   llmModelsLoaded: false,
+  mediaModels: [],
+  mediaModelsLoaded: false,
 
   isSaving: false,
   isLoading: false,
@@ -441,7 +467,14 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set((state) => {
       // Модель нового LLM-узла берём из загруженного списка (KI-074), чтобы
       // узел сразу был запускаемым; fallback — дефолтный id из types/graph.
-      const node = createNode(type, position, state.nodes.length, state.llmModels[0]?.id);
+      // Для image-узла — первая media-модель (v0.6.0b.2.3).
+      const node = createNode(
+        type,
+        position,
+        state.nodes.length,
+        state.llmModels[0]?.id,
+        state.mediaModels[0]?.id,
+      );
 
       return {
         nodes: [
@@ -662,6 +695,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         tokensIn: node.tokensIn,
         tokensOut: node.tokensOut,
         costUsd: node.costUsd,
+        // Поле в снимке необязательное (backend пока его не отдаёт, KI-114).
+        costRub: node.costRub ?? null,
       };
     }
 
@@ -802,6 +837,22 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       // моделей», а причина видна в консоли. Повторная попытка — при следующем
       // монтировании LLM-узла (флаг loaded не выставлен).
       console.warn('Не удалось загрузить список моделей LLM', error);
+    }
+  },
+
+  loadMediaModelsAsync: async () => {
+    if (get().mediaModelsLoaded) {
+      return;
+    }
+
+    try {
+      const models = await fetchMediaModelsAsync('IMAGE');
+
+      set({ mediaModels: models, mediaModelsLoaded: true });
+    } catch (error: unknown) {
+      // Как и у LLM: селект покажет «нет доступных image-моделей», причина —
+      // в консоли; повтор при следующем монтировании узла (флаг не выставлен).
+      console.warn('Не удалось загрузить список media-моделей', error);
     }
   },
 

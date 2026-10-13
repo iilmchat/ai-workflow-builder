@@ -42,6 +42,14 @@ export const NodeRunSnapshotSchema = z.object({
   tokensIn: z.number().int().nullable(),
   tokensOut: z.number().int().nullable(),
   costUsd: z.string().nullable(),
+  /**
+   * Стоимость media-генерации в рублях (v0.6.0b.2.2, колонка `node_runs.cost_rub`).
+   *
+   * Поле необязательное: backend пока не передаёт `cost_rub` в снимок
+   * (см. KI-114), поэтому старые и текущие ответы приходят без него. Когда
+   * backend начнёт отдавать поле, оно подхватится без правок фронтенда.
+   */
+  costRub: z.string().nullable().optional(),
   durationMs: z.number().int().nullable(),
   startedAt: z.string().nullable(),
   finishedAt: z.string().nullable(),

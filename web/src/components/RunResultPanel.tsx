@@ -32,7 +32,23 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 /**
+ * Форматирует рубли для панели: backend отдаёт `numeric` с 6 знаками
+ * («0.600000»), в UI это лишний шум — показываем копейки.
+ *
+ * @param value - стоимость в рублях строкой (как пришла из snapshot)
+ * @returns строка вида «0.60 ₽»; исходная строка, если распарсить не удалось
+ */
+function formatRub(value: string): string {
+  const amount = Number(value);
+
+  return Number.isFinite(amount) ? `${amount.toFixed(2)} ₽` : `${value} ₽`;
+}
+
+/**
  * Форматирует метрики узла в строку «длительность · токены · стоимость».
+ *
+ * Валюты не смешиваются: LLM-узлы отдают `costUsd`, media-узлы — `costRub`
+ * (v0.6.0b.2.3), поэтому в строке появляется та, что заполнена.
  *
  * @param metrics - метрики узла (или `undefined`, если узел не выполнялся)
  * @returns строка метрик либо `null`, если показывать нечего
@@ -42,6 +58,7 @@ function formatMetrics(metrics: {
   tokensIn: number | null;
   tokensOut: number | null;
   costUsd: string | null;
+  costRub: string | null;
 } | undefined): string | null {
   if (!metrics) {
     return null;
@@ -59,6 +76,10 @@ function formatMetrics(metrics: {
 
   if (metrics.costUsd !== null) {
     parts.push(`$${metrics.costUsd}`);
+  }
+
+  if (metrics.costRub !== null) {
+    parts.push(formatRub(metrics.costRub));
   }
 
   return parts.length > 0 ? parts.join(' · ') : null;

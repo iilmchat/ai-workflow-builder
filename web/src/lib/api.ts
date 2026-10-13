@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import {
+  MediaModelInfoSchema,
+  type MediaModelInfo,
+  type MediaModelType,
+} from '@/types/media';
 import { RunStatusSchema } from '@/types/run-stream';
 
 /** База API: пустая строка — запросы идут на dev-сервер и проксируются Vite. */
@@ -313,4 +318,25 @@ export async function fetchLlmModelsAsync(): Promise<LlmModelInfo[]> {
   const data = await requestAsync<unknown>('/llm/models');
 
   return z.array(LlmModelInfoSchema).parse(data);
+}
+
+/**
+ * Возвращает media-модели указанного типа (v0.6.0b.2.3).
+ *
+ * Ответ приходит в camelCase (`{ models: [...] }`), маппинг из snake_case
+ * делает backend. Пустой список означает «GPTunnel media не сконфигурирован».
+ *
+ * @param type - тип моделей; по умолчанию `IMAGE` (узел Image Generation)
+ * @returns список media-моделей (пустой, если провайдер не сконфигурирован)
+ * @throws ApiError при сетевой ошибке, не-2xx статусе или неожиданном формате
+ */
+export async function fetchMediaModelsAsync(
+  type: MediaModelType = 'IMAGE',
+): Promise<MediaModelInfo[]> {
+  const data = await requestAsync<unknown>(
+    `/media/models?type=${encodeURIComponent(type)}`,
+  );
+  const parsed = z.object({ models: z.array(MediaModelInfoSchema) }).parse(data);
+
+  return parsed.models;
 }
