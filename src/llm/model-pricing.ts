@@ -24,14 +24,17 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
 /**
  * Считает стоимость вызова модели.
  *
- * Отсутствующие токены считаются нулём: если провайдер отдал только часть
- * метрик, стоимость будет неполной, но не `null`.
+ * Если провайдер не отдал usage вовсе (оба счётчика `null`), стоимость
+ * неизвестна и возвращается `null` (KI-052): «неизвестно» и «ноль» —
+ * семантически разные значения, а `cost_usd = 0` в `node_runs` читался бы
+ * как «бесплатный вызов». Если известна только часть метрик, считается
+ * стоимость известной части.
  *
  * @param model - id модели
  * @param inputTokens - токенов на входе (может быть `null`)
  * @param outputTokens - токенов на выходе (может быть `null`)
  * @returns стоимость в USD (округление до 6 знаков) либо `null`, если модель
- *   отсутствует в прайс-листе
+ *   отсутствует в прайс-листе или usage недоступен
  */
 export function calculateCostUsd(
   model: string,
@@ -41,6 +44,10 @@ export function calculateCostUsd(
   const pricing = MODEL_PRICING[model];
 
   if (!pricing) {
+    return null;
+  }
+
+  if (inputTokens === null && outputTokens === null) {
     return null;
   }
 

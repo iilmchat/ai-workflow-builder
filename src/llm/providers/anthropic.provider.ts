@@ -85,6 +85,11 @@ export class AnthropicProvider implements ILlmProvider {
     this.client = new Anthropic({ apiKey });
   }
 
+  /** Готов ли провайдер к вызовам (задан ли `ANTHROPIC_API_KEY`, KI-039). */
+  get isConfigured(): boolean {
+    return this.client !== null;
+  }
+
   /**
    * Генерирует текст через Anthropic Messages API.
    *

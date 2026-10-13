@@ -86,6 +86,11 @@ export class OpenAiProvider implements ILlmProvider {
     this.client = new OpenAI({ apiKey });
   }
 
+  /** Готов ли провайдер к вызовам (задан ли `OPENAI_API_KEY`, KI-039). */
+  get isConfigured(): boolean {
+    return this.client !== null;
+  }
+
   /**
    * Генерирует текст через OpenAI Chat Completions API.
    *

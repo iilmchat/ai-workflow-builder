@@ -37,6 +37,13 @@ export interface ILlmProvider {
   /** Модели, доступные у провайдера. */
   readonly models: ReadonlyArray<{ id: string; label: string }>;
   /**
+   * Готов ли провайдер к вызовам.
+   *
+   * `true`, если API-ключ задан и клиент SDK создан. `false` — ключа нет;
+   * вызовы будут падать с `LlmProviderException` (KI-039).
+   */
+  readonly isConfigured: boolean;
+  /**
    * Сгенерировать текст (не-стриминговый для R3).
    *
    * @param prompt - пользовательский промпт (целиком не логируется, RULES 5.9)

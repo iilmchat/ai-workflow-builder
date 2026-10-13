@@ -66,11 +66,11 @@ describe('LlmNodeExecutor', () => {
 
     expect(result).toEqual({
       outputs: { text: 'без метрик' },
-      // Токены неизвестны, но модель известна — стоимость считается нулевой.
+      // Токены неизвестны — стоимость неизвестна (null, а не 0) после KI-052.
       metrics: {
         inputTokens: null,
         outputTokens: null,
-        costUsd: 0,
+        costUsd: null,
         model: 'gpt-4o',
       },
     });

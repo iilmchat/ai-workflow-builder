@@ -43,9 +43,16 @@ export class LlmRegistryService {
   /**
    * Находит провайдера по id модели.
    *
+   * Метод намеренно **не** учитывает {@link ILlmProvider.isConfigured} (KI-039):
+   * `resolveByModel` отвечает только на вопрос «кто обслуживает эту модель», а
+   * не «можно ли сейчас вызвать провайдера». Неконфигурированный провайдер
+   * резолвится штатно, и ошибка всплывает на `generateAsync` с понятным текстом
+   * («`ANTHROPIC_API_KEY не задан`»), а не подменяется на «модель не
+   * поддерживается» — иначе пользователь с UI получил бы неверную диагностику.
+   *
    * @param modelId - id модели (например, `claude-sonnet-4-20250514`)
    * @returns провайдер, обслуживающий модель
-   * @throws LlmProviderException если модель не поддерживается
+   * @throws LlmProviderException если модель не поддерживается ни одним провайдером
    */
   resolveByModel(modelId: string): ILlmProvider {
     const provider = this.byModelId.get(modelId);
@@ -61,17 +68,25 @@ export class LlmRegistryService {
   }
 
   /**
-   * Возвращает список моделей всех провайдеров.
+   * Возвращает список моделей провайдеров, готовых к вызовам.
    *
-   * @returns модели с указанием провайдера (для UI выбора модели)
+   * Неконфигурированные провайдеры (без API-ключа) отфильтровываются (KI-039):
+   * UI не должен предлагать модели, вызов которых гарантированно упадёт.
+   * Для диагностики «почему модели нет в списке» смотрите `isConfigured`
+   * провайдера и переменные окружения (`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`).
+   *
+   * @returns модели с указанием провайдера (для UI выбора модели); пустой
+   *   массив, если ни один провайдер не сконфигурирован
    */
   listModels(): LlmModelInfo[] {
-    return this.providers.flatMap((provider) =>
-      provider.models.map((model) => ({
-        provider: provider.name,
-        id: model.id,
-        label: model.label,
-      })),
-    );
+    return this.providers
+      .filter((provider) => provider.isConfigured)
+      .flatMap((provider) =>
+        provider.models.map((model) => ({
+          provider: provider.name,
+          id: model.id,
+          label: model.label,
+        })),
+      );
   }
 }

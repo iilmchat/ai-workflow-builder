@@ -25,6 +25,7 @@ describe('LlmService', () => {
     const provider: ILlmProvider = {
       name: 'fake',
       models: [{ id: 'fake-model', label: 'Fake' }],
+      isConfigured: true,
       generateAsync,
     };
 

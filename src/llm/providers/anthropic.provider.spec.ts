@@ -98,6 +98,11 @@ describe('AnthropicProvider', () => {
     expect(options.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it('isConfigured отражает наличие ключа (KI-039)', () => {
+    expect(new AnthropicProvider(configStub('sk-ant-test')).isConfigured).toBe(true);
+    expect(new AnthropicProvider(configStub(undefined)).isConfigured).toBe(false);
+  });
+
   it('возвращает usage: null, если провайдер не отдал метрики (KI-038)', async () => {
     createMock.mockResolvedValue({
       model: 'claude-sonnet-4-20250514',

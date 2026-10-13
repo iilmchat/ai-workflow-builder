@@ -89,6 +89,11 @@ describe('OpenAiProvider', () => {
     expect(options.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it('isConfigured отражает наличие ключа (KI-039)', () => {
+    expect(new OpenAiProvider(configStub('sk-test')).isConfigured).toBe(true);
+    expect(new OpenAiProvider(configStub(undefined)).isConfigured).toBe(false);
+  });
+
   it('возвращает пустой текст и usage: null, если контента и метрик нет (KI-038)', async () => {
     createMock.mockResolvedValue({ choices: [] });
 

@@ -13,9 +13,20 @@ describe('calculateCostUsd', () => {
     expect(calculateCostUsd('', 100, 100)).toBeNull();
   });
 
-  it('трактует null-токены как нули (KI-038)', () => {
-    expect(calculateCostUsd('gpt-4o', null, null)).toBe(0);
+  it('возвращает null, если провайдер не отдал usage (KI-052)', () => {
+    // «Неизвестно» ≠ «ноль»: 0 USD в node_runs читался бы как бесплатный вызов.
+    expect(calculateCostUsd('gpt-4o', null, null)).toBeNull();
+    expect(calculateCostUsd('claude-sonnet-4-20250514', null, null)).toBeNull();
+  });
+
+  it('считает стоимость по известной части токенов (KI-052)', () => {
     expect(calculateCostUsd('gpt-4o', 1_000_000, null)).toBe(2.5);
+    expect(calculateCostUsd('gpt-4o', null, 1_000_000)).toBe(10);
+  });
+
+  it('регресс: стоимость по обоим счётчикам не изменилась (KI-052)', () => {
+    expect(calculateCostUsd('gpt-4o', 1000, 500)).toBe(0.0075);
+    expect(calculateCostUsd('claude-sonnet-4-20250514', 1000, 500)).toBe(0.0105);
   });
 
   it('округляет результат до 6 знаков (KI-038)', () => {
