@@ -433,7 +433,8 @@ git push origin main
 - **`docs/development/GETTING_STARTED.md`** — разворачивание с нуля.
 - **`docs/development/PROMPT_V2.md`** — этот файл.
 - **`docs/CHANGELOG.md`** — история версий (Keep a Changelog).
-- **`docs/KNOWN_ISSUES.md`** — реестр KI-001..009.
+- **`docs/KNOWN_ISSUES.md`** — реестр KI-001..009 (витрина на GitHub Issues).
+- **`docs/development/KI_GITHUB_SYNC.md`** — синхронизация KNOWN_ISSUES ↔ GitHub Issues (подход B — витрина).
 - **`docs/development/RELEASES.md`** — чек-лист релиза.
 
 ---
