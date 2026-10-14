@@ -71,6 +71,7 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const llmModels = useWorkflowStore((state) => state.llmModels);
   const loadLlmModels = useWorkflowStore((state) => state.loadLlmModelsAsync);
+  const removeNode = useWorkflowStore((state) => state.removeNode);
 
   // Список грузится лениво при появлении LLM-узла и кэшируется в сторе,
   // поэтому запрос уходит один раз на сессию, а не на каждый узел.
@@ -101,6 +102,7 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
         executionLevel={executionLevel}
         status={status}
         badges={badgesForModel(selected)}
+        onDelete={() => removeNode(id)}
       >
         <select
           value={data.model}

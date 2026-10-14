@@ -44,6 +44,8 @@ interface BaseNodeProps {
   status?: RunStatus;
   /** Дополнительные бейджи (capabilities модели, v0.6.0a). */
   badges?: NodeBadge[];
+  /** Удаляет узел вместе с его связями (A2). */
+  onDelete: () => void;
   /** Содержимое тела карточки. */
   children: ReactNode;
 }
@@ -66,6 +68,7 @@ export function BaseNode({
   executionLevel,
   status,
   badges,
+  onDelete,
   children,
 }: BaseNodeProps) {
   const { t } = useTranslation();
@@ -75,7 +78,9 @@ export function BaseNode({
   return (
     <div
       data-status={status ?? 'idle'}
-      className={`relative w-60 rounded-xl border-2 ${border} ${background} shadow-node`}
+      // `group/node` — чтобы кнопка удаления (A2) показывалась при наведении
+      // именно на этот узел, а не на любой узел холста.
+      className={`group/node relative w-60 rounded-xl border-2 ${border} ${background} shadow-node`}
     >
       {badges !== undefined && badges.length > 0 && (
         <span className="absolute -top-2 right-5 flex gap-1">
@@ -104,6 +109,19 @@ export function BaseNode({
           {icon}
         </span>
         <span className="text-xs font-medium text-muted-foreground">{title}</span>
+
+        {/* A2: кнопка появляется при наведении на узел — в шапке она не мешает
+            читать название, но всегда доступна мышью. */}
+        <button
+          type="button"
+          onClick={onDelete}
+          aria-label={t('node.delete')}
+          title={t('node.delete')}
+          // nodrag: без этого клик по кнопке тащил бы узел.
+          className="nodrag ml-auto cursor-pointer rounded px-1 text-xs leading-none text-muted-foreground opacity-0 transition-opacity hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 group-hover/node:opacity-100"
+        >
+          ×
+        </button>
       </div>
 
       <div className="px-3 py-2">{children}</div>

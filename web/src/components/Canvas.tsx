@@ -19,6 +19,14 @@ interface CanvasProps {
   onReady: (findCenter: FindCenterHandler) => void;
 }
 
+/**
+ * Клавиши удаления выбранных узлов и связей (A1).
+ *
+ * React Flow v12 по умолчанию слушает только `Backspace`, поэтому `Delete` —
+ * привычная клавиша для удаления — не делал ничего.
+ */
+const DELETE_KEY_CODES = ['Delete', 'Backspace'];
+
 /** Внутренняя часть канваса: живёт внутри ReactFlowProvider. */
 function CanvasInner({ onReady }: CanvasProps) {
   const nodes = useWorkflowStore((state) => state.nodes);
@@ -26,6 +34,7 @@ function CanvasInner({ onReady }: CanvasProps) {
   const onNodesChange = useWorkflowStore((state) => state.onNodesChange);
   const onEdgesChange = useWorkflowStore((state) => state.onEdgesChange);
   const onConnect = useWorkflowStore((state) => state.onConnect);
+  const removeNode = useWorkflowStore((state) => state.removeNode);
   const setSelectedNodeId = useWorkflowStore((state) => state.setSelectedNodeId);
   const isEmpty = nodes.length === 0;
 
@@ -69,6 +78,16 @@ function CanvasInner({ onReady }: CanvasProps) {
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onConnect={onConnect}
+      // A1: по умолчанию React Flow v12 удаляет только по `Backspace`, из-за
+      // чего привычная клавиша `Delete` не работала. Возвращаем обе.
+      deleteKeyCode={DELETE_KEY_CODES}
+      // A1: удаление узла сносит и его связи, чтобы в графе не оставалось
+      // висячих рёбер (React Flow убирает их сам — фиксируем это тестом).
+      onNodesDelete={(deleted) => {
+        for (const node of deleted) {
+          removeNode(node.id);
+        }
+      }}
       // Клик по узлу показывает его результат в нижней панели (R4.3b),
       // клик по пустому месту возвращает панель к run-уровню. Клик по связи или
       // порту эти обработчики не дёргает, поэтому выбор не «слетает».

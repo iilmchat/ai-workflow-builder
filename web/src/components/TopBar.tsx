@@ -78,6 +78,19 @@ function syncWorkflowUrlParam(workflowId: string): void {
 }
 
 /**
+ * Убирает `?workflowId=` из адресной строки (A3).
+ *
+ * После «Новый» перезагрузка страницы не должна возвращать пользователя к
+ * прежнему workflow.
+ */
+function clearWorkflowUrlParam(): void {
+  const url = new URL(window.location.href);
+
+  url.searchParams.delete('workflowId');
+  window.history.replaceState(null, '', url);
+}
+
+/**
  * Верхняя панель редактора: имя workflow и действия Save / Load / Run.
  *
  * Run запускает реальный прогон (`POST /runs` + SSE, R4.2) и показывает статус:
@@ -101,6 +114,7 @@ export function TopBar() {
   const setNotice = useWorkflowStore((state) => state.setNotice);
   const runStatus = useWorkflowStore((state) => state.runStatus);
   const runError = useWorkflowStore((state) => state.runError);
+  const newWorkflow = useWorkflowStore((state) => state.newWorkflow);
 
   // KI-157: имя пишется в хранилище на каждый символ, без сохранения выделения
   // курсор прыгал бы в конец при правке середины названия.
@@ -226,6 +240,23 @@ export function TopBar() {
     await startRunAsync(workflowId);
   };
 
+  /**
+   * Начинает новый workflow (A3): чистит граф и историю запуска.
+   *
+   * Если в графе что-то есть, спрашиваем подтверждение — несохранённая работа
+   * пропадёт. Пустой граф чистится молча, чтобы кнопка не мешала зря.
+   */
+  const handleNewWorkflow = () => {
+    const { nodes, edges } = useWorkflowStore.getState();
+
+    if ((nodes.length > 0 || edges.length > 0) && !window.confirm(t('topbar.new.confirm'))) {
+      return;
+    }
+
+    newWorkflow();
+    clearWorkflowUrlParam();
+  };
+
   return (
     <>
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-4">
@@ -279,6 +310,20 @@ export function TopBar() {
             className="cursor-pointer rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
           >
             {currentLang === 'ru' ? 'EN' : 'RU'}
+          </button>
+
+          {/* A3: «Новый» — рядом с Load, до него: это первое действие в ряду
+              файловых операций (новый → загрузить → сохранить → запустить). */}
+          <button
+            type="button"
+            onClick={handleNewWorkflow}
+            aria-label={t('topbar.new')}
+            title={t('topbar.new')}
+            data-topbar-new=""
+            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+          >
+            <span aria-hidden="true">📄</span>
+            {t('topbar.new')}
           </button>
 
           <button

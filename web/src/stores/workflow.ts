@@ -233,6 +233,24 @@ export interface WorkflowState {
   /** Соединяет два порта новой связью. */
   onConnect: (connection: Connection) => void;
 
+  /**
+   * Удаляет узел вместе со всеми его связями (A1).
+   *
+   * @param nodeId - id удаляемого узла
+   */
+  removeNode: (nodeId: string) => void;
+  /**
+   * Удаляет связь по id (A1).
+   *
+   * @param edgeId - id удаляемой связи
+   */
+  removeEdge: (edgeId: string) => void;
+  /**
+   * Сбрасывает редактор к пустому новому workflow (A3): чистит граф, историю
+   * запуска и выбранный узел, возвращает имя по умолчанию.
+   */
+  newWorkflow: () => void;
+
   setNodes: (nodes: AppNode[]) => void;
   setEdges: (edges: Edge[]) => void;
 
@@ -561,6 +579,56 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
       return { edges: nextEdges, executionLevels: {} };
     }),
+
+  removeNode: (nodeId) =>
+    set((state) => {
+      // Узел без своих связей оставил бы висячие рёбра: React Flow попытался бы
+      // нарисовать связь к несуществующему узлу.
+      const edges = state.edges.filter(
+        (edge) => edge.source !== nodeId && edge.target !== nodeId,
+      );
+
+      return {
+        nodes: state.nodes.filter((node) => node.id !== nodeId),
+        edges,
+        // Панель результата не должна показывать данные удалённого узла.
+        selectedNodeId: state.selectedNodeId === nodeId ? null : state.selectedNodeId,
+        // План выполнения после правки графа неактуален.
+        executionLevels: {},
+      };
+    }),
+
+  removeEdge: (edgeId) =>
+    set((state) => ({
+      edges: state.edges.filter((edge) => edge.id !== edgeId),
+      executionLevels: {},
+    })),
+
+  newWorkflow: () => {
+    // Поток предыдущего запуска закрываем, иначе его события продолжали бы
+    // менять состояние уже пустого редактора.
+    closeStreamIfAny();
+    set({
+      nodes: [],
+      edges: [],
+      currentWorkflowId: null,
+      currentWorkflowName: DEFAULT_WORKFLOW_NAME,
+      executionLevels: {},
+      selectedNodeId: null,
+      runId: null,
+      runStatus: null,
+      runError: null,
+      nodeStatuses: {},
+      nodeOutputs: {},
+      nodeErrors: {},
+      nodeLogs: {},
+      nodeMetrics: {},
+      attemptNumber: 0,
+      attemptsMade: 0,
+      attempts: null,
+      runHasMoreAttempts: false,
+    });
+  },
 
   setNodes: (nodes) => set({ nodes }),
   setEdges: (edges) => set({ edges }),

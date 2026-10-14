@@ -71,6 +71,7 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const mediaModels = useWorkflowStore((state) => state.mediaModels);
   const loadMediaModels = useWorkflowStore((state) => state.loadMediaModelsAsync);
+  const removeNode = useWorkflowStore((state) => state.removeNode);
   const outputs = useWorkflowStore((state) => state.nodeOutputs[id]);
 
   // Список моделей грузится лениво при появлении узла и кэшируется в сторе.
@@ -120,6 +121,7 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
         title={t(NODE_REGISTRY.image_generation.labelKey)}
         executionLevel={executionLevel}
         status={status}
+        onDelete={() => removeNode(id)}
       >
         <select
           value={data.model ?? ''}

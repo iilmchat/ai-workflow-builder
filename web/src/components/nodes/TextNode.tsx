@@ -23,6 +23,7 @@ export function TextNode({ id, data }: NodeProps<TextFlowNode>) {
   const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   // Статус выполнения приходит из SSE-потока (R4.2).
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
+  const removeNode = useWorkflowStore((state) => state.removeNode);
 
   // KI-157: хранилище обновляется на каждый символ, поэтому без сохранения
   // выделения курсор после ре-рендера уезжал бы в конец текста.
@@ -37,6 +38,7 @@ export function TextNode({ id, data }: NodeProps<TextFlowNode>) {
         title={t(NODE_REGISTRY.text.labelKey)}
         executionLevel={executionLevel}
         status={status}
+        onDelete={() => removeNode(id)}
       >
         <textarea
           rows={3}
