@@ -282,6 +282,12 @@ function createNode(
   const shared = { id: `${type}-${index}-${crypto.randomUUID()}`, position };
 
   switch (type) {
+    case 'text':
+      return {
+        ...shared,
+        type: 'text',
+        data: { kind: 'text', value: '' },
+      };
     case 'llm':
       return {
         ...shared,
@@ -302,12 +308,7 @@ function createNode(
           model: defaultMediaModelId ?? '',
         },
       };
-    default:
-      return {
-        ...shared,
-        type: 'text',
-        data: { kind: 'text', value: '' },
-      };
+    // Нет default: — новый NodeType поймает tsc (KI-129).
   }
 }
 
@@ -338,32 +339,41 @@ function nodeDataFromApi(
   data: Record<string, unknown>,
 ): TextNodeData | LlmNodeData | ImageGenNodeData {
   switch (type) {
-    case 'llm': {
-      const model = data.model;
+    case 'text':
+      return {
+        kind: 'text',
+        value: typeof data.value === 'string' ? data.value : '',
+      };
+    case 'llm':
       return {
         kind: 'llm',
         // Модель НЕ подменяем (KI-069): если id неизвестен текущему списку,
         // селект покажет его как «(недоступно)». Молчаливая подмена на первый
         // из списка перезаписывала сохранённую модель при следующем Save.
-        model: typeof model === 'string' ? model : '',
+        model: typeof data.model === 'string' ? data.model : '',
       };
+    case 'image_generation': {
+      // KI-122: переносим `model`/`aspectRatio`, иначе Load терял выбор
+      // пользователя и следующий Save затирал его в БД.
+      // KI-129: поля со значением `undefined` не присваиваем вовсе — иначе
+      // пустые ключи появляются в JSON и в `Object.keys(data)`.
+      const result: ImageGenNodeData = { kind: 'image' };
+
+      if (typeof data.model === 'string') {
+        result.model = data.model;
+      }
+
+      if (typeof data.aspectRatio === 'string') {
+        result.aspectRatio = data.aspectRatio;
+      }
+
+      if (typeof data.imageUrl === 'string') {
+        result.imageUrl = data.imageUrl;
+      }
+
+      return result;
     }
-    case 'image_generation':
-      return {
-        kind: 'image',
-        // KI-122: без переноса `model`/`aspectRatio` Load терял выбор
-        // пользователя — селект модели и соотношение сторон оказывались
-        // пустыми, и следующий Save затирал их в БД.
-        model: typeof data.model === 'string' ? data.model : undefined,
-        aspectRatio:
-          typeof data.aspectRatio === 'string' ? data.aspectRatio : undefined,
-        imageUrl: typeof data.imageUrl === 'string' ? data.imageUrl : undefined,
-      };
-    default:
-      return {
-        kind: 'text',
-        value: typeof data.value === 'string' ? data.value : '',
-      };
+    // Нет default: — новый NodeType поймает tsc (KI-129).
   }
 }
 

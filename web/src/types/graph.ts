@@ -1,14 +1,19 @@
 import type { Node } from '@xyflow/react';
 
 /**
- * Произвольные данные узла конкретного типа.
+ * Дискриминированный union данных узла по `kind`.
  *
- * Метки типа (`label`) здесь нет: подпись узла — метаданные реестра
- * (`@/lib/node-registry`), а не данные графа (v0.6.x).
+ * `kind` — обязательный дискриминатор: без него tsc не сужает тип
+ * при работе с `node.data`. Связь `kind` ↔ `NodeType` проверяется
+ * через `NODE_REGISTRY satisfies Record<NodeType, NodeRegistryEntry>`
+ * (см. `@/lib/node-registry`).
+ *
+ * `extends Record<string, unknown>` у подтипов сохранено сознательно: этого
+ * требуют React Flow (`Node<TData extends Record<string, unknown>>`) и API-слой
+ * (`ApiGraphNode.data` — `Record<string, unknown>`), иначе `Node<TextNodeData,
+ * 'text'>` и `toApiNode` перестанут компилироваться.
  */
-export type NodeData = {
-  [key: string]: unknown;
-};
+export type NodeData = TextNodeData | LlmNodeData | ImageGenNodeData;
 
 /** Узел графа — совместим с backend-DTO `NodeDto`. */
 export type GraphNode = {
@@ -43,12 +48,19 @@ export type Graph = {
 export type NodeType = 'text' | 'llm' | 'image_generation';
 
 /**
- * Категории узлов для будущего каталога (KI-127).
+ * Категории узлов для каталога (KI-127, § 5.2 DESIGN v0.7).
  *
- * Порядок = порядок секций в каталоге. Сами метки/иконки и привязка типов
+ * Порядок = порядок секций в каталоге. Категория `media` — для текущего
+ * `image_generation` и будущих video/audio-узлов. Сами иконки и привязка типов
  * к категориям живут в едином реестре `@/lib/node-registry`.
  */
-export const NODE_CATEGORIES = ['input', 'ai', 'tools', 'output'] as const;
+export const NODE_CATEGORIES = [
+  'input',
+  'ai',
+  'media',
+  'tools',
+  'output',
+] as const;
 
 /** Категория узла (KI-127). */
 export type NodeCategory = (typeof NODE_CATEGORIES)[number];
@@ -87,23 +99,22 @@ export const DATA_TYPE_COLORS: Record<DataType, string> = {
  */
 export const DEFAULT_LLM_MODEL_ID = 'claude-sonnet-4-20250514';
 
-/** Данные узла Text. */
+/** Данные узла `text`: строка текста. */
 export interface TextNodeData extends Record<string, unknown> {
-  kind?: 'text';
+  kind: 'text';
   value: string;
 }
 
-/** Данные узла LLM. */
+/** Данные узла `llm`: id модели. */
 export interface LlmNodeData extends Record<string, unknown> {
-  kind?: 'llm';
+  kind: 'llm';
   /** id модели, который принимает backend (`claude-sonnet-4-20250514`) — KI-069. */
   model: string;
 }
 
-/** Данные узла генерации изображений. */
+/** Данные узла `image_generation`: id модели, соотношение, URL. */
 export interface ImageGenNodeData extends Record<string, unknown> {
-  kind?: 'image';
-  imageUrl?: string;
+  kind: 'image';
   /**
    * id выбранной image-модели из каталога media (`GET /media/models`).
    *
@@ -116,6 +127,13 @@ export interface ImageGenNodeData extends Record<string, unknown> {
    * v0.6.0b.2.3). Пусто — используется дефолт модели из каталога.
    */
   aspectRatio?: string;
+  /**
+   * Ссылка на результат генерации.
+   *
+   * Поле появляется только если backend его отдал: `undefined` не присваиваем
+   * (KI-129), чтобы пустых ключей не было в JSON и `Object.keys(data)`.
+   */
+  imageUrl?: string;
 }
 
 /** Узел Text в терминах React Flow. */

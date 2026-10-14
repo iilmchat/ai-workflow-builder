@@ -6,7 +6,7 @@ import {
   isRenderableMediaUrl,
   type MediaModelInfo,
 } from '@/types/media';
-import { NODE_TYPE_ICONS, NODE_TYPE_LABELS } from '@/lib/node-registry';
+import { NODE_REGISTRY, tLabel } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
   DATA_TYPE_COLORS,
@@ -102,8 +102,8 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
       />
 
       <BaseNode
-        icon={NODE_TYPE_ICONS.image_generation}
-        title={NODE_TYPE_LABELS.image_generation}
+        icon={NODE_REGISTRY.image_generation.icon}
+        title={tLabel(NODE_REGISTRY.image_generation.labelKey)}
         executionLevel={executionLevel}
         status={status}
       >

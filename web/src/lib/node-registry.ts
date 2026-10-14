@@ -28,56 +28,61 @@ export type NodeComponent =
 /**
  * Описание узла в реестре: единый источник правды.
  *
- * Ключи — `NodeType`; `tsc` ловит пропущенные/лишние типы (KI-121).
+ * Ключи — `NodeType`; tsc ловит пропущенные/лишние через
+ * `Record<NodeType, ...>` и `satisfies`.
  */
 export interface NodeRegistryEntry {
-  /** Отображаемое имя (RU) — временно, до i18n (KI-126). */
-  readonly label: string;
-  /** Иконка узла: текстовый плейсхолдер, пока нет SVG. */
+  /** i18n-ключ подписи (R5.3). До i18n — резолвится через `tLabel()`. */
+  readonly labelKey: string;
+  /** Эмодзи-иконка (в каталоге и в тулбаре). */
   readonly icon: string;
-  /** Эмодзи для кнопки тулбара (v0.6.x). */
-  readonly iconEmoji: string;
-  /** Английская подпись (временно, до i18n KI-126) — для тулбара. */
-  readonly labelEn: string;
-  /** Категория для каталога (KI-127). */
+  /** Категория для каталога (§ 5.2 DESIGN v0.7). */
   readonly category: NodeCategory;
   /** React-компонент узла. */
   readonly component: NodeComponent;
+  /** Capabilities — задел под KI-128 (сервисные узлы). */
+  readonly capabilities: {
+    /** Узел хранит внешнее состояние (БД, индекс, память). */
+    readonly externalState: boolean;
+    /** Требует пользовательской конфигурации до запуска. */
+    readonly userConfig: boolean;
+  };
 }
 
 /**
  * Единый реестр типов узлов.
  *
- * `Record<NodeType, ...>` — tsc ловит забытые типы: добавили тип в
- * `NodeType` и не добавили в реестр → ошибка компиляции. Порядок ключей —
- * это порядок узлов в тулбаре и (в будущем) в каталоге (KI-121, KI-127).
+ * `as const satisfies Record<NodeType, NodeRegistryEntry>`:
+ * - `Record<NodeType, ...>` — tsc требует запись для каждого типа;
+ * - `as const` — литеральные типы для `labelKey`/`category`;
+ * - `satisfies` — проверка формы без расширения типов.
+ *
+ * Порядок ключей — это порядок узлов в тулбаре и (в будущем) в каталоге.
+ * Новый узел = новый файл-компонент + одна запись здесь (RULES 1.15).
  */
-export const NODE_REGISTRY: Record<NodeType, NodeRegistryEntry> = {
+export const NODE_REGISTRY = {
   text: {
-    label: 'Текст',
-    icon: 'T',
-    iconEmoji: '📝',
-    labelEn: 'Text',
+    labelKey: 'node.text.label',
+    icon: '📝',
     category: 'input',
     component: TextNode,
+    capabilities: { externalState: false, userConfig: false },
   },
   llm: {
-    label: 'LLM',
-    icon: 'LLM',
-    iconEmoji: '🤖',
-    labelEn: 'LLM',
+    labelKey: 'node.llm.label',
+    icon: '🤖',
     category: 'ai',
     component: LLMNode,
+    capabilities: { externalState: false, userConfig: false },
   },
   image_generation: {
-    label: 'Генерация изображения',
-    icon: 'IMG',
-    iconEmoji: '🖼',
-    labelEn: 'Image Generation',
-    category: 'ai',
+    labelKey: 'node.image_generation.label',
+    icon: '🖼',
+    category: 'media',
     component: ImageGenNode,
+    capabilities: { externalState: false, userConfig: true },
   },
-};
+} as const satisfies Record<NodeType, NodeRegistryEntry>;
 
 /** Список всех типов (для валидации и обхода) — выводится из реестра. */
 export const NODE_TYPES = Object.keys(NODE_REGISTRY) as NodeType[];
@@ -107,15 +112,31 @@ export const nodeTypes = Object.fromEntries(
   NODE_TYPES.map((type) => [type, NODE_REGISTRY[type].component]),
 ) as unknown as NodeTypes;
 
-/** Подписи узлов по типу — для тулбара и шапки узла (KI-123). */
-export const NODE_TYPE_LABELS: Record<NodeType, string> = Object.fromEntries(
-  NODE_TYPES.map((type) => [type, NODE_REGISTRY[type].label]),
-) as Record<NodeType, string>;
+/**
+ * Временный резолвер i18n-ключей до R5.3 (react-i18next).
+ *
+ * При добавлении нового ключа — добавить пару здесь. В R5.3
+ * этот объект заменяется на `i18next.t()` без изменения
+ * вызывающего кода.
+ */
+const TEMP_LABELS: Record<string, string> = {
+  'node.text.label': 'Текст',
+  'node.llm.label': 'LLM',
+  'node.image_generation.label': 'Генерация изображения',
+};
 
-/** Иконки узлов по типу — для тулбара и шапки узла (KI-123). */
-export const NODE_TYPE_ICONS: Record<NodeType, string> = Object.fromEntries(
-  NODE_TYPES.map((type) => [type, NODE_REGISTRY[type].icon]),
-) as Record<NodeType, string>;
+/**
+ * Резолвит i18n-ключ подписи узла в строку.
+ *
+ * До R5.3 — через {@link TEMP_LABELS}; после — через `i18next.t()`.
+ * Неизвестный ключ возвращается как есть, чтобы пропажа пары была видна в UI.
+ *
+ * @param key - i18n-ключ (например, `node.text.label`)
+ * @returns подпись для UI либо сам ключ, если перевода ещё нет
+ */
+export function tLabel(key: string): string {
+  return TEMP_LABELS[key] ?? key;
+}
 
 /**
  * Подпись узла для UI: берётся **только** из реестра.
@@ -131,6 +152,6 @@ export function nodeLabelOf(node: AppNode | undefined, fallback: string): string
   const type = node?.type;
 
   return type !== undefined && isNodeType(type)
-    ? NODE_REGISTRY[type].label
+    ? tLabel(NODE_REGISTRY[type].labelKey)
     : fallback;
 }

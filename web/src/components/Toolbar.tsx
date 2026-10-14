@@ -1,4 +1,4 @@
-import { NODE_REGISTRY } from '@/lib/node-registry';
+import { NODE_REGISTRY, tLabel } from '@/lib/node-registry';
 import type { NodeType } from '@/types/graph';
 
 interface ToolbarProps {
@@ -13,8 +13,8 @@ interface ToolbarProps {
  *
  * Список явный, а не `NODE_TYPES`: порядок кнопок — часть UI, он не должен
  * меняться при перестановке ключей реестра. Иконка и подпись берутся из
- * реестра (KI-123): для тулбара — эмодзи и английская подпись (визуал v0.6.x),
- * для шапки узла — текстовые `icon`/RU-`label`.
+ * реестра (KI-123; R5.1): эмодзи из `icon`, подпись — через `tLabel(labelKey)`.
+ * До R5.3 подписи русские (вариант A), в R5.3 их заменит i18n.
  */
 const TOOLBAR_TYPES: NodeType[] = ['text', 'llm', 'image_generation'];
 
@@ -35,8 +35,8 @@ export function Toolbar({ onAddNode, disabled = false }: ToolbarProps) {
             onClick={() => onAddNode(type)}
             className="flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 active:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <span aria-hidden="true">{NODE_REGISTRY[type].iconEmoji}</span>
-            {NODE_REGISTRY[type].labelEn}
+            <span aria-hidden="true">{NODE_REGISTRY[type].icon}</span>
+            {tLabel(NODE_REGISTRY[type].labelKey)}
           </button>
         ))}
       </div>

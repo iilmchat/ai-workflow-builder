@@ -1,6 +1,6 @@
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
 import { BaseNode } from '@/components/nodes/BaseNode';
-import { NODE_TYPE_ICONS, NODE_TYPE_LABELS } from '@/lib/node-registry';
+import { NODE_REGISTRY, tLabel } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
   DATA_TYPE_COLORS,
@@ -23,8 +23,8 @@ export function TextNode({ id, data }: NodeProps<TextFlowNode>) {
   return (
     <>
       <BaseNode
-        icon={NODE_TYPE_ICONS.text}
-        title={NODE_TYPE_LABELS.text}
+        icon={NODE_REGISTRY.text.icon}
+        title={tLabel(NODE_REGISTRY.text.labelKey)}
         executionLevel={executionLevel}
         status={status}
       >

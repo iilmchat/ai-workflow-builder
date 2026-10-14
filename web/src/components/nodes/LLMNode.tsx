@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
 import { BaseNode, type NodeBadge } from '@/components/nodes/BaseNode';
 import { groupLlmModelsForSelect } from '@/lib/llm-models';
-import { NODE_TYPE_ICONS, NODE_TYPE_LABELS } from '@/lib/node-registry';
+import { NODE_REGISTRY, tLabel } from '@/lib/node-registry';
 import type { LlmModelInfo } from '@/lib/api';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
@@ -94,8 +94,8 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
       />
 
       <BaseNode
-        icon={NODE_TYPE_ICONS.llm}
-        title={NODE_TYPE_LABELS.llm}
+        icon={NODE_REGISTRY.llm.icon}
+        title={tLabel(NODE_REGISTRY.llm.labelKey)}
         executionLevel={executionLevel}
         status={status}
         badges={badgesForModel(selected)}
