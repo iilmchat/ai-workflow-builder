@@ -50,12 +50,18 @@ describe('MediaNodeExecutor', () => {
   let registry: {
     createTaskAsync: ReturnType<typeof vi.fn>;
     getTaskAsync: ReturnType<typeof vi.fn>;
+    findParamsAsync: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
     registry = {
       createTaskAsync: vi.fn(() => Promise.resolve(task())),
       getTaskAsync: vi.fn(() => Promise.resolve(task())),
+      // KI-181: по умолчанию модель объявляет `aspect_ratio` — как в живом
+      // каталоге CreativeLab для flux/yandex-art.
+      findParamsAsync: vi.fn(() =>
+        Promise.resolve([{ key: 'aspect_ratio', type: 'enum', label: 'aspect_ratio' }]),
+      ),
     };
 
     const moduleRef = await Test.createTestingModule({
@@ -270,11 +276,13 @@ describe('MediaNodeExecutor', () => {
     ).rejects.toThrow('ключ media API не принят');
   });
 
-  it('поддерживает data.params и fallback на data.aspectRatio', async () => {
+  it('KI-181: отправляет только параметры, объявленные моделью', async () => {
     registry.createTaskAsync.mockResolvedValue(
       task({ status: 'done', resultUrls: ['https://cdn/img.png'] }),
     );
 
+    // Модель объявляет только aspect_ratio: `resolution`/`nsfw` — опечатки
+    // или чужие параметры, upstream на них отвечает «Invalid input».
     await executor.executeAsync(
       imageNode({ params: { resolution: '1024x1024', nsfw: false } }),
       { prompt: 'кот' },
@@ -282,9 +290,24 @@ describe('MediaNodeExecutor', () => {
     );
 
     expect(registry.createTaskAsync).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        params: { resolution: '1024x1024', nsfw: false },
-      }),
+      expect.objectContaining({ params: {} }),
+    );
+
+    // Разрешённый параметр проходит как есть.
+    await executor.executeAsync(
+      imageNode({ params: { aspect_ratio: '16:9', nsfw: true } }),
+      { prompt: 'кот' },
+      RUN_ID,
+    );
+
+    expect(registry.createTaskAsync).toHaveBeenLastCalledWith(
+      expect.objectContaining({ params: { aspect_ratio: '16:9' } }),
+    );
+  });
+
+  it('KI-181: fallback на data.aspectRatio и default модели', async () => {
+    registry.createTaskAsync.mockResolvedValue(
+      task({ status: 'done', resultUrls: ['https://cdn/img.png'] }),
     );
 
     await executor.executeAsync(
@@ -295,6 +318,39 @@ describe('MediaNodeExecutor', () => {
 
     expect(registry.createTaskAsync).toHaveBeenLastCalledWith(
       expect.objectContaining({ params: { aspect_ratio: '16:9' } }),
+    );
+
+    // Пользователь не выбрал — подставляется default из каталога.
+    registry.findParamsAsync.mockResolvedValue([
+      { key: 'aspect_ratio', type: 'enum', label: 'aspect_ratio', default: 'auto' },
+    ]);
+
+    await executor.executeAsync(
+      imageNode({ params: undefined, aspectRatio: undefined }),
+      { prompt: 'кот' },
+      RUN_ID,
+    );
+
+    expect(registry.createTaskAsync).toHaveBeenLastCalledWith(
+      expect.objectContaining({ params: { aspect_ratio: 'auto' } }),
+    );
+  });
+
+  it('KI-181: неизвестная модель — параметры уходят как есть', async () => {
+    registry.createTaskAsync.mockResolvedValue(
+      task({ status: 'done', resultUrls: ['https://cdn/img.png'] }),
+    );
+    // Модели нет в каталоге: терять ввод пользователя нельзя.
+    registry.findParamsAsync.mockResolvedValue(null);
+
+    await executor.executeAsync(
+      imageNode({ params: { custom: 'value' } }),
+      { prompt: 'кот' },
+      RUN_ID,
+    );
+
+    expect(registry.createTaskAsync).toHaveBeenLastCalledWith(
+      expect.objectContaining({ params: { custom: 'value' } }),
     );
   });
 

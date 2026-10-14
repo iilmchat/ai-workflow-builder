@@ -82,7 +82,7 @@ export class MediaNodeExecutor {
     }
 
     const model = this.readModel(node);
-    const params = this.readParams(node);
+    const params = await this.readParamsAsync(node, model);
     const mediaType = this.readMediaType(node);
 
     // Ключ стабилен при повторе: тот же runId и nodeId на job-level retry
@@ -227,35 +227,45 @@ export class MediaNodeExecutor {
   }
 
   /**
-   * Собирает параметры генерации из данных узла.
+   * Собирает параметры генерации из данных узла (KI-181).
    *
-   * Поддерживаются два вида: готовый объект `data.params` (приоритет) и
-   * отдельные поля вроде `aspectRatio`. Значения приводятся к скалярным типам,
-   * которые принимает upstream; прочие отбрасываются.
+   * Набор параметров у моделей разный, поэтому он берётся из каталога
+   * (`MediaModelInfo.params`), а не хардкодится: в запрос уходят только ключи,
+   * объявленные самой моделью. Это отсекает опечатки и «чужие» параметры
+   * (например `aspect_ratio` для модели, которая его не принимает) — upstream
+   * на такое отвечает `Invalid input, check schema issues`, не объясняя причину.
+   *
+   * Источники значений по приоритету:
+   * 1. `data.params` — явный объект от UI;
+   * 2. отдельные поля узла (`data.aspectRatio` → `aspect_ratio`);
+   * 3. `default` из каталога — чтобы модель со обязательным параметром
+   *    получила значение, даже если пользователь его не выбирал.
    *
    * @param node - узел графа
-   * @returns параметры генерации
+   * @param modelId - id модели, для которой собираются параметры
+   * @returns параметры генерации, поддерживаемые моделью
    */
-  private readParams(node: NodeDto): Record<string, string | number | boolean> {
-    const params: Record<string, string | number | boolean> = {};
+  private async readParamsAsync(
+    node: NodeDto,
+    modelId: string,
+  ): Promise<Record<string, string | number | boolean>> {
+    const declared = await this.registry.findParamsAsync(modelId);
+    const requested = readRequestedParams(node);
 
-    const raw = node.data.params;
-
-    if (isPlainRecord(raw)) {
-      for (const [key, value] of Object.entries(raw)) {
-        if (
-          typeof value === 'string' ||
-          typeof value === 'number' ||
-          typeof value === 'boolean'
-        ) {
-          params[key] = value;
-        }
-      }
+    // Модели неизвестны её параметры (нет в каталоге) — отправляем как есть:
+    // лучше попробовать, чем молча потерять ввод пользователя.
+    if (declared === null) {
+      return requested;
     }
 
-    // Отдельные поля узла — только если их не переопределил data.params.
-    if (typeof node.data.aspectRatio === 'string' && !('aspect_ratio' in params)) {
-      params.aspect_ratio = node.data.aspectRatio;
+    const params: Record<string, string | number | boolean> = {};
+
+    for (const param of declared) {
+      const value = requested[param.key] ?? param.default;
+
+      if (isParamValue(value)) {
+        params[param.key] = value;
+      }
     }
 
     return params;
@@ -282,6 +292,51 @@ export class MediaNodeExecutor {
       ? candidate
       : 'IMAGE';
   }
+}
+
+/**
+ * Проверяет, что значение параметра — скаляр, допустимый в запросе.
+ *
+ * @param value - значение из `data.params` или `default` каталога
+ * @returns `true` для строки, числа или булева
+ */
+function isParamValue(
+  value: unknown,
+): value is string | number | boolean {
+  return (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  );
+}
+
+/**
+ * Собирает параметры, запрошенные данными узла (KI-181).
+ *
+ * @param node - узел графа
+ * @returns скалярные значения из `data.params` плюс `data.aspectRatio`
+ */
+function readRequestedParams(
+  node: NodeDto,
+): Record<string, string | number | boolean> {
+  const params: Record<string, string | number | boolean> = {};
+
+  const raw = node.data.params;
+
+  if (isPlainRecord(raw)) {
+    for (const [key, value] of Object.entries(raw)) {
+      if (isParamValue(value)) {
+        params[key] = value;
+      }
+    }
+  }
+
+  // Отдельные поля узла — только если их не переопределил data.params.
+  if (typeof node.data.aspectRatio === 'string' && !('aspect_ratio' in params)) {
+    params.aspect_ratio = node.data.aspectRatio;
+  }
+
+  return params;
 }
 
 /**

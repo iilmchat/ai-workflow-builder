@@ -344,6 +344,8 @@ function createNode(
         data: {
           kind: 'llm',
           model: defaultModelId ?? DEFAULT_LLM_MODEL_ID,
+          // KI-180: промпт можно ввести прямо в узле, без связи от Text.
+          prompt: '',
         },
       };
     case 'image_generation':
@@ -393,14 +395,24 @@ function nodeDataFromApi(
         kind: 'text',
         value: typeof data.value === 'string' ? data.value : '',
       };
-    case 'llm':
+    case 'llm': {
+      const prompt =
+        typeof data.prompt === 'string'
+          ? data.prompt
+          : typeof data.value === 'string'
+            ? data.value
+            : '';
+
       return {
         kind: 'llm',
         // Модель НЕ подменяем (KI-069): если id неизвестен текущему списку,
         // селект покажет его как «(недоступно)». Молчаливая подмена на первый
         // из списка перезаписывала сохранённую модель при следующем Save.
         model: typeof data.model === 'string' ? data.model : '',
+        // KI-180: промпт узла. Старые workflow хранили его в `value`.
+        prompt,
       };
+    }
     case 'image_generation': {
       // KI-122: переносим `model`/`aspectRatio`, иначе Load терял выбор
       // пользователя и следующий Save затирал его в БД.

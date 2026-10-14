@@ -51,6 +51,63 @@ function extractUsage(
   };
 }
 
+/**
+ * Извлекает текст ответа и причину остановки (KI-179).
+ *
+ * Провайдеры с reasoning (DeepSeek V4 Flash через GPTunnel) при упоре в лимит
+ * токенов отдают **пустой** `content`, а весь бюджет уходит в `reasoning`
+ * (`finish_reason: 'length'`). Проверено на живом GPTunnel: `content` пуст на
+ * любом лимите, включая 256 токенов. Раньше такой ответ молча превращался в
+ * `text: ''`, и падал уже следующий узел — с невнятным «Пустой prompt».
+ *
+ * @param completion - ответ `chat.completions.create`
+ * @returns текст (content либо reasoning), длину reasoning и finish_reason
+ */
+function extractText(completion: {
+  choices?: Array<{ finish_reason?: unknown; message?: unknown }>;
+}): { text: string; reasoningLength: number; finishReason: string | null } {
+  const choice = completion.choices?.[0];
+  const message = choice?.message;
+
+  const finishReason =
+    typeof choice?.finish_reason === 'string' ? choice.finish_reason : null;
+
+  if (typeof message !== 'object' || message === null) {
+    return { text: '', reasoningLength: 0, finishReason };
+  }
+
+  const candidate = message as { content?: unknown; reasoning?: unknown };
+  const content = typeof candidate.content === 'string' ? candidate.content : '';
+  // Имя поля у разных прокси разное: `reasoning` (GPTunnel), `reasoning_content`
+  // (DeepSeek напрямую).
+  const reasoning = readReasoningText(candidate);
+
+  return {
+    text: content.length > 0 ? content : reasoning,
+    reasoningLength: reasoning.length,
+    finishReason,
+  };
+}
+
+/**
+ * Достаёт reasoning-текст из сообщения ассистента.
+ *
+ * @param message - `choices[0].message` (форма не типизирована SDK)
+ * @returns текст рассуждений либо пустую строку
+ */
+function readReasoningText(message: {
+  reasoning?: unknown;
+  reasoning_content?: unknown;
+}): string {
+  for (const value of [message.reasoning, message.reasoning_content]) {
+    if (typeof value === 'string' && value.length > 0) {
+      return value;
+    }
+  }
+
+  return '';
+}
+
 /** Конфиг OpenAI-совместимого провайдера. */
 export interface OpenAiCompatibleConfig {
   /** Идентификатор для UI ('openai', 'routerai', 'deepseek', ...). */
@@ -184,6 +241,11 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
       ? this.resolveModel(options.model)
       : options.model;
 
+    // Результат разбора выносится за `try`, чтобы ошибка «пустой ответ»
+    // (KI-179) не переоборачивалась в `toProviderException`.
+    let answer: ReturnType<typeof extractText>;
+    let usage: ReturnType<typeof extractUsage>;
+
     try {
       const completion = await this.client.chat.completions.create(
         {
@@ -201,12 +263,32 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
         { signal },
       );
 
-      return {
-        text: completion.choices[0]?.message.content ?? '',
-        usage: extractUsage(completion, options.model),
-      };
-    } catch (error: unknown) {
-      throw toProviderException(this.name, error, signal);
+      answer = extractText(completion);
+      usage = extractUsage(completion, options.model);
+    } catch (error: unknown) {      throw toProviderException(this.name, error, signal);
     }
+
+    // KI-179: пустой ответ — не «успех с пустым текстом», а явная ошибка:
+    // иначе следующий узел падает с невнятным «Пустой prompt». Проверка вне
+    // `try`, чтобы сообщение не переобернулось в `toProviderException`.
+    if (answer.text.length === 0) {
+      throw new LlmProviderException(
+        this.name,
+        `LLM вернул пустой ответ (finish_reason: ${answer.finishReason ?? 'неизвестен'})`,
+        // Упор в лимит токенов — не временный сбой, но и не «навсегда»:
+        // повтор с тем же лимитом даст то же самое, поэтому не retryable.
+        { retryable: false },
+      );
+    }
+
+    if (answer.reasoningLength > 0) {
+      // Ответ собран из reasoning: полезно знать, что модель не дошла до
+      // финального текста (обычно из-за лимита токенов).
+      this.logger.warn(
+        `Ответ модели ${options.model} пуст в content, использован reasoning (${answer.reasoningLength} симв., finish_reason: ${answer.finishReason ?? 'неизвестен'})`,
+      );
+    }
+
+    return { text: answer.text, usage };
   }
 }

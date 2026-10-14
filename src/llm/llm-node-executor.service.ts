@@ -7,6 +7,28 @@ import { LlmService } from './llm.service.js';
 /** Модель по умолчанию, если узел не задал свою. */
 export const DEFAULT_LLM_MODEL = 'claude-sonnet-4-20250514';
 
+/**
+ * Достаёт prompt LLM-узла (KI-180).
+ *
+ * Приоритет источников: связь (`inputs.prompt`) → промпт, введённый в узле
+ * (`data.prompt`) → `data.value` (workflow, сохранённые до появления поля).
+ *
+ * @param node - узел графа
+ * @param inputs - нормализованные входы узла
+ * @returns промпт либо пустую строку
+ */
+function readPrompt(node: NodeDto, inputs: Record<string, unknown>): string {
+  const sources = [inputs.prompt, node.data.prompt, node.data.value];
+
+  for (const source of sources) {
+    if (typeof source === 'string' && source.length > 0) {
+      return source;
+    }
+  }
+
+  return '';
+}
+
 /** Метрики выполнения LLM-узла (для записи в `node_runs`, KI-038). */
 export interface LlmNodeMetrics {
   /** Токенов на входе (`null`, если провайдер не отдал usage). */
@@ -52,7 +74,10 @@ export class LlmNodeExecutor {
     node: NodeDto,
     inputs: Record<string, unknown>,
   ): Promise<LlmNodeExecutionResult> {
-    const prompt = typeof inputs.prompt === 'string' ? inputs.prompt : '';
+    // KI-180: prompt приходит по связи (`inputs.prompt`) либо вводится прямо
+    // в узле (`data.prompt`). `data.value` — совместимость с workflow,
+    // сохранёнными до появления поля в узле.
+    const prompt = readPrompt(node, inputs);
 
     if (!prompt) {
       throw new LlmProviderException(

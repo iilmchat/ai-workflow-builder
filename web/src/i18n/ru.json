@@ -45,6 +45,7 @@
   "node.image_generation.label": "Генерация изображения",
   "node.levels.title": "Уровень выполнения: {{level}}",
   "node.llm.label": "LLM",
+  "node.llm.placeholder": "Введите prompt…",
   "node.llm.model_unavailable": "Модель недоступна",
   "node.llm.select.choose": "Выберите модель",
   "node.llm.select.none": "Нет доступных моделей",

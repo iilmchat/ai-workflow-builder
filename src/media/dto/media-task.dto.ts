@@ -44,6 +44,24 @@ export const MediaTaskStatusSchema = z.enum([
   'failed',
 ]);
 
+/**
+ * Ошибка задачи от upstream.
+ *
+ * Upstream отдаёт причину падения **в двух формах**: строкой (валидация входа)
+ * и объектом `{ code, title, message }` (падение на стороне провайдера,
+ * например `EXCEPTION`). Раньше схема ждала только строку, поэтому ответ с
+ * объектом не проходил `safeParse`, и вместо реальной причины пользователь
+ * видел `Invalid input, check schema issues` (KI-181).
+ */
+export const MediaTaskErrorSchema = z.union([
+  z.string(),
+  z.object({
+    code: z.number().int().optional(),
+    title: z.string().optional(),
+    message: z.string().optional(),
+  }),
+]);
+
 /** Ответ `POST /media/tasks` и `GET /media/tasks/:id`. */
 export const MediaTaskResponseSchema = z.object({
   /** Код ответа upstream (`0` — успех). */
@@ -63,8 +81,15 @@ export const MediaTaskResponseSchema = z.object({
   /** URL-ы результата (48 часов жизни, см. KI-077). */
   // KI-111: upstream отдаёт массив объектов { url }, а не массив строк.
   result: z.array(z.object({ url: z.url() })).optional(),
-  /** Причина падения при `status: 'failed'`. */
-  error: z.string().optional(),
+  /** Причина падения при `status: 'failed'` (строка либо объект). */
+  error: MediaTaskErrorSchema.optional(),
+  /**
+   * Вернул ли upstream стоимость за упавшую задачу.
+   *
+   * `yandex-art` при падении отдаёт `refunded: true` — цена в ответе есть,
+   * но фактически не списана.
+   */
+  refunded: z.boolean().optional(),
   /** Предупреждения upstream, например о снятой модели. */
   warnings: z
     .array(z.object({ code: z.string(), message: z.string().optional() }))

@@ -45,6 +45,7 @@
   "node.image_generation.label": "Image generation",
   "node.levels.title": "Execution level: {{level}}",
   "node.llm.label": "LLM",
+  "node.llm.placeholder": "Enter prompt…",
   "node.llm.model_unavailable": "Model unavailable",
   "node.llm.select.choose": "Choose a model",
   "node.llm.select.none": "No models available",

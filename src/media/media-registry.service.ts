@@ -5,6 +5,7 @@ import {
   type CreateMediaTaskInput,
   type IMediaProvider,
   type MediaModelInfo,
+  type MediaParam,
   type MediaType,
 } from './media-provider.interface.js';
 
@@ -112,6 +113,33 @@ export class MediaRegistryService {
     }
 
     return provider.getTaskAsync(taskId);
+  }
+
+  /**
+   * Возвращает параметры, объявленные моделью в каталоге (KI-181).
+   *
+   * Нужны исполнителю media-узла: набор параметров у моделей разный, поэтому
+   * запрос собирается по каталогу, а не по хардкоду.
+   *
+   * @param modelId - id модели из каталога
+   * @returns параметры модели либо `null`, если модель не найдена (каталог
+   *   недоступен или модель не объявлена ни одним провайдером)
+   */
+  async findParamsAsync(modelId: string): Promise<readonly MediaParam[] | null> {
+    const configured = this.providers.filter(
+      (provider) => provider.isConfigured,
+    );
+
+    for (const provider of configured) {
+      const models = await provider.listModelsAsync();
+      const found = models.find((model) => model.id === modelId);
+
+      if (found) {
+        return found.params;
+      }
+    }
+
+    return null;
   }
 
   /**

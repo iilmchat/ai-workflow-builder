@@ -105,11 +105,18 @@ export interface TextNodeData extends Record<string, unknown> {
   value: string;
 }
 
-/** Данные узла `llm`: id модели. */
+/** Данные узла `llm`: id модели и (необязательно) промпт. */
 export interface LlmNodeData extends Record<string, unknown> {
   kind: 'llm';
   /** id модели, который принимает backend (`claude-sonnet-4-20250514`) — KI-069. */
   model: string;
+  /**
+   * Промпт, введённый прямо в узле (KI-180).
+   *
+   * Если он непустой, используется, когда нет связи от Text-узла
+   * (`inputs.prompt` приоритетнее).
+   */
+  prompt?: string;
 }
 
 /** Данные узла `image_generation`: id модели, соотношение, URL. */

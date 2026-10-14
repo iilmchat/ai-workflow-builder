@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { LlmProviderException } from '../llm-provider.interface.js';
 import {
   OpenAiCompatibleProvider,
@@ -228,14 +229,81 @@ describe('OpenAiCompatibleProvider', () => {
     expect(options.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('возвращает пустой текст и usage: null, если контента и метрик нет (KI-038)', async () => {
+  it('KI-179: пустой ответ — явная ошибка, а не text: ""', async () => {
     createMock.mockResolvedValue({ choices: [] });
 
     const provider = new OpenAiCompatibleProvider(providerConfig());
 
+    // Раньше возвращался `text: ''`, и следующий узел падал с невнятным
+    // «Пустой prompt»; теперь причина названа сразу.
+    await expect(provider.generateAsync('x', { model: 'gpt-4o' })).rejects.toThrow(
+      'LLM вернул пустой ответ',
+    );
+  });
+
+  it('KI-179: при пустом content берётся reasoning, но с предупреждением', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    createMock.mockResolvedValue({
+      choices: [
+        {
+          finish_reason: 'length',
+          message: {
+            content: '',
+            reasoning: 'рассуждение модели',
+            reasoning_content: null,
+          },
+        },
+      ],
+      usage: { prompt_tokens: 25, completion_tokens: 16 },
+    });
+
+    const provider = new OpenAiCompatibleProvider(providerConfig());
+
+    await expect(provider.generateAsync('x', { model: 'deepseek-v4-flash' })).resolves.toEqual({
+      text: 'рассуждение модели',
+      usage: { inputTokens: 25, outputTokens: 16, model: 'deepseek-v4-flash' },
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('использован reasoning'));
+  });
+
+  it('KI-179: reasoning_content — альтернативное имя поля', async () => {
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    createMock.mockResolvedValue({
+      choices: [
+        {
+          finish_reason: 'stop',
+          message: { content: '', reasoning_content: 'текст из reasoning_content' },
+        },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+
+    const provider = new OpenAiCompatibleProvider(providerConfig());
+
     await expect(provider.generateAsync('x', { model: 'gpt-4o' })).resolves.toEqual({
-      text: '',
-      usage: null,
+      text: 'текст из reasoning_content',
+      usage: { inputTokens: 1, outputTokens: 1, model: 'gpt-4o' },
+    });
+  });
+
+  it('KI-179: непустой content при finish_reason=length остаётся как есть', async () => {
+    createMock.mockResolvedValue({
+      choices: [
+        {
+          finish_reason: 'length',
+          message: { content: 'обрезанный, но валидный ответ' },
+        },
+      ],
+      usage: { prompt_tokens: 3, completion_tokens: 4 },
+    });
+
+    const provider = new OpenAiCompatibleProvider(providerConfig());
+
+    await expect(provider.generateAsync('x', { model: 'gpt-4o' })).resolves.toEqual({
+      text: 'обрезанный, но валидный ответ',
+      usage: { inputTokens: 3, outputTokens: 4, model: 'gpt-4o' },
     });
   });
 

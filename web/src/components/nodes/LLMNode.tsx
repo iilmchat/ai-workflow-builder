@@ -1,7 +1,9 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode, type NodeBadge } from '@/components/nodes/BaseNode';
+import { useAutoResize } from '@/hooks/use-auto-resize';
+import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import { groupLlmModelsForSelect } from '@/lib/llm-models';
 import { NODE_REGISTRY } from '@/lib/node-registry';
 import type { LlmModelInfo } from '@/lib/api';
@@ -73,6 +75,19 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
   const loadLlmModels = useWorkflowStore((state) => state.loadLlmModelsAsync);
   const removeNode = useWorkflowStore((state) => state.removeNode);
 
+  // KI-157: промпт пишется в хранилище на каждый символ — сохраняем курсор.
+  const handlePromptChange = usePreserveCursor<HTMLTextAreaElement>(
+    useCallback(
+      (value: string) => updateNodeData(id, { prompt: value }),
+      [id, updateNodeData],
+    ),
+  );
+
+  // KI-169: поле растёт по тексту (до 200px).
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+
+  useAutoResize(promptRef, data.prompt ?? '');
+
   // Список грузится лениво при появлении LLM-узла и кэшируется в сторе,
   // поэтому запрос уходит один раз на сессию, а не на каждый узел.
   useEffect(() => {
@@ -134,6 +149,17 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
             </optgroup>
           ))}
         </select>
+
+        {/* KI-180: промпт можно ввести прямо в узле — без связи от Text.
+            Приоритет у связи (`inputs.prompt`), поле работает как fallback. */}
+        <textarea
+          ref={promptRef}
+          rows={2}
+          value={data.prompt ?? ''}
+          placeholder={t('node.llm.placeholder')}
+          className="nodrag mt-2 w-full resize-none overflow-hidden rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+          onChange={handlePromptChange}
+        />
 
         <p
           className="mt-1.5 truncate text-[10px] text-muted-foreground"
