@@ -288,9 +288,10 @@ Planned 1 · Won't Fix 1.
 - **KI-177** — LM Studio auto-discovery только на старте (нет
   фонового обновления).
 - **KI-178** — формат *_MODELS не валидируется Zod.
-- **KI-152, 153, 158, 161, 170, 171, 173** — Low-уборки.
-- ~10 старых Low из реестра (KI-028, 043, 045, 057, 058, 073, 076,
-  090, 102, 105, 118, 123, 128, 143, 144).
+- **KI-152, 153, 161, 170, 171, 173** — Low-уборки.
+- ~13 старых Low из реестра (KI-028, 043, 045, 057, 058, 073, 076,
+  090, 102, 118, 123, 128, 143, 144). KI-105 (node types)
+  и KI-128 (сервисные узлы) — в v0.8 roadmap, не Low.
 
 ## § 7. Известные грабли (Windows + Docker + WSL2 + Yandex + CI)
 
@@ -331,7 +332,10 @@ Planned 1 · Won't Fix 1.
 11. **Yandex AI Studio** — это **OpenAI-совместимый endpoint**
     `https://llm.api.cloud.yandex.net/v1`, URI моделей
     `gpt://<folder_id>/<model>/<version>`, каталог **обновляется** —
-    не хардкодить (KI-174).
+    не хардкодить, а задавать env `YANDEX_MODELS` (KI-174). Vision
+    через суффикс `:text+vision`. Без `YANDEX_FOLDER_ID` (и без полных
+    URI в `YANDEX_MODELS`) провайдер **не регистрируется** — это
+    graceful-поведение, а не ошибка.
 
 12. **React HMR кэш:** после правки компонентов, если поведение не
     соответствует исходнику — `Remove-Item web/node_modules/.vite
@@ -343,6 +347,10 @@ Planned 1 · Won't Fix 1.
     **не** `.local`).
 
 14. **`cost_usd` (USD, LLM) ≠ `cost_rub` (RUB, media).** Не смешивать
+    в одной колонке. Для локальных (LM Studio) `cost_usd = 0`,
+    для облачных вне прайса — `null` («неизвестно» ≠ «бесплатно»)
+    (KI-148, KI-052).
+
     в одной колонке.
 
 15. **`idempotency_key = ${runId}:${nodeId}`** для media — защита
@@ -352,40 +360,10 @@ Planned 1 · Won't Fix 1.
 
 17. **Type узла: `'image_generation'` (backend-контракт), `kind: 'image'`
     (UI-метка).** Не путать.
-18. **Tailwind v4: `color-mix()` со ссылкой на `var(--color-*)` вне
-    `@theme`/`.dark`** эмитится как невалидный `theme(...)` — держать
-    значение отдельной переменной (KI-134, RULES 4.32).
-
-19. **CI: `pnpm/action-setup@v4`** — не указывать `with: version`
-    при наличии `packageManager` в `package.json` (KI-141,
-    RULES 6.10). Все job'ы в одном стиле.
-
-20. **Зависимости `web/`** — только в `web/package.json`, не полагаться
-    на корневой `node_modules` (KI-142, RULES 6.11). Проверка:
-    `Remove-Item web/node_modules -Recurse; pnpm --dir web install
-    --frozen-lockfile; pnpm --dir web build`.
-
-21. **Zod strip по умолчанию.** Новые поля в SSE-событиях нужно явно
-    добавлять в frontend Zod-схему, иначе молча теряются (KI-149).
-
-22. **Yandex AI Studio** — OpenAI-совместимый endpoint
-    `https://llm.api.cloud.yandex.net/v1`. URI модели:
-    `gpt://<folder_id>/<model>/<version>`. Каталог обновляется —
-    env `YANDEX_MODELS` (KI-174). Vision через суффикс `:text+vision`.
-
-23. **`usePreserveCursor`** для всех контролируемых `<input>` /
+18. **`usePreserveCursor`** для всех контролируемых `<input>` /
     `<textarea>` с внешним store (Zustand) — иначе курсор прыгает
     в конец (KI-157).
 
-24. **Vite HMR кэш** — после правки компонентов, если поведение не
-    соответствует исходнику: `Remove-Item web/node_modules/.vite
-    -Recurse` + перезапуск dev-сервера.
-
-25. **`cost_usd = 0` для LM Studio** (isLocal), **`null`** для
-    облачных вне прайса. Не путать «бесплатно» и «неизвестно»
-    (KI-148, KI-052).
-
----
 
 ## § 8. Roadmap
 
@@ -417,7 +395,14 @@ Planned 1 · Won't Fix 1.
 - **KI-067** — per-provider семафоры.
 - **KI-048** — бюджет вызовов на запуск.
 - **KI-062** — retryable `APIConnectionError`.
-- **KI-077** — `GET /runs/:id/nodes`.
+- **KI-077** — `GET /runs/:id/nodes` (для Load после F5).
+- **KI-150** — «неизвестно» vs «бесплатно» в UI (`cost_usd`).
+- **KI-155** — frontend-тесты компонентов (алиас `@/`, jsdom).
+- **KI-066** — heartbeat аренды (`lease_expires_at`).
+- **KI-061** — `GET /runs` (список запусков).
+- **KI-063** — финальность в snapshot.
+- **KI-177, KI-178** — LM Studio refresh, Zod-валидация
+  `*_MODELS` (низкий приоритет, если успеется).
 
 ### v0.9+ — медиа + агенты + observability
 
