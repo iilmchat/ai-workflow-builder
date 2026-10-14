@@ -159,8 +159,11 @@ export function TopBar() {
   };
 
   /**
-   * Запускает workflow. Несохранённый граф сначала сохраняется: `POST /runs`
-   * требует id из БД, а backend выполняет снимок графа из сохранённого workflow.
+   * Запускает workflow.
+   *
+   * KI-147: перед Run граф **всегда** сохраняется (не только для нового
+   * workflow) — `POST /runs` читает snapshot из БД, иначе запускается
+   * устаревшая версия графа.
    */
   const handleRun = async () => {
     // KI-074: сначала проверяем модели — граф с недоступной моделью упадёт.
@@ -191,20 +194,23 @@ export function TopBar() {
       return;
     }
 
-    let workflowId = useWorkflowStore.getState().currentWorkflowId;
+    // KI-147: сохраняем ВСЕГДА перед Run, а не только для нового workflow.
+    // POST /runs читает snapshot из БД — без Save пользователь запускает
+    // устаревший граф (связи, добавленные после последнего Save, теряются).
+    const idBefore = useWorkflowStore.getState().currentWorkflowId;
+    const isFirstSave = !idBefore;
 
-    if (!workflowId) {
-      await saveWorkflowAsync();
-      workflowId = useWorkflowStore.getState().currentWorkflowId;
+    await saveWorkflowAsync();
 
-      if (workflowId) {
-        syncWorkflowUrlParam(workflowId);
-      }
-    }
+    const workflowId = useWorkflowStore.getState().currentWorkflowId;
 
     if (!workflowId) {
       // Сохранение не удалось: причина уже показана уведомлением из стора.
       return;
+    }
+
+    if (isFirstSave) {
+      syncWorkflowUrlParam(workflowId);
     }
 
     await startRunAsync(workflowId);
