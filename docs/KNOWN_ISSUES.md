@@ -1838,8 +1838,10 @@
 ---
 
 ### KI-121 — Типы узлов дублируются в четырёх местах
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
-- **Файлы:** `web/src/types/graph.ts`, `web/src/components/nodes/index.ts`,
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.6.1 (коммит `990e705`)
+- **Файлы:** `web/src/lib/node-registry.ts` (новый),
+  `web/src/types/graph.ts`, `web/src/components/nodes/index.ts`,
   `web/src/stores/workflow.ts`, `web/src/components/Toolbar.tsx`
 - **Описание:** `NodeType` (graph.ts), ключ registry (`nodes/index.ts`),
   литерал в `createNode`, литерал в `fromApiWorkflow`, массив
@@ -1847,16 +1849,23 @@
   значения. `tsc` ловит `NODE_TYPE_LABELS/ICONS` (`Record<NodeType,...>`),
   но **не** цепочку `node.type !== 'text' && ...` в `fromApiWorkflow` —
   именно там сломался бы Load незамеченным.
-- **Решение:** вывести ключи registry из `NodeType`
-  (`const registry: Record<NodeType, ComponentType<NodeProps>>`),
-  заменить `!==`-цепочку на проверку по набору `NODE_TYPES`.
-- **Когда чинить:** при добавлении следующего типа узла.
-- **Связанные:** KI-120.
+- **Fix:** Единый реестр `NODE_REGISTRY`
+  (`Record<NodeType, NodeRegistryEntry>`) — метаданные, компоненты,
+  `isNodeType()`, `nodeTypes` для React Flow. `fromApiWorkflow`
+  переведён с цепочки `!==` на `isNodeType()` — новый тип узла
+  больше не теряется молча при Load (tsc ловит). `Toolbar` строит
+  кнопки из реестра, локальный `BUTTONS` удалён. `nodes/index.ts` —
+  тонкий реэкспорт. `Canvas.tsx` не менялся.
+- **Остаток:** `default:`-ветки в `createNode`/`nodeDataFromApi` не
+  поймают 4-й тип — расширить при добавлении узла (KI-129 —
+  уборка типов; KI-127 частично закрыт: категории в реестре есть).
+- **Связанные:** KI-122, KI-123, KI-127, KI-129.
 
 ---
 
 ### KI-122 — `nodeDataFromApi` для image-узла теряет `model` / `aspectRatio`
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.6.1 (коммит `990e705`)
 - **Файлы:** `web/src/stores/workflow.ts` (`nodeDataFromApi`)
 - **Описание:** Функция возвращает только `kind`, `label`, `imageUrl`,
   хотя `ImageGenNodeData` (после v0.6.0b.2.3) содержит ещё `model`
@@ -1865,19 +1874,33 @@
   пустыми (модель подставится только у нового узла из `mediaModels[0]`).
 - **Решение:** добавить перенос `model`/`aspectRatio` в `nodeDataFromApi`.
 - **Когда чинить:** до v0.6.0 release (иначе Load сломает UI-граф).
-- **Связанные:** KI-069.
+- **Fix:** `nodeDataFromApi` переносит `model` и `aspectRatio` для
+  `image_generation` (тип-проверка через `typeof … === 'string'`).
+  Подтверждено smoke: `di` и `16:9` переживают Save → F5 → Load
+  (проверено SQL-запросом к `nodes->2->data`).
+- **Остаток:** `data.label` удалён из `NodeData` целиком — заголовок
+  узла берётся из реестра (`nodeLabelOf`). `data.label` в старых
+  workflow в БД исчезнет после первого Save.
+- **Связанные:** KI-069, KI-129.
 
 ---
 
 ### KI-123 — `NODE_TYPE_LABELS/ICONS` дублируются в тулбаре
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.6.1 (коммит `990e705`)
 - **Файлы:** `web/src/components/Toolbar.tsx`
 - **Описание:** `Toolbar.tsx` держит собственный массив `BUTTONS` с
   `label` и `icon`, хотя те же строки есть в `NODE_TYPE_LABELS/ICONS`.
   Согласовано сейчас, но при переименовании легко поправить одно
   место и забыть второе.
 - **Решение:** строить `BUTTONS` из `NODE_TYPE_LABELS/ICONS`.
-- **Связанные:** KI-121.
+- **Fix:** `Toolbar` берёт иконку из `NODE_REGISTRY[type].iconEmoji`
+  (📝🤖🖼) и подпись из `NODE_REGISTRY[type].labelEn`
+  (Text / LLM / Image Generation). Визуал v0.6.0 сохранён.
+  Локальный массив `BUTTONS` удалён полностью.
+- **Остаток:** два набора имён/иконок (RU/текст + EN/эмодзи) —
+  свести к одному ключу + локали при i18n (KI-126).
+- **Связанные:** KI-121, KI-126.
 
 ---
 
@@ -1940,8 +1963,11 @@
 
 ---
 
-### KI-127 — Каталог узлов с категориями
+### KI-127 — Каталог узлов с категориями (частично закрыт)
 - **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.6.1 (частично, коммит `990e705`) —
+  `NODE_CATEGORIES` / `NodeCategory` + `category` у каждой записи
+  реестра (`input` / `ai` / `tools` / `output`). Скелет готов.
 - **Файлы:** `web/src/components/Toolbar.tsx`,
   `web/src/components/nodes/index.ts`
 - **Описание:** Меню добавления узла — плоский список из 3 кнопок.
@@ -1960,6 +1986,8 @@
     (`http`, `code`), `output` (`save`, `webhook`).
   - Меню — поповер с секциями, поиск по названию (как у GPTunnel).
 - **Когда чинить:** v0.8 (вместе с 4+ новыми узлами).
+- **Остаток:** поповер каталога с секциями и поиском не построен —
+  v0.8 (вместе с 4+ новыми узлами).
 - **Связанные:** KI-121, KI-128.
 
 ---
@@ -1983,18 +2011,55 @@
 
 ---
 
+### KI-129 — Уборка типов фронтенда (NodeData, imageUrl)
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `web/src/types/graph.ts`, `web/src/stores/workflow.ts`,
+  `web/src/lib/node-registry.ts`
+- **Описание:** После KI-121/KI-122 накопились типовые шероховатости,
+  не влияющие на рантайм, но мешающие поддержке:
+  1. `NodeData` стал пустой индексной сигнатурой
+     (`{ [key: string]: unknown }`) — тип больше ничего не
+     документирует, хотя используется в `GraphNode.data`.
+  2. `data.kind` (`'text' | 'llm' | 'image'`) не связан с `node.type`
+     на уровне типов: можно создать `node.type='llm'` с
+     `data.kind='image'` — tsc не заметит.
+  3. В сторе после Load появляется ключ `imageUrl: undefined`
+     (nodeDataFromApi задаёт его явно, даже если поле отсутствует) —
+     в JSON/БД не попадает, но виден в `Object.keys(data)` и
+     расходится с тем, что уйдёт в payload.
+  4. `default:`-ветки в `createNode`/`nodeDataFromApi` не поймают
+     4-й тип узла — расширить switch при добавлении или заменить
+     на `satisfies`-проверку по реестру.
+- **Возможные решения:**
+  1. Дискриминированный union `NodeData` по `kind` + `satisfies`
+     на `node.type`:
+     `type NodeData = { kind: 'text'; value: string }
+       | { kind: 'llm'; model: string }
+       | { kind: 'image'; model?: string; aspectRatio?: string;
+           imageUrl?: string }`.
+  2. Явные `case 'text': case 'llm': case 'image_generation':`
+     без `default:` — tsc потребует обработать новый тип
+     (ошибка при добавлении узла — это то, что нужно).
+  3. В `nodeDataFromApi` — не присваивать `imageUrl: undefined`,
+     использовать условное добавление поля (или `structuredClone`).
+- **Когда чинить:** v0.7 (вместе с i18n и темами — тоже трогают
+  компоненты узлов).
+- **Связанные:** KI-121, KI-122, KI-126, KI-127.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 31 |
+| Fixed | 34 |
 | In Progress | 0 |
 | Planned | 2 |
 | Deferred | 0 |
 | Documented | 6 |
-| Open | 81 |
+| Open | 79 |
 | Won't Fix | 1 |
-| **Всего** | **121** |
+| **Всего** | **122** |
 
 ---
 

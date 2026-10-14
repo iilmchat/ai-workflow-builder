@@ -17,6 +17,27 @@
 ---
 ## [Unreleased]
 
+### Changed
+- **Frontend — v0.6.1: единый реестр узлов (KI-121, KI-122, KI-123):**
+  - `web/src/lib/node-registry.ts` (новый) — `NODE_REGISTRY`
+    (`Record<NodeType, NodeRegistryEntry>`): метаданные (`label`,
+    `icon`, `iconEmoji`, `labelEn`, `category`), компоненты,
+    `isNodeType()`, `nodeTypes` для React Flow, `nodeLabelOf()`.
+  - `fromApiWorkflow` — цепочка `!==` заменена на `isNodeType()`.
+    Новый тип узла больше не теряется молча при Load (tsc ловит).
+  - `nodeDataFromApi` — переносит `model` / `aspectRatio` для
+    `image_generation` (KI-122: до правки Load терял выбор
+    пользователя, и следующий Save затирал его в БД).
+  - `Toolbar` — кнопки строятся из реестра (KI-123), локальный
+    `BUTTONS` удалён. Визуал v0.6.0 сохранён (эмодзи + EN-подписи
+    для тулбара, RU-подписи — для шапки узла и будущего каталога).
+  - `data.label` удалён из `NodeData` — заголовок узла берётся из
+    реестра (`nodeLabelOf`). Читатели `data.label` (`TopBar`,
+    `RunResultPanel`, `workflow.runPlanAsync`) переведены на хелпер.
+  - `NODE_CATEGORIES` / `NodeCategory` + `category` у каждой записи
+    реестра — скелет под каталог (KI-127 частично).
+  - `nodes/index.ts` — тонкий реэкспорт; `Canvas.tsx` не менялся.
+
 ---
 
 ## [0.6.0] — 2026-10-14
