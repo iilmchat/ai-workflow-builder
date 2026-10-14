@@ -1,5 +1,6 @@
 import {
   MODEL_PRICING,
+  bareModelId,
   calculateCostUsd,
   calculateCostUsdForProvider,
 } from './model-pricing.js';
@@ -45,7 +46,38 @@ describe('calculateCostUsd', () => {
       'claude-sonnet-4-20250514',
       'gpt-4o',
       'gpt-4o-mini',
+      // KI-176: Yandex AI Studio (0.002 / 0.005 / 0.010 / 0.002+0.003 USD за 1k).
+      'yandexgpt-lite',
+      'yandexgpt',
+      'yandexgpt-32k',
+      'qwen3.6-35b-a3b',
     ]);
+  });
+
+  it('KI-176: считает стоимость Yandex по короткому имени', () => {
+    // 0.002 USD за 1k токенов = 2 USD за 1M.
+    expect(calculateCostUsd('yandexgpt-lite', 1_000_000, 0)).toBe(2);
+    expect(calculateCostUsd('yandexgpt', 0, 1_000_000)).toBe(5);
+    expect(calculateCostUsd('yandexgpt-32k', 1000, 1000)).toBe(0.02);
+    // qwen3.6-35b-a3b: 0.002 вход / 0.003 выход за 1k.
+    expect(calculateCostUsd('qwen3.6-35b-a3b', 1_000_000, 1_000_000)).toBe(5);
+  });
+
+  it('KI-176: находит цену по полному URI модели Yandex', () => {
+    // В node.data.model лежит URI, а ключи прайса — короткие имена.
+    expect(
+      calculateCostUsd('gpt://b1gufspraeh2i5nin6nt/yandexgpt-lite/latest', 1_000_000, 0),
+    ).toBe(2);
+    expect(
+      calculateCostUsd('gpt://b1gufspraeh2i5nin6nt/yandexgpt-32k/rc', 0, 1_000_000),
+    ).toBe(10);
+  });
+
+  it('bareModelId: извлекает имя модели из URI', () => {
+    expect(bareModelId('gpt://folder/yandexgpt-lite/latest')).toBe('yandexgpt-lite');
+    expect(bareModelId('gpt://folder/qwen3.6-35b-a3b/latest')).toBe('qwen3.6-35b-a3b');
+    expect(bareModelId('yandexgpt-lite')).toBe('yandexgpt-lite');
+    expect(bareModelId('gpt-4o')).toBe('gpt-4o');
   });
 });
 

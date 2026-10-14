@@ -26,7 +26,9 @@ import { LlmService } from './llm.service.js';
     {
       provide: LLM_PROVIDERS,
       inject: [LlmProviderFactory],
-      useFactory: (factory: LlmProviderFactory) => factory.createProviders(),
+      // Асинхронная фабрика: каталог LM Studio запрашивается у сервера (KI-088),
+      // поэтому Nest дождётся списка моделей до инициализации провайдеров.
+      useFactory: (factory: LlmProviderFactory) => factory.createProvidersAsync(),
     },
     LlmRegistryService,
     LlmService,

@@ -21,6 +21,13 @@ const LMSTUDIO_PLACEHOLDER_KEY = 'not-needed';
 const LMSTUDIO_DEFAULT_BASE_URL = 'http://localhost:1234/v1';
 
 /**
+ * Таймаут запроса каталога моделей у LM Studio (KI-088, RULES 4.19).
+ *
+ * Сервер локальный: если он не запущен, старт не должен ждать дольше этого.
+ */
+const LMSTUDIO_DISCOVERY_TIMEOUT_MS = 3_000;
+
+/**
  * Дефолтный адрес GPTunnel.
  *
  * Дублирует дефолт env-схемы по той же причине, что и у LM Studio.
@@ -108,40 +115,19 @@ const DEEPSEEK_MODELS: readonly ModelInfo[] = [
 ];
 
 /**
- * Модели Yandex AI Studio (KI-159).
+ * Модели Yandex AI Studio по умолчанию (KI-174).
  *
- * `id` — короткое имя модели: именно оно хранится в `node.data.model` и
- * показывается в UI. Полный URI (`gpt://<folder_id>/<model>/latest`) собирает
- * {@link createYandexProvider}: Yandex не принимает короткий id и отвечает
- * 400 «Failed to parse model URI».
+ * Используются, когда `YANDEX_MODELS` не задан, но известен `YANDEX_FOLDER_ID`.
+ * Короткие имена: полный URI собирает {@link LlmProviderFactory.createYandexProvider}.
  *
- * Перечень сверен с документацией Yandex Cloud: доступны `yandexgpt-lite`,
- * `yandexgpt` (Pro) и `yandexgpt-32k`; версия `/latest` — по умолчанию.
- * Прежний список содержал выдуманный id `qwen3.6-35b-a3b/latest`, из-за
- * которого каждый Run по Yandex падал с 400.
+ * Перечень сверен с документацией Yandex Cloud: доступны `yandexgpt-lite`
+ * (Lite) и `yandexgpt` (Pro); версия `/latest` — по умолчанию. Модели каталога
+ * с vision (например `qwen3.6-35b-a3b`) задаются через `YANDEX_MODELS` — в
+ * публичной документации YandexGPT их нет.
  *
  * @see https://cloud.yandex.ru/docs/foundation-models/concepts/yandexgpt/models
  */
-const YANDEX_MODELS: readonly ModelInfo[] = [
-  {
-    id: 'yandexgpt-lite',
-    label: 'YandexGPT Lite',
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-  },
-  {
-    id: 'yandexgpt',
-    label: 'YandexGPT Pro',
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-  },
-  {
-    id: 'yandexgpt-32k',
-    label: 'YandexGPT Pro 32k',
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-  },
-];
+const YANDEX_DEFAULT_MODEL_IDS: readonly string[] = ['yandexgpt-lite', 'yandexgpt'];
 
 /**
  * Версия модели Yandex, подставляемая в URI.
@@ -149,6 +135,15 @@ const YANDEX_MODELS: readonly ModelInfo[] = [
  * `/latest` — версия по умолчанию по документации.
  */
 const YANDEX_MODEL_VERSION = 'latest';
+
+/** Префикс URI модели Yandex: `gpt://<folder>/<model>/<version>`. */
+const YANDEX_URI_PREFIX = 'gpt://';
+
+/** Суффикс подписи моделей Yandex в селекте. */
+const YANDEX_LABEL_SUFFIX = ' (Yandex)';
+
+/** Имя переменной с каталогом моделей Yandex (для предупреждений). */
+const YANDEX_MODELS_ENV_KEY = 'YANDEX_MODELS';
 
 /**
  * Фабрика LLM-провайдеров (v0.5.0; GPTunnel — v0.6.0b.1).
@@ -183,10 +178,13 @@ export class LlmProviderFactory {
    * Схема окружения уже проверена `validateEnv` при старте (RULES 4.5),
    * поэтому здесь значения читаются без повторной валидации.
    *
+   * Метод асинхронный (RULES 1.4) из-за LM Studio: его каталог запрашивается
+   * у локального сервера (`GET /models`) с коротким таймаутом (KI-088).
+   *
    * @returns провайдеры в порядке приоритета; пустой массив, если не
    *   сконфигурирован ни один
    */
-  createProviders(): ILlmProvider[] {
+  async createProvidersAsync(): Promise<ILlmProvider[]> {
     const providers: ILlmProvider[] = [];
 
     const anthropicKey = this.config.get<string>('ANTHROPIC_API_KEY');
@@ -225,7 +223,7 @@ export class LlmProviderFactory {
       providers.push(yandex);
     }
 
-    const lmstudio = this.createLmStudioProvider();
+    const lmstudio = await this.createLmStudioProvider();
 
     if (lmstudio) {
       providers.push(lmstudio);
@@ -309,28 +307,42 @@ export class LlmProviderFactory {
   }
 
   /**
-   * Создаёт провайдера Yandex AI Studio (KI-159).
+   * Создаёт провайдера Yandex AI Studio (KI-159, KI-174).
    *
-   * Yandex требует **и** ключ, **и** `YANDEX_FOLDER_ID`: без folder_id URI
-   * модели собрать нечем, а вызов падал бы с 400 уже во время Run. Поэтому при
-   * отсутствии любой из переменных провайдер не создаётся — Yandex просто не
-   * появляется в `GET /llm/models` (graceful degradation), а в лог уходит
-   * предупреждение с подсказкой, что задать.
+   * Каталог моделей берётся из `YANDEX_MODELS` (формат общий с
+   * `LMSTUDIO_MODELS`), а короткие id превращаются в URI
+   * `gpt://<folder_id>/<model>/latest`. Правила:
    *
-   * @returns провайдер либо `null`, если ключ или folder_id не заданы
+   * - `YANDEX_MODELS` задан → используем его; короткие id требуют
+   *   `YANDEX_FOLDER_ID`, без него они пропускаются с предупреждением,
+   *   а полные URI работают всегда;
+   * - `YANDEX_MODELS` не задан и `YANDEX_FOLDER_ID` есть → дефолтный список
+   *   {@link YANDEX_DEFAULT_MODEL_IDS};
+   * - ни того, ни другого → провайдер не создаётся (graceful degradation:
+   *   лучше не показывать модели, чем падать с 400 во время Run).
+   *
+   * @returns провайдер либо `null`, если каталог собрать не удалось
    */
   private createYandexProvider(): OpenAiCompatibleProvider | null {
     const apiKey = this.config.get<string>('YANDEX_API_KEY');
-    const folderId = this.config.get<string>('YANDEX_FOLDER_ID');
 
     if (!apiKey) {
       return null;
     }
 
-    if (!folderId) {
-      this.logger.warn(
-        'YANDEX_FOLDER_ID не задан — провайдер yandex пропущен: без folder_id URI модели (gpt://<folder_id>/<model>/latest) собрать нельзя',
-      );
+    const folderId = this.config.get<string>('YANDEX_FOLDER_ID');
+    const rawModels = this.config.get<string>('YANDEX_MODELS');
+    const models =
+      rawModels && rawModels.trim().length > 0
+        ? this.parseYandexModels(rawModels, folderId)
+        : this.buildYandexModels(YANDEX_DEFAULT_MODEL_IDS, folderId);
+
+    if (models.length === 0) {
+      if (!folderId) {
+        this.logger.warn(
+          'YANDEX_FOLDER_ID не задан — провайдер yandex пропущен: без folder_id URI модели (gpt://<folder_id>/<model>/latest) собрать нельзя',
+        );
+      }
 
       return null;
     }
@@ -341,11 +353,144 @@ export class LlmProviderFactory {
       baseURL:
         this.config.get<string>('YANDEX_BASE_URL') ??
         'https://llm.api.cloud.yandex.net/v1',
-      models: YANDEX_MODELS,
+      models,
       envKey: 'YANDEX_API_KEY',
-      // В UI и в node.data.model — короткое имя, в upstream — полный URI.
-      resolveModel: (model) => `gpt://${folderId}/${model}/${YANDEX_MODEL_VERSION}`,
+      // Полные URI уходят как есть, короткие имена превращаются в URI.
+      resolveModel: (model) => this.toYandexUri(model, folderId),
     });
+  }
+
+  /**
+   * Разбирает `YANDEX_MODELS` (KI-174).
+   *
+   * Отличия от {@link parseModelIds}: id модели Yandex может быть полным URI
+   * `gpt://…`, то есть содержать `:` внутри. Простой `indexOf(':')` разрезал
+   * бы `gpt` и `//folder/model/latest:text`, поэтому граница «id : модальности»
+   * ищется после последнего `/`.
+   *
+   * @param raw - сырое значение `YANDEX_MODELS`
+   * @param folderId - id каталога для коротких id (может отсутствовать)
+   * @returns модели с модальностями; пустой массив, если валидных записей нет
+   */
+  private parseYandexModels(
+    raw: string,
+    folderId: string | undefined,
+  ): ModelInfo[] {
+    const models: ModelInfo[] = [];
+
+    for (const entry of raw.split(',')) {
+      const trimmed = entry.trim();
+
+      if (trimmed.length === 0) {
+        continue;
+      }
+
+      const separatorIndex = trimmed.lastIndexOf(':');
+      const looksLikeUri = trimmed.startsWith(YANDEX_URI_PREFIX);
+      // У URI разделитель модальностей идёт после последнего '/', иначе
+      // первый ':' попал бы в схему 'gpt://'.
+      const hasModalities =
+        separatorIndex > (looksLikeUri ? trimmed.lastIndexOf('/') : -1);
+      const id = (
+        hasModalities ? trimmed.slice(0, separatorIndex) : trimmed
+      ).trim();
+      const modalitiesRaw = hasModalities
+        ? trimmed.slice(separatorIndex + 1).trim()
+        : '';
+
+      if (id.length === 0) {
+        this.logger.warn(`${YANDEX_MODELS_ENV_KEY}: пропущена запись без id: "${trimmed}"`);
+        continue;
+      }
+
+      if (this.isShortYandexId(id) && !folderId) {
+        this.logger.warn(
+          `${YANDEX_MODELS_ENV_KEY}: у модели "${id}" короткий id, но YANDEX_FOLDER_ID не задан — модель пропущена (задайте полный URI gpt://<folder>/<model>/<version>)`,
+        );
+        continue;
+      }
+
+      const inputModalities = this.parseModalities(id, modalitiesRaw, {
+        envKey: YANDEX_MODELS_ENV_KEY,
+        labelSuffix: YANDEX_LABEL_SUFFIX,
+      });
+
+      if (!inputModalities) {
+        continue;
+      }
+
+      models.push({
+        // Храним то, что пришло из env: полный URI уходит в upstream как есть.
+        id: this.toYandexUri(id, folderId),
+        label: `${id}${YANDEX_LABEL_SUFFIX}`,
+        inputModalities,
+        outputModalities: ENV_LIST_OUTPUT,
+      });
+    }
+
+    return models;
+  }
+
+  /**
+   * Собирает модели Yandex из коротких id (дефолтный каталог).
+   *
+   * @param ids - короткие имена моделей
+   * @param folderId - id каталога
+   * @returns модели либо пустой массив, если folder_id не задан
+   */
+  private buildYandexModels(
+    ids: readonly string[],
+    folderId: string | undefined,
+  ): ModelInfo[] {
+    if (!folderId) {
+      return [];
+    }
+
+    return ids.map((id) => ({
+      id: this.toYandexUri(id, folderId),
+      label: `${id}${YANDEX_LABEL_SUFFIX}`,
+      inputModalities: ENV_LIST_DEFAULT_INPUT,
+      outputModalities: ENV_LIST_OUTPUT,
+    }));
+  }
+
+  /**
+   * Приводит id модели Yandex к URI.
+   *
+   * Поддерживаются три формы записи в `YANDEX_MODELS`:
+   * - полный URI `gpt://…` — уходит как есть, префикс не дублируется;
+   * - `yandexgpt-lite` — короткое имя, версия добавляется (`/latest`);
+   * - `yandexgpt-lite/latest` — имя с версией, версия **не** добавляется
+   *   второй раз.
+   *
+   * @param id - id модели из env
+   * @param folderId - id каталога (нужен для форм без `gpt://`)
+   * @returns URI `gpt://<folder>/<model>[/<version>]`; при отсутствии folder_id
+   *   короткая форма возвращается как есть (вызывающий код её отфильтровывает)
+   */
+  private toYandexUri(id: string, folderId: string | undefined): string {
+    if (id.startsWith(YANDEX_URI_PREFIX)) {
+      return id;
+    }
+
+    if (!folderId) {
+      return id;
+    }
+
+    // Версия уже указана, если в записи есть '/'.
+    const hasVersion = id.includes('/');
+
+    return `${YANDEX_URI_PREFIX}${folderId}/${id}${hasVersion ? '' : `/${YANDEX_MODEL_VERSION}`}`;
+  }
+
+  /**
+   * Проверяет, что запись требует `YANDEX_FOLDER_ID`.
+   *
+   * @param id - id из env
+   * @returns `true`, если это не полный URI (то есть нужен folder_id)
+   */
+  private isShortYandexId(id: string): boolean {
+    return !id.startsWith(YANDEX_URI_PREFIX);
   }
 
   /**
@@ -387,22 +532,29 @@ export class LlmProviderFactory {
   }
 
   /**
-   * Создаёт провайдера локального LM Studio.
+   * Создаёт провайдера локального LM Studio (KI-088).
    *
-   * Ключ не нужен, поэтому единственное условие — непустой список моделей
-   * `LMSTUDIO_MODELS`: без него провайдер не знает, что предлагать в UI.
-   * Модальности у моделей берутся из того же значения (см.
-   * {@link parseModelIds}).
+   * Каталог моделей собирается из двух источников:
+   * - `LMSTUDIO_MODELS` — приоритет: пользователь сам задаёт модальности;
+   * - `GET {LMSTUDIO_BASE_URL}/models` — реальный список сервера.
    *
-   * @returns провайдер либо `null`, если список моделей пуст
+   * Правила слияния: если env пуст, берутся все модели из API с модальностью
+   * `text`; если env задан, его записи сохраняются как есть (включая
+   * модальности), а модели, которых нет в API, остаются с предупреждением —
+   * пользователь может знать лучше, а сервер мог быть просто не запущен.
+   * Недоступный API не роняет старт: используется env как есть.
+   *
+   * @returns провайдер либо `null`, если моделей нет ни в env, ни в API
    */
-  private createLmStudioProvider(): OpenAiCompatibleProvider | null {
+  private async createLmStudioProvider(): Promise<OpenAiCompatibleProvider | null> {
     const baseURL =
       this.config.get<string>('LMSTUDIO_BASE_URL') ?? LMSTUDIO_DEFAULT_BASE_URL;
-    const models = this.parseModelIds(
+    const envModels = this.parseModelIds(
       this.config.get<string>('LMSTUDIO_MODELS') ?? '',
       { envKey: 'LMSTUDIO_MODELS', labelSuffix: ' (local)' },
     );
+    const discovered = await this.fetchLmStudioModelIdsAsync(baseURL);
+    const models = this.mergeLmStudioModels(envModels, discovered);
 
     if (models.length === 0) {
       return null;
@@ -416,6 +568,95 @@ export class LlmProviderFactory {
       // LM Studio крутится на своём железе: стоимость вызова — 0, не null (KI-148).
       isLocal: true,
     });
+  }
+
+  /**
+   * Сливает модели из env с найденными в LM Studio (KI-088).
+   *
+   * @param envModels - модели из `LMSTUDIO_MODELS` (приоритет)
+   * @param discoveredIds - id моделей из `GET /models`
+   * @returns итоговый каталог с суффиксом ` (local)` в подписи
+   */
+  private mergeLmStudioModels(
+    envModels: readonly ModelInfo[],
+    discoveredIds: readonly string[],
+  ): ModelInfo[] {
+    // env не задан — доверяем серверу, все модели считаем текстовыми.
+    if (envModels.length === 0) {
+      return discoveredIds.map((id) => ({
+        id,
+        label: `${id} (local)`,
+        inputModalities: ENV_LIST_DEFAULT_INPUT,
+        outputModalities: ENV_LIST_OUTPUT,
+      }));
+    }
+
+    // API недоступен — работаем по env, как раньше.
+    if (discoveredIds.length === 0) {
+      return [...envModels];
+    }
+
+    for (const model of envModels) {
+      if (!discoveredIds.includes(model.id)) {
+        this.logger.warn(
+          `LMSTUDIO_MODELS: модель "${model.id}" не найдена в LM Studio (GET /models) — оставлена как задана; проверьте id через ${baseUrlHint()}`,
+        );
+      }
+    }
+
+    // Модели из API, которых нет в env: добавляем с дефолтной модальностью,
+    // чтобы сервер не выглядел пустым, если пользователь задал список вручную.
+    const extra = discoveredIds
+      .filter((id) => !envModels.some((model) => model.id === id))
+      .map((id) => ({
+        id,
+        label: `${id} (local)`,
+        inputModalities: ENV_LIST_DEFAULT_INPUT,
+        outputModalities: ENV_LIST_OUTPUT,
+      }));
+
+    return [...envModels, ...extra];
+  }
+
+  /**
+   * Запрашивает список моделей у LM Studio (KI-088).
+   *
+   * Сервер локальный, поэтому таймаут короткий: если он не запущен, старт
+   * приложения не должен ждать. Любая ошибка (нет соединения, не-2xx, битый
+   * JSON) трактуется одинаково — «список неизвестен».
+   *
+   * @param baseURL - базовый адрес LM Studio (обычно `…/v1`)
+   * @returns id моделей; пустой массив, если сервер недоступен
+   */
+  private async fetchLmStudioModelIdsAsync(baseURL: string): Promise<string[]> {
+    const signal = AbortSignal.timeout(LMSTUDIO_DISCOVERY_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(`${baseURL.replace(/\/+$/, '')}/models`, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        signal,
+      });
+
+      if (!response.ok) {
+        this.logger.warn(
+          `LM Studio ответил ${response.status} на GET /models — используется только LMSTUDIO_MODELS`,
+        );
+
+        return [];
+      }
+
+      const payload: unknown = await response.json();
+
+      return extractModelIds(payload);
+    } catch (error: unknown) {
+      // Штатная ситуация: LM Studio не запущен.
+      this.logger.warn(
+        `LM Studio недоступен (${baseURL}) — используется только LMSTUDIO_MODELS: ${toMessage(error)}`,
+      );
+
+      return [];
+    }
   }
 
   /**
@@ -514,4 +755,59 @@ export class LlmProviderFactory {
 
     return parsed.length > 0 ? parsed : ENV_LIST_DEFAULT_INPUT;
   }
+}
+
+/**
+ * Приводит неизвестную ошибку к тексту для лога.
+ *
+ * @param error - значение из `catch`
+ * @returns сообщение ошибки
+ */
+function toMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Подсказка, как посмотреть реальные id моделей LM Studio.
+ *
+ * @returns команда для терминала
+ */
+function baseUrlHint(): string {
+  return 'GET /v1/models у LM Studio';
+}
+
+/**
+ * Извлекает id моделей из ответа `GET /models` (KI-088).
+ *
+ * Ответ внешнего сервера, поэтому разбирается без предположений о форме:
+ * ожидается OpenAI-совместимый `{ data: [{ id }] }`, всё остальное считается
+ * «список неизвестен» — старт из-за этого не падает.
+ *
+ * @param payload - разобранный JSON ответа
+ * @returns id моделей; пустой массив, если данных нет
+ */
+function extractModelIds(payload: unknown): string[] {
+  if (typeof payload !== 'object' || payload === null || !('data' in payload)) {
+    return [];
+  }
+
+  const data = (payload as { data?: unknown }).data;
+
+  if (!Array.isArray(data)) {
+    return [];
+  }
+
+  const ids: string[] = [];
+
+  for (const item of data) {
+    if (typeof item === 'object' && item !== null && 'id' in item) {
+      const id = (item as { id?: unknown }).id;
+
+      if (typeof id === 'string' && id.length > 0 && !ids.includes(id)) {
+        ids.push(id);
+      }
+    }
+  }
+
+  return ids;
 }

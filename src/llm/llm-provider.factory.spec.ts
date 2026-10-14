@@ -46,8 +46,8 @@ function configStub(values: Record<string, string | undefined>): ConfigService {
  * @param values - переменные окружения
  * @returns провайдеры в порядке приоритета
  */
-function createProviders(values: Record<string, string | undefined>) {
-  return new LlmProviderFactory(configStub(values)).createProviders();
+async function createProviders(values: Record<string, string | undefined>) {
+  return new LlmProviderFactory(configStub(values)).createProvidersAsync();
 }
 
 /**
@@ -57,28 +57,63 @@ function createProviders(values: Record<string, string | undefined>) {
  * @param name - идентификатор провайдера
  * @returns провайдер или `undefined`
  */
-function byName(
+async function byName(
   values: Record<string, string | undefined>,
   name: string,
-): OpenAiCompatibleProvider | undefined {
-  const provider = createProviders(values).find((item) => item.name === name);
+): Promise<OpenAiCompatibleProvider | undefined> {
+  const provider = (await createProviders(values)).find((item) => item.name === name);
 
   return provider instanceof OpenAiCompatibleProvider ? provider : undefined;
 }
 
+/**
+ * Подменяет GET /models у LM Studio: фабрика запрашивает каталог при старте
+ * (KI-088), а в юнит-тестах сеть недопустима. По умолчанию сервер «недоступен».
+ *
+ * @param ids - id моделей, которые вернёт сервер; пустой массив — «нет ответа»
+ */
+function stubLmStudioApi(ids: string[] | null): void {
+  if (ids === null) {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('ECONNREFUSED'))));
+
+    return;
+  }
+
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ data: ids.map((id) => ({ id })) }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    ),
+  );
+}
+
 describe('LlmProviderFactory', () => {
-  it('возвращает пустой список, если не задан ни один ключ', () => {
-    expect(createProviders({})).toEqual([]);
+  beforeEach(() => {
+    // По умолчанию LM Studio «не запущен»: фабрика не должна ждать сеть.
+    stubLmStudioApi(null);
   });
 
-  it('включает только Anthropic, когда задан только его ключ', () => {
-    const providers = createProviders({ ANTHROPIC_API_KEY: 'sk-ant-test' });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+  it('возвращает пустой список, если не задан ни один ключ', async () => {
+    await expect(createProviders({})).resolves.toEqual([]);
+  });
+
+  it('включает только Anthropic, когда задан только его ключ', async () => {
+    const providers = await createProviders({ ANTHROPIC_API_KEY: 'sk-ant-test' });
 
     expect(providers.map((provider) => provider.name)).toEqual(['anthropic']);
   });
 
-  it('объявляет у Anthropic модели с text+vision на входе (v0.6.0a)', () => {
-    const anthropic = createProviders({ ANTHROPIC_API_KEY: 'sk-ant-test' })[0];
+  it('объявляет у Anthropic модели с text+vision на входе (v0.6.0a)', async () => {
+    const [anthropic] = await createProviders({ ANTHROPIC_API_KEY: 'sk-ant-test' });
 
     expect(anthropic.models).toEqual([
       {
@@ -96,8 +131,8 @@ describe('LlmProviderFactory', () => {
     ]);
   });
 
-  it('создаёт OpenAI-провайдера с ключом и дефолтным baseURL', () => {
-    const openai = byName({ OPENAI_API_KEY: 'sk-test' }, 'openai');
+  it('создаёт OpenAI-провайдера с ключом и дефолтным baseURL', async () => {
+    const openai = await byName({ OPENAI_API_KEY: 'sk-test' }, 'openai');
 
     expect(openai?.name).toBe('openai');
     expect(openai?.models).toEqual([
@@ -117,23 +152,23 @@ describe('LlmProviderFactory', () => {
     expect(openai?.isConfigured).toBe(true);
   });
 
-  it('работает с OpenAI и RouterAI одновременно (v0.5.0)', () => {
-    const providers = createProviders({
+  it('работает с OpenAI и RouterAI одновременно (v0.5.0)', async () => {
+    const providers = await createProviders({
       OPENAI_API_KEY: 'sk-test',
       ROUTERAI_API_KEY: 'sk-router',
     });
 
     expect(providers.map((provider) => provider.name)).toEqual(['openai', 'routerai']);
 
-    const routerai = byName({ ROUTERAI_API_KEY: 'sk-router' }, 'routerai');
+    const routerai = await byName({ ROUTERAI_API_KEY: 'sk-router' }, 'routerai');
 
     expect(routerai?.models.map((model) => model.id)).toContain(
       'anthropic/claude-sonnet-4',
     );
   });
 
-  it('включает LM Studio без ключа, если задан список моделей', () => {
-    const lmstudio = byName(
+  it('включает LM Studio без ключа, если задан список моделей', async () => {
+    const lmstudio = await byName(
       { LMSTUDIO_MODELS: 'qwen2.5-7b-instruct, llama-3.3-70b' },
       'lmstudio',
     );
@@ -158,16 +193,20 @@ describe('LlmProviderFactory', () => {
     ]);
   });
 
-  it('KI-148: облачные провайдеры не помечены локальными', () => {
+  it('KI-148: облачные провайдеры не помечены локальными', async () => {
     // Только LM Studio бесплатен: у остальных стоимость считается по прайсу.
-    expect(byName({ OPENAI_API_KEY: 'sk-openai' }, 'openai')?.isLocal).toBe(false);
-    expect(byName({ DEEPSEEK_API_KEY: 'sk-deepseek' }, 'deepseek')?.isLocal).toBe(false);
-    expect(
-      byName({ ANTHROPIC_API_KEY: 'sk-ant-test' }, 'anthropic')?.isLocal,
-    ).toBeUndefined();
+    const openai = await byName({ OPENAI_API_KEY: 'sk-openai' }, 'openai');
+    const deepseek = await byName({ DEEPSEEK_API_KEY: 'sk-deepseek' }, 'deepseek');
+    const anthropic = await byName({ ANTHROPIC_API_KEY: 'sk-ant-test' }, 'anthropic');
+
+    expect(openai?.isLocal).toBe(false);
+    expect(deepseek?.isLocal).toBe(false);
+    // Anthropic флаг вовсе не задаёт — «не локальный» по умолчанию.
+    expect(anthropic?.isLocal).toBeUndefined();
   });
 
-  it('разбирает модальности LM Studio из суффикса (v0.6.0a)', () => {    const lmstudio = byName(
+  it('разбирает модальности LM Studio из суффикса (v0.6.0a)', async () => {
+    const lmstudio = await byName(
       {
         LMSTUDIO_MODELS:
           'qwen2.5-coder-7b-instruct:text,qwen/qwen2.5-vl-7b:text+vision',
@@ -191,10 +230,89 @@ describe('LlmProviderFactory', () => {
     ]);
   });
 
-  it('пропускает модель LM Studio с неизвестной модальностью (v0.6.0a)', () => {
+  it('KI-088: без LMSTUDIO_MODELS каталог берётся из GET /models', async () => {
+    stubLmStudioApi(['qwen/qwen2.5-coder-7b-instruct', 'qwen/qwen3-8b']);
+
+    const lmstudio = await byName({}, 'lmstudio');
+
+    // Все найденные модели — текстовые по умолчанию.
+    expect(lmstudio?.models).toEqual([
+      {
+        id: 'qwen/qwen2.5-coder-7b-instruct',
+        label: 'qwen/qwen2.5-coder-7b-instruct (local)',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      },
+      {
+        id: 'qwen/qwen3-8b',
+        label: 'qwen/qwen3-8b (local)',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      },
+    ]);
+  });
+
+  it('KI-088: env-модальности сохраняются, найденные модели добавляются', async () => {
+    stubLmStudioApi(['qwen/qwen2.5-vl-7b', 'qwen/qwen3-8b']);
+
+    const lmstudio = await byName(
+      { LMSTUDIO_MODELS: 'qwen/qwen2.5-vl-7b:text+vision' },
+      'lmstudio',
+    );
+
+    // env-запись идёт первой и со своими модальностями, остальное — из API.
+    expect(lmstudio?.models).toEqual([
+      {
+        id: 'qwen/qwen2.5-vl-7b',
+        label: 'qwen/qwen2.5-vl-7b (local)',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
+      {
+        id: 'qwen/qwen3-8b',
+        label: 'qwen/qwen3-8b (local)',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      },
+    ]);
+  });
+
+  it('KI-088: модель из env, которой нет в API, остаётся с предупреждением', async () => {
     const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
-    const lmstudio = byName(
+    stubLmStudioApi(['qwen/qwen3-8b']);
+
+    const lmstudio = await byName(
+      { LMSTUDIO_MODELS: 'my-custom-model:text' },
+      'lmstudio',
+    );
+
+    expect(lmstudio?.models.map((model) => model.id)).toEqual([
+      'my-custom-model',
+      'qwen/qwen3-8b',
+    ]);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('my-custom-model'),
+    );
+  });
+
+  it('KI-088: недоступный LM Studio не мешает старту — работает env', async () => {
+    stubLmStudioApi(null);
+
+    const lmstudio = await byName(
+      { LMSTUDIO_MODELS: 'qwen2.5-coder-7b-instruct:text' },
+      'lmstudio',
+    );
+
+    expect(lmstudio?.models.map((model) => model.id)).toEqual([
+      'qwen2.5-coder-7b-instruct',
+    ]);
+  });
+
+  it('пропускает модель LM Studio с неизвестной модальностью (v0.6.0a)', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const lmstudio = await byName(
       { LMSTUDIO_MODELS: 'good-model:text,broken-model:foo' },
       'lmstudio',
     );
@@ -209,13 +327,13 @@ describe('LlmProviderFactory', () => {
     warn.mockRestore();
   });
 
-  it('не включает LM Studio без списка моделей', () => {
-    expect(createProviders({ LMSTUDIO_MODELS: '' })).toEqual([]);
-    expect(createProviders({ LMSTUDIO_MODELS: '  ,  ' })).toEqual([]);
+  it('не включает LM Studio без списка моделей', async () => {
+    await expect(createProviders({ LMSTUDIO_MODELS: '' })).resolves.toEqual([]);
+    await expect(createProviders({ LMSTUDIO_MODELS: '  ,  ' })).resolves.toEqual([]);
   });
 
-  it('собирает всех провайдеров в порядке приоритета', () => {
-    const providers = createProviders({
+  it('собирает всех провайдеров в порядке приоритета', async () => {
+    const providers = await createProviders({
       ANTHROPIC_API_KEY: 'sk-ant',
       OPENAI_API_KEY: 'sk-openai',
       ROUTERAI_API_KEY: 'sk-router',
@@ -235,8 +353,8 @@ describe('LlmProviderFactory', () => {
     ]);
   });
 
-  it('берёт baseURL провайдера из его переменной окружения', () => {
-    byName(
+  it('берёт baseURL провайдера из его переменной окружения', async () => {
+    await byName(
       {
         DEEPSEEK_API_KEY: 'sk-deepseek',
         DEEPSEEK_BASE_URL: 'http://localhost:9999/v1',
@@ -250,8 +368,8 @@ describe('LlmProviderFactory', () => {
     });
   });
 
-  it('подставляет дефолтный baseURL, если переменная не задана', () => {
-    byName({ ROUTERAI_API_KEY: 'sk-router' }, 'routerai');
+  it('подставляет дефолтный baseURL, если переменная не задана', async () => {
+    await byName({ ROUTERAI_API_KEY: 'sk-router' }, 'routerai');
 
     expect(openAiConstructorMock).toHaveBeenCalledWith({
       apiKey: 'sk-router',
@@ -259,44 +377,130 @@ describe('LlmProviderFactory', () => {
     });
   });
 
-  it('включает Yandex с ключом и folder_id (KI-159)', () => {
-    const yandex = byName(
-      { YANDEX_API_KEY: 'sk-yandex', YANDEX_FOLDER_ID: 'b1g-folder' },
+  it('KI-174: YANDEX_MODELS задаёт каталог, короткие id достраиваются в URI', async () => {
+    const yandex = await byName(
+      {
+        YANDEX_API_KEY: 'sk-yandex',
+        YANDEX_FOLDER_ID: 'b1g-folder',
+        YANDEX_MODELS: 'yandexgpt-lite:text,yandexgpt-32k',
+      },
       'yandex',
     );
 
-    // Реальные модели Yandex AI Studio: URI собирается провайдером, в UI и
-    // node.data.model хранится короткий id.
     expect(yandex?.models).toEqual([
       {
-        id: 'yandexgpt-lite',
-        label: 'YandexGPT Lite',
+        id: 'gpt://b1g-folder/yandexgpt-lite/latest',
+        label: 'yandexgpt-lite (Yandex)',
         inputModalities: ['text'],
         outputModalities: ['text'],
       },
       {
-        id: 'yandexgpt',
-        label: 'YandexGPT Pro',
-        inputModalities: ['text'],
-        outputModalities: ['text'],
-      },
-      {
-        id: 'yandexgpt-32k',
-        label: 'YandexGPT Pro 32k',
+        // Без суффикса модальностей — текстовая (как у LM Studio/GPTunnel).
+        id: 'gpt://b1g-folder/yandexgpt-32k/latest',
+        label: 'yandexgpt-32k (Yandex)',
         inputModalities: ['text'],
         outputModalities: ['text'],
       },
     ]);
   });
 
-  it('KI-159: без YANDEX_FOLDER_ID провайдер не включается (graceful degradation)', () => {
-    // Без folder_id URI модели собрать нечем — лучше не показывать провайдера,
-    // чем падать с 400 во время Run.
-    expect(byName({ YANDEX_API_KEY: 'sk-yandex' }, 'yandex')).toBeUndefined();
+  it('KI-174: полный URI проходит как есть, префикс не дублируется', async () => {
+    const yandex = await byName(
+      {
+        YANDEX_API_KEY: 'sk-yandex',
+        YANDEX_FOLDER_ID: 'b1g-folder',
+        YANDEX_MODELS:
+          'gpt://b1gufspraeh2i5nin6nt/qwen3.6-35b-a3b/latest:text+vision',
+      },
+      'yandex',
+    );
+
+    // Ключевой случай: ':' внутри 'gpt://' не должен съесть модальности.
+    expect(yandex?.models).toEqual([
+      {
+        id: 'gpt://b1gufspraeh2i5nin6nt/qwen3.6-35b-a3b/latest',
+        label: 'gpt://b1gufspraeh2i5nin6nt/qwen3.6-35b-a3b/latest (Yandex)',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
+    ]);
   });
 
-  it('включает GPTunnel с ключом и списком моделей (v0.6.0b.1)', () => {
-    const gptunnel = byName(
+  it('KI-174: без YANDEX_FOLDER_ID короткие id пропускаются, URI работают', async () => {
+    const yandex = await byName(
+      {
+        YANDEX_API_KEY: 'sk-yandex',
+        YANDEX_MODELS:
+          'yandexgpt-lite,gpt://b1g-folder/yandexgpt/latest:text',
+      },
+      'yandex',
+    );
+
+    expect(yandex?.models.map((model) => model.id)).toEqual([
+      'gpt://b1g-folder/yandexgpt/latest',
+    ]);
+  });
+
+  it('KI-174: имя с версией получает префикс, но не вторую версию', async () => {
+    const yandex = await byName(
+      {
+        YANDEX_API_KEY: 'sk-yandex',
+        YANDEX_FOLDER_ID: 'b1g-folder',
+        YANDEX_MODELS: 'yandexgpt-lite/latest:text,yandexgpt-32k/rc',
+      },
+      'yandex',
+    );
+
+    // 'yandexgpt-lite/latest' — уже имя+версия: '/latest' не дублируется.
+    expect(yandex?.models.map((model) => model.id)).toEqual([
+      'gpt://b1g-folder/yandexgpt-lite/latest',
+      'gpt://b1g-folder/yandexgpt-32k/rc',
+    ]);
+  });
+
+  it('KI-174: пустой YANDEX_MODELS без folder_id — провайдера нет', async () => {
+    const yandex = await byName(
+      { YANDEX_API_KEY: 'sk-yandex', YANDEX_MODELS: '   ' },
+      'yandex',
+    );
+
+    expect(yandex).toBeUndefined();
+  });
+
+  it('включает Yandex с ключом и folder_id (KI-159)', async () => {
+    const yandex = await byName(
+      { YANDEX_API_KEY: 'sk-yandex', YANDEX_FOLDER_ID: 'b1g-folder' },
+      'yandex',
+    );
+
+    // KI-174: без YANDEX_MODELS используется дефолт (yandexgpt-lite + yandexgpt),
+    // а id хранится уже как полный URI, который уходит и в upstream, и в UI.
+    expect(yandex?.models).toEqual([
+      {
+        id: 'gpt://b1g-folder/yandexgpt-lite/latest',
+        label: 'yandexgpt-lite (Yandex)',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      },
+      {
+        id: 'gpt://b1g-folder/yandexgpt/latest',
+        label: 'yandexgpt (Yandex)',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      },
+    ]);
+  });
+
+  it('KI-159: без YANDEX_FOLDER_ID провайдер не включается (graceful degradation)', async () => {
+    // Без folder_id URI модели собрать нечем — лучше не показывать провайдера,
+    // чем падать с 400 во время Run.
+    const yandex = await byName({ YANDEX_API_KEY: 'sk-yandex' }, 'yandex');
+
+    expect(yandex).toBeUndefined();
+  });
+
+  it('включает GPTunnel с ключом и списком моделей (v0.6.0b.1)', async () => {
+    const gptunnel = await byName(
       {
         GPTUNNEL_API_KEY: 'sk-gptunnel',
         GPTUNNEL_MODELS:
@@ -329,19 +533,19 @@ describe('LlmProviderFactory', () => {
     ]);
   });
 
-  it('не включает GPTunnel без списка моделей (v0.6.0b.1)', () => {
-    expect(createProviders({ GPTUNNEL_API_KEY: 'sk-gptunnel' })).toEqual([]);
-    expect(
+  it('не включает GPTunnel без списка моделей (v0.6.0b.1)', async () => {
+    await expect(createProviders({ GPTUNNEL_API_KEY: 'sk-gptunnel' })).resolves.toEqual([]);
+    await expect(
       createProviders({ GPTUNNEL_API_KEY: 'sk-gptunnel', GPTUNNEL_MODELS: '  ,  ' }),
-    ).toEqual([]);
+    ).resolves.toEqual([]);
   });
 
-  it('не включает GPTunnel без ключа, даже если список задан (v0.6.0b.1)', () => {
-    expect(createProviders({ GPTUNNEL_MODELS: 'gpt-5.6-luna:text' })).toEqual([]);
+  it('не включает GPTunnel без ключа, даже если список задан (v0.6.0b.1)', async () => {
+    await expect(createProviders({ GPTUNNEL_MODELS: 'gpt-5.6-luna:text' })).resolves.toEqual([]);
   });
 
-  it('берёт baseURL GPTunnel из окружения (v0.6.0b.1)', () => {
-    byName(
+  it('берёт baseURL GPTunnel из окружения (v0.6.0b.1)', async () => {
+    await byName(
       {
         GPTUNNEL_API_KEY: 'sk-gptunnel',
         GPTUNNEL_MODELS: 'gpt-5.6-luna',
@@ -356,10 +560,10 @@ describe('LlmProviderFactory', () => {
     });
   });
 
-  it('пропускает модель GPTunnel с неизвестной модальностью (v0.6.0b.1)', () => {
+  it('пропускает модель GPTunnel с неизвестной модальностью (v0.6.0b.1)', async () => {
     const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
-    const gptunnel = byName(
+    const gptunnel = await byName(
       {
         GPTUNNEL_API_KEY: 'sk-gptunnel',
         GPTUNNEL_MODELS: 'gpt-5.6-luna:text,broken-model:foo',
@@ -375,8 +579,8 @@ describe('LlmProviderFactory', () => {
     warn.mockRestore();
   });
 
-  it('работает с GPTunnel и RouterAI одновременно (v0.6.0b.1)', () => {
-    const providers = createProviders({
+  it('работает с GPTunnel и RouterAI одновременно (v0.6.0b.1)', async () => {
+    const providers = await createProviders({
       ROUTERAI_API_KEY: 'sk-router',
       GPTUNNEL_API_KEY: 'sk-gptunnel',
       GPTUNNEL_MODELS: 'gpt-5.6-luna:text',
@@ -388,8 +592,8 @@ describe('LlmProviderFactory', () => {
     ]);
   });
 
-  it('ставит GPTunnel в приоритете после RouterAI (v0.6.0b.1)', () => {
-    const providers = createProviders({
+  it('ставит GPTunnel в приоритете после RouterAI (v0.6.0b.1)', async () => {
+    const providers = await createProviders({
       ANTHROPIC_API_KEY: 'sk-ant',
       OPENAI_API_KEY: 'sk-openai',
       ROUTERAI_API_KEY: 'sk-router',

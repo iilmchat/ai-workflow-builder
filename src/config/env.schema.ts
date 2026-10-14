@@ -171,11 +171,24 @@ export const EnvSchema = z.object({
   /**
    * id каталога Yandex Cloud (KI-159).
    *
-   * Yandex принимает модель только как URI `gpt://<folder_id>/<model>/latest`,
-   * поэтому без этой переменной провайдер `yandex` не регистрируется: иначе
-   * каждый Run падал бы с 400 «Failed to parse model URI».
+   * Нужен, чтобы собрать URI коротких id моделей из `YANDEX_MODELS`
+   * (`yandexgpt-lite` → `gpt://<folder_id>/yandexgpt-lite/latest`). Без него
+   * работают только модели, заданные полным URI.
    */
   YANDEX_FOLDER_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+  /**
+   * Каталог моделей Yandex AI Studio (KI-174).
+   *
+   * Формат как у `LMSTUDIO_MODELS`/`GPTUNNEL_MODELS`:
+   * `<id>[:<модальность>[+<модальность>...]]` через запятую. `<id>` — либо
+   * короткое имя (`yandexgpt-lite`), либо полный URI
+   * (`gpt://<folder>/<model>/<version>`) — например
+   * `gpt://b1g.../yandexgpt-lite/latest:text,gpt://b1g.../qwen3.6-35b-a3b/latest:text+vision`.
+   *
+   * Если не задан, используется дефолтный список YandexGPT (нужен
+   * `YANDEX_FOLDER_ID`). Валидация значений — при парсинге в фабрике.
+   */
+  YANDEX_MODELS: z.preprocess(emptyToUndefined, z.string().optional()),
 
   // === LM Studio (локальный сервер, ключ не нужен) ===
   /** Base URL локального LM Studio. */
