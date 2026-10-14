@@ -159,8 +159,45 @@ describe('OpenAiCompatibleProvider', () => {
     );
   });
 
-  it('возвращает content ответа и передаёт параметры в SDK', async () => {
+  it('KI-159: подменяет id модели через resolveModel (URI для Yandex)', async () => {
     createMock.mockResolvedValue({
+      model: 'gpt://b1g-folder/yandexgpt-lite/latest',
+      usage: { prompt_tokens: 5, completion_tokens: 3 },
+      choices: [{ message: { content: 'ответ yandex' } }],
+    });
+
+    const provider = new OpenAiCompatibleProvider(
+      providerConfig({
+        name: 'yandex',
+        models: [{ id: 'yandexgpt-lite', label: 'YandexGPT Lite' }],
+        envKey: 'YANDEX_API_KEY',
+        resolveModel: (model) => `gpt://b1g-folder/${model}/latest`,
+      }),
+    );
+
+    await provider.generateAsync('вопрос', { model: 'yandexgpt-lite' });
+
+    // В UI и node.data.model — короткий id, в upstream — полный URI.
+    expect(createMock.mock.calls[0][0].model).toBe(
+      'gpt://b1g-folder/yandexgpt-lite/latest',
+    );
+  });
+
+  it('без resolveModel id модели уходит как есть', async () => {
+    createMock.mockResolvedValue({
+      model: 'gpt-4o',
+      usage: { prompt_tokens: 5, completion_tokens: 3 },
+      choices: [{ message: { content: 'ответ' } }],
+    });
+
+    const provider = new OpenAiCompatibleProvider(providerConfig());
+
+    await provider.generateAsync('вопрос', { model: 'gpt-4o' });
+
+    expect(createMock.mock.calls[0][0].model).toBe('gpt-4o');
+  });
+
+  it('возвращает content ответа и передаёт параметры в SDK', async () => {    createMock.mockResolvedValue({
       model: 'gpt-4o',
       usage: { prompt_tokens: 20, completion_tokens: 7 },
       choices: [{ message: { content: 'ответ gpt' } }],

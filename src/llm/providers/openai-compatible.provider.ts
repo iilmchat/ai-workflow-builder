@@ -73,6 +73,17 @@ export interface OpenAiCompatibleConfig {
    * а не `null` (KI-148). По умолчанию — `false`.
    */
   isLocal?: boolean;
+  /**
+   * Преобразует id модели в то, что ждёт upstream (KI-159).
+   *
+   * Нужен провайдерам, у которых идентификатор модели — не просто строка:
+   * Yandex AI Studio требует URI `gpt://<folder_id>/<model>/latest`, тогда как
+   * в UI и в `node.data.model` хранится короткое имя (`yandexgpt-lite`).
+   * Без преобразования upstream отвечает 400 «Failed to parse model URI».
+   *
+   * По умолчанию id уходит как есть.
+   */
+  resolveModel?: (model: string) => string;
 }
 
 /**
@@ -106,6 +117,9 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
    */
   readonly isLocal: boolean;
 
+  /** Преобразование id модели для upstream (KI-159); `undefined` — как есть. */
+  private readonly resolveModel: ((model: string) => string) | undefined;
+
   private readonly logger: Logger;
   /** Клиент SDK: создаётся всегда, кроме случая отсутствия ключа. */
   private readonly client: OpenAI | null;
@@ -120,6 +134,7 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
     this.models = config.models;
     this.envKey = config.envKey;
     this.isLocal = config.isLocal ?? false;
+    this.resolveModel = config.resolveModel;
     this.logger = new Logger(`OpenAiCompatibleProvider:${config.name}`);
 
     if (!config.apiKey) {
@@ -164,11 +179,15 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
     }
 
     const signal = options.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
+    // KI-159: часть провайдеров (Yandex) требует URI вместо короткого id.
+    const upstreamModel = this.resolveModel
+      ? this.resolveModel(options.model)
+      : options.model;
 
     try {
       const completion = await this.client.chat.completions.create(
         {
-          model: options.model,
+          model: upstreamModel,
           // Актуальное поле лимита ответа (в SDK есть и deprecated max_tokens).
           max_completion_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
           temperature: options.temperature,

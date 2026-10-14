@@ -168,6 +168,14 @@ export const EnvSchema = z.object({
   YANDEX_BASE_URL: z
     .preprocess(emptyToUndefined, httpUrl.optional())
     .default('https://llm.api.cloud.yandex.net/v1'),
+  /**
+   * id каталога Yandex Cloud (KI-159).
+   *
+   * Yandex принимает модель только как URI `gpt://<folder_id>/<model>/latest`,
+   * поэтому без этой переменной провайдер `yandex` не регистрируется: иначе
+   * каждый Run падал бы с 400 «Failed to parse model URI».
+   */
+  YANDEX_FOLDER_ID: z.preprocess(emptyToUndefined, z.string().optional()),
 
   // === LM Studio (локальный сервер, ключ не нужен) ===
   /** Base URL локального LM Studio. */

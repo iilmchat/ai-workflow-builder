@@ -221,6 +221,7 @@ describe('LlmProviderFactory', () => {
       ROUTERAI_API_KEY: 'sk-router',
       DEEPSEEK_API_KEY: 'sk-deepseek',
       YANDEX_API_KEY: 'sk-yandex',
+      YANDEX_FOLDER_ID: 'b1g-folder',
       LMSTUDIO_MODELS: 'qwen2.5-7b-instruct',
     });
 
@@ -258,17 +259,40 @@ describe('LlmProviderFactory', () => {
     });
   });
 
-  it('включает Yandex с ключом', () => {
-    const yandex = byName({ YANDEX_API_KEY: 'sk-yandex' }, 'yandex');
+  it('включает Yandex с ключом и folder_id (KI-159)', () => {
+    const yandex = byName(
+      { YANDEX_API_KEY: 'sk-yandex', YANDEX_FOLDER_ID: 'b1g-folder' },
+      'yandex',
+    );
 
+    // Реальные модели Yandex AI Studio: URI собирается провайдером, в UI и
+    // node.data.model хранится короткий id.
     expect(yandex?.models).toEqual([
       {
-        id: 'qwen3.6-35b-a3b/latest',
-        label: 'Qwen3.6-35B (Yandex)',
-        inputModalities: ['text', 'vision'],
+        id: 'yandexgpt-lite',
+        label: 'YandexGPT Lite',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      },
+      {
+        id: 'yandexgpt',
+        label: 'YandexGPT Pro',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      },
+      {
+        id: 'yandexgpt-32k',
+        label: 'YandexGPT Pro 32k',
+        inputModalities: ['text'],
         outputModalities: ['text'],
       },
     ]);
+  });
+
+  it('KI-159: без YANDEX_FOLDER_ID провайдер не включается (graceful degradation)', () => {
+    // Без folder_id URI модели собрать нечем — лучше не показывать провайдера,
+    // чем падать с 400 во время Run.
+    expect(byName({ YANDEX_API_KEY: 'sk-yandex' }, 'yandex')).toBeUndefined();
   });
 
   it('включает GPTunnel с ключом и списком моделей (v0.6.0b.1)', () => {
@@ -373,6 +397,7 @@ describe('LlmProviderFactory', () => {
       GPTUNNEL_MODELS: 'gpt-5.6-luna:text',
       DEEPSEEK_API_KEY: 'sk-deepseek',
       YANDEX_API_KEY: 'sk-yandex',
+      YANDEX_FOLDER_ID: 'b1g-folder',
       LMSTUDIO_MODELS: 'qwen2.5-coder-7b-instruct:text',
     });
 

@@ -99,6 +99,67 @@ describe('MediaNodeExecutor', () => {
     );
   });
 
+  it('KI-166: берёт prompt из data.prompt, если вход пуст', async () => {
+    registry.createTaskAsync.mockResolvedValue(
+      task({ status: 'done', resultUrls: ['https://cdn/img.png'], costRub: 0.6 }),
+    );
+
+    await executor.executeAsync(
+      imageNode({ prompt: 'промпт из узла' }),
+      {},
+      RUN_ID,
+    );
+
+    expect(registry.createTaskAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'промпт из узла' }),
+    );
+  });
+
+  it('KI-166: вход важнее data.prompt', async () => {
+    registry.createTaskAsync.mockResolvedValue(
+      task({ status: 'done', resultUrls: ['https://cdn/img.png'], costRub: 0.6 }),
+    );
+
+    await executor.executeAsync(
+      imageNode({ prompt: 'промпт из узла' }),
+      { prompt: 'промпт из связи' },
+      RUN_ID,
+    );
+
+    expect(registry.createTaskAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'промпт из связи' }),
+    );
+  });
+
+  it('KI-166: старый формат (data.value) продолжает работать', async () => {
+    registry.createTaskAsync.mockResolvedValue(
+      task({ status: 'done', resultUrls: ['https://cdn/img.png'], costRub: 0.6 }),
+    );
+
+    // Workflow, сохранённый до появления data.prompt.
+    await executor.executeAsync(imageNode({ value: 'старый промпт' }), {}, RUN_ID);
+
+    expect(registry.createTaskAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'старый промпт' }),
+    );
+  });
+
+  it('KI-166: пустой data.prompt не перекрывает data.value', async () => {
+    registry.createTaskAsync.mockResolvedValue(
+      task({ status: 'done', resultUrls: ['https://cdn/img.png'], costRub: 0.6 }),
+    );
+
+    await executor.executeAsync(
+      imageNode({ prompt: '', value: 'запасной промпт' }),
+      {},
+      RUN_ID,
+    );
+
+    expect(registry.createTaskAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'запасной промпт' }),
+    );
+  });
+
   it('бросает при пустой модели', async () => {
     await expect(
       executor.executeAsync(imageNode({ model: '' }), { prompt: 'кот' }, RUN_ID),

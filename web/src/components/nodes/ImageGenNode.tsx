@@ -85,14 +85,10 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
   const prompt = data.prompt ?? '';
 
   // KI-157: промпт пишется в хранилище на каждый символ — сохраняем курсор.
-  // KI-166: помимо `prompt` пишем `value` — именно его читает backend-исполнитель
-  // media-узла (`inputs.prompt` → `data.value`), поэтому без дублирования
-  // введённый в узле промпт до генерации не дошёл бы.
+  // KI-166: дублирование в `data.value` больше не нужно — backend читает
+  // `data.prompt` (с fallback на `value` только для старых workflow).
   const handlePromptChange = usePreserveCursor<HTMLTextAreaElement>(
-    useCallback(
-      (value: string) => updateNodeData(id, { prompt: value, value }),
-      [id, updateNodeData],
-    ),
+    useCallback((value: string) => updateNodeData(id, { prompt: value }), [id, updateNodeData]),
   );
 
   // KI-169: поле растёт по тексту промпта (до 200px).

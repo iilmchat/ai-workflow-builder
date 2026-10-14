@@ -24,6 +24,7 @@ import {
 } from '@/lib/api';
 import { subscribeToRunStream } from '@/lib/run-stream';
 import { levelsToMap } from '@/lib/plan';
+import { pickDefaultMediaModel } from '@/lib/media';
 import { isNodeType, nodeLabelOf } from '@/lib/node-registry';
 import type { MediaModelInfo } from '@/types/media';
 import {
@@ -415,14 +416,19 @@ function nodeDataFromApi(
         result.aspectRatio = data.aspectRatio;
       }
 
-      // KI-160/KI-166: промпт узла. `prompt` — новое поле, `value` — то, из
-      // которого читает backend; поддерживаем оба, чтобы Load не терял текст.
-      if (typeof data.prompt === 'string') {
-        result.prompt = data.prompt;
-      }
+      // KI-160/KI-166: промпт узла живёт в `data.prompt`. Ранее его писали ещё
+      // и в `data.value` — теперь это не нужно, backend читает `data.prompt`.
+      // Старые workflow хранили промпт в `value`: переносим его в `prompt`,
+      // чтобы текст появился в поле узла (и снова сохранялся уже как `prompt`).
+      const prompt =
+        typeof data.prompt === 'string'
+          ? data.prompt
+          : typeof data.value === 'string'
+            ? data.value
+            : undefined;
 
-      if (typeof data.value === 'string') {
-        result.value = data.value;
+      if (prompt !== undefined) {
+        result.prompt = prompt;
       }
 
       if (typeof data.imageUrl === 'string') {
@@ -546,7 +552,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         position,
         state.nodes.length,
         state.llmModels[0]?.id,
-        state.mediaModels[0]?.id,
+        // KI-154: не mediaModels[0] (там bgremover — image-to-image),
+        // а первая text-to-image модель каталога.
+        pickDefaultMediaModel(state.mediaModels),
       );
 
       return {

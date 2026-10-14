@@ -182,7 +182,13 @@ export class MediaNodeExecutor {
   }
 
   /**
-   * Достаёт промпт узла из входов, с fallback на `data.value`.
+   * Достаёт промпт узла (KI-166).
+   *
+   * Приоритет источников:
+   * 1. вход `prompt` — связь от Text/LLM-узла;
+   * 2. `data.prompt` — промпт, введённый прямо в узле Image Generation;
+   * 3. `data.value` — то же поле у workflow, сохранённых до появления
+   *    `data.prompt` (обратная совместимость).
    *
    * @param node - узел графа
    * @param inputs - нормализованные входы
@@ -191,6 +197,10 @@ export class MediaNodeExecutor {
   private readPrompt(node: NodeDto, inputs: Record<string, unknown>): string {
     if (typeof inputs.prompt === 'string' && inputs.prompt.length > 0) {
       return inputs.prompt;
+    }
+
+    if (typeof node.data.prompt === 'string' && node.data.prompt.length > 0) {
+      return node.data.prompt;
     }
 
     return typeof node.data.value === 'string' ? node.data.value : '';

@@ -107,15 +107,48 @@ const DEEPSEEK_MODELS: readonly ModelInfo[] = [
   },
 ];
 
-/** Модели Yandex AI Studio. */
+/**
+ * Модели Yandex AI Studio (KI-159).
+ *
+ * `id` — короткое имя модели: именно оно хранится в `node.data.model` и
+ * показывается в UI. Полный URI (`gpt://<folder_id>/<model>/latest`) собирает
+ * {@link createYandexProvider}: Yandex не принимает короткий id и отвечает
+ * 400 «Failed to parse model URI».
+ *
+ * Перечень сверен с документацией Yandex Cloud: доступны `yandexgpt-lite`,
+ * `yandexgpt` (Pro) и `yandexgpt-32k`; версия `/latest` — по умолчанию.
+ * Прежний список содержал выдуманный id `qwen3.6-35b-a3b/latest`, из-за
+ * которого каждый Run по Yandex падал с 400.
+ *
+ * @see https://cloud.yandex.ru/docs/foundation-models/concepts/yandexgpt/models
+ */
 const YANDEX_MODELS: readonly ModelInfo[] = [
   {
-    id: 'qwen3.6-35b-a3b/latest',
-    label: 'Qwen3.6-35B (Yandex)',
-    inputModalities: ['text', 'vision'],
+    id: 'yandexgpt-lite',
+    label: 'YandexGPT Lite',
+    inputModalities: ['text'],
+    outputModalities: ['text'],
+  },
+  {
+    id: 'yandexgpt',
+    label: 'YandexGPT Pro',
+    inputModalities: ['text'],
+    outputModalities: ['text'],
+  },
+  {
+    id: 'yandexgpt-32k',
+    label: 'YandexGPT Pro 32k',
+    inputModalities: ['text'],
     outputModalities: ['text'],
   },
 ];
+
+/**
+ * Версия модели Yandex, подставляемая в URI.
+ *
+ * `/latest` — версия по умолчанию по документации.
+ */
+const YANDEX_MODEL_VERSION = 'latest';
 
 /**
  * Фабрика LLM-провайдеров (v0.5.0; GPTunnel — v0.6.0b.1).
@@ -276,14 +309,29 @@ export class LlmProviderFactory {
   }
 
   /**
-   * Создаёт провайдера Yandex AI Studio.
+   * Создаёт провайдера Yandex AI Studio (KI-159).
    *
-   * @returns провайдер либо `null`, если ключ не задан
+   * Yandex требует **и** ключ, **и** `YANDEX_FOLDER_ID`: без folder_id URI
+   * модели собрать нечем, а вызов падал бы с 400 уже во время Run. Поэтому при
+   * отсутствии любой из переменных провайдер не создаётся — Yandex просто не
+   * появляется в `GET /llm/models` (graceful degradation), а в лог уходит
+   * предупреждение с подсказкой, что задать.
+   *
+   * @returns провайдер либо `null`, если ключ или folder_id не заданы
    */
   private createYandexProvider(): OpenAiCompatibleProvider | null {
     const apiKey = this.config.get<string>('YANDEX_API_KEY');
+    const folderId = this.config.get<string>('YANDEX_FOLDER_ID');
 
     if (!apiKey) {
+      return null;
+    }
+
+    if (!folderId) {
+      this.logger.warn(
+        'YANDEX_FOLDER_ID не задан — провайдер yandex пропущен: без folder_id URI модели (gpt://<folder_id>/<model>/latest) собрать нельзя',
+      );
+
       return null;
     }
 
@@ -295,6 +343,8 @@ export class LlmProviderFactory {
         'https://llm.api.cloud.yandex.net/v1',
       models: YANDEX_MODELS,
       envKey: 'YANDEX_API_KEY',
+      // В UI и в node.data.model — короткое имя, в upstream — полный URI.
+      resolveModel: (model) => `gpt://${folderId}/${model}/${YANDEX_MODEL_VERSION}`,
     });
   }
 
