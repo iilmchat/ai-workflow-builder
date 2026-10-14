@@ -17,13 +17,18 @@
 ---
 ## [Unreleased]
 
+### Fixed
+- **KI-179** — LLM: fallback `reasoning` при пустом `content`;
+  явная ошибка «LLM вернул пустой ответ (finish_reason=X)» (`675ca23`).
+- **KI-180** — textarea для prompt в LLM-узле (auto-resize, i18n,
+  backend fallback `inputs.prompt` → `data.prompt`) (`675ca23`).
+- **KI-181** — media: схема принимает объектную форму ошибки
+  (EXCEPTION от GPTunnel); падение yandex-art на стороне
+  провайдера видно пользователю (`675ca23`).
+
 ### Documented
-- **KI-180, KI-181, KI-182** — найдено на смоке v0.7.2-pre:
-  - KI-180 (Medium): нет textarea для prompt в LLM-узле.
-  - KI-181 (High): media с не-generic params (yandex-art) падают
-    с `Invalid input`.
-  - KI-182 (High): LLM-селект не показывает vision-модели
-    (qwen3.6-35b-a3b в /llm/models есть, в UI — нет).
+- **KI-182** — не баг кода (старый `.env`); добавлено 5 тестов на
+  группировку моделей (`675ca23`).
 - **KI-174, KI-175, KI-176** — Yandex AI Studio: env-формат каталога
   моделей (по образцу `LMSTUDIO_MODELS`), vision-модальность
   `qwen3.6-35b-a3b` (потеряна в v0.7.1), цены в `MODEL_PRICING`.

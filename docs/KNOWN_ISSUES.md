@@ -2929,69 +2929,110 @@
 - **Связанные:** KI-174.
 
 ### KI-179 — LLM возвращает пустой content → media-узел падает с «Пустой prompt»
-- **Приоритет:** 🔴 Critical | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🔴 Critical | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.7.2 (коммит `675ca23`)
 - **Файлы:** `src/llm/providers/openai-compatible.provider.ts`,
-  `src/media/media-node-executor.service.ts`, `src/llm/llm.service.ts`
+  `src/llm/llm-node-executor.service.ts`
 - **Описание:** При Text → LLM (deepseek-v4-flash на GPTunnel) → ImageGen
-  (nano-banana-pro) LLM **иногда** возвращает `{"text": ""}` при
-  `tokens=44/1024` (1024 = maxTokens). Тогда media падает с «Пустой
-  prompt». Воспроизводится 2 из 6 запусков за час.
-  Гипотеза: GPTunnel/DeepSeek V4 Flash при упоре в `maxTokens`
-  возвращает reasoning-контент отдельно, `choices[0].message.content`
-  пустой, `finish_reason='length'`.
-- **Диагностика:** временно логировать структуру ответа (без PII):
-  длины `content`, `reasoning_content`, `finish_reason`.
-- **Решение (TBD):** (1) парсить `reasoning_content` как fallback;
-  (2) поднять/убрать maxTokens для deepseek-v4-flash; (3) явная ошибка
-  «LLM вернул пустой ответ (finish_reason=length)» вместо каскада.
-- **Когда чинить:** v0.7.2 (блокирует надёжный прогон media-цепочки).
-- **Связанные:** KI-166, KI-162.
+  (nano-banana-pro) LLM **иногда** возвращал `{"text": ""}` при
+  `tokens=44/1024` (1024 = maxTokens). Тогда media падал с «Пустой
+  prompt», и настоящая причина была не видна.
+- **Диагностика (2026-10-15):** гипотеза подтверждена — при
+  `finish_reason='length'` (упор в maxTokens) `content` пустой,
+  рассуждения в поле `reasoning` (не `reasoning_content`).
+  Воспроизведено на deepseek-v4-flash / GPTunnel с лимитами 16/64/256.
+- **Fix:** (1) fallback на `reasoning` при пустом `content`;
+  (2) явное исключение `LLM вернул пустой ответ (finish_reason=X)`
+  вместо каскада «Пустой prompt» в media.
+- **Остаток:** maxTokens для reasoning-моделей — KI-183.
+- **Когда чинить:** — (закрыто, v0.7.2)
+- **Связанные:** KI-166, KI-180, KI-183.
 
 ### KI-180 — Нет textarea для prompt в LLM-узле
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
-- **Файлы:** `web/src/components/nodes/LLMNode.tsx`
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.7.2 (коммит `675ca23`)
+- **Файлы:** `web/src/components/nodes/LLMNode.tsx`,
+  `web/src/types/graph.ts`, `web/src/stores/workflow.ts`,
+  `src/llm/llm-node-executor.service.ts`
 - **Описание:** TextNode и ImageGenNode имеют textarea (auto-resize),
   LLMNode — только `<select>` модели. Если связь от Text не проведена,
-  у LLM нет способа принять prompt — узел падает с «Пустой prompt».
-  Пользователь ожидает ввод прямо в узле (как в GPTunnel).
-- **Решение:** textarea для `data.prompt` (auto-resize из KI-169).
-  При выполнении: приоритет `inputs.prompt` (от связи), fallback
-  `data.prompt`. i18n: `node.llm.placeholder`.
-- **Когда чинить:** v0.7.2 (вместе с KI-179 — обе про пустой prompt).
+  у LLM нет способа принять prompt — узел падал с «Пустой prompt».
+- **Fix:** textarea для `data.prompt` (auto-resize из KI-169), backend
+  fallback `inputs.prompt` → `data.prompt` → `data.value`. i18n
+  `node.llm.placeholder`.
+- **Когда чинить:** — (закрыто, v0.7.2)
 - **Связанные:** KI-160, KI-169, KI-179.
 
 ### KI-181 — Media-модели с не-generic params (Yandex Art) падают
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-15
-- **Файлы:** `src/media/media-node-executor.service.ts`,
-  `src/media/providers/creativelab.provider.ts`
-- **Описание:** `yandex-art/latest` через CreativeLab/GPTunnel падает с
-  `Invalid input, check schema issues`. `promptLen=844` приходит, но
-  Yandex Art требует другой набор params (вероятно `width`/`height`
-  вместо `aspect_ratio`, или `style`, `seed`). Наш executor передаёт
-  generic-формат CreativeLab — это работает для flux/dall-e, но не для
-  специализированных моделей (yandex-art, kandinsky).
-- **Решение:** каталог `/media/models` содержит `params` per-model
-  (в `MediaModelInfo`); построить payload динамически по `params`
-  модели, а не хардкодить `aspect_ratio`. Проверить: `GET /media/models?type=IMAGE`
-  → `yandex-art` → `params`.
-- **Когда чинить:** v0.7.2 (блокирует генерацию через Yandex Art).
-- **Связанные:** KI-101, KI-154, KI-166.
+- **Приоритет:** 🟠 High | **Статус:** Fixed (частично) | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.7.2 (коммит `675ca23`)
+- **Файлы:** `src/media/dto/media-task.dto.ts`,
+  `src/media/dto/media-task.mapper.ts`,
+  `src/media/media-registry.service.ts`,
+  `src/media/media-node-executor.service.ts`
+- **Описание:** `yandex-art` через CreativeLab/GPTunnel падал с
+  `Invalid input, check schema issues`.
+- **Диагностика (2026-10-15):** params в `/media/models` для
+  `yandex-art` корректны (`aspect_ratio:enum`, `inputs: []`) — наш payload
+  подходил. Реальная причина: GPTunnel возвращает
+  `error:{code:1, title:"EXCEPTION", message:"Internal server error"}`,
+  `refunded:true` — падает на их стороне (4/4 прогонов). Наша схема
+  `MediaTaskResponseSchema` объявляла `error: z.string()` → `safeParse`
+  падал → в UI показывалось «Invalid input» вместо настоящей причины.
+- **Fix:** схема принимает объектную форму ошибки; executor показывает
+  `EXCEPTION: Internal server error` (refunded); параметры запроса
+  собираются по `params` модели из каталога, а не хардкодятся.
+- **Остаток:** генерация `yandex-art` через GPTunnel не работает на их
+  стороне. Нужен тикет в GPTunnel или отдельный endpoint Yandex Art —
+  KI-184.
+- **Когда чинить:** — (закрыто частично, v0.7.2)
+- **Связанные:** KI-101, KI-154, KI-166, KI-184.
 
 ### KI-182 — LLM-селект не показывает vision-модели
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-15
-- **Файлы:** `web/src/components/nodes/LLMNode.tsx`
+- **Приоритет:** 🟠 High | **Статус:** Documented (не воспроизводится) | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/components/nodes/LLMNode.tsx`,
+  `web/src/lib/llm-models.ts`
 - **Описание:** `/llm/models` отдаёт `qwen3.6-35b-a3b/latest` (Yandex)
-  с `inputModalities: ['text','vision']`. В UI-селекте LLM-узла эта
-  модель **не видна** — видно только `yandexgpt-lite/latest`. Гипотеза:
-  фильтр `filterModelsByInput(models, 'text')` или группировка
-  `groupLlmModelsForSelect` отсекает vision-модели (или неправильно
-  строит optgroup). Проверить: открыть DevTools, найти вызов
-  фильтра в LLMNode.
-- **Решение:** показать все модели с `outputModalities=['text']`
-  (входные модальности — только для бейджа, не для фильтра).
-  Vision-модели — в группе «Текст + Vision».
-- **Когда чинить:** v0.7.2 (vision-модели Yandex недоступны в UI).
-- **Связанные:** KI-174, KI-175, KI-069, KI-092.
+  с `inputModalities: ['text','vision']`, но в UI-селекте LLM-узла эта
+  модель якобы не видна.
+- **Диагностика (2026-10-15):** не баг кода. LLMNode не
+  использует `filterModelsByInput`; `groupLlmModelsForSelect` работает
+  правильно (`qwen3.6-35b-a3b` в группе «Текст + Vision», бейдж `[V]`).
+  Наблюдение объяснялось старым `.env` (`yandexgpt-lite/latest` без
+  `gpt://`) — Yandex давал 0 моделей.
+- **Fix:** добавить 5 тестов на группировку (контракт не сломать).
+- **Когда чинить:** — (закрыто как невоспроизводимое, v0.7.2)
+- **Связанные:** KI-174, KI-175, KI-092.
+
+### KI-183 — maxTokens не учитывает reasoning-модели
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/llm/providers/openai-compatible.provider.ts`
+  (`DEFAULT_MAX_TOKENS`), `src/llm/llm-provider.interface.ts`
+  (`LlmGenerateOptions`)
+- **Описание:** Модели с reasoning (deepseek-v4-flash через GPTunnel)
+  тратят бюджет 1024 токена на рассуждения — финальный ответ либо
+  пуст (KI-179), либо обрезан (в живом прогоне `tokens_out=1024`,
+  эссе оборвано на середине).
+- **Решение:** (1) поднять maxTokens для reasoning-моделей (2048/4096);
+  (2) env per-model override (`LLM_MAX_TOKENS_<MODEL>`);
+  (3) поле `maxTokens` в `ModelInfo`.
+- **Когда чинить:** v0.8 (нужно решение по тарифам/лимитам).
+- **Связанные:** KI-179.
+
+### KI-184 — Media-ошибка upstream не различает «наш запрос» и «сбой провайдера»
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/media/dto/media-task.mapper.ts`,
+  `src/media/media-node-executor.service.ts`
+- **Описание:** После KI-181 объектная форма `error` разбирается,
+  но `code:1 EXCEPTION` от GPTunnel — это внутренняя ошибка на их
+  стороне. В `node_runs.error` попадает как обычный текст падения
+  узла. Пользователь не понимает, что повторять бессмысленно, и
+  что `refunded:true`.
+- **Решение:** различать классы ошибок upstream (валидация входа /
+  сбой провайдера / модель снята); передавать `refunded` в метрики
+  узла.
+- **Когда чинить:** v0.8 (вместе с тикетом в GPTunnel).
+- **Связанные:** KI-181, KI-105.
 
 ---
 
@@ -2999,14 +3040,14 @@
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 68 |
+| Fixed | 71 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
-| Documented | 6 |
-| Open | 99 |
+| Documented | 7 |
+| Open | 97 |
 | Won't Fix | 1 |
-| **Всего** | **175** |
+| **Всего** | **177** |
 
 ---
 
