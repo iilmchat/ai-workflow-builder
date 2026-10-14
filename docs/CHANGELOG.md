@@ -17,6 +17,10 @@
 ---
 ## [Unreleased]
 
+## [0.6.1] — 2026-10-14
+
+**Frontend: единый реестр узлов (KI-121, KI-122, KI-123), KI-125..129.**
+
 ### Changed
 - **Frontend — v0.6.1: единый реестр узлов (KI-121, KI-122, KI-123):**
   - `web/src/lib/node-registry.ts` (новый) — `NODE_REGISTRY`
@@ -37,6 +41,16 @@
   - `NODE_CATEGORIES` / `NodeCategory` + `category` у каждой записи
     реестра — скелет под каталог (KI-127 частично).
   - `nodes/index.ts` — тонкий реэкспорт; `Canvas.tsx` не менялся.
+
+### Documented
+- **KI-125** — нет тёмной темы (🟡 Medium, v0.7).
+- **KI-126** — нет i18n RU/EN (🟡 Medium, v0.7). RULES 1.14.
+- **KI-127** — каталог узлов с категориями (🟡 Medium, частично
+  закрыт: `NODE_CATEGORIES` + `category` в реестре; поповер — v0.8).
+- **KI-128** — узлы-сервисы с внутренним конфигом (🟢 Low, v0.8+).
+- **KI-129** — уборка типов фронтенда: `NodeData` как
+  дискриминированный union, `imageUrl` без `undefined`
+  (🟢 Low, v0.7).
 
 ---
 
