@@ -17,6 +17,21 @@
 ---
 ## [Unreleased]
 
+### Documented
+- **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
+  - **v0.8 Canvas UX:** KI-185 (вставка узла в связь),
+    KI-186 (расширенные хоткеи), KI-187 (комментарии),
+    KI-188 (курсор/рука), KI-189 (направляющие/snap),
+    KI-190 (миникарта-toggle), KI-191 (дублировать узел).
+  - **v0.8 LLM:** KI-192 (System prompt), KI-193 (Reasoning mode).
+  - **v0.8 прочее:** KI-194 (Note/Compare), KI-195 (auto-save).
+  - **v0.8 Share:** KI-197 (публичная read-only ссылка).
+  - **v0.9:** KI-196 (медиа-инструменты: upscale, bg-removal,
+    lipsync, 3D, motion).
+  - **KI-107 не тронут:** в KNOWN_ISSUES.md это «Параллельные
+    media-узлы и rate limit», а не Share — детали Share
+    заведены отдельным KI-197.
+
 ## [0.7.2] — 2026-10-15
 
 **Patch-релиз после v0.7.1. Yandex env + LM Studio auto-discovery + LLM/media фиксы.**
