@@ -1,9 +1,9 @@
 # PROMPT_V4.md — Стартовый промпт для нового чата
 
-**Версия промпта:** v4.0
-**Дата:** 2026-10-14
-**Актуальный релиз:** v0.7.1 (UI-срезы + 19 патчей: интеграции, UX, метрики)
-**Текущий этап:** v0.7.2 — Yandex env-формат + 9 Open KI; затем v0.8 (auth, sub-workflows)
+**Версия промпта:** v4.1
+**Дата:** 2026-10-15
+**Актуальный релиз:** v0.7.2 (Yandex env + LM Studio auto-discovery + LLM/media fixes)
+**Текущий этап:** v0.8 — DESIGN (sub-workflows, auth, share, Canvas UX, LLM system/reasoning)
 **Репозиторий:** https://github.com/iilmchat/ai-workflow-builder
 **Рабочий путь:** `D:\Projects\AI\workflow-builder` (перенесён с `C:\Projects\AI\ai-workflow-builder`)
 
@@ -73,7 +73,7 @@
 - **BullMQ 6** + **ioredis** — очередь `workflow-runs`.
 - **Zod 4** — валидация на границах.
 - **Pino** — логи.
-- **Vitest 4** — тесты (**341** на v0.7.1).
+- **Vitest 4** — тесты (**358** на v0.7.2).
 - **@anthropic-ai/sdk** 0.133, **openai** 7.32.
 
 ### Frontend (`web/`)
@@ -82,8 +82,8 @@
 - **@xyflow/react** v12 (React Flow) — canvas.
 - **Zustand 5** — state.
 - **Tailwind CSS v4** (плагин `@tailwindcss/vite`, без JS-конфига).
-- **react-i18next** + **i18next** — i18n RU/EN (93 ключа).
-- **Vitest 4** (10 тестов на чистые функции).
+- **react-i18next** + **i18next** — i18n RU/EN (106 ключей).
+- **Vitest 4** (15 тестов на чистые функции).
 - **Zod** — валидация API-ответов (в `web/dependencies`).
 
 ### Инструменты
@@ -96,7 +96,7 @@
 
 ### Открытые репозитории
 
-- Теги: `v0.4.0`, `v0.6.0`, `v0.6.1`, `v0.7.0`, `v0.7.1`.
+- Теги: `v0.4.0`, `v0.6.0`, `v0.6.1`, `v0.7.0`, `v0.7.1`, `v0.7.2`.
 - **`v0.5.0` НЕ существует** — 6 LLM-провайдеров + GPTunnel chat
   вошли в v0.6.0.
 
@@ -137,11 +137,12 @@
 
 ## § 3. Обязательные документы (читать в каждой новой сессии)
 
-1. **`docs/development/RULES.md`** — единый свод правил (**v1.5.0**).
+1. **`docs/development/RULES.md`** — единый свод правил (**v1.7.0**).
    - § 2.10 — формат передачи MD через чат (A — 4-пробельный отступ).
    - § 2.12 — при закрытии KI давать **точечный diff** на docs.
    - § 2.13 — не писать буквальные паттерны API-ключей.
    - § 2.14 — структура DESIGN-документа.
+   - § 3.17 — **docs-коммит сразу после каждого код-шага** (не откладывать).
    - § 4.1 — **`.js` в относительных импортах** (ESM, backend).
    - § 4.32 — Tailwind v4 `color-mix()` вне `@theme` — ловушка.
    - § 4.33 — smoke «закрылось» требует before-снимка.
@@ -151,8 +152,9 @@
    `[Unreleased]` → `[X.Y.Z] — YYYY-MM-DD`, сверху пустая `[Unreleased]`.
 3. **`docs/KNOWN_ISSUES.md`** — реестр KI. Нумерация с KI-001, **не
    пропускать**. При закрытии — статус `Fixed` + «Исправлено в: vX.Y.Z».
-   **169 блоков на v0.7.1.**
-4. **`docs/development/PROMPT_V4.md`** (этот файл).
+   **190 блоков на v0.7.2.**
+4. **`docs/development/PROMPT_V4.md`** (этот файл, v4.1 — актуализирован
+   2026-10-15 под v0.7.2; полный PROMPT_V5 — после DESIGN v0.8).
 
 ---
 
@@ -189,15 +191,20 @@
 
 ---
 
-## § 5. Текущее состояние (v0.7.1, 2026-10-14)
+## § 5. Текущее состояние (v0.7.2, 2026-10-15)
 
 ### Что работает
 
 **Backend:**
 - CRUD workflow, Engine (Kahn's algorithm + DFS cycle detection).
 - 6 LLM-провайдеров: Anthropic, OpenAI, RouterAI, GPTunnel, DeepSeek,
-  **Yandex AI Studio** (OpenAI-совместимый, `gpt://<folder>/<model>/<version>`),
-  LM Studio (`isLocal: true` → cost_usd = 0).
+  **Yandex AI Studio** (OpenAI-совместимый endpoint
+  `https://llm.api.cloud.yandex.net/v1`, env `YANDEX_MODELS` +
+  `YANDEX_FOLDER_ID`, URI `gpt://<folder>/<model>/<version>`,
+  vision через суффикс `:text+vision` для qwen3.6-35b-a3b),
+  LM Studio (`isLocal: true` → cost_usd = 0, **auto-discovery
+  через `GET /v1/models`** при старте, env `LMSTUDIO_MODELS` —
+  приоритет для модальностей).
 - Media-провайдер **CreativeLab** (GPTunnel `/api/v2/media`), 57 IMAGE-моделей.
 - BullMQ worker (`workflow-runs`, concurrency 5, lease 5 мин, retry).
 - SSE-поток `GET /runs/:id/stream` — snapshot + events, keep-alive 15s.
@@ -210,11 +217,13 @@
 
 **Frontend:**
 - Canvas (React Flow + Zustand + Tailwind v4).
-- Узлы: **Text** (textarea auto-resize), **LLM** (селект с группировкой),
-  **ImageGen** (селект + aspect_ratio + prompt textarea + картинка в узле).
+- Узлы: **Text** (textarea auto-resize), **LLM** (селект моделей
+  + группировка «Текст» / «Текст + Vision» + textarea prompt +
+  auto-resize), **ImageGen** (селект + aspect_ratio + textarea prompt
+  + картинка).
 - **Тёмная/светлая тема** (CSS-переменные через `@theme`, `.dark`,
   useTheme + system).
-- **i18n RU/EN** (react-i18next, 93 ключа, паритет-тест).
+- **i18n RU/EN** (react-i18next, 106 ключей, паритет-тест).
 - **SSE-подписка**, подсветка нод по статусу.
 - **Панель результата** (outputs, метрики cost_usd/cost_rub, logs,
   word-wrap).
@@ -230,7 +239,7 @@
   duration_ms, logs (unique по `run_id, node_id`).
 
 **Метрики:**
-- 341 backend-тестов, 10 frontend-тестов.
+- 358 backend-тестов, 15 frontend-тестов.
 - Bundle frontend: ~600 kB JS.
 - CI: 2 job (backend + web), оба зелёные.
 - Husky pre-commit — блокирует ключи.
@@ -238,34 +247,50 @@
 
 ---
 
-## § 6. Открытые KI (актуально на v0.7.1)
+## § 6. Открытые KI (актуально на v0.7.2)
 
-**Всего: 169 блоков.** Fixed 64 · Open 97 · Planned 1 · Documented 6 ·
-Won't Fix 1.
+**Всего: 190 блоков.** Fixed 71 · Documented 7 · Open 110 ·
+Planned 1 · Won't Fix 1.
 
-**🟠 High / приоритет v0.7.2:**
-- **KI-174** — Yandex AI Studio: env-формат `YANDEX_MODELS`
-  (по образцу `LMSTUDIO_MODELS`), отменяет KI-172.
-- **KI-088** — нет автообнаружения моделей LM Studio (`GET /v1/models`).
+**🟠 High / v0.8:**
+- **KI-192** — System prompt у LLM-узла.
+- **KI-193** — Режим размышления (Reasoning: Off/Medium/High)
+  для reasoning-моделей.
 
-**🟡 Medium / v0.7.2 или v0.8:**
-- **KI-175** — Yandex-модели всегда `text`, нет `V`-бейджа для vision.
-- **KI-176** — Yandex-цены ($0.002/$0.003) не в `MODEL_PRICING` → null.
+**🟡 Medium / v0.8:**
+- **KI-183** — maxTokens не учитывает reasoning-модели.
+- **KI-184** — Media-ошибка upstream не различает «наш запрос» /
+  «сбой провайдера» / «refunded».
+- **KI-185** — вставка узла в связь (hover на edge).
+- **KI-186** — расширенный список хоткеев (Tab/S/H/F/C/Ctrl+A/C/V/D/Z).
+- **KI-189** — направляющие + snap при перетаскивании.
+- **KI-191** — дублировать узел (Ctrl+D).
+- **KI-195** — auto-save в фоне (debounced).
+- **KI-197** — публичная read-only ссылка (Share).
 - **KI-066** — нет heartbeat аренды в БД (параллельный replay).
-- **KI-067** — `concurrency` глобальный, нет per-provider лимитов.
+- **KI-067** — concurrency глобальный, нет per-provider лимитов.
 - **KI-048** — нет предохранителя по стоимости повторов.
-- **KI-062** — `APIConnectionError` — неповторяемая.
+- **KI-062** — APIConnectionError классифицируется как неповторяемая.
 - **KI-145** — каталог узлов: a11y (listbox/aria-activedescendant).
-- **KI-155** — frontend не умеет тестировать компоненты.
-- **KI-150** — `cost_usd = null` для моделей вне прайса.
-- **KI-061** — `GET /runs` (список запусков).
+- **KI-155** — frontend не умеет тестировать компоненты (нет jsdom).
+- **KI-150** — cost_usd = null для моделей вне прайса.
+- **KI-061** — GET /runs (список запусков).
 - **KI-063** — финальность не в snapshot.
-- **KI-077** — `GET /runs/:id/nodes`.
+- **KI-077** — GET /runs/:id/nodes.
 
-**🟢 Low / v0.8+:** ~15 штук (KI-152, 153, 158, 161, 170, 171, 173,
-076, 090, 105, 118, 123, 128, 143, 144).
-
----
+**🟢 Low / v0.8 или v0.9:**
+- **KI-187** — комментарии/аннотации на холсте.
+- **KI-188** — режимы Курсор / Рука (S/H).
+- **KI-190** — миникарта: toggle + hotkey.
+- **KI-194** — Note / Compare узлы.
+- **KI-196** — медиа-инструменты (upscale, bg-removal, lipsync,
+  3D, motion) — v0.9.
+- **KI-177** — LM Studio auto-discovery только на старте (нет
+  фонового обновления).
+- **KI-178** — формат *_MODELS не валидируется Zod.
+- **KI-152, 153, 158, 161, 170, 171, 173** — Low-уборки.
+- ~10 старых Low из реестра (KI-028, 043, 045, 057, 058, 073, 076,
+  090, 102, 105, 118, 123, 128, 143, 144).
 
 ## § 7. Известные грабли (Windows + Docker + WSL2 + Yandex + CI)
 
@@ -327,44 +352,84 @@ Won't Fix 1.
 
 17. **Type узла: `'image_generation'` (backend-контракт), `kind: 'image'`
     (UI-метка).** Не путать.
+18. **Tailwind v4: `color-mix()` со ссылкой на `var(--color-*)` вне
+    `@theme`/`.dark`** эмитится как невалидный `theme(...)` — держать
+    значение отдельной переменной (KI-134, RULES 4.32).
+
+19. **CI: `pnpm/action-setup@v4`** — не указывать `with: version`
+    при наличии `packageManager` в `package.json` (KI-141,
+    RULES 6.10). Все job'ы в одном стиле.
+
+20. **Зависимости `web/`** — только в `web/package.json`, не полагаться
+    на корневой `node_modules` (KI-142, RULES 6.11). Проверка:
+    `Remove-Item web/node_modules -Recurse; pnpm --dir web install
+    --frozen-lockfile; pnpm --dir web build`.
+
+21. **Zod strip по умолчанию.** Новые поля в SSE-событиях нужно явно
+    добавлять в frontend Zod-схему, иначе молча теряются (KI-149).
+
+22. **Yandex AI Studio** — OpenAI-совместимый endpoint
+    `https://llm.api.cloud.yandex.net/v1`. URI модели:
+    `gpt://<folder_id>/<model>/<version>`. Каталог обновляется —
+    env `YANDEX_MODELS` (KI-174). Vision через суффикс `:text+vision`.
+
+23. **`usePreserveCursor`** для всех контролируемых `<input>` /
+    `<textarea>` с внешним store (Zustand) — иначе курсор прыгает
+    в конец (KI-157).
+
+24. **Vite HMR кэш** — после правки компонентов, если поведение не
+    соответствует исходнику: `Remove-Item web/node_modules/.vite
+    -Recurse` + перезапуск dev-сервера.
+
+25. **`cost_usd = 0` для LM Studio** (isLocal), **`null`** для
+    облачных вне прайса. Не путать «бесплатно» и «неизвестно»
+    (KI-148, KI-052).
 
 ---
 
 ## § 8. Roadmap
 
-### v0.7.2 — Yandex + Open KI (следующее)
+### v0.7.2 — Yandex env + LM Studio + LLM/media fixes (2026-10-15) ✅ ВЫПУЩЕН
 
-- **KI-174** — env-формат `YANDEX_MODELS` (High, отменяет KI-172).
-- **KI-175** — vision-модальность Yandex `qwen3.6-35b-a3b`.
-- **KI-176** — Yandex-цены в `MODEL_PRICING`.
-- **KI-088** — автообнаружение LM Studio через `GET /v1/models`.
-- **KI-150** — «неизвестно» vs «бесплатно» в UI.
-- **KI-155** — frontend-тесты компонентов (алиас `@/`, jsdom).
-- **KI-066** — heartbeat аренды (`lease_expires_at`).
+- KI-174/175/176 — Yandex env-формат каталога, vision, цены.
+- KI-088 — LM Studio auto-discovery.
+- KI-179 — LLM: пустой content (fallback reasoning).
+- KI-180 — textarea для prompt в LLM-узле.
+- KI-181 — media: схема принимает объектную форму ошибки.
 
-### v0.8 — фичи для продукта
+### v0.8 — фичи для продукта (следующее)
+
+**DESIGN v0.8 — до кода.** Состав:
 
 - **Auth** (JWT + Passport, KI-106).
+- **Share** (read-only ссылка, KI-197; участники по ID — v0.9+).
 - **Sub-workflows** (переиспользуемые компоненты).
-- **Node types:** `http`, `condition`, `output` (KI-105).
-- **Share workflow** (read-only, KI-107).
+- **LLM upgrade:** System prompt (KI-192), Reasoning mode (KI-193);
+  maxTokens (KI-183).
+- **Canvas UX:** вставка в связь (KI-185), хоткеи (KI-186),
+  комментарии (KI-187), курсор/рука (KI-188), snap/направляющие
+  (KI-189), миникарта toggle (KI-190), дублирование (KI-191),
+  auto-save (KI-195).
+- **Node types:** http, condition, output (KI-105), note/compare
+  (KI-194).
 - **Export/Import JSON** (KI-108).
-- **Templates** (пресеты, KI-109).
-- **Image providers:** Replicate / FAL напрямую.
-- **VIDEO/AUDIO/MUSIC** узлы (CreativeLab даёт API).
+- **Templates** (KI-109).
 - **KI-067** — per-provider семафоры.
 - **KI-048** — бюджет вызовов на запуск.
 - **KI-062** — retryable `APIConnectionError`.
-- **KI-077** — `GET /runs/:id/nodes` (для Load после F5).
+- **KI-077** — `GET /runs/:id/nodes`.
 
-### v0.9+ — observability
+### v0.9+ — медиа + агенты + observability
 
+- **Медиа-инструменты:** upscale, bg-removal, lipsync, 3D, motion
+  (KI-196).
+- **Vector DB / Memory / Agent** (KI-128).
+- **Video / Audio / Music** узлы (KI-105).
+- **Image providers** напрямую: Replicate / FAL.
 - OpenTelemetry traces.
 - Rate limiting per provider.
 - Human-in-the-loop (approval node).
 - Workflow versioning.
-
----
 
 ## § 9. Формат ответа ассистента
 
@@ -388,7 +453,7 @@ Won't Fix 1.
 
 - **Не соглашайся вслепую.** dsh может ошибиться (был случай с KI-086 —
   false alarm). Если что-то смущает — скажи.
-- **Проверяй по цифрам.** Тесты `341/341`, не «много». Build `0/0`.
+- **Проверяй по цифрам.** Тесты `358/358`, не «много». Build `0/0`.
 - **Смотри за отступами от ТЗ.** Если dsh отступил и обосновал —
   не перебивай, если обоснование верное.
 - **Проверяй, что не смешались задачи.** RULES § 3.2.
@@ -446,7 +511,17 @@ Won't Fix 1.
 - **`usePreserveCursor`** — сохранение позиции курсора при контролируемых
   полях (KI-157).
 - **`as const satisfies Record<NodeType, ...>`** — tsc ловит забытый тип.
-
+- **`usePreserveCursor`** — сохранение позиции курсора в контролируемых
+  полях со store (KI-157).
+- **`pickDefaultMediaModel`** — выбор text-to-image модели как дефолт,
+  а не первой по алфавиту (KI-154).
+- **`bareModelId`** — извлечение короткого id из Yandex URI
+  `gpt://<folder>/<model>/<version>` (KI-176).
+- **`calculateCostUsdForProvider`** — cost_usd = 0 для `isLocal`,
+  иначе из MODEL_PRICING (KI-148).
+- **Zod-схемы синхронизируются вручную** между backend events и
+  frontend (`run-event.dto.ts` ↔ `run-stream.ts`) — тест на паритет
+  полей был бы полезен (KI-149).
 **Не стесняйся предлагать новое.** Если видишь паттерн, которого нет в
 RULES — скажи «это стоит добавить в RULES § X.Y».
 
@@ -454,9 +529,11 @@ RULES — скажи «это стоит добавить в RULES § X.Y».
 
 ## § 12. Итог
 
-**Проект в состоянии: v0.7.1 выпущен, CI зелёный, 341/341 backend +
-10/10 frontend, тёмная тема + i18n + каталог + картинки работают.**
+**Проект в состоянии: v0.7.2 выпущен, CI зелёный, 358/358 backend +
+15/15 frontend. Тёмная тема + i18n + каталог + Yandex env +
+LM Studio auto + картинки — работают.**
 
-**Мы стоим перед v0.7.2 — Yandex env-формат + 12 Open KI.**
+**Мы стоим перед v0.8 — DESIGN (sub-workflows, auth, share,
+Canvas UX, LLM system/reasoning).**
 
 **Продолжаем.**
