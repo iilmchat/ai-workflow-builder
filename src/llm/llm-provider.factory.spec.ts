@@ -139,6 +139,8 @@ describe('LlmProviderFactory', () => {
     );
 
     expect(lmstudio?.isConfigured).toBe(true);
+    // KI-148: LM Studio крутится локально, стоимость вызова считается нулевой.
+    expect(lmstudio?.isLocal).toBe(true);
     // Без суффикса модальностей модель считается текстовой (v0.6.0a).
     expect(lmstudio?.models).toEqual([
       {
@@ -156,8 +158,16 @@ describe('LlmProviderFactory', () => {
     ]);
   });
 
-  it('разбирает модальности LM Studio из суффикса (v0.6.0a)', () => {
-    const lmstudio = byName(
+  it('KI-148: облачные провайдеры не помечены локальными', () => {
+    // Только LM Studio бесплатен: у остальных стоимость считается по прайсу.
+    expect(byName({ OPENAI_API_KEY: 'sk-openai' }, 'openai')?.isLocal).toBe(false);
+    expect(byName({ DEEPSEEK_API_KEY: 'sk-deepseek' }, 'deepseek')?.isLocal).toBe(false);
+    expect(
+      byName({ ANTHROPIC_API_KEY: 'sk-ant-test' }, 'anthropic')?.isLocal,
+    ).toBeUndefined();
+  });
+
+  it('разбирает модальности LM Studio из суффикса (v0.6.0a)', () => {    const lmstudio = byName(
       {
         LMSTUDIO_MODELS:
           'qwen2.5-coder-7b-instruct:text,qwen/qwen2.5-vl-7b:text+vision',

@@ -66,6 +66,13 @@ export interface OpenAiCompatibleConfig {
    * не задан (например, `OPENAI_API_KEY`). Для LM Studio ключ не нужен.
    */
   envKey?: string;
+  /**
+   * Локальный провайдер (модели на своём железе, бесплатны).
+   *
+   * Используется для расчёта стоимости: у локальных провайдеров она равна `0`,
+   * а не `null` (KI-148). По умолчанию — `false`.
+   */
+  isLocal?: boolean;
 }
 
 /**
@@ -92,6 +99,13 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
   /** Модели, объявленные у провайдера. */
   readonly models: readonly ModelInfo[];
 
+  /**
+   * Локальный ли провайдер (LM Studio — да, облачные — нет).
+   *
+   * Влияет на расчёт стоимости: у локального она `0`, а не `null` (KI-148).
+   */
+  readonly isLocal: boolean;
+
   private readonly logger: Logger;
   /** Клиент SDK: создаётся всегда, кроме случая отсутствия ключа. */
   private readonly client: OpenAI | null;
@@ -105,6 +119,7 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
     this.name = config.name;
     this.models = config.models;
     this.envKey = config.envKey;
+    this.isLocal = config.isLocal ?? false;
     this.logger = new Logger(`OpenAiCompatibleProvider:${config.name}`);
 
     if (!config.apiKey) {

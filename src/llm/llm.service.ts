@@ -22,10 +22,14 @@ export class LlmService {
   /**
    * Вызывает LLM по id модели.
    *
+   * Провайдер резолвится здесь, поэтому именно здесь к результату добавляется
+   * флаг `isLocal`: исполнитель узла не знает провайдера, но должен посчитать
+   * стоимость (`0` для локальных моделей, KI-148).
+   *
    * @param prompt - пользовательский промпт
    * @param model - id модели (из `node.data.model`)
    * @param options - дополнительные параметры (`system`, лимиты, свой signal)
-   * @returns текст ответа и метрики вызова (KI-038)
+   * @returns текст ответа и метрики вызова (KI-038), с флагом `isLocal`
    * @throws LlmProviderException если модель не поддерживается или вызов упал
    */
   async generateAsync(
@@ -35,12 +39,14 @@ export class LlmService {
   ): Promise<LlmGenerateResult> {
     const provider = this.registry.resolveByModel(model);
 
-    return provider.generateAsync(prompt, {
+    const result = await provider.generateAsync(prompt, {
       // Таймаут по умолчанию; явный options.signal имеет приоритет.
       signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
       ...options,
       // model задаётся аргументом и снаружи не переопределяется.
       model,
     });
+
+    return { ...result, isLocal: provider.isLocal ?? false };
   }
 }

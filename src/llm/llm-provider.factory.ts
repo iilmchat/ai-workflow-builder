@@ -363,6 +363,8 @@ export class LlmProviderFactory {
       apiKey: LMSTUDIO_PLACEHOLDER_KEY,
       baseURL,
       models,
+      // LM Studio крутится на своём железе: стоимость вызова — 0, не null (KI-148).
+      isLocal: true,
     });
   }
 

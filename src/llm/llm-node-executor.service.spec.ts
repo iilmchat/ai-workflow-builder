@@ -94,6 +94,27 @@ describe('LlmNodeExecutor', () => {
     });
   });
 
+  it('KI-148: для локального провайдера costUsd = 0, а не null', async () => {
+    llm.generateAsync.mockResolvedValue({
+      text: 'локальный ответ',
+      usage: { inputTokens: 10, outputTokens: 20, model: 'qwen2.5-7b-instruct' },
+      isLocal: true,
+    });
+
+    const result = await executor.executeAsync(
+      node({ model: 'qwen2.5-7b-instruct' }),
+      { prompt: 'привет' },
+    );
+
+    // Модель вне прайс-листа, но провайдер локальный: вызов бесплатен → 0.
+    expect(result.metrics).toEqual({
+      inputTokens: 10,
+      outputTokens: 20,
+      costUsd: 0,
+      model: 'qwen2.5-7b-instruct',
+    });
+  });
+
   it('берёт модель по умолчанию, если data.model не задана', async () => {
     await executor.executeAsync(node({}), { prompt: 'привет' });
 

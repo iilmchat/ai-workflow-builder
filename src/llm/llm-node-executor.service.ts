@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { NodeDto } from '../engine/dto/index.js';
-import { calculateCostUsd } from './model-pricing.js';
+import { calculateCostUsdForProvider } from './model-pricing.js';
 import { LlmProviderException } from './llm-provider.interface.js';
 import { LlmService } from './llm.service.js';
 
@@ -76,7 +76,10 @@ export class LlmNodeExecutor {
     const metrics: LlmNodeMetrics = {
       inputTokens: usage?.inputTokens ?? null,
       outputTokens: usage?.outputTokens ?? null,
-      costUsd: calculateCostUsd(
+      // KI-148: у локальных провайдеров (LM Studio) стоимость — 0, а не null,
+      // иначе панель показывала бы токены без цены.
+      costUsd: calculateCostUsdForProvider(
+        { isLocal: result.isLocal },
         usedModel,
         usage?.inputTokens ?? null,
         usage?.outputTokens ?? null,

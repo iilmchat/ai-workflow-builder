@@ -1,4 +1,8 @@
-import { MODEL_PRICING, calculateCostUsd } from './model-pricing.js';
+import {
+  MODEL_PRICING,
+  calculateCostUsd,
+  calculateCostUsdForProvider,
+} from './model-pricing.js';
 
 describe('calculateCostUsd', () => {
   it('считает стоимость известной модели по токенам (KI-038)', () => {
@@ -42,5 +46,31 @@ describe('calculateCostUsd', () => {
       'gpt-4o',
       'gpt-4o-mini',
     ]);
+  });
+});
+
+describe('calculateCostUsdForProvider (KI-148)', () => {
+  it('для локального провайдера стоимость — 0, а не null', () => {
+    // Модель вне прайс-листа: без флага было бы null («неизвестно»).
+    expect(
+      calculateCostUsdForProvider({ isLocal: true }, 'qwen2.5-7b-instruct', 10, 20),
+    ).toBe(0);
+  });
+
+  it('для локального провайдера 0 даже без usage (модель бесплатна)', () => {
+    expect(calculateCostUsdForProvider({ isLocal: true }, 'qwen2.5-7b-instruct', null, null)).toBe(
+      0,
+    );
+  });
+
+  it('для не-локального провайдера делегирует в calculateCostUsd', () => {
+    expect(calculateCostUsdForProvider({ isLocal: false }, 'gpt-4o', 1_000_000, 0)).toBe(2.5);
+    // Модель вне прайса остаётся «неизвестной» — null, не 0.
+    expect(calculateCostUsdForProvider({ isLocal: false }, 'deepseek-reasoner', 10, 20)).toBeNull();
+  });
+
+  it('отсутствие флага трактуется как «не локальный»', () => {
+    expect(calculateCostUsdForProvider({}, 'gpt-4o', 1_000_000, 0)).toBe(2.5);
+    expect(calculateCostUsdForProvider({}, 'unknown-model', 10, 20)).toBeNull();
   });
 });

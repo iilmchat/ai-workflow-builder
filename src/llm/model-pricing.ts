@@ -56,3 +56,32 @@ export function calculateCostUsd(
 
   return Number((inputCost + outputCost).toFixed(6));
 }
+
+/**
+ * Считает стоимость вызова с учётом локальности провайдера (KI-148).
+ *
+ * Для локальных провайдеров (LM Studio) модели запущены на своём железе и
+ * бесплатны, поэтому стоимость — `0`, а не `null`: `null` в панели результата
+ * означал бы «неизвестно» и выглядел бы как отсутствие данных, хотя вызов
+ * действительно ничего не стоил. Для остальных провайдеров результат
+ * полностью совпадает с {@link calculateCostUsd} — в том числе `null` для
+ * модели вне прайс-листа (KI-052).
+ *
+ * @param provider - провайдер; учитывается только флаг `isLocal`
+ * @param model - id модели
+ * @param inputTokens - токенов на входе (может быть `null`)
+ * @param outputTokens - токенов на выходе (может быть `null`)
+ * @returns `0` для локального провайдера, иначе стоимость в USD либо `null`
+ */
+export function calculateCostUsdForProvider(
+  provider: { isLocal?: boolean },
+  model: string,
+  inputTokens: number | null,
+  outputTokens: number | null,
+): number | null {
+  if (provider.isLocal === true) {
+    return 0;
+  }
+
+  return calculateCostUsd(model, inputTokens, outputTokens);
+}

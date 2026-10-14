@@ -52,6 +52,8 @@ describe('LlmService', () => {
     await expect(service.generateAsync('привет', 'fake-model')).resolves.toEqual({
       text: 'ответ провайдера',
       usage: { inputTokens: 3, outputTokens: 2, model: 'fake-model' },
+      // KI-148: сервис проставляет флаг локальности, провайдер его не задал.
+      isLocal: false,
     });
 
     expect(generateAsync).toHaveBeenCalledTimes(1);
@@ -70,6 +72,38 @@ describe('LlmService', () => {
     await expect(service.generateAsync('привет', 'fake-model')).resolves.toEqual({
       text: 'без метрик',
       usage: null,
+      isLocal: false,
+    });
+  });
+
+  it('KI-148: помечает результат isLocal для локального провайдера', async () => {
+    const localProvider: ILlmProvider = {
+      name: 'lmstudio',
+      models: [{ id: 'qwen2.5-7b-instruct', label: 'qwen2.5-7b-instruct (local)' }],
+      isConfigured: true,
+      isLocal: true,
+      generateAsync: vi.fn(() =>
+        Promise.resolve({
+          text: 'локальный ответ',
+          usage: { inputTokens: 3, outputTokens: 2, model: 'qwen2.5-7b-instruct' },
+        }),
+      ),
+    };
+    const registry = {
+      resolveByModel: vi.fn(() => localProvider),
+      listModels: vi.fn(() => []),
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [LlmService, { provide: LlmRegistryService, useValue: registry }],
+    }).compile();
+    const localService = moduleRef.get(LlmService);
+
+    await expect(
+      localService.generateAsync('привет', 'qwen2.5-7b-instruct'),
+    ).resolves.toEqual({
+      text: 'локальный ответ',
+      usage: { inputTokens: 3, outputTokens: 2, model: 'qwen2.5-7b-instruct' },
+      isLocal: true,
     });
   });
 
