@@ -1907,7 +1907,7 @@
 - **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
 - **Файлы:** `web/src/index.css`, `web/src/components/*`
 - **Описание:** Tailwind v4 подключён без dark-mode стратегии. Все
-  цвета светлые (`bg-white`, `text-gray-700`, `border-gray-200`).
+  цвета светлые (`bg-white`, `text-slate-700`, `border-slate-200`).
   Переключение темы невозможно без переписывания классов.
 - **Возможные решения:**
   1. `dark:` варианты + класс `.dark` на `<html>` (классический
@@ -1915,7 +1915,6 @@
   2. CSS-переменные (`--color-bg`, `--color-fg`) в `:root` и `.dark`,
      Tailwind v4 `@theme` — компоненты используют `bg-background`,
      `text-foreground`. Меньше правок при добавлении новых тем.
-  3. `next-themes` (аналог для React).
 - **Когда чинить:** v0.7 (перед UX-полировкой).
 - **Связанные:** KI-126.
 
@@ -1955,8 +1954,10 @@
      `subcategory?: string`; меню строится из реестра.
   2. Отдельный JSON-манифест каталога.
 - **Требования:**
-  - Категории: `input` (Text), `ai` (LLM, Image Gen, Video Gen),
-    `tools` (HTTP, Code), `output` (Save, Webhook).
+  - Категории (использовать **кодовые** имена типов, чтобы не
+    разъезжаться с KI-121/KI-123): `input` (`text`), `ai` (`llm`,
+    `image_generation`, будущий `video_generation`), `tools`
+    (`http`, `code`), `output` (`save`, `webhook`).
   - Меню — поповер с секциями, поиск по названию (как у GPTunnel).
 - **Когда чинить:** v0.8 (вместе с 4+ новыми узлами).
 - **Связанные:** KI-121, KI-128.
@@ -1978,7 +1979,7 @@
   2. Ввести `NodeCapabilities` (persistence, external_state,
      user_config) — engine учитывает при валидации.
 - **Когда чинить:** v0.8+ (после базовых узлов).
-- **Связанные:** KI-127, DESIGN v0.7.
+- **Связанные:** KI-121, KI-127.
 
 ---
 

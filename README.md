@@ -104,7 +104,7 @@ Vite проксирует `/workflow`, `/engine`, `/llm` и `/runs` (SSE) на
 
 - [`docs/development/RULES.md`](docs/development/RULES.md) — rules for TS/NestJS/ESM/Drizzle (v1.1.0)
 - [`docs/development/GETTING_STARTED.md`](docs/development/GETTING_STARTED.md) — пошаговое разворачивание
-- [`docs/development/PROMPT_V2.md`](docs/development/PROMPT_V2.md) — starting prompt for new sessions
+- [`docs/development/PROMPT_V3.md`](docs/development/PROMPT_V3.md) — starting prompt for new sessions
 - [`docs/CHANGELOG.md`](docs/CHANGELOG.md) — version history
 - [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) — known issues registry
 
