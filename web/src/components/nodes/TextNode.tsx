@@ -1,6 +1,8 @@
+import { useCallback } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode } from '@/components/nodes/BaseNode';
+import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import { NODE_REGISTRY } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
@@ -22,6 +24,12 @@ export function TextNode({ id, data }: NodeProps<TextFlowNode>) {
   // Статус выполнения приходит из SSE-потока (R4.2).
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
 
+  // KI-157: хранилище обновляется на каждый символ, поэтому без сохранения
+  // выделения курсор после ре-рендера уезжал бы в конец текста.
+  const handleValueChange = usePreserveCursor<HTMLTextAreaElement>(
+    useCallback((value: string) => updateNodeData(id, { value }), [id, updateNodeData]),
+  );
+
   return (
     <>
       <BaseNode
@@ -36,7 +44,7 @@ export function TextNode({ id, data }: NodeProps<TextFlowNode>) {
           placeholder={t('node.text.placeholder')}
           // nodrag: иначе протяжка мышью по textarea тащит саму ноду.
           className="nodrag w-full resize-none rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
-          onChange={(event) => updateNodeData(id, { value: event.target.value })}
+          onChange={handleValueChange}
         />
       </BaseNode>
 

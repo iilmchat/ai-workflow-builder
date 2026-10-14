@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n, { setLanguage, type Language } from '@/i18n';
+import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import { useTheme } from '@/hooks/use-theme';
 import { nodeLabelOf } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
@@ -100,6 +101,15 @@ export function TopBar() {
   const setNotice = useWorkflowStore((state) => state.setNotice);
   const runStatus = useWorkflowStore((state) => state.runStatus);
   const runError = useWorkflowStore((state) => state.runError);
+
+  // KI-157: имя пишется в хранилище на каждый символ, без сохранения выделения
+  // курсор прыгал бы в конец при правке середины названия.
+  const handleNameChange = usePreserveCursor<HTMLInputElement>(
+    useCallback(
+      (value: string) => setCurrentWorkflowName(value),
+      [setCurrentWorkflowName],
+    ),
+  );
   const attemptNumber = useWorkflowStore((state) => state.attemptNumber);
   const attempts = useWorkflowStore((state) => state.attempts);
   const runHasMoreAttempts = useWorkflowStore((state) => state.runHasMoreAttempts);
@@ -225,7 +235,7 @@ export function TopBar() {
 
         <input
           value={name}
-          onChange={(event) => setCurrentWorkflowName(event.target.value)}
+          onChange={handleNameChange}
           placeholder={t('topbar.name.placeholder')}
           aria-label={t('topbar.name.placeholder')}
           // nodrag: единое правило для всех input внутри редактора.
