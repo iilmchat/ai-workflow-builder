@@ -1849,6 +1849,10 @@
   значения. `tsc` ловит `NODE_TYPE_LABELS/ICONS` (`Record<NodeType,...>`),
   но **не** цепочку `node.type !== 'text' && ...` в `fromApiWorkflow` —
   именно там сломался бы Load незамеченным.
+- **Решение:** вывести ключи registry из `NodeType` (единый
+  `NODE_REGISTRY`), заменить `!==`-цепочку в `fromApiWorkflow` на
+  `isNodeType()`, строить `Toolbar` из реестра.
+- **Когда чинить:** — (закрыто, v0.6.1).
 - **Fix:** Единый реестр `NODE_REGISTRY`
   (`Record<NodeType, NodeRegistryEntry>`) — метаданные, компоненты,
   `isNodeType()`, `nodeTypes` для React Flow. `fromApiWorkflow`
@@ -1873,7 +1877,7 @@
   у загруженного workflow селект модели и aspect_ratio окажутся
   пустыми (модель подставится только у нового узла из `mediaModels[0]`).
 - **Решение:** добавить перенос `model`/`aspectRatio` в `nodeDataFromApi`.
-- **Когда чинить:** до v0.6.0 release (иначе Load сломает UI-граф).
+- **Когда чинить:** — (закрыто, v0.6.1).
 - **Fix:** `nodeDataFromApi` переносит `model` и `aspectRatio` для
   `image_generation` (тип-проверка через `typeof … === 'string'`).
   Подтверждено smoke: `di` и `16:9` переживают Save → F5 → Load
@@ -1894,6 +1898,7 @@
   Согласовано сейчас, но при переименовании легко поправить одно
   место и забыть второе.
 - **Решение:** строить `BUTTONS` из `NODE_TYPE_LABELS/ICONS`.
+- **Когда чинить:** — (закрыто, v0.6.1).
 - **Fix:** `Toolbar` берёт иконку из `NODE_REGISTRY[type].iconEmoji`
   (📝🤖🖼) и подпись из `NODE_REGISTRY[type].labelEn`
   (Text / LLM / Image Generation). Визуал v0.6.0 сохранён.
@@ -1968,8 +1973,8 @@
 - **Исправлено в:** v0.6.1 (частично, коммит `990e705`) —
   `NODE_CATEGORIES` / `NodeCategory` + `category` у каждой записи
   реестра (`input` / `ai` / `tools` / `output`). Скелет готов.
-- **Файлы:** `web/src/components/Toolbar.tsx`,
-  `web/src/components/nodes/index.ts`
+- **Файлы:** `web/src/lib/node-registry.ts`,
+  `web/src/types/graph.ts`, `web/src/components/Toolbar.tsx`
 - **Описание:** Меню добавления узла — плоский список из 3 кнопок.
   При росте числа узлов (v0.8: http, condition, output, video, audio,
   sub-workflow) плоский список станет неудобным. У референсов
@@ -1985,9 +1990,9 @@
     `image_generation`, будущий `video_generation`), `tools`
     (`http`, `code`), `output` (`save`, `webhook`).
   - Меню — поповер с секциями, поиск по названию (как у GPTunnel).
-- **Когда чинить:** v0.8 (вместе с 4+ новыми узлами).
-- **Остаток:** поповер каталога с секциями и поиском не построен —
-  v0.8 (вместе с 4+ новыми узлами).
+- **Когда чинить:** v0.8 (поповер каталога с секциями и поиском).
+- **Остаток:** скелет категорий (`NODE_CATEGORIES` + `category`
+  в реестре) готов в v0.6.1; поповер каталога не построен.
 - **Связанные:** KI-121, KI-128.
 
 ---
@@ -2032,7 +2037,10 @@
      на `satisfies`-проверку по реестру.
 - **Возможные решения:**
   1. Дискриминированный union `NodeData` по `kind` + `satisfies`
-     на `node.type`:
+     на `node.type`. Важно: `kind` сделать **обязательным**
+     (`kind: 'text' | 'llm' | 'image'`), иначе tsc не сужает тип
+     (сейчас `kind?` опционален в `TextNodeData`/`LlmNodeData`/
+     `ImageGenNodeData`):
      `type NodeData = { kind: 'text'; value: string }
        | { kind: 'llm'; model: string }
        | { kind: 'image'; model?: string; aspectRatio?: string;
