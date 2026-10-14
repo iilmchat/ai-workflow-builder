@@ -33,7 +33,7 @@ export function TextNode({ id, data }: NodeProps<TextFlowNode>) {
           value={data.value}
           placeholder="Введите текст..."
           // nodrag: иначе протяжка мышью по textarea тащит саму ноду.
-          className="nodrag w-full resize-none rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-border"
+          className="nodrag w-full resize-none rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
           onChange={(event) => updateNodeData(id, { value: event.target.value })}
         />
       </BaseNode>

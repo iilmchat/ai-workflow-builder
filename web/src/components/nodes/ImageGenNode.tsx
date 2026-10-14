@@ -110,7 +110,7 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
         <select
           value={data.model ?? ''}
           // nodrag: иначе клик по списку тащит ноду вместо открытия меню.
-          className="nodrag w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-border disabled:bg-muted disabled:text-muted-foreground"
+          className="nodrag w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:bg-muted disabled:text-muted-foreground"
           disabled={!hasModels && !isUnavailable}
           onChange={(event) => updateNodeData(id, { model: event.target.value })}
         >
@@ -148,7 +148,7 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
           <select
             value={aspectRatioValue}
             aria-label="Соотношение сторон"
-            className="nodrag mt-2 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-border"
+            className="nodrag mt-2 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
             onChange={(event) =>
               updateNodeData(id, { aspectRatio: event.target.value })
             }
