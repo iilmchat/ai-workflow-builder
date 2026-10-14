@@ -2,13 +2,12 @@ import { useEffect } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
 import { BaseNode, type NodeBadge } from '@/components/nodes/BaseNode';
 import { groupLlmModelsForSelect } from '@/lib/llm-models';
+import { NODE_TYPE_ICONS, NODE_TYPE_LABELS } from '@/lib/node-registry';
 import type { LlmModelInfo } from '@/lib/api';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
   DATA_TYPE_COLORS,
   DATA_TYPE_LABELS,
-  NODE_TYPE_ICONS,
-  NODE_TYPE_LABELS,
   type LlmFlowNode,
 } from '@/types/graph';
 

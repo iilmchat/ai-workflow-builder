@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { nodeLabelOf } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
 import type { RunStatus } from '@/types/run-stream';
 
@@ -119,7 +120,7 @@ export function RunResultPanel() {
   /** Заголовок: «Узел <label> · <status>» либо «Запуск · <status> (попытка N/M)». */
   const title =
     selectedNodeId !== null
-      ? `Узел ${selectedNode?.data.label ?? selectedNodeId} · ${
+      ? `Узел ${nodeLabelOf(selectedNode ?? undefined, selectedNodeId)} · ${
           status ? STATUS_LABELS[status] : 'не выполнялся'
         }`
       : runStatus === null

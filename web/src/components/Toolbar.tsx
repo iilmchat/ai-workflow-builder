@@ -1,3 +1,4 @@
+import { NODE_REGISTRY } from '@/lib/node-registry';
 import type { NodeType } from '@/types/graph';
 
 interface ToolbarProps {
@@ -7,12 +8,15 @@ interface ToolbarProps {
   disabled?: boolean;
 }
 
-/** Кнопки нижнего тулбара: иконка, подпись и тип создаваемого узла. */
-const BUTTONS: { type: NodeType; label: string; icon: string }[] = [
-  { type: 'text', label: 'Text', icon: '📝' },
-  { type: 'llm', label: 'LLM', icon: '🤖' },
-  { type: 'image_generation', label: 'Image Generation', icon: '🖼' },
-];
+/**
+ * Порядок кнопок в тулбаре.
+ *
+ * Список явный, а не `NODE_TYPES`: порядок кнопок — часть UI, он не должен
+ * меняться при перестановке ключей реестра. Иконка и подпись берутся из
+ * реестра (KI-123): для тулбара — эмодзи и английская подпись (визуал v0.6.x),
+ * для шапки узла — текстовые `icon`/RU-`label`.
+ */
+const TOOLBAR_TYPES: NodeType[] = ['text', 'llm', 'image_generation'];
 
 /**
  * Нижний тулбар: кнопки добавления узлов.
@@ -23,7 +27,7 @@ export function Toolbar({ onAddNode, disabled = false }: ToolbarProps) {
   return (
     <div className="absolute bottom-6 left-1/2 z-10 -translate-x-1/2">
       <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 shadow-lg ring-1 ring-slate-200">
-        {BUTTONS.map(({ type, label, icon }) => (
+        {TOOLBAR_TYPES.map((type) => (
           <button
             key={type}
             type="button"
@@ -31,8 +35,8 @@ export function Toolbar({ onAddNode, disabled = false }: ToolbarProps) {
             onClick={() => onAddNode(type)}
             className="flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 active:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <span aria-hidden="true">{icon}</span>
-            {label}
+            <span aria-hidden="true">{NODE_REGISTRY[type].iconEmoji}</span>
+            {NODE_REGISTRY[type].labelEn}
           </button>
         ))}
       </div>

@@ -1,8 +1,12 @@
 import type { Node } from '@xyflow/react';
 
-/** Тип данных узла: метка + произвольные параметры конкретного типа узла. */
+/**
+ * Произвольные данные узла конкретного типа.
+ *
+ * Метки типа (`label`) здесь нет: подпись узла — метаданные реестра
+ * (`@/lib/node-registry`), а не данные графа (v0.6.x).
+ */
 export type NodeData = {
-  label?: string;
   [key: string]: unknown;
 };
 
@@ -38,19 +42,16 @@ export type Graph = {
  */
 export type NodeType = 'text' | 'llm' | 'image_generation';
 
-/** Подписи узлов по их типу (используются в тулбаре и в шапке узла). */
-export const NODE_TYPE_LABELS: Record<NodeType, string> = {
-  text: 'Text',
-  llm: 'LLM',
-  image_generation: 'Image Generation',
-};
+/**
+ * Категории узлов для будущего каталога (KI-127).
+ *
+ * Порядок = порядок секций в каталоге. Сами метки/иконки и привязка типов
+ * к категориям живут в едином реестре `@/lib/node-registry`.
+ */
+export const NODE_CATEGORIES = ['input', 'ai', 'tools', 'output'] as const;
 
-/** Иконки узлов по их типу. */
-export const NODE_TYPE_ICONS: Record<NodeType, string> = {
-  text: '📝',
-  llm: '🤖',
-  image_generation: '🖼',
-};
+/** Категория узла (KI-127). */
+export type NodeCategory = (typeof NODE_CATEGORIES)[number];
 
 /**
  * Типизированные порты узлов.
@@ -88,14 +89,12 @@ export const DEFAULT_LLM_MODEL_ID = 'claude-sonnet-4-20250514';
 
 /** Данные узла Text. */
 export interface TextNodeData extends Record<string, unknown> {
-  label?: string;
   kind?: 'text';
   value: string;
 }
 
 /** Данные узла LLM. */
 export interface LlmNodeData extends Record<string, unknown> {
-  label?: string;
   kind?: 'llm';
   /** id модели, который принимает backend (`claude-sonnet-4-20250514`) — KI-069. */
   model: string;
@@ -103,7 +102,6 @@ export interface LlmNodeData extends Record<string, unknown> {
 
 /** Данные узла генерации изображений. */
 export interface ImageGenNodeData extends Record<string, unknown> {
-  label?: string;
   kind?: 'image';
   imageUrl?: string;
   /**

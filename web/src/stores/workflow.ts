@@ -23,6 +23,7 @@ import {
 } from '@/lib/api';
 import { subscribeToRunStream } from '@/lib/run-stream';
 import { levelsToMap } from '@/lib/plan';
+import { isNodeType, nodeLabelOf } from '@/lib/node-registry';
 import type { MediaModelInfo } from '@/types/media';
 import {
   DEFAULT_LLM_MODEL_ID,
@@ -287,7 +288,6 @@ function createNode(
         type: 'llm',
         data: {
           kind: 'llm',
-          label: 'LLM',
           model: defaultModelId ?? DEFAULT_LLM_MODEL_ID,
         },
       };
@@ -297,7 +297,6 @@ function createNode(
         type: 'image_generation',
         data: {
           kind: 'image',
-          label: 'Image Generation',
           // Модель по умолчанию — первая доступная в каталоге media
           // (v0.6.0b.2.3): узел сразу запускаем, без выбора вручную.
           model: defaultMediaModelId ?? '',
@@ -307,7 +306,7 @@ function createNode(
       return {
         ...shared,
         type: 'text',
-        data: { kind: 'text', label: 'Text', value: '' },
+        data: { kind: 'text', value: '' },
       };
   }
 }
@@ -338,14 +337,11 @@ function nodeDataFromApi(
   type: NodeType,
   data: Record<string, unknown>,
 ): TextNodeData | LlmNodeData | ImageGenNodeData {
-  const label = typeof data.label === 'string' ? data.label : undefined;
-
   switch (type) {
     case 'llm': {
       const model = data.model;
       return {
         kind: 'llm',
-        label,
         // Модель НЕ подменяем (KI-069): если id неизвестен текущему списку,
         // селект покажет его как «(недоступно)». Молчаливая подмена на первый
         // из списка перезаписывала сохранённую модель при следующем Save.
@@ -355,13 +351,17 @@ function nodeDataFromApi(
     case 'image_generation':
       return {
         kind: 'image',
-        label,
+        // KI-122: без переноса `model`/`aspectRatio` Load терял выбор
+        // пользователя — селект модели и соотношение сторон оказывались
+        // пустыми, и следующий Save затирал их в БД.
+        model: typeof data.model === 'string' ? data.model : undefined,
+        aspectRatio:
+          typeof data.aspectRatio === 'string' ? data.aspectRatio : undefined,
         imageUrl: typeof data.imageUrl === 'string' ? data.imageUrl : undefined,
       };
     default:
       return {
         kind: 'text',
-        label,
         value: typeof data.value === 'string' ? data.value : '',
       };
   }
@@ -385,11 +385,12 @@ function fromApiWorkflow(workflow: ApiWorkflow): {
   const skipped: string[] = [];
 
   for (const node of workflow.nodes) {
-    if (
-      node.type !== 'text' &&
-      node.type !== 'llm' &&
-      node.type !== 'image_generation'
-    ) {
+    // KI-121: проверка по единому реестру вместо цепочки `!==`. Цепочку tsc
+    // не ловил: новый тип узла молча терялся при Load.
+    if (!isNodeType(node.type)) {
+      console.warn(
+        `Неизвестный тип узла: ${node.type} (id: ${node.id}) — узел пропущен`,
+      );
       skipped.push(node.id);
       continue;
     }
@@ -600,12 +601,14 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       );
 
       const levels = levelsToMap(plan.levels);
-      // В сообщении показываем типы узлов, а не их uuid: ids нечитаемы.
+      // В сообщении показываем подписи типов узлов из реестра, а не uuid.
       const order = plan.order
-        .map((nodeId) => {
-          const node = nodes.find((item) => item.id === nodeId);
-          return node?.data.label ?? node?.type ?? nodeId;
-        })
+        .map((nodeId) =>
+          nodeLabelOf(
+            nodes.find((item) => item.id === nodeId),
+            nodeId,
+          ),
+        )
         .join(' → ');
 
       set({

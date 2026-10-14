@@ -1,26 +1,12 @@
-import type { ComponentType } from 'react';
-import type { NodeProps, NodeTypes } from '@xyflow/react';
-import { ImageGenNode } from './ImageGenNode';
-import { LLMNode } from './LLMNode';
-import { TextNode } from './TextNode';
-
 /**
- * Реестр кастомных узлов React Flow.
+ * Кастомные узлы React Flow.
  *
- * Ключ должен совпадать со значением `type` у узла
- * (`text` | `llm` | `image_generation`) — то же имя уходит в backend.
- *
- * Типы сужаем через `NodeTypes`: у каждого узла свои данные (`TextNodeData`,
- * `LlmNodeData`, ...), а `NodeProps` инвариантен по типу узла, поэтому без
- * приведения конкретные компоненты не подходят под общий `ComponentType`.
- * Во время выполнения React Flow передаёт компоненту props именно его узла.
+ * Тонкий реэкспорт единого реестра (KI-121): и компоненты, и метаданные
+ * (подписи, иконки, категории) теперь живут в `@/lib/node-registry`.
+ * Файл оставлен, чтобы не менять импорт `@/components/nodes` у потребителей.
  */
-const registry = {
-  text: TextNode,
-  llm: LLMNode,
-  image_generation: ImageGenNode,
-} as unknown as NodeTypes;
+export { nodeTypes, NODE_TYPE_ICONS, NODE_TYPE_LABELS } from '@/lib/node-registry';
 
-export const nodeTypes: Record<string, ComponentType<NodeProps>> = registry;
-
-export { ImageGenNode, LLMNode, TextNode };
+export { ImageGenNode } from './ImageGenNode';
+export { LLMNode } from './LLMNode';
+export { TextNode } from './TextNode';

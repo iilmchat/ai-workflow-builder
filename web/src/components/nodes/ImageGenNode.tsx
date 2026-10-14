@@ -6,12 +6,11 @@ import {
   isRenderableMediaUrl,
   type MediaModelInfo,
 } from '@/types/media';
+import { NODE_TYPE_ICONS, NODE_TYPE_LABELS } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
   DATA_TYPE_COLORS,
   DATA_TYPE_LABELS,
-  NODE_TYPE_ICONS,
-  NODE_TYPE_LABELS,
   type ImageGenFlowNode,
 } from '@/types/graph';
 

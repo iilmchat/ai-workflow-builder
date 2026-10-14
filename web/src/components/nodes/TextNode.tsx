@@ -1,11 +1,10 @@
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
 import { BaseNode } from '@/components/nodes/BaseNode';
+import { NODE_TYPE_ICONS, NODE_TYPE_LABELS } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
   DATA_TYPE_COLORS,
   DATA_TYPE_LABELS,
-  NODE_TYPE_ICONS,
-  NODE_TYPE_LABELS,
   type TextFlowNode,
 } from '@/types/graph';
 

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { nodeLabelOf } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
 import type { RunStatus } from '@/types/run-stream';
 import { LoadModal } from './LoadModal';
@@ -111,7 +112,7 @@ export function TopBar() {
     return nodes
       .filter((node) => node.data.kind === 'llm')
       .filter((node) => !llmModels.some((model) => model.id === node.data.model))
-      .map((node) => node.data.label ?? node.id);
+      .map((node) => nodeLabelOf(node, node.id));
   };
 
   /**
@@ -128,7 +129,7 @@ export function TopBar() {
     return nodes
       .filter((node) => node.data.kind === 'image')
       .filter((node) => !mediaModels.some((model) => model.id === node.data.model))
-      .map((node) => node.data.label ?? node.id);
+      .map((node) => nodeLabelOf(node, node.id));
   };
 
   /**
