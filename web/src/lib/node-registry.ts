@@ -3,6 +3,7 @@ import type { NodeProps, NodeTypes } from '@xyflow/react';
 import { ImageGenNode } from '@/components/nodes/ImageGenNode';
 import { LLMNode } from '@/components/nodes/LLMNode';
 import { TextNode } from '@/components/nodes/TextNode';
+import i18n from '@/i18n';
 import type {
   AppNode,
   ImageGenFlowNode,
@@ -113,36 +114,12 @@ export const nodeTypes = Object.fromEntries(
 ) as unknown as NodeTypes;
 
 /**
- * Временный резолвер i18n-ключей до R5.3 (react-i18next).
- *
- * При добавлении нового ключа — добавить пару здесь. В R5.3
- * этот объект заменяется на `i18next.t()` без изменения
- * вызывающего кода.
- */
-const TEMP_LABELS: Record<string, string> = {
-  'node.text.label': 'Текст',
-  'node.llm.label': 'LLM',
-  'node.image_generation.label': 'Генерация изображения',
-};
-
-/**
- * Резолвит i18n-ключ подписи узла в строку.
- *
- * До R5.3 — через {@link TEMP_LABELS}; после — через `i18next.t()`.
- * Неизвестный ключ возвращается как есть, чтобы пропажа пары была видна в UI.
- *
- * @param key - i18n-ключ (например, `node.text.label`)
- * @returns подпись для UI либо сам ключ, если перевода ещё нет
- */
-export function tLabel(key: string): string {
-  return TEMP_LABELS[key] ?? key;
-}
-
-/**
  * Подпись узла для UI: берётся **только** из реестра.
  *
  * `data.label` удалён (v0.6.x): подпись типа узла — это метаданные реестра,
  * а не данные графа, поэтому хранить её в узле и в БД больше не нужно.
+ * Резолвит ключ глобальный инстанс i18next (R5.3): функция вызывается и вне
+ * React-компонентов (TopBar, RunResultPanel, стор), где хука нет.
  *
  * @param node - узел графа (у узлов неизвестного типа `type` может быть не задан)
  * @param fallback - запасной текст, обычно id узла
@@ -152,6 +129,6 @@ export function nodeLabelOf(node: AppNode | undefined, fallback: string): string
   const type = node?.type;
 
   return type !== undefined && isNodeType(type)
-    ? tLabel(NODE_REGISTRY[type].labelKey)
+    ? i18n.t(NODE_REGISTRY[type].labelKey)
     : fallback;
 }

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { RunStatus } from '@/types/run-stream';
 
 /**
@@ -67,6 +68,7 @@ export function BaseNode({
   badges,
   children,
 }: BaseNodeProps) {
+  const { t } = useTranslation();
   const border = STATUS_BORDER[status ?? 'pending'];
   const background = STATUS_BACKGROUND[status ?? 'pending'];
 
@@ -91,7 +93,7 @@ export function BaseNode({
       {executionLevel !== undefined && (
         <span
           className="absolute -right-2 -top-2 flex size-5 items-center justify-center rounded-full bg-slate-500 text-[10px] font-semibold text-white shadow-sm"
-          title={`Уровень выполнения: ${executionLevel}`}
+          title={t('node.levels.title', { level: executionLevel })}
         >
           {executionLevel}
         </span>

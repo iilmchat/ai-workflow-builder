@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n, { setLanguage, type Language } from '@/i18n';
 import { useTheme } from '@/hooks/use-theme';
 import { nodeLabelOf } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
@@ -19,12 +21,12 @@ function Spinner() {
 const ACTIVE_RUN_STATUSES: ReadonlySet<RunStatus> = new Set(['pending', 'running']);
 
 /** Подпись и цвет бейджа статуса запуска. */
-const RUN_STATUS_STYLE: Record<RunStatus, { text: string; className: string }> = {
-  pending: { text: 'Создаётся…', className: 'bg-muted text-muted-foreground' },
-  running: { text: 'Выполняется…', className: 'bg-blue-100 text-blue-700' },
-  completed: { text: 'Готово', className: 'bg-green-100 text-green-700' },
-  failed: { text: 'Ошибка', className: 'bg-red-100 text-red-700' },
-  cancelled: { text: 'Отменён', className: 'bg-muted text-muted-foreground' },
+const RUN_STATUS_STYLE: Record<RunStatus, { labelKey: string; className: string }> = {
+  pending: { labelKey: 'run.status.pending', className: 'bg-muted text-muted-foreground' },
+  running: { labelKey: 'run.status.running', className: 'bg-blue-100 text-blue-700' },
+  completed: { labelKey: 'run.status.completed', className: 'bg-green-100 text-green-700' },
+  failed: { labelKey: 'run.status.failed', className: 'bg-red-100 text-red-700' },
+  cancelled: { labelKey: 'run.status.cancelled', className: 'bg-muted text-muted-foreground' },
 };
 
 /**
@@ -41,15 +43,19 @@ function runStatusText(
   attempts: number | null,
 ): string {
   if (status === null) {
-    return 'Run';
+    return i18n.t('topbar.run');
   }
 
-  const base = RUN_STATUS_STYLE[status].text;
+  const base = i18n.t(RUN_STATUS_STYLE[status].labelKey);
 
   // Промежуточный провал (KI-070) статус не меняет: он остаётся 'running',
   // поэтому подпись продолжает показывать номер попытки.
   if (status === 'running' && attempts !== null && attemptNumber > 0) {
-    return `${base} (попытка ${attemptNumber}/${attempts})`;
+    return i18n.t('run.status.attempt', {
+      base,
+      current: attemptNumber,
+      total: attempts,
+    });
   }
 
   return base;
@@ -80,6 +86,8 @@ function syncWorkflowUrlParam(workflowId: string): void {
 export function TopBar() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const { resolved, setTheme } = useTheme();
+  const { t, i18n: i18nInstance } = useTranslation();
+  const currentLang = i18nInstance.language as Language;
 
   const name = useWorkflowStore((state) => state.currentWorkflowName);
   const setCurrentWorkflowName = useWorkflowStore(
@@ -161,9 +169,9 @@ export function TopBar() {
     if (unavailableNodes.length > 0) {
       setNotice({
         kind: 'error',
-        text:
-          `Модель недоступна в узлах: ${unavailableNodes.join(', ')}. ` +
-          'Выберите модель из списка перед запуском.',
+        text: t('topbar.models_unavailable', {
+          nodes: unavailableNodes.join(', '),
+        }),
       });
 
       return;
@@ -175,9 +183,9 @@ export function TopBar() {
     if (nodesWithoutMediaModel.length > 0) {
       setNotice({
         kind: 'error',
-        text:
-          `Выберите image-модель в узлах: ${nodesWithoutMediaModel.join(', ')}. ` +
-          'Список моделей — в селекте узла Image Generation.',
+        text: t('topbar.image_models_missing', {
+          nodes: nodesWithoutMediaModel.join(', '),
+        }),
       });
 
       return;
@@ -212,8 +220,8 @@ export function TopBar() {
         <input
           value={name}
           onChange={(event) => setCurrentWorkflowName(event.target.value)}
-          placeholder="Название workflow"
-          aria-label="Название workflow"
+          placeholder={t('topbar.name.placeholder')}
+          aria-label={t('topbar.name.placeholder')}
           // nodrag: единое правило для всех input внутри редактора.
           className="nodrag w-64 rounded-lg border border-transparent px-2 py-1 text-sm font-medium text-foreground outline-none hover:border-border focus:border-primary focus:ring-1 focus:ring-primary"
         />
@@ -224,9 +232,7 @@ export function TopBar() {
             // Тултип: причина ошибки либо подсказка, что будет ещё попытка (KI-070).
             title={
               runError ??
-              (runHasMoreAttempts
-                ? 'Предыдущая попытка упала — BullMQ повторит запуск'
-                : undefined)
+              (runHasMoreAttempts ? t('topbar.retry_hint') : undefined)
             }
             className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${RUN_STATUS_STYLE[runStatus].className}`}
           >
@@ -238,11 +244,25 @@ export function TopBar() {
           <button
             type="button"
             onClick={() => setTheme(resolved === 'dark' ? 'light' : 'dark')}
-            aria-label={resolved === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
-            title={resolved === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
+            aria-label={t(
+              resolved === 'dark' ? 'topbar.theme.to_light' : 'topbar.theme.to_dark',
+            )}
+            title={t(
+              resolved === 'dark' ? 'topbar.theme.to_light' : 'topbar.theme.to_dark',
+            )}
             className="cursor-pointer rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-muted"
           >
             {resolved === 'dark' ? '☀' : '🌙'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setLanguage(currentLang === 'ru' ? 'en' : 'ru')}
+            aria-label={t('topbar.lang.toggle')}
+            title={t('topbar.lang.toggle')}
+            className="cursor-pointer rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+          >
+            {currentLang === 'ru' ? 'EN' : 'RU'}
           </button>
 
           <button
@@ -252,7 +272,7 @@ export function TopBar() {
             className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isLoading ? <Spinner /> : <span aria-hidden="true">📂</span>}
-            Load
+            {t('topbar.load')}
           </button>
 
           <button
@@ -262,7 +282,7 @@ export function TopBar() {
             className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isSaving ? <Spinner /> : <span aria-hidden="true">💾</span>}
-            Save
+            {t('topbar.save')}
           </button>
 
           <button

@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
+import { useTranslation } from 'react-i18next';
 import { BaseNode, type NodeBadge } from '@/components/nodes/BaseNode';
 import { groupLlmModelsForSelect } from '@/lib/llm-models';
-import { NODE_REGISTRY, tLabel } from '@/lib/node-registry';
+import { NODE_REGISTRY } from '@/lib/node-registry';
 import type { LlmModelInfo } from '@/lib/api';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
@@ -63,6 +64,7 @@ function badgesForModel(model: LlmModelInfo | undefined): NodeBadge[] {
  */
 export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
   const { updateNodeData } = useReactFlow();
+  const { t } = useTranslation();
   // Уровень выполнения появляется после Run (/engine/plan).
   const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   // Статус выполнения приходит из SSE-потока (R4.2).
@@ -95,7 +97,7 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
 
       <BaseNode
         icon={NODE_REGISTRY.llm.icon}
-        title={tLabel(NODE_REGISTRY.llm.labelKey)}
+        title={t(NODE_REGISTRY.llm.labelKey)}
         executionLevel={executionLevel}
         status={status}
         badges={badgesForModel(selected)}
@@ -108,13 +110,15 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
         >
           {data.model === '' && (
             <option value="" disabled>
-              {llmModels.length === 0 ? 'Нет доступных моделей' : 'Выберите модель'}
+              {llmModels.length === 0
+                ? t('node.llm.select.none')
+                : t('node.llm.select.choose')}
             </option>
           )}
 
           {isUnavailable && (
             <option value={data.model} disabled>
-              {data.model} (недоступно)
+              {t('node.llm.unavailable', { model: data.model })}
             </option>
           )}
 
@@ -136,8 +140,8 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
           {selected
             ? selected.provider
             : llmModels.length === 0
-              ? 'Нет доступных моделей'
-              : 'Модель недоступна'}
+              ? t('node.llm.select.none')
+              : t('node.llm.model_unavailable')}
         </p>
       </BaseNode>
 

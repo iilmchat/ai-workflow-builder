@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n from '@/i18n';
 import {
   deleteWorkflowAsync,
   listWorkflowsAsync,
@@ -10,17 +12,22 @@ interface LoadModalProps {
   onClose: () => void;
 }
 
-/** Форматирует дату создания workflow для списка. */
+/**
+ * Форматирует дату создания workflow для списка.
+ *
+ * Локаль выбирается по текущему языку интерфейса, поэтому дата выглядит
+ * привычно и в RU («14.10.2026, 12:00»), и в EN.
+ */
 function formatDate(value: string | null | undefined): string {
   if (!value) {
-    return 'дата неизвестна';
+    return i18n.t('loadModal.date_unknown');
   }
 
   const date = new Date(value);
 
   return Number.isNaN(date.getTime())
-    ? 'дата неизвестна'
-    : date.toLocaleString('ru-RU');
+    ? i18n.t('loadModal.date_unknown')
+    : date.toLocaleString(i18n.language === 'en' ? 'en-US' : 'ru-RU');
 }
 
 /**
@@ -30,6 +37,7 @@ function formatDate(value: string | null | undefined): string {
  * фону или кнопке «Отмена».
  */
 export function LoadModal({ onClose }: LoadModalProps) {
+  const { t } = useTranslation();
   const loadWorkflowAsync = useWorkflowStore((state) => state.loadWorkflowAsync);
   const setNotice = useWorkflowStore((state) => state.setNotice);
 
@@ -46,7 +54,7 @@ export function LoadModal({ onClose }: LoadModalProps) {
       // userId пока не передаём: авторизации нет, показываем все workflow.
       setWorkflows(await listWorkflowsAsync());
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Не удалось загрузить список');
+      setError(caught instanceof Error ? caught.message : t('loadModal.list_failed'));
     } finally {
       setIsLoading(false);
     }
@@ -79,10 +87,10 @@ export function LoadModal({ onClose }: LoadModalProps) {
   const handleDelete = async (id: string) => {
     try {
       await deleteWorkflowAsync(id);
-      setNotice({ kind: 'success', text: 'Workflow удалён' });
+      setNotice({ kind: 'success', text: t('loadModal.deleted') });
       await refreshAsync();
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : 'Не удалось удалить';
+      const message = caught instanceof Error ? caught.message : t('loadModal.delete_failed');
       setError(message);
       setNotice({ kind: 'error', text: message });
     }
@@ -100,29 +108,31 @@ export function LoadModal({ onClose }: LoadModalProps) {
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="Загрузить workflow"
+        aria-label={t('loadModal.title')}
       >
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h2 className="text-sm font-semibold text-foreground">Загрузить workflow</h2>
+          <h2 className="text-sm font-semibold text-foreground">{t('loadModal.title')}</h2>
           <button
             type="button"
             onClick={onClose}
             className="cursor-pointer rounded px-2 text-muted-foreground hover:text-foreground"
-            aria-label="Закрыть"
+            aria-label={t('common.close')}
           >
             ✕
           </button>
         </div>
 
         <div className="min-h-24 flex-1 overflow-y-auto px-4 py-3">
-          {isLoading && <p className="text-xs text-muted-foreground">Загрузка…</p>}
+          {isLoading && (
+            <p className="text-xs text-muted-foreground">{t('common.loading')}</p>
+          )}
 
           {error && !isLoading && (
             <p className="text-xs text-red-600">{error}</p>
           )}
 
           {!isLoading && !error && workflows.length === 0 && (
-            <p className="text-xs text-muted-foreground">Сохранённых workflow пока нет</p>
+            <p className="text-xs text-muted-foreground">{t('loadModal.empty')}</p>
           )}
 
           <ul className="flex flex-col gap-2">
@@ -136,7 +146,8 @@ export function LoadModal({ onClose }: LoadModalProps) {
                     {workflow.name}
                   </p>
                   <p className="text-[10px] text-muted-foreground">
-                    {formatDate(workflow.createdAt)} · узлов: {workflow.nodes.length}
+                    {formatDate(workflow.createdAt)} ·{' '}
+                    {t('loadModal.nodes', { count: workflow.nodes.length })}
                   </p>
                 </div>
 
@@ -146,14 +157,14 @@ export function LoadModal({ onClose }: LoadModalProps) {
                     onClick={() => void handleOpen(workflow.id)}
                     className="cursor-pointer rounded-md bg-muted px-3 py-1 text-xs font-medium text-foreground hover:bg-border"
                   >
-                    Открыть
+                    {t('common.open')}
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleDelete(workflow.id)}
                     className="cursor-pointer rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
                   >
-                    Удалить
+                    {t('common.delete')}
                   </button>
                 </div>
               </li>
@@ -167,7 +178,7 @@ export function LoadModal({ onClose }: LoadModalProps) {
             onClick={onClose}
             className="cursor-pointer rounded-lg border border-border px-4 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
           >
-            Отмена
+            {t('common.cancel')}
           </button>
         </div>
       </div>

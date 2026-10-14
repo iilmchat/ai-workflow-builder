@@ -5,7 +5,7 @@
  * (подписи, иконки, категории) теперь живут в `@/lib/node-registry`.
  * Файл оставлен, чтобы не менять импорт `@/components/nodes` у потребителей.
  */
-export { nodeTypes, NODE_REGISTRY, tLabel } from '@/lib/node-registry';
+export { nodeTypes, NODE_REGISTRY } from '@/lib/node-registry';
 
 export { ImageGenNode } from './ImageGenNode';
 export { LLMNode } from './LLMNode';

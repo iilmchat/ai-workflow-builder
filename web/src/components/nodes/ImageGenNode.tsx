@@ -1,12 +1,14 @@
 import { useEffect } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
+import { useTranslation } from 'react-i18next';
 import { BaseNode } from '@/components/nodes/BaseNode';
+import i18n from '@/i18n';
 import {
   MediaNodeOutputsSchema,
   isRenderableMediaUrl,
   type MediaModelInfo,
 } from '@/types/media';
-import { NODE_REGISTRY, tLabel } from '@/lib/node-registry';
+import { NODE_REGISTRY } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
   DATA_TYPE_COLORS,
@@ -23,6 +25,10 @@ const ASPECT_RATIO_KEY = 'aspect_ratio';
  * `priceInput` (например, за 1000 символов) показываем отдельно: у IMAGE-моделей
  * он обычно `null`, но у AUDIO/TTS-моделей тарификация идёт по входу.
  *
+ * Подписи берём из глобального i18n: функция вызывается вне React, а `t` из
+ * `useTranslation` здесь недоступен (вариант с передачей `t` параметром
+ * усложнил бы сигнатуру ради двух строк).
+ *
  * @param model - выбранная media-модель
  * @returns строка цены либо `null`, если тариф неизвестен
  */
@@ -30,11 +36,18 @@ function formatPrice(model: MediaModelInfo): string | null {
   const parts: string[] = [];
 
   if (model.priceUnit !== null) {
-    parts.push(`от ${model.price} ₽ / генерация`);
+    parts.push(
+      i18n.t('node.image.price_per_generation', { price: model.price }),
+    );
   }
 
   if (model.priceInput !== null && model.priceInputUnit !== null) {
-    parts.push(`вход: ${model.priceInput} ₽ / ${model.priceInputUnit}`);
+    parts.push(
+      i18n.t('node.image.price_input', {
+        price: model.priceInput,
+        unit: model.priceInputUnit,
+      }),
+    );
   }
 
   return parts.length > 0 ? parts.join(' · ') : null;
@@ -51,6 +64,7 @@ function formatPrice(model: MediaModelInfo): string | null {
  */
 export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
   const { updateNodeData } = useReactFlow();
+  const { t } = useTranslation();
   // Уровень выполнения появляется после Run (/engine/plan).
   const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   // Статус выполнения приходит из SSE-потока (R4.2).
@@ -103,7 +117,7 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
 
       <BaseNode
         icon={NODE_REGISTRY.image_generation.icon}
-        title={tLabel(NODE_REGISTRY.image_generation.labelKey)}
+        title={t(NODE_REGISTRY.image_generation.labelKey)}
         executionLevel={executionLevel}
         status={status}
       >
@@ -115,18 +129,18 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
           onChange={(event) => updateNodeData(id, { model: event.target.value })}
         >
           {!hasModels && !isUnavailable && (
-            <option value="">Нет доступных image-моделей</option>
+            <option value="">{t('node.image.select.none')}</option>
           )}
 
           {(data.model ?? '') === '' && hasModels && (
             <option value="" disabled>
-              Выберите модель
+              {t('node.image.select.choose')}
             </option>
           )}
 
           {isUnavailable && (
             <option value={data.model} disabled>
-              {data.model} (недоступно)
+              {t('node.image.unavailable', { model: data.model })}
             </option>
           )}
 
@@ -147,7 +161,7 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
         {aspectRatioParam?.options !== undefined && (
           <select
             value={aspectRatioValue}
-            aria-label="Соотношение сторон"
+            aria-label={t('node.image.aspect_ratio')}
             className="nodrag mt-2 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
             onChange={(event) =>
               updateNodeData(id, { aspectRatio: event.target.value })
@@ -164,25 +178,25 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
         <div className="mt-2">
           {status === 'running' ? (
             <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-blue-300 bg-blue-50 px-2 text-center text-[10px] text-blue-600">
-              Генерация…
+              {t('node.image.generating')}
             </div>
           ) : status === 'failed' ? (
             <div className="flex min-h-20 items-center justify-center rounded-lg border border-red-200 bg-red-50 px-2 text-center text-[10px] text-red-600">
-              Ошибка генерации
+              {t('node.image.error')}
             </div>
           ) : safeMediaUrl !== null ? (
             <img
               src={safeMediaUrl}
-              alt="Сгенерированное изображение"
+              alt={t('node.image.alt')}
               className="w-full rounded-lg border border-border"
             />
           ) : isInvalidUrl ? (
             <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-amber-300 px-2 text-center text-[10px] text-amber-600">
-              Некорректный URL результата
+              {t('node.image.invalid_url')}
             </div>
           ) : (
             <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-border px-2 text-center text-[10px] text-muted-foreground">
-              Здесь появится результат
+              {t('node.image.placeholder')}
             </div>
           )}
         </div>

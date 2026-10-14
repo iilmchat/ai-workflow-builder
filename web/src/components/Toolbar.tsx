@@ -1,4 +1,5 @@
-import { NODE_REGISTRY, tLabel } from '@/lib/node-registry';
+import { useTranslation } from 'react-i18next';
+import { NODE_REGISTRY } from '@/lib/node-registry';
 import type { NodeType } from '@/types/graph';
 
 interface ToolbarProps {
@@ -24,6 +25,8 @@ const TOOLBAR_TYPES: NodeType[] = ['text', 'llm', 'image_generation'];
  * Позиционируется абсолютно по центру низа экрана, поверх канваса.
  */
 export function Toolbar({ onAddNode, disabled = false }: ToolbarProps) {
+  const { t } = useTranslation();
+
   return (
     <div className="absolute bottom-6 left-1/2 z-10 -translate-x-1/2">
       <div className="flex items-center gap-2 rounded-xl bg-background px-3 py-2 shadow-lg ring-1 ring-border">
@@ -36,7 +39,7 @@ export function Toolbar({ onAddNode, disabled = false }: ToolbarProps) {
             className="flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted active:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span aria-hidden="true">{NODE_REGISTRY[type].icon}</span>
-            {tLabel(NODE_REGISTRY[type].labelKey)}
+            {t(NODE_REGISTRY[type].labelKey)}
           </button>
         ))}
       </div>

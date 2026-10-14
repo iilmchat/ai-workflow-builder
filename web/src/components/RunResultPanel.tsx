@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n from '@/i18n';
 import { nodeLabelOf } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
 import type { RunStatus } from '@/types/run-stream';
@@ -6,13 +8,13 @@ import type { RunStatus } from '@/types/run-stream';
 /** Высота панели в свёрнутом и развёрнутом виде (Tailwind-классы). */
 const PANEL_HEIGHT = { collapsed: 'h-12', expanded: 'h-72' } as const;
 
-/** Подписи статусов узла и запуска для заголовка панели. */
-const STATUS_LABELS: Record<RunStatus, string> = {
-  pending: 'ожидает',
-  running: 'выполняется',
-  completed: 'завершён',
-  failed: 'ошибка',
-  cancelled: 'отменён',
+/** i18n-ключи подписей статусов узла и запуска для заголовка панели. */
+const STATUS_LABEL_KEYS: Record<RunStatus, string> = {
+  pending: 'run.status.node.pending',
+  running: 'run.status.node.running',
+  completed: 'run.status.node.completed',
+  failed: 'run.status.node.failed',
+  cancelled: 'run.status.node.cancelled',
 };
 
 /**
@@ -68,11 +70,16 @@ function formatMetrics(metrics: {
   const parts: string[] = [];
 
   if (metrics.durationMs !== null) {
-    parts.push(`${metrics.durationMs} мс`);
+    parts.push(i18n.t('runResultPanel.unit.ms', { value: metrics.durationMs }));
   }
 
   if (metrics.tokensIn !== null || metrics.tokensOut !== null) {
-    parts.push(`токены ${metrics.tokensIn ?? '?'} → ${metrics.tokensOut ?? '?'}`);
+    parts.push(
+      i18n.t('runResultPanel.metrics.tokens', {
+        input: metrics.tokensIn ?? '?',
+        output: metrics.tokensOut ?? '?',
+      }),
+    );
   }
 
   if (metrics.costUsd !== null) {
@@ -95,6 +102,7 @@ function formatMetrics(metrics: {
  */
 export function RunResultPanel() {
   const [isExpanded, setIsExpanded] = useState(true);
+  const { t } = useTranslation();
 
   const selectedNodeId = useWorkflowStore((state) => state.selectedNodeId);
   const nodes = useWorkflowStore((state) => state.nodes);
@@ -120,14 +128,21 @@ export function RunResultPanel() {
   /** Заголовок: «Узел <label> · <status>» либо «Запуск · <status> (попытка N/M)». */
   const title =
     selectedNodeId !== null
-      ? `Узел ${nodeLabelOf(selectedNode ?? undefined, selectedNodeId)} · ${
-          status ? STATUS_LABELS[status] : 'не выполнялся'
-        }`
+      ? t('runResultPanel.title.node', {
+          label: nodeLabelOf(selectedNode ?? undefined, selectedNodeId),
+          status: status
+            ? t(STATUS_LABEL_KEYS[status])
+            : t('runResultPanel.title.node.not_run'),
+        })
       : runStatus === null
-        ? 'Запуск · не запускался'
-        : `Запуск · ${STATUS_LABELS[runStatus]}${
-            attempts !== null && attemptNumber > 0 ? ` (попытка ${attemptNumber}/${attempts})` : ''
-          }`;
+        ? t('runResultPanel.title.run.not_started')
+        : t('runResultPanel.title.run', { status: t(STATUS_LABEL_KEYS[runStatus]) }) +
+          (attempts !== null && attemptNumber > 0
+            ? t('runResultPanel.attempt', {
+                current: attemptNumber,
+                total: attempts,
+              })
+            : '');
 
   return (
     <section
@@ -162,25 +177,25 @@ export function RunResultPanel() {
           {selectedNodeId !== null ? (
             <>
               {status === undefined || status === 'pending' ? (
-                <Section title="Статус">
-                  <p className="text-xs text-muted-foreground">Узел ещё не выполнялся.</p>
+                <Section title={t('runResultPanel.section.status')}>
+                  <p className="text-xs text-muted-foreground">{t('runResultPanel.node.not_run')}</p>
                 </Section>
               ) : null}
 
               {status === 'running' ? (
-                <Section title="Статус">
-                  <p className="text-xs text-blue-600">Выполняется…</p>
+                <Section title={t('runResultPanel.section.status')}>
+                  <p className="text-xs text-blue-600">{t('runResultPanel.running')}</p>
                 </Section>
               ) : null}
 
               {error !== undefined ? (
-                <Section title="Ошибка">
+                <Section title={t('runResultPanel.section.error')}>
                   <p className="whitespace-pre-wrap text-xs text-red-700">{error}</p>
                 </Section>
               ) : null}
 
               {outputs !== undefined ? (
-                <Section title="Вывод">
+                <Section title={t('runResultPanel.section.output')}>
                   <pre className="text-xs font-mono text-foreground">
                     {JSON.stringify(outputs, null, 2)}
                   </pre>
@@ -188,13 +203,13 @@ export function RunResultPanel() {
               ) : null}
 
               {metrics !== null ? (
-                <Section title="Метрики">
+                <Section title={t('runResultPanel.section.metrics')}>
                   <p className="text-xs text-muted-foreground">{metrics}</p>
                 </Section>
               ) : null}
 
               {logs !== undefined && logs.length > 0 ? (
-                <Section title={`Логи (${logs.length})`}>
+                <Section title={t('runResultPanel.section.logs', { count: logs.length })}>
                   <ul className="space-y-0.5 text-xs text-muted-foreground">
                     {logs.map((line) => (
                       <li key={line}>{line}</li>
@@ -204,33 +219,35 @@ export function RunResultPanel() {
               ) : null}
             </>
           ) : (
-            <Section title="Запуск">
+            <Section title={t('runResultPanel.section.run')}>
               {runStatus === null ? (
                 <p className="text-xs text-muted-foreground">
-                  Запустите workflow, чтобы увидеть результат.
+                  {t('runResultPanel.run_hint')}
                 </p>
               ) : null}
 
               {runStatus === 'running' || runStatus === 'pending' ? (
-                <p className="text-xs text-blue-600">Выполняется…</p>
+                <p className="text-xs text-blue-600">{t('runResultPanel.running')}</p>
               ) : null}
 
               {runStatus === 'completed' ? (
-                <p className="text-xs text-green-700">Запуск завершён успешно.</p>
+                <p className="text-xs text-green-700">{t('runResultPanel.run_completed')}</p>
               ) : null}
 
               {runStatus === 'failed' ? (
                 <p className="whitespace-pre-wrap text-xs text-red-700">
-                  Ошибка запуска: {runError ?? 'причина недоступна'}
+                  {t('runResultPanel.run_error', {
+                    error: runError ?? t('runResultPanel.run_error_unknown'),
+                  })}
                 </p>
               ) : null}
 
               {runStatus === 'cancelled' ? (
-                <p className="text-xs text-muted-foreground">Запуск отменён.</p>
+                <p className="text-xs text-muted-foreground">{t('runResultPanel.run_cancelled')}</p>
               ) : null}
 
               <p className="mt-1 text-[10px] text-muted-foreground">
-                Кликните по узлу, чтобы посмотреть его вывод, метрики и логи.
+                {t('runResultPanel.node_hint')}
               </p>
             </Section>
           )}

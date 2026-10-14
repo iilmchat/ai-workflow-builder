@@ -1,6 +1,9 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import '@xyflow/react/dist/style.css';
+// i18n инициализируется до рендера: переводы нужны уже первому рендеру,
+// а стор читает i18n.t() на этапе импорта (см. stores/workflow.ts).
+import './i18n';
 import './index.css';
 import { App } from '@/App';
 import { useWorkflowStore } from '@/stores/workflow';

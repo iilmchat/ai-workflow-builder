@@ -1,6 +1,7 @@
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
+import { useTranslation } from 'react-i18next';
 import { BaseNode } from '@/components/nodes/BaseNode';
-import { NODE_REGISTRY, tLabel } from '@/lib/node-registry';
+import { NODE_REGISTRY } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
   DATA_TYPE_COLORS,
@@ -15,6 +16,7 @@ import {
  */
 export function TextNode({ id, data }: NodeProps<TextFlowNode>) {
   const { updateNodeData } = useReactFlow();
+  const { t } = useTranslation();
   // Уровень выполнения появляется после Run (/engine/plan).
   const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   // Статус выполнения приходит из SSE-потока (R4.2).
@@ -24,14 +26,14 @@ export function TextNode({ id, data }: NodeProps<TextFlowNode>) {
     <>
       <BaseNode
         icon={NODE_REGISTRY.text.icon}
-        title={tLabel(NODE_REGISTRY.text.labelKey)}
+        title={t(NODE_REGISTRY.text.labelKey)}
         executionLevel={executionLevel}
         status={status}
       >
         <textarea
           rows={3}
           value={data.value}
-          placeholder="Введите текст..."
+          placeholder={t('node.text.placeholder')}
           // nodrag: иначе протяжка мышью по textarea тащит саму ноду.
           className="nodrag w-full resize-none rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
           onChange={(event) => updateNodeData(id, { value: event.target.value })}

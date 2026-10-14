@@ -8,6 +8,7 @@ import {
   type NodeChange,
 } from '@xyflow/react';
 import { create } from 'zustand';
+import i18n from '@/i18n';
 import {
   createRunAsync,
   createWorkflowAsync,
@@ -85,7 +86,14 @@ function withNodeStatus(
 /** Владелец графа: авторизации пока нет, поэтому значение фиксированное. */
 export const DEFAULT_USER_ID = 'demo-user';
 /** Имя workflow по умолчанию (backend требует непустое). */
-export const DEFAULT_WORKFLOW_NAME = 'Новый workflow';
+/**
+ * Имя нового workflow.
+ *
+ * Оценено на этапе импорта модуля (i18n уже инициализирован в `main.tsx`):
+ * это стартовое значение, которое пользователь дальше меняет сам, поэтому
+ * переключение языка его не переименовывает.
+ */
+export const DEFAULT_WORKFLOW_NAME = i18n.t('workflow.default_name');
 
 /** Уведомление для пользователя. */
 export interface Notice {
@@ -430,14 +438,14 @@ function fromApiWorkflow(workflow: ApiWorkflow): {
     nodes,
     edges,
     warning: skipped.length
-      ? `Пропущены узлы неизвестного типа: ${skipped.join(', ')}`
+      ? i18n.t('toast.unknown_node_types', { ids: skipped.join(', ') })
       : null,
   };
 }
 
 /** Достаёт текст ошибки из неизвестного значения. */
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : 'Неизвестная ошибка';
+  return error instanceof Error ? error.message : i18n.t('error.unknown');
 }
 
 /**
@@ -555,7 +563,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         currentWorkflowId: saved.id,
         currentWorkflowName: saved.name,
         isSaving: false,
-        notice: { kind: 'success', text: `Workflow сохранён: ${saved.name}` },
+        notice: {
+          kind: 'success',
+          text: i18n.t('toast.workflow_saved', { name: saved.name }),
+        },
       });
       // Сохранён другой граф — прежнее состояние запуска к нему не относится.
       get().resetRunState();
@@ -584,7 +595,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         selectedNodeId: null,
         notice: warning
           ? { kind: 'error', text: warning }
-          : { kind: 'success', text: `Workflow загружен: ${workflow.name}` },
+          : { kind: 'success', text: i18n.t('toast.workflow_loaded', { name: workflow.name }) },
       });
       // Загружен другой граф: состояние прошлого запуска сбрасываем.
       get().resetRunState();
@@ -598,7 +609,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     const { nodes, edges } = get();
 
     if (nodes.length === 0) {
-      set({ notice: { kind: 'error', text: 'Граф пуст: добавьте хотя бы один узел' } });
+      set({ notice: { kind: 'error', text: i18n.t('toast.graph_empty') } });
       return;
     }
 
@@ -626,7 +637,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         isLoading: false,
         notice: {
           kind: 'success',
-          text: `План: ${plan.levels.length} ур., порядок ${order}`,
+            text: i18n.t('toast.plan', { levels: plan.levels.length, order }),
         },
       });
     } catch (error) {
@@ -678,7 +689,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         }
       },
       onFatalError: (attempts) => {
-        const text = `Поток запуска не отвечает (ошибок подряд: ${attempts})`;
+        const text = i18n.t('toast.stream_stalled', { count: attempts });
 
         set({ runError: text, notice: { kind: 'error', text } });
       },
@@ -805,7 +816,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           attemptNumber: event.attemptsMade + 1,
           runError:
             event.status === 'failed'
-              ? (state.runError ?? 'Запуск завершился с ошибкой')
+              ? (state.runError ?? i18n.t('error.run_failed'))
               : null,
         }));
 
