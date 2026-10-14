@@ -530,8 +530,9 @@ Planned 1 · Won't Fix 1.
   (RULES § 5.9).
 - **Sub-workflow** — `visitedWorkflows: Set` для рекурсии, max
   глубина 5, префикс ID `sub_<nodeId>__`.
-- **Undo/Redo** — snapshot-история (max 50), structural sharing
-  через Immer.
+- **Undo/Redo (план v0.8)** — snapshot-история (max 50),
+  `structuredClone`; при необходимости — Immer как новая
+  зависимость.
 - **Condition MVP DSL** — без `new Function`, только простые
   операции (`>`, `<`, `===`, `includes`); sandbox — v0.9.
 **Не стесняйся предлагать новое.** Если видишь паттерн, которого нет в
@@ -567,7 +568,8 @@ guards, LoginPage, AuthProvider.**
   compare.
 - **Export/Import/Templates** (KI-108, 109).
 
-**7 подшагов R6.1..R6.7** (~28 ч dsh).
+**7 подшагов R6.1..R6.7** (~28 ч dsh; 8 сессий — R6.4
+разбит на a/b).
 
 **Решения Approved (5/5):**
 1. Auth: httpOnly cookie + sameSite=strict.
