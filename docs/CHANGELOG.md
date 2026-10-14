@@ -17,6 +17,27 @@
 ---
 ## [Unreleased]
 
+### Changed
+- **Frontend — v0.7.0 / R5.1: уборка типов и реестр на labelKey
+  (KI-129):**
+  - `NodeData` — дискриминированный union по `kind`
+    (`TextNodeData | LlmNodeData | ImageGenNodeData`), `kind`
+    обязателен. Подтипы `extends Record<string, unknown>` (требование
+    React Flow и API-слоя).
+  - `createNode` / `nodeDataFromApi` — явные `case` без `default:`;
+    новый тип узла поймает tsc.
+  - `imageUrl` в `nodeDataFromApi` добавляется условно — без
+    `undefined`-ключей в JSON и в `Object.keys`.
+  - `NODE_REGISTRY` — `labelKey` вместо `label`/`labelEn`, `icon`
+    (эмодзи) вместо `iconEmoji` + `label`. `as const satisfies
+    Record<NodeType, NodeRegistryEntry>`.
+  - `capabilities: { externalState, userConfig }` — задел под
+    KI-128.
+  - `NODE_CATEGORIES` — 5 категорий (`input / ai / media / tools /
+    output`), `image_generation` → `media`.
+  - `Toolbar` и узлы — `tLabel(NODE_REGISTRY[type].labelKey)`;
+    временный RU до R5.3 (react-i18next).
+
 ## [0.6.1] — 2026-10-14
 
 **Frontend: единый реестр узлов (KI-121, KI-122, KI-123), KI-125..129.**

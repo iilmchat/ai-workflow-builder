@@ -63,8 +63,16 @@
         category: 'input',
         /** Компонент. */
         component: TextNode,
-        /** Capabilities (задел под KI-128). */
-        capabilities: { persistence: false, externalState: false },
+        /**
+         * Capabilities (задел под KI-128, KI-130).
+         * Канонический набор: { externalState, userConfig }.
+         * - externalState — узел хранит внешнее состояние
+         *   (БД, индекс, память).
+         * - userConfig — true, если без явного выбора пользователя
+         *   узел не запускаем (image_generation без модели = fail;
+         *   llm с DEFAULT_LLM_MODEL_ID = работает, поэтому false).
+         */
+        capabilities: { externalState: false, userConfig: false },
       },
       // ...
     } as const satisfies Record<NodeType, NodeRegistryEntry>;
@@ -271,7 +279,7 @@
 
 **Что внутри:**
 
-- Секции по `NODE_REGISTRY[type].category` (`input` / `ai` / `tools` / `output`), порядок — из `NODE_CATEGORIES`.
+- Секции по `NODE_REGISTRY[type].category` (`input` / `ai` / `media` / `tools` / `output`), порядок — из `NODE_CATEGORIES`.
 - Внутри секции — карточки узлов: `icon` + `t(labelKey)`.
 - **Секции:** `input / ai / media / tools / output` (5 категорий,
   `media` — задел под KI-128: video/audio узлы).
@@ -330,6 +338,12 @@
       | { kind: 'text'; value: string }
       | { kind: 'llm'; model: string }
       | { kind: 'image'; model?: string; aspectRatio?: string; imageUrl?: string };
+
+**Важно:** каждый подтип (TextNodeData / LlmNodeData / ImageGenNodeData)
+должен `extends Record<string, unknown>`. Это требование React Flow
+(`Node<TData extends Record<string, unknown>>`) и API-слоя
+(`ApiGraphNode.data` — `z.record(z.string(), z.unknown())`). Без
+индексной сигнатуры компиляция падает.
 
 **Плюс** — дискриминатор `kind` в `*NodeData` становится обязательным (`kind: 'text'`, не `kind?: 'text'`).
 

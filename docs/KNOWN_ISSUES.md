@@ -2017,7 +2017,8 @@
 ---
 
 ### KI-129 — Уборка типов фронтенда (NodeData, imageUrl)
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.7.0 (коммит `7838359`)
 - **Файлы:** `web/src/types/graph.ts`, `web/src/stores/workflow.ts`,
   `web/src/lib/node-registry.ts`
 - **Описание:** После KI-121/KI-122 накопились типовые шероховатости,
@@ -2050,9 +2051,63 @@
      (ошибка при добавлении узла — это то, что нужно).
   3. В `nodeDataFromApi` — не присваивать `imageUrl: undefined`,
      использовать условное добавление поля (или `structuredClone`).
-- **Когда чинить:** v0.7 (вместе с i18n и темами — тоже трогают
-  компоненты узлов).
-- **Связанные:** KI-121, KI-122, KI-126, KI-127.
+- **Когда чинить:** — (закрыто, v0.7.0).
+- **Fix:** `NodeData` — дискриминированный union по `kind`
+  (`TextNodeData | LlmNodeData | ImageGenNodeData`), `kind`
+  обязателен. `imageUrl` в `nodeDataFromApi` добавляется условно —
+  без `undefined`-ключей (подтверждено payload PATCH:
+  `dataKeys = [kind, model, aspectRatio]`). `createNode` /
+  `nodeDataFromApi` — явные `case` без `default:`; новый тип узла
+  поймает tsc.
+- **Остаток:** связь `NodeType ↔ data.kind` компилятором **не**
+  проверяется (см. KI-131) — `satisfies` проверяет только форму
+  записи реестра.
+- **Связанные:** KI-121, KI-122, KI-126, KI-127, KI-130, KI-131.
+
+---
+
+### KI-130 — capabilities в реестре: расхождение DESIGN и реализации
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.7.0 (docs-only)
+- **Файлы:** `docs/development/v0.7/DESIGN_UI_SLICES.md` (§ 2)
+- **Описание:** В DESIGN § 2 набор был `{ persistence, externalState }`,
+  в реализации R5.1 — `{ externalState, userConfig }`. Критерий
+  `userConfig` не определён: у `llm` стоит `false`, у
+  `image_generation` — `true`, хотя оба требуют выбора модели.
+  Попутно DESIGN § 5.1 (4 категории без `media`) противоречил
+  § 5.2 (5 с `media`) — § 5.1 исправлен.
+- **Fix:** Канонический набор — `{ externalState, userConfig }`
+  (§ 2 DESIGN). Определения: `externalState` — узел хранит внешнее
+  состояние (БД, индекс, память); `userConfig` — узел требует
+  конфигурации пользователя до запуска (выбор модели, endpoint).
+  Противоречие § 5.1/§ 5.2 убрано.
+- **Связанные:** KI-128, KI-129.
+
+---
+
+### KI-131 — Связь `NodeType ↔ data.kind` не проверяется tsc
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `web/src/types/graph.ts`, `web/src/lib/node-registry.ts`
+- **Описание:** После R5.1 `NodeData` — дискриминированный union по
+  `kind`, а `NODE_REGISTRY` — `as const satisfies Record<NodeType,
+  NodeRegistryEntry>`. Но `satisfies` проверяет **только форму
+  записи**: `component` — объединение трёх компонентов, поэтому
+  `text: { component: LLMNode }` пройдёт молча. Аналогично, связь
+  `node.type='llm'` ↔ `data.kind='image'` не проверяется
+  компилятором, хотя JSDoc в `graph.ts` и DESIGN § 6 обещают
+  обратное.
+- **Возможные решения:**
+  1. Рядом с реестром — маппинг `Record<NodeType, NodeData['kind']>`,
+     и generic-хелпер `entry<K extends NodeType>(type: K, entry:
+     Entry<NodeDataOf<K>>)`. Тогда `text: entry('llm', ...)` — ошибка.
+  2. Discriminated `NodeRegistryEntry` по `kind` (не по `NodeType`).
+  3. Type-тест (vitest + `expectTypeOf`) — когда появится
+     frontend-инфраструктура (KI-068).
+- **Когда чинить:** R5.3 (i18n) или R5.4 (каталог) — обе задачи
+  трогают `NODE_REGISTRY`. Type-тест — **опционально**, если
+  KI-068 (frontend-инфраструктура) закроют до R5.3; иначе —
+  решения 1–2 (generic-хелпер или discriminated entry).
+- **Связанные:** KI-121, KI-129, KI-068.
 
 ---
 
@@ -2060,14 +2115,14 @@
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 34 |
+| Fixed | 36 |
 | In Progress | 0 |
 | Planned | 2 |
 | Deferred | 0 |
 | Documented | 6 |
 | Open | 79 |
 | Won't Fix | 1 |
-| **Всего** | **122** |
+| **Всего** | **124** |
 
 ---
 
