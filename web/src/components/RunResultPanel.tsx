@@ -48,6 +48,22 @@ function formatRub(value: string): string {
 }
 
 /**
+ * Форматирует доллары для панели: backend отдаёт `numeric` с 6 знаками
+ * («0.000000», «2.500000»), в UI это лишний шум — показываем центы (KI-151).
+ *
+ * Устроено по образцу {@link formatRub}: нечисловое значение не превращается
+ * в «$NaN», а отдаётся как есть.
+ *
+ * @param value - стоимость в USD строкой (как пришла из snapshot)
+ * @returns строка вида «$0.00»; исходная строка, если распарсить не удалось
+ */
+function formatUsd(value: string): string {
+  const amount = Number(value);
+
+  return Number.isFinite(amount) ? `$${amount.toFixed(2)}` : `$${value}`;
+}
+
+/**
  * Форматирует метрики узла в строку «длительность · токены · стоимость».
  *
  * Валюты не смешиваются: LLM-узлы отдают `costUsd`, media-узлы — `costRub`
@@ -83,7 +99,7 @@ function formatMetrics(metrics: {
   }
 
   if (metrics.costUsd !== null) {
-    parts.push(`$${metrics.costUsd}`);
+    parts.push(formatUsd(metrics.costUsd));
   }
 
   if (metrics.costRub !== null) {
