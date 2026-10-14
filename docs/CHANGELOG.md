@@ -17,6 +17,17 @@
 ---
 ## [Unreleased]
 
+### Added
+- **Интеграции — v0.7.2: Yandex env + LM Studio auto-discovery (KI-174/175/176/088):**
+  - `YANDEX_MODELS` (env): формат `<id>:<modalities>` (короткие id +
+    `YANDEX_FOLDER_ID` или полные `gpt://<folder>/<model>/<version>`).
+    Парсер `parseYandexModels`. Vision через `:text+vision`.
+  - `MODEL_PRICING` — yandexgpt-lite / yandexgpt / yandexgpt-32k /
+    qwen3.6-35b-a3b. `bareModelId()` извлекает id из URI.
+  - LM Studio: `createProvidersAsync` + `GET /v1/models` при старте.
+    Env `LMSTUDIO_MODELS` — приоритет для модальностей; API — источник
+    каталога. API недоступен → fallback на env.
+
 ### Documented
 - **KI-174, KI-175, KI-176** — Yandex AI Studio: env-формат каталога
   моделей (по образцу `LMSTUDIO_MODELS`), vision-модальность

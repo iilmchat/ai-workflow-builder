@@ -1387,18 +1387,22 @@
 ---
 
 ### KI-088 — `LMSTUDIO_MODELS` не имеет автообнаружения
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-13
-- **Файлы:** `src/llm/llm-provider.factory.ts`
-- **Описание:** Список моделей LM Studio задаётся вручную в env,
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-13
+- **Исправлено в:** v0.7.2-pre (коммит `ed945cd`)
+- **Файлы:** `src/llm/llm-provider.factory.ts`, `src/llm/llm.module.ts`
+- **Описание:** Список моделей LM Studio задавался вручную в env,
   хотя сервер отдаёт их через `GET /v1/models`. Если в env модель
-  указана, а в LM Studio её нет — ошибка всплывёт только на
+  указана, а в LM Studio её нет — ошибка всплывала только на
   вызове.
-- **Решение:** опционально `GET {LMSTUDIO_BASE_URL}/models` при
-  старте; env — override.
-- **Когда чинить:** v0.6.0.
-- **Связанные:** —
+- **Fix:** `createLmStudioProvider` стал асинхронным
+  (`createProvidersAsync` в `LlmModule`): при старте запрашивается
+  `GET {LMSTUDIO_BASE_URL}/models` с таймаутом 3 с. Каталог
+  сливается: env-записи сохраняют свои модальности (приоритет),
+  найденные в API добавляются как `text`, отсутствующие в API
+  остаются с предупреждением, недоступный сервер — fallback на env.
+- **Когда чинить:** — (закрыто, v0.7.2-pre)
+- **Связанные:** KI-177.
 
----
 
 ### KI-089 — `z.url({ protocol })` — deprecated в Zod 4
 - **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-13
@@ -2841,9 +2845,10 @@
 ---
 
 ### KI-174 — Yandex AI Studio: env-формат каталога моделей
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.7.2-pre (коммит `ed945cd`)
 - **Файлы:** `src/llm/llm-provider.factory.ts` (`YANDEX_MODELS`),
-  `.env.example`, `src/llm/providers/openai-compatible.provider.ts`
+  `.env.example`, `src/config/env.schema.ts`
 - **Описание:** v0.7.1 (KI-159) захардкодил список моделей Yandex
   в фабрике (`yandexgpt-lite`, `yandexgpt`, `yandexgpt-32k`). Это
   ломается сразу:
@@ -2856,62 +2861,104 @@
      раз.
   3. Пользователь сам знает свой folder и модели — env-формат
      лучше.
-- **Решение (эскиз):** формат по образцу `LMSTUDIO_MODELS` /
-  `GPTUNNEL_MODELS`:
-  ```text
-  YANDEX_API_KEY=<ключ>
-  YANDEX_FOLDER_ID=b1gufspraeh2i5nin6nt
-  YANDEX_MODELS=gpt://b1gufspraeh2i5nin6nt/yandexgpt-lite/latest:text,gpt://b1gufspraeh2i5nin6nt/qwen3.6-35b-a3b/latest:text+vision
-  ```
-- Парсер `parseModelIds` (есть) + суффикс модальностей `:text+vision`.
-- `YANDEX_FOLDER_ID` — дефолтный префикс для коротких id; если
-  пользователь ввёл полный `gpt://...` — не требуется.
-- Без `YANDEX_MODELS` — пустой список (провайдер не регистрируется).
+- **Fix:** каталог переведён в `YANDEX_MODELS` (формат
+  `<id>[:<модальности>]` через запятую). Парсер `parseYandexModels`
+  понимает полный URI `gpt://<folder>/<model>/<version>`, короткое
+  имя (`yandexgpt-lite` → `/latest`) и имя с версией
+  (`yandexgpt-lite/latest` — версия не дублируется); короткие id без
+  `YANDEX_FOLDER_ID` пропускаются с предупреждением. Без
+  `YANDEX_MODELS` работает дефолт (`yandexgpt-lite` + `yandexgpt`),
+  а без folder_id провайдер не регистрируется.
 - **Отменяет:** KI-172.
-- **Когда чинить:** v0.7.2.
+- **Когда чинить:** — (закрыто, v0.7.2-pre)
 - **Связанные:** KI-159, KI-172, KI-175, KI-176, KI-088.
 
 ### KI-175 — Yandex: модели всегда `text` (нет `V`-бейджа)
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.7.2-pre (коммит `ed945cd`)
 - **Файлы:** `src/llm/llm-provider.factory.ts` (`YANDEX_MODELS`)
 - **Описание:** v0.7.1 пометил все Yandex-модели как `text` только.
-Но `qwen3.6-35b-a3b/latest` — **мультимодальная** (UI Yandex AI
-Studio: «Работа с текстом и изображениями», «Понять визуальный
-контент»). Vision-модель не покажет badge `[V]` в селекте.
-- **Решение:** env-суффикс `:text+vision` (см. KI-174) — тогда
-модальность задаёт пользователь по документации Yandex.
-- **Когда чинить:** v0.7.2 (вместе с KI-174).
+  Но `qwen3.6-35b-a3b/latest` — **мультимодальная** (UI Yandex AI
+  Studio: «Работа с текстом и изображениями», «Понять визуальный
+  контент»). Vision-модель не покажет badge `[V]` в селекте.
+- **Fix:** модальности задаются суффиксом в `YANDEX_MODELS`
+  (`…qwen3.6-35b-a3b/latest:text+vision`) через общий парсер
+  `parseModalities`; в smoke `/llm/models` отдаёт
+  `inputModalities: ['text','vision']`, UI показывает badge `[V]`.
+- **Когда чинить:** — (закрыто, v0.7.2-pre)
 - **Связанные:** KI-159, KI-174.
 
 ### KI-176 — Yandex: цены не в `MODEL_PRICING` → `cost_usd = null`
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.7.2-pre (коммит `ed945cd`)
 - **Файлы:** `src/llm/model-pricing.ts`
 - **Описание:** Цены Yandex AI Studio известны и стабильны
-(пользовательский конфиг):
-- YandexGPT Lite: $0.002/1k input, $0.002/1k output.
-- Qwen3.6-35B (VL): $0.002/1k input, $0.003/1k output.
-Но в `MODEL_PRICING` их нет → `cost_usd = null` (как в KI-150,
-KI-052). UI покажет токены без стоимости.
-- **Решение:** добавить Yandex-модели в `MODEL_PRICING`; для
-неизвестных Yandex-моделей — либо `null` («неизвестно»), либо
-env-таблица цен.
-- **Когда чинить:** v0.7.2 (после KI-174) или v0.8.
-- **Связанные:** KI-052, KI-150, KI-174.  
+  (пользовательский конфиг):
+  - YandexGPT Lite: $0.002/1k input, $0.002/1k output.
+  - Qwen3.6-35B (VL): $0.002/1k input, $0.003/1k output.
+  Но в `MODEL_PRICING` их нет → `cost_usd = null` (как в KI-150,
+  KI-052). UI покажет токены без стоимости.
+- **Fix:** в `MODEL_PRICING` добавлены `yandexgpt-lite`, `yandexgpt`,
+  `yandexgpt-32k`, `qwen3.6-35b-a3b` (тарифы на 2026-10-15);
+  `calculateCostUsd` ищет цену и по полному URI через `bareModelId()`.
+- **Когда чинить:** — (закрыто, v0.7.2-pre)
+- **Связанные:** KI-052, KI-150, KI-174.
 
 ---
+
+### KI-177 — LM Studio auto-discovery работает только на старте
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/llm/llm-provider.factory.ts`
+- **Описание:** Каталог запрашивается один раз при инициализации.
+  LM Studio, запущенный после backend, остаётся невидимым до
+  перезапуска приложения (KI-088).
+- **Решение:** фоновое обновление или `POST /llm/refresh`.
+- **Когда чинить:** v0.8 (при появлении кэша каталога).
+- **Связанные:** KI-088, KI-117.
+
+### KI-178 — Формат `YANDEX_MODELS` / `LMSTUDIO_MODELS` не валидируется Zod
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/config/env.schema.ts`
+- **Описание:** `YANDEX_MODELS`, `LMSTUDIO_MODELS`, `GPTUNNEL_MODELS` —
+  `z.string().optional()`. Опечатка в формате видна только в логе, но
+  не в `validateEnv`, то есть старт проходит с «тихо» неполным
+  каталогом.
+- **Решение:** Zod-схема формата списка (`<id>[:<modalities>]`),
+  проверяющая записи на этапе валидации env.
+- **Когда чинить:** v0.8 (вместе с KI-174-доработками).
+- **Связанные:** KI-174.
+
+### KI-179 — LLM возвращает пустой content → media-узел падает с «Пустой prompt»
+- **Приоритет:** 🔴 Critical | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/llm/providers/openai-compatible.provider.ts`,
+  `src/media/media-node-executor.service.ts`, `src/llm/llm.service.ts`
+- **Описание:** При Text → LLM (deepseek-v4-flash на GPTunnel) → ImageGen
+  (nano-banana-pro) LLM **иногда** возвращает `{"text": ""}` при
+  `tokens=44/1024` (1024 = maxTokens). Тогда media падает с «Пустой
+  prompt». Воспроизводится 2 из 6 запусков за час.
+  Гипотеза: GPTunnel/DeepSeek V4 Flash при упоре в `maxTokens`
+  возвращает reasoning-контент отдельно, `choices[0].message.content`
+  пустой, `finish_reason='length'`.
+- **Диагностика:** временно логировать структуру ответа (без PII):
+  длины `content`, `reasoning_content`, `finish_reason`.
+- **Решение (TBD):** (1) парсить `reasoning_content` как fallback;
+  (2) поднять/убрать maxTokens для deepseek-v4-flash; (3) явная ошибка
+  «LLM вернул пустой ответ (finish_reason=length)» вместо каскада.
+- **Когда чинить:** v0.7.2 (блокирует надёжный прогон media-цепочки).
+- **Связанные:** KI-166, KI-162.
 
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 64 |
+| Fixed | 68 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 6 |
-| Open | 97 |
+| Open | 96 |
 | Won't Fix | 1 |
-| **Всего** | **169** |
+| **Всего** | **172** |
 
 ---
 
