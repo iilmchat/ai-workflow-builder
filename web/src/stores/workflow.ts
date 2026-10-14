@@ -83,6 +83,28 @@ function withNodeStatus(
   return { nodeStatuses: { ...state.nodeStatuses, [nodeId]: status } };
 }
 
+/**
+ * Возвращает патч состояния с логами узла из события.
+ *
+ * Пустой список игнорируем: у события без ретраев `logs: []`, и затирать им
+ * уже известные логи из snapshot нельзя (та же логика, что в snapshot-ветке).
+ * KI-149 (KI-075): логи приходят в `node_completed`/`node_failed`.
+ *
+ * @param state - текущее состояние стора
+ * @param nodeId - id узла графа
+ * @param logs - логи из события (`null` у старых событий)
+ * @returns патч `nodeLogs` либо пустой объект
+ */
+function withNodeLogs(
+  state: WorkflowState,
+  nodeId: string,
+  logs: readonly string[] | null | undefined,
+): Partial<Pick<WorkflowState, 'nodeLogs'>> {
+  return logs !== null && logs !== undefined && logs.length > 0
+    ? { nodeLogs: { ...state.nodeLogs, [nodeId]: [...logs] } }
+    : {};
+}
+
 /** Владелец графа: авторизации пока нет, поэтому значение фиксированное. */
 export const DEFAULT_USER_ID = 'demo-user';
 /** Имя workflow по умолчанию (backend требует непустое). */
@@ -763,15 +785,21 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         set((state) => ({
           ...withNodeStatus(state, event.nodeId, 'completed'),
           nodeOutputs: { ...state.nodeOutputs, [event.nodeId]: event.outputs },
-          // Токены и стоимость приходят только в snapshot, а длительность есть и
-          // в событии — обновляем её, сохраняя уже известные метрики.
+          // KI-149 (KI-075): метрики есть и в событии — панель показывает
+          // стоимость и токены сразу после Run, а не только после F5.
+          // Значения события свежее snapshot, поэтому перекрывают известные.
           nodeMetrics: {
             ...state.nodeMetrics,
             [event.nodeId]: {
               ...(state.nodeMetrics[event.nodeId] ?? EMPTY_METRICS),
               durationMs: event.durationMs,
+              costRub: event.costRub ?? null,
+              tokensIn: event.tokensIn ?? null,
+              tokensOut: event.tokensOut ?? null,
+              costUsd: event.costUsd ?? null,
             },
           },
+          ...withNodeLogs(state, event.nodeId, event.logs),
         }));
 
         return;
@@ -783,6 +811,19 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           // до переподключения, а run-уровневый runError остаётся для бейджа.
           runError: event.error,
           nodeErrors: { ...state.nodeErrors, [event.nodeId]: event.error },
+          // KI-149 (KI-075): метрики провайдера на падении неизвестны (`null`),
+          // зато приходят логи ретраев — панель покажет их до F5.
+          nodeMetrics: {
+            ...state.nodeMetrics,
+            [event.nodeId]: {
+              ...(state.nodeMetrics[event.nodeId] ?? EMPTY_METRICS),
+              costRub: event.costRub ?? null,
+              tokensIn: event.tokensIn ?? null,
+              tokensOut: event.tokensOut ?? null,
+              costUsd: event.costUsd ?? null,
+            },
+          },
+          ...withNodeLogs(state, event.nodeId, event.logs),
         }));
 
         return;

@@ -85,6 +85,14 @@ export const RunEventSchema = z.discriminatedUnion('type', [
     nodeId: z.string(),
     outputs: z.record(z.string(), z.unknown()),
     durationMs: z.number().int(),
+    // KI-149 (KI-075): метрики приходят и в событии (backend v0.7.1). Без этих
+    // полей Zod их отбрасывает (strip), и панель видит стоимость только из
+    // snapshot после F5. Поля необязательные — старые события валидны.
+    costRub: z.string().nullable().optional(),
+    tokensIn: z.number().int().nonnegative().nullable().optional(),
+    tokensOut: z.number().int().nonnegative().nullable().optional(),
+    costUsd: z.string().nullable().optional(),
+    logs: z.array(z.string()).nullable().optional(),
     finishedAt: z.string(),
   }),
   /** Узел упал. */
@@ -93,6 +101,11 @@ export const RunEventSchema = z.discriminatedUnion('type', [
     runId: z.string(),
     nodeId: z.string(),
     error: z.string(),
+    costRub: z.string().nullable().optional(),
+    tokensIn: z.number().int().nonnegative().nullable().optional(),
+    tokensOut: z.number().int().nonnegative().nullable().optional(),
+    costUsd: z.string().nullable().optional(),
+    logs: z.array(z.string()).nullable().optional(),
     finishedAt: z.string(),
   }),
   /** Запуск завершён — успешно или с ошибкой. */
