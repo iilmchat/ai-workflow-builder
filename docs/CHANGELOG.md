@@ -17,6 +17,27 @@
 ---
 ## [Unreleased]
 
+### Added
+- **Frontend — v0.7.0 / R5.2: тёмная тема (KI-125, KI-132):**
+  - `web/src/styles/theme.css` (новый) — `@theme` (светлая) +
+    `.dark` (тёмная): CSS-переменные для background/foreground/
+    muted/border/primary/canvas/node + маппинг React Flow
+    (`--xy-*`: edge-stroke, background-pattern, controls, minimap,
+    edge-label).
+  - `web/src/hooks/use-theme.ts` (новый) — `useTheme()`:
+    light/dark/system, `localStorage.theme`, реактивная подписка
+    на `matchMedia`, класс `.dark` на `<html>`.
+  - `web/index.html` — inline-script до bundle, против вспышки.
+  - `TopBar` — кнопка ☀/🌙.
+  - Компоненты (`TopBar`, `Toolbar`, `BaseNode`, `RunResultPanel`,
+    `LoadModal`, `Canvas`) и узлы (`TextNode`, `LLMNode`,
+    `ImageGenNode`) переведены на переменные.
+  - Инпуты узлов — темизированы; фокус `focus:border-primary
+    focus:ring-1 focus:ring-primary` (R5.2.1/R5.2.2/R5.2.3).
+  - RULES 4.32: `color-mix()` вне `@theme` эмитится как невалидный
+    `theme(…)` — такие значения держать отдельной переменной в
+    `@theme`/`.dark` (KI-134).
+
 ### Changed
 - **Frontend — v0.7.0 / R5.1: уборка типов и реестр на labelKey
   (KI-129):**

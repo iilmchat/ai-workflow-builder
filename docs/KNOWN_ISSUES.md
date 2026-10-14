@@ -1932,7 +1932,8 @@
 ---
 
 ### KI-125 — Нет тёмной темы
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.7.0 (коммиты `1c3d948`, `d4b33f0`, `fc621f8`)
 - **Файлы:** `web/src/index.css`, `web/src/components/*`
 - **Описание:** Tailwind v4 подключён без dark-mode стратегии. Все
   цвета светлые (`bg-white`, `text-slate-700`, `border-slate-200`).
@@ -1943,8 +1944,26 @@
   2. CSS-переменные (`--color-bg`, `--color-fg`) в `:root` и `.dark`,
      Tailwind v4 `@theme` — компоненты используют `bg-background`,
      `text-foreground`. Меньше правок при добавлении новых тем.
-- **Когда чинить:** v0.7 (перед UX-полировкой).
-- **Связанные:** KI-126.
+- **Когда чинить:** — (закрыто, v0.7.0).
+- **Fix:** CSS-переменные через Tailwind v4 `@theme`
+  (`web/src/styles/theme.css`) + `.dark` на `<html>`.
+  `useTheme()` (`web/src/hooks/use-theme.ts`) — light/dark/system,
+  `localStorage.theme`, реактивная подписка на `matchMedia`.
+  Inline-script в `web/index.html` до bundle — против вспышки (FOUC).
+  Кнопка ☀/🌙 в `TopBar`.
+  Компоненты (`TopBar`, `Toolbar`, `BaseNode`, `RunResultPanel`,
+  `LoadModal`, `Canvas`, узлы `TextNode`/`LLMNode`/`ImageGenNode`)
+  переведены на переменные (`bg-background`, `text-foreground`,
+  `border-border`, `bg-node-bg`, `border-node-pending`).
+  React Flow: `--xy-*` (edge-stroke, background-pattern, controls,
+  minimap, edge-label) — маппинг на наши переменные.
+  Инпуты узлов темизированы (R5.2.1) + заметный фокус
+  `focus:border-primary focus:ring-1 focus:ring-primary` (R5.2.2/3).
+  Smoke: light/dark/system, F5 сохраняет, system переключается
+  без перезагрузки (Emulation.setEmulatedMedia).
+- **Остаток:** KI-133 (статусные цвета вне узлов — R5.3);
+  KI-136 (`:focus` vs `:focus-visible`).
+- **Связанные:** KI-126, KI-132, KI-133, KI-134, KI-135, KI-136.
 
 ---
 
@@ -2111,18 +2130,116 @@
 
 ---
 
+### KI-132 — Инпуты внутри узлов не темизированы
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.7.0 (коммит `1c3d948`)
+- **Файлы:** `web/src/components/nodes/TextNode.tsx`,
+  `web/src/components/nodes/LLMNode.tsx`,
+  `web/src/components/nodes/ImageGenNode.tsx`,
+  `web/src/components/nodes/BaseNode.tsx`
+- **Описание:** После R5.2 карточки узлов стали тёмными, но инпуты
+  внутри них оставались светлыми: селекты (`LLMNode`,
+  `ImageGenNode`) — из-за `bg-white`, textarea (`TextNode`) — из-за
+  UA-дефолта контролов при незаданном фоне (в таблице соответствий
+  такой замены не было — фон пришлось добавить). На тёмной карточке
+  это выглядело как белые прямоугольники; рамка карточки в статусе
+  pending оставалась `border-slate-300` (светлое кольцо).
+- **Fix:** `TextNode.tsx` (textarea), `LLMNode.tsx` (select),
+  `ImageGenNode.tsx` (2 select + цена + placeholder результата),
+  `BaseNode.tsx` (рамка pending → `border-node-pending`) переведены
+  на переменные `bg-background`, `border-border`, `text-foreground`,
+  `text-muted-foreground`, `disabled:bg-muted`. Заметный фокус —
+  `focus:border-primary focus:ring-1 focus:ring-primary`.
+- **Остаток:** статусные фоны узлов (`bg-blue-50/bg-green-50/
+  bg-red-50`) — R5.3 (KI-133).
+- **Связанные:** KI-125, KI-133.
+
+---
+
+### KI-133 — Статусные/notice-цвета вне узлов остаются палитрой Tailwind
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `web/src/components/TopBar.tsx`
+  (`RUN_STATUS_STYLE`), `web/src/components/Toast.tsx`,
+  `web/src/components/RunResultPanel.tsx`,
+  `web/src/components/LoadModal.tsx` (кнопка «Удалить»),
+  `web/src/components/nodes/BaseNode.tsx` (статусные фоны узлов)
+- **Описание:** После R5.2 базовые поверхности (background, text,
+  border, node-bg) темизированы, но статусные/notice-цвета остаются
+  литеральными (`bg-blue-100/text-blue-700`, `bg-red-50`,
+  `bg-emerald-50`, `bg-blue-50/bg-green-50/bg-red-50` для узлов).
+  Читаемы в обеих темах, но выглядят как «светлые чипы» на тёмном
+  UI. `--color-node-pending/running/completed/failed` уже заведены
+  в `theme.css`, но используются не везде.
+- **Когда чинить:** R5.3 (i18n) — вместе с канонизацией статусов.
+- **Связанные:** KI-125, KI-132.
+
+---
+
+### KI-134 — Ловушка Tailwind v4: `color-mix()` вне `@theme`
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.7.0 (коммит `1c3d948`, RULES 4.32)
+- **Файлы:** `docs/development/RULES.md` (§ 4.32),
+  `web/src/styles/theme.css`
+- **Описание:** `color-mix()` со ссылкой на `var(--color-*)` **вне
+  блока `@theme`/`.dark`** эмитится Tailwind v4 как невалидный
+  `theme(colors.…)` — браузер отбрасывает свойство. Обнаружено при
+  попытке задать `--xy-minimap-mask-background-color` через
+  `color-mix` в `.react-flow`.
+- **Fix:** `--color-canvas-mask` объявлен отдельной переменной
+  внутри `@theme`/`.dark`; в `.react-flow` используется
+  `var(--color-canvas-mask)`. Правило зафиксировано в RULES 4.32.
+- **Связанные:** KI-125.
+
+---
+
+### KI-135 — CDP-фокус требует `Emulation.setFocusEmulationEnabled`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** —
+- **Описание:** В headless Chrome `element.focus()` выставляет
+  `document.activeElement`, но `:focus` не матчится, пока
+  `document.hasFocus() === false` — фокусные стили (`focus:ring-*`,
+  `focus:border-*`) в smoke не проверяются, дают ложный «не сработало».
+  Лечится `Emulation.setFocusEmulationEnabled({ enabled: true })`
+  перед проверкой. Обнаружено в R5.2.2 при проверке
+  `focus:border-primary`.
+- **Решение:** заметка в `docs/development/SMOKE_CDP.md` (новый файл
+  при появлении) либо комментарий в CDP-сниппетах.
+- **Связанные:** KI-125, KI-132.
+
+---
+
+### KI-136 — `:focus` vs `:focus-visible` в инпутах узлов
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `web/src/components/nodes/*.tsx`,
+  `web/src/components/TopBar.tsx`
+- **Описание:** После R5.2.2/R5.2.3 фокус инпутов — `:focus`
+  (`focus:border-primary focus:ring-1 focus:ring-primary`). Ring
+  виден при клике мышью и при программном фокусе, не только при
+  навигации с клавиатуры. Для инпутов это обычно ожидаемо, но
+  не соответствует современным a11y-рекомендациям (обычно
+  `:focus-visible` для ring, `:focus` для бордера).
+- **Возможные решения:**
+  1. Оставить `:focus` (текущее) — привычно, просто.
+  2. `focus-visible:ring-1 focus-visible:ring-primary` для ring +
+     `focus:border-primary` для бордера.
+  3. Полный переход на `focus-visible` — только клавиатура.
+- **Когда чинить:** R5.3 или v0.8 (при a11y-аудите).
+- **Связанные:** KI-125, KI-132.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 36 |
+| Fixed | 39 |
 | In Progress | 0 |
 | Planned | 2 |
 | Deferred | 0 |
 | Documented | 6 |
-| Open | 79 |
+| Open | 81 |
 | Won't Fix | 1 |
-| **Всего** | **124** |
+| **Всего** | **129** |
 
 ---
 
