@@ -2947,6 +2947,54 @@
 - **Когда чинить:** v0.7.2 (блокирует надёжный прогон media-цепочки).
 - **Связанные:** KI-166, KI-162.
 
+### KI-180 — Нет textarea для prompt в LLM-узле
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/components/nodes/LLMNode.tsx`
+- **Описание:** TextNode и ImageGenNode имеют textarea (auto-resize),
+  LLMNode — только `<select>` модели. Если связь от Text не проведена,
+  у LLM нет способа принять prompt — узел падает с «Пустой prompt».
+  Пользователь ожидает ввод прямо в узле (как в GPTunnel).
+- **Решение:** textarea для `data.prompt` (auto-resize из KI-169).
+  При выполнении: приоритет `inputs.prompt` (от связи), fallback
+  `data.prompt`. i18n: `node.llm.placeholder`.
+- **Когда чинить:** v0.7.2 (вместе с KI-179 — обе про пустой prompt).
+- **Связанные:** KI-160, KI-169, KI-179.
+
+### KI-181 — Media-модели с не-generic params (Yandex Art) падают
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/media/media-node-executor.service.ts`,
+  `src/media/providers/creativelab.provider.ts`
+- **Описание:** `yandex-art/latest` через CreativeLab/GPTunnel падает с
+  `Invalid input, check schema issues`. `promptLen=844` приходит, но
+  Yandex Art требует другой набор params (вероятно `width`/`height`
+  вместо `aspect_ratio`, или `style`, `seed`). Наш executor передаёт
+  generic-формат CreativeLab — это работает для flux/dall-e, но не для
+  специализированных моделей (yandex-art, kandinsky).
+- **Решение:** каталог `/media/models` содержит `params` per-model
+  (в `MediaModelInfo`); построить payload динамически по `params`
+  модели, а не хардкодить `aspect_ratio`. Проверить: `GET /media/models?type=IMAGE`
+  → `yandex-art` → `params`.
+- **Когда чинить:** v0.7.2 (блокирует генерацию через Yandex Art).
+- **Связанные:** KI-101, KI-154, KI-166.
+
+### KI-182 — LLM-селект не показывает vision-модели
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/components/nodes/LLMNode.tsx`
+- **Описание:** `/llm/models` отдаёт `qwen3.6-35b-a3b/latest` (Yandex)
+  с `inputModalities: ['text','vision']`. В UI-селекте LLM-узла эта
+  модель **не видна** — видно только `yandexgpt-lite/latest`. Гипотеза:
+  фильтр `filterModelsByInput(models, 'text')` или группировка
+  `groupLlmModelsForSelect` отсекает vision-модели (или неправильно
+  строит optgroup). Проверить: открыть DevTools, найти вызов
+  фильтра в LLMNode.
+- **Решение:** показать все модели с `outputModalities=['text']`
+  (входные модальности — только для бейджа, не для фильтра).
+  Vision-модели — в группе «Текст + Vision».
+- **Когда чинить:** v0.7.2 (vision-модели Yandex недоступны в UI).
+- **Связанные:** KI-174, KI-175, KI-069, KI-092.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
@@ -2956,9 +3004,9 @@
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 6 |
-| Open | 96 |
+| Open | 99 |
 | Won't Fix | 1 |
-| **Всего** | **172** |
+| **Всего** | **175** |
 
 ---
 

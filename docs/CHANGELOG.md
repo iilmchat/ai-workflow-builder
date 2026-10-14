@@ -17,6 +17,18 @@
 ---
 ## [Unreleased]
 
+### Documented
+- **KI-180, KI-181, KI-182** — найдено на смоке v0.7.2-pre:
+  - KI-180 (Medium): нет textarea для prompt в LLM-узле.
+  - KI-181 (High): media с не-generic params (yandex-art) падают
+    с `Invalid input`.
+  - KI-182 (High): LLM-селект не показывает vision-модели
+    (qwen3.6-35b-a3b в /llm/models есть, в UI — нет).
+- **KI-174, KI-175, KI-176** — Yandex AI Studio: env-формат каталога
+  моделей (по образцу `LMSTUDIO_MODELS`), vision-модальность
+  `qwen3.6-35b-a3b` (потеряна в v0.7.1), цены в `MODEL_PRICING`.
+  Уточнён KI-172. Инсайт после пользовательской настройки Yandex.
+
 ### Added
 - **Интеграции — v0.7.2: Yandex env + LM Studio auto-discovery (KI-174/175/176/088):**
   - `YANDEX_MODELS` (env): формат `<id>:<modalities>` (короткие id +
@@ -27,12 +39,6 @@
   - LM Studio: `createProvidersAsync` + `GET /v1/models` при старте.
     Env `LMSTUDIO_MODELS` — приоритет для модальностей; API — источник
     каталога. API недоступен → fallback на env.
-
-### Documented
-- **KI-174, KI-175, KI-176** — Yandex AI Studio: env-формат каталога
-  моделей (по образцу `LMSTUDIO_MODELS`), vision-модальность
-  `qwen3.6-35b-a3b` (потеряна в v0.7.1), цены в `MODEL_PRICING`.
-  Уточнён KI-172. Инсайт после пользовательской настройки Yandex.
 
 ## [0.7.1] — 2026-10-14
 
