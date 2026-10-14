@@ -17,6 +17,52 @@
 ---
 ## [Unreleased]
 
+## [0.7.1] — 2026-10-14
+
+**Patch-релиз после v0.7.0. 19 KI закрыто + 9 новых Open.**
+
+Пакеты фиксов:
+- Интеграции: Yandex (реальный URI + folder_id), media-дефолт
+  (flux-schnell), LMSTUDIO_MODELS id, единый источник prompt.
+- UX: удаление edges/nodes, кнопка «Новый workflow»,
+  word-wrap панели, auto-resize textarea, tooltips, миникарта.
+- Метрики: cost_rub/tokens/cost_usd в node_completed/node_failed
+  (панель без F5), cost_usd = 0 для LM Studio, формат USD.
+- Run: авто-Save перед Run (устаревший snapshot).
+- Ввод: сохранение курсора в контролируемых полях.
+
+### Fixed
+- **KI-075** — метрики в `node_completed`/`node_failed` (`84532f1`,
+  `684211f`): cost_rub / tokensIn / tokensOut / costUsd / logs.
+- **KI-147** — Run всегда Save перед запуском (`47d577f`).
+- **KI-148** — cost_usd = 0 для локальных провайдеров (`f200c42`).
+- **KI-149** — frontend читает метрики события (`684211f`).
+- **KI-151** — формат USD с 2 знаками (`58d5672`).
+- **KI-154** — дефолт media-модели: text-to-image, не bgremover
+  (`29f4e19`).
+- **KI-156** — LMSTUDIO_MODELS id совпадают с LM Studio
+  (`29f4e19`).
+- **KI-157** — сохранение курсора в контролируемых полях
+  (`702d849`).
+- **KI-158** — миникарта: контраст + border (`474a93f`).
+- **KI-159** — Yandex URI `gpt://<folder>/<model>/latest`
+  (`29f4e19`).
+- **KI-160** — textarea для prompt в ImageGen (`474a93f`).
+- **KI-162** — удаление edges через Delete/Backspace (`9d2f6bf`).
+- **KI-163** — кнопка удаления node (`9d2f6bf`).
+- **KI-164** — кнопка «Новый workflow» (`9d2f6bf`).
+- **KI-165** — word-wrap в панели результата (`474a93f`).
+- **KI-166** — единый источник prompt (`29f4e19`).
+- **KI-167** — tooltips Controls React Flow локализованы
+  (`474a93f`).
+- **KI-168** — tooltip кнопки сворачивания панели (`474a93f`).
+- **KI-169** — auto-resize textarea в узлах (`474a93f`).
+
+### Added
+- **Frontend тесты выросли с 2 до 10** — добавлены на чистые
+  функции (`pickDefaultMediaModel`, форматтеры).
+- **Backend тесты: 325 -> 341** (+16).
+
 ## [0.7.0] — 2026-10-14
 
 **UI-срезы v0.7: тёмная тема, i18n, каталог узлов, уборка типов.**
