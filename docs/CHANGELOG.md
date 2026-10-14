@@ -17,6 +17,21 @@
 ---
 ## [Unreleased]
 
+## [0.7.2] — 2026-10-15
+
+**Patch-релиз после v0.7.1. Yandex env + LM Studio auto-discovery + LLM/media фиксы.**
+
+### Added
+- **Интеграции — Yandex env + LM Studio auto-discovery (KI-174/175/176/088):**
+  - `YANDEX_MODELS` (env): формат `<id>:<modalities>` (короткие id +
+    `YANDEX_FOLDER_ID` или полные `gpt://<folder>/<model>/<version>`).
+    Парсер `parseYandexModels`. Vision через `:text+vision`.
+  - `MODEL_PRICING` — yandexgpt-lite / yandexgpt / yandexgpt-32k /
+    qwen3.6-35b-a3b. `bareModelId()` извлекает id из URI.
+  - LM Studio: `createProvidersAsync` + `GET /v1/models` при старте.
+    Env `LMSTUDIO_MODELS` — приоритет для модальностей; API — источник
+    каталога. API недоступен → fallback на env.
+
 ### Fixed
 - **KI-179** — LLM: fallback `reasoning` при пустом `content`;
   явная ошибка «LLM вернул пустой ответ (finish_reason=X)» (`675ca23`).
@@ -33,17 +48,6 @@
   моделей (по образцу `LMSTUDIO_MODELS`), vision-модальность
   `qwen3.6-35b-a3b` (потеряна в v0.7.1), цены в `MODEL_PRICING`.
   Уточнён KI-172. Инсайт после пользовательской настройки Yandex.
-
-### Added
-- **Интеграции — v0.7.2: Yandex env + LM Studio auto-discovery (KI-174/175/176/088):**
-  - `YANDEX_MODELS` (env): формат `<id>:<modalities>` (короткие id +
-    `YANDEX_FOLDER_ID` или полные `gpt://<folder>/<model>/<version>`).
-    Парсер `parseYandexModels`. Vision через `:text+vision`.
-  - `MODEL_PRICING` — yandexgpt-lite / yandexgpt / yandexgpt-32k /
-    qwen3.6-35b-a3b. `bareModelId()` извлекает id из URI.
-  - LM Studio: `createProvidersAsync` + `GET /v1/models` при старте.
-    Env `LMSTUDIO_MODELS` — приоритет для модальностей; API — источник
-    каталога. API недоступен → fallback на env.
 
 ## [0.7.1] — 2026-10-14
 
