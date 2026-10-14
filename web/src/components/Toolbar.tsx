@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NODE_REGISTRY } from '@/lib/node-registry';
 import type { NodeType } from '@/types/graph';
+import { NodeCatalogPopover } from './NodeCatalogPopover';
 
 interface ToolbarProps {
   /** Добавляет узел указанного типа в центр канваса. */
@@ -20,28 +22,50 @@ interface ToolbarProps {
 const TOOLBAR_TYPES: NodeType[] = ['text', 'llm', 'image_generation'];
 
 /**
- * Нижний тулбар: кнопки добавления узлов.
+ * Нижний тулбар: быстрые кнопки добавления узлов и каталог (KI-127).
  *
- * Позиционируется абсолютно по центру низа экрана, поверх канваса.
+ * Позиционируется абсолютно по центру низа экрана, поверх канваса. Поповер
+ * каталога раскрывается вверх и позиционируется относительно панели тулбара
+ * (поэтому вокруг панели — `relative`).
  */
 export function Toolbar({ onAddNode, disabled = false }: ToolbarProps) {
   const { t } = useTranslation();
+  const [catalogOpen, setCatalogOpen] = useState(false);
 
   return (
     <div className="absolute bottom-6 left-1/2 z-10 -translate-x-1/2">
-      <div className="flex items-center gap-2 rounded-xl bg-background px-3 py-2 shadow-lg ring-1 ring-border">
-        {TOOLBAR_TYPES.map((type) => (
+      <div className="relative">
+        <div className="flex items-center gap-2 rounded-xl bg-background px-3 py-2 shadow-lg ring-1 ring-border">
+          {TOOLBAR_TYPES.map((type) => (
+            <button
+              key={type}
+              type="button"
+              disabled={disabled}
+              onClick={() => onAddNode(type)}
+              className="flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted active:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span aria-hidden="true">{NODE_REGISTRY[type].icon}</span>
+              {t(NODE_REGISTRY[type].labelKey)}
+            </button>
+          ))}
+
           <button
-            key={type}
             type="button"
-            disabled={disabled}
-            onClick={() => onAddNode(type)}
-            className="flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted active:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            data-catalog-toggle="true"
+            onClick={() => setCatalogOpen((value) => !value)}
+            aria-label={t('catalog.open')}
+            aria-expanded={catalogOpen}
+            className="cursor-pointer rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground hover:bg-muted"
           >
-            <span aria-hidden="true">{NODE_REGISTRY[type].icon}</span>
-            {t(NODE_REGISTRY[type].labelKey)}
+            +
           </button>
-        ))}
+        </div>
+
+        <NodeCatalogPopover
+          open={catalogOpen}
+          onClose={() => setCatalogOpen(false)}
+          onAddNode={onAddNode}
+        />
       </div>
     </div>
   );
