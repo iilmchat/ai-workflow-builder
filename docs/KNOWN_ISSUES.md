@@ -2749,7 +2749,9 @@
 - **Решение:** поддержать синтаксис версии в id модели (`yandexgpt-32k/rc`) или
   env-переменную.
 - **Когда чинить:** при добавлении моделей Yandex с нестандартной версией.
-- **Связанные:** KI-159.
+- **Отменяет:** KI-174 (env-формат `YANDEX_MODELS` решит версию
+  через id модели: `yandexgpt-32k/rc`).
+- **Связанные:** KI-159, KI-174.
 
 ---
 
@@ -2838,6 +2840,66 @@
 
 ---
 
+### KI-174 — Yandex AI Studio: env-формат каталога моделей
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `src/llm/llm-provider.factory.ts` (`YANDEX_MODELS`),
+  `.env.example`, `src/llm/providers/openai-compatible.provider.ts`
+- **Описание:** v0.7.1 (KI-159) захардкодил список моделей Yandex
+  в фабрике (`yandexgpt-lite`, `yandexgpt`, `yandexgpt-32k`). Это
+  ломается сразу:
+  1. **Потеряна реальная `qwen3.6-35b-a3b/latest`** — модель есть
+     в Yandex AI Studio и поддерживает vision (см. пользовательский
+     конфиг: `gpt://b1gufspraeh2i5nin6nt/qwen3.6-35b-a3b/latest`).
+     В KI-159 решили, что это «выдуманный id» — ошибочно.
+  2. **Yandex AI Studio обновляет каталог**: там уже DeepSeek V4
+     Flash, Alice AI LLM, Qwen3.6-35B. Хардкод нужно править каждый
+     раз.
+  3. Пользователь сам знает свой folder и модели — env-формат
+     лучше.
+- **Решение (эскиз):** формат по образцу `LMSTUDIO_MODELS` /
+  `GPTUNNEL_MODELS`:
+  ```text
+  YANDEX_API_KEY=<ключ>
+  YANDEX_FOLDER_ID=b1gufspraeh2i5nin6nt
+  YANDEX_MODELS=gpt://b1gufspraeh2i5nin6nt/yandexgpt-lite/latest:text,gpt://b1gufspraeh2i5nin6nt/qwen3.6-35b-a3b/latest:text+vision
+  ```
+- Парсер `parseModelIds` (есть) + суффикс модальностей `:text+vision`.
+- `YANDEX_FOLDER_ID` — дефолтный префикс для коротких id; если
+  пользователь ввёл полный `gpt://...` — не требуется.
+- Без `YANDEX_MODELS` — пустой список (провайдер не регистрируется).
+- **Отменяет:** KI-172.
+- **Когда чинить:** v0.7.2.
+- **Связанные:** KI-159, KI-172, KI-175, KI-176, KI-088.
+
+### KI-175 — Yandex: модели всегда `text` (нет `V`-бейджа)
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `src/llm/llm-provider.factory.ts` (`YANDEX_MODELS`)
+- **Описание:** v0.7.1 пометил все Yandex-модели как `text` только.
+Но `qwen3.6-35b-a3b/latest` — **мультимодальная** (UI Yandex AI
+Studio: «Работа с текстом и изображениями», «Понять визуальный
+контент»). Vision-модель не покажет badge `[V]` в селекте.
+- **Решение:** env-суффикс `:text+vision` (см. KI-174) — тогда
+модальность задаёт пользователь по документации Yandex.
+- **Когда чинить:** v0.7.2 (вместе с KI-174).
+- **Связанные:** KI-159, KI-174.
+
+### KI-176 — Yandex: цены не в `MODEL_PRICING` → `cost_usd = null`
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `src/llm/model-pricing.ts`
+- **Описание:** Цены Yandex AI Studio известны и стабильны
+(пользовательский конфиг):
+- YandexGPT Lite: $0.002/1k input, $0.002/1k output.
+- Qwen3.6-35B (VL): $0.002/1k input, $0.003/1k output.
+Но в `MODEL_PRICING` их нет → `cost_usd = null` (как в KI-150,
+KI-052). UI покажет токены без стоимости.
+- **Решение:** добавить Yandex-модели в `MODEL_PRICING`; для
+неизвестных Yandex-моделей — либо `null` («неизвестно»), либо
+env-таблица цен.
+- **Когда чинить:** v0.7.2 (после KI-174) или v0.8.
+- **Связанные:** KI-052, KI-150, KI-174.  
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
@@ -2847,9 +2909,9 @@
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 6 |
-| Open | 94 |
+| Open | 97 |
 | Won't Fix | 1 |
-| **Всего** | **166** |
+| **Всего** | **169** |
 
 ---
 
