@@ -215,7 +215,7 @@ export function TopBar() {
           placeholder="Название workflow"
           aria-label="Название workflow"
           // nodrag: единое правило для всех input внутри редактора.
-          className="nodrag w-64 rounded-lg border border-transparent px-2 py-1 text-sm font-medium text-foreground outline-none hover:border-border focus:border-border"
+          className="nodrag w-64 rounded-lg border border-transparent px-2 py-1 text-sm font-medium text-foreground outline-none hover:border-border focus:border-primary focus:ring-1 focus:ring-primary"
         />
 
         {runStatus !== null && (
