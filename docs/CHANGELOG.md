@@ -18,6 +18,15 @@
 ## [Unreleased]
 
 ### Added
+- **Frontend — v0.7.0 / R5.4: каталог узлов (KI-127):**
+  - `web/src/components/NodeCatalogPopover.tsx` (новый) — поповер
+    каталога: секции из `NODE_REGISTRY` по `category`, порядок из
+    `NODE_CATEGORIES`, только непустые секции (`input`/`ai`/`media`).
+    Поиск (i18n-aware), клавиатура (↑/↓ по кругу, Enter, Esc, `/`,
+    клик вне).
+  - `Toolbar`: кнопка «+» (`data-catalog-toggle`).
+  - 9 ключей `catalog.*` (ru/en 84 -> 93, паритет-тест).
+  - Bundle 585 -> 589 kB.
 - **Frontend — v0.7.0 / R5.3: i18n RU/EN (KI-126, KI-137, KI-141,
   KI-142):**
   - `react-i18next` + `i18next`. `web/src/i18n/index.ts` —
