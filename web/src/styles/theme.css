@@ -25,8 +25,9 @@
   --color-canvas-bg: theme(colors.slate.50);
   --color-canvas-dot: theme(colors.slate.200);
   /* Маска миникарты: отдельная переменная, потому что color-mix с ссылкой на
-     тему Tailwind внутри .react-flow эмитит неразрешённый theme(...) (R5.2). */
-  --color-canvas-mask: color-mix(in oklab, black 10%, transparent);
+     тему Tailwind внутри .react-flow эмитит неразрешённый theme(...) (R5.2).
+     KI-158: 10% почти не читались — контуры узлов терялись на фоне. */
+  --color-canvas-mask: color-mix(in oklab, black 30%, transparent);
 
   /* Узлы. */
   --color-node-bg: theme(colors.white);
@@ -58,7 +59,9 @@
 
   --color-canvas-bg: theme(colors.slate.900);
   --color-canvas-dot: theme(colors.slate.700);
-  --color-canvas-mask: color-mix(in oklab, white 10%, transparent);
+  /* KI-158: на тёмном фоне маска была белой на 10% и «выбеливала» узлы —
+     миникарта сливалась с холстом. Затемняем, как в светлой теме. */
+  --color-canvas-mask: color-mix(in oklab, black 60%, transparent);
 
   --color-node-bg: theme(colors.slate.900);
   --color-node-border: theme(colors.slate.700);
@@ -95,4 +98,19 @@
   --xy-minimap-node-stroke-color: var(--color-node-border);
   --xy-edge-label-background-color: var(--color-background);
   --xy-edge-label-color: var(--color-foreground);
+}
+
+/*
+ * KI-158: у миникарты не было рамки, и она сливалась с холстом — особенно на
+ * тёмном фоне. Тень даёт светлой теме, рамка — тёмной (там тень не видна).
+ */
+.react-flow__minimap {
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px var(--color-node-shadow);
+}
+
+/* Узлы миникарты: контур чуть плотнее фона, чтобы читались и без маски. */
+.react-flow__minimap-node {
+  stroke-width: 1.5;
 }

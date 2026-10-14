@@ -415,6 +415,16 @@ function nodeDataFromApi(
         result.aspectRatio = data.aspectRatio;
       }
 
+      // KI-160/KI-166: промпт узла. `prompt` — новое поле, `value` — то, из
+      // которого читает backend; поддерживаем оба, чтобы Load не терял текст.
+      if (typeof data.prompt === 'string') {
+        result.prompt = data.prompt;
+      }
+
+      if (typeof data.value === 'string') {
+        result.value = data.value;
+      }
+
       if (typeof data.imageUrl === 'string') {
         result.imageUrl = data.imageUrl;
       }

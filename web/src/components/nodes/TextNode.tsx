@@ -1,7 +1,8 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode } from '@/components/nodes/BaseNode';
+import { useAutoResize } from '@/hooks/use-auto-resize';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import { NODE_REGISTRY } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
@@ -31,6 +32,11 @@ export function TextNode({ id, data }: NodeProps<TextFlowNode>) {
     useCallback((value: string) => updateNodeData(id, { value }), [id, updateNodeData]),
   );
 
+  // KI-169: поле растёт по тексту (до 200px), вместо прокрутки вслепую.
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useAutoResize(textareaRef, data.value);
+
   return (
     <>
       <BaseNode
@@ -41,11 +47,13 @@ export function TextNode({ id, data }: NodeProps<TextFlowNode>) {
         onDelete={() => removeNode(id)}
       >
         <textarea
+          ref={textareaRef}
           rows={3}
           value={data.value}
           placeholder={t('node.text.placeholder')}
           // nodrag: иначе протяжка мышью по textarea тащит саму ноду.
-          className="nodrag w-full resize-none rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+          // overflow-hidden: высоту задаёт хук (KI-169), а не браузерная прокрутка.
+          className="nodrag w-full resize-none overflow-hidden rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
           onChange={handleValueChange}
         />
       </BaseNode>

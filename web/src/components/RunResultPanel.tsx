@@ -181,6 +181,10 @@ export function RunResultPanel() {
           type="button"
           onClick={() => setIsExpanded((value) => !value)}
           aria-expanded={isExpanded}
+          // Викс 5 (KI-168): у кнопки не было ни подписи, ни тултипа —
+          // назначение иконки ▼/▲ угадывалось.
+          aria-label={t(isExpanded ? 'panel.collapse' : 'panel.expand')}
+          title={t(isExpanded ? 'panel.collapse' : 'panel.expand')}
           data-panel-toggle={isExpanded ? 'expanded' : 'collapsed'}
           className="ml-auto cursor-pointer rounded-lg border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-muted"
         >
@@ -212,7 +216,10 @@ export function RunResultPanel() {
 
               {outputs !== undefined ? (
                 <Section title={t('runResultPanel.section.output')}>
-                  <pre className="text-xs font-mono text-foreground">
+                  {/* Викс 1 (KI-165): длинный промпт/JSON не влезал в одну
+                      строку и обрезался — переносим по словам и ломаем
+                      длинные токены (URL, base64), сохраняя монопространство. */}
+                  <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words">
                     {JSON.stringify(outputs, null, 2)}
                   </pre>
                 </Section>

@@ -134,6 +134,19 @@ export interface ImageGenNodeData extends Record<string, unknown> {
    * (KI-129), чтобы пустых ключей не было в JSON и `Object.keys(data)`.
    */
   imageUrl?: string;
+  /**
+   * Промпт, заданный прямо в узле (KI-160).
+   *
+   * Если он непустой, генерация идёт по нему, иначе — по входу `prompt` от
+   * Text/LLM-узла (обратная совместимость). Дублируется в `value`, потому что
+   * backend-исполнитель читает промпт из `data.value` (см. KI-166).
+   */
+  prompt?: string;
+  /**
+   * Промпт для backend: исполнитель media-узла читает `data.value`
+   * (fallback после `inputs.prompt`), а не `data.prompt` — см. KI-166.
+   */
+  value?: string;
 }
 
 /** Узел Text в терминах React Flow. */

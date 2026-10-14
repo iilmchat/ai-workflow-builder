@@ -1,8 +1,10 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode } from '@/components/nodes/BaseNode';
 import i18n from '@/i18n';
+import { useAutoResize } from '@/hooks/use-auto-resize';
+import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import {
   MediaNodeOutputsSchema,
   isRenderableMediaUrl,
@@ -57,9 +59,10 @@ function formatPrice(model: MediaModelInfo): string | null {
  * Узел генерации изображений (v0.6.0b.2.3).
  *
  * Вход — `text` (промпт), выход — `image` (зелёная метка G). Тело узла:
- * 1. селект media-модели из `GET /media/models?type=IMAGE`;
- * 2. селект `aspect_ratio` — единственный параметр формы в MVP;
- * 3. результат генерации: `mediaUrl` из `nodeOutputs` либо плейсхолдер,
+ * 1. `textarea` промпта — если он заполнен, он приоритетнее входа (KI-160);
+ * 2. селект media-модели из `GET /media/models?type=IMAGE`;
+ * 3. селект `aspect_ratio` — единственный параметр формы в MVP;
+ * 4. результат генерации: `mediaUrl` из `nodeOutputs` либо плейсхолдер,
  *    «Генерация…» во время выполнения и «Ошибка генерации» при падении.
  */
 export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
@@ -78,6 +81,24 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
   useEffect(() => {
     void loadMediaModels();
   }, [loadMediaModels]);
+
+  const prompt = data.prompt ?? '';
+
+  // KI-157: промпт пишется в хранилище на каждый символ — сохраняем курсор.
+  // KI-166: помимо `prompt` пишем `value` — именно его читает backend-исполнитель
+  // media-узла (`inputs.prompt` → `data.value`), поэтому без дублирования
+  // введённый в узле промпт до генерации не дошёл бы.
+  const handlePromptChange = usePreserveCursor<HTMLTextAreaElement>(
+    useCallback(
+      (value: string) => updateNodeData(id, { prompt: value, value }),
+      [id, updateNodeData],
+    ),
+  );
+
+  // KI-169: поле растёт по тексту промпта (до 200px).
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+
+  useAutoResize(promptRef, prompt);
 
   const selected = mediaModels.find((model) => model.id === data.model);
   // Модель, которой нет в каталоге (старое значение или провайдер отключён):
@@ -123,6 +144,17 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
         status={status}
         onDelete={() => removeNode(id)}
       >
+        {/* KI-160: промпт можно задать прямо в узле. Если поле пустое —
+            используется вход от Text/LLM-узла (обратная совместимость). */}
+        <textarea
+          ref={promptRef}
+          rows={1}
+          value={prompt}
+          placeholder={t('node.image.prompt_placeholder')}
+          className="nodrag mb-2 w-full resize-none overflow-hidden rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+          onChange={handlePromptChange}
+        />
+
         <select
           value={data.model ?? ''}
           // nodrag: иначе клик по списку тащит ноду вместо открытия меню.

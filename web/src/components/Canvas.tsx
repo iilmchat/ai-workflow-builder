@@ -10,6 +10,7 @@ import {
 } from '@xyflow/react';
 import { nodeTypes } from '@/components/nodes';
 import { useWorkflowStore, type FindCenterHandler } from '@/stores/workflow';
+import { useTranslation } from 'react-i18next';
 
 interface CanvasProps {
   /**
@@ -27,8 +28,31 @@ interface CanvasProps {
  */
 const DELETE_KEY_CODES = ['Delete', 'Backspace'];
 
+/**
+ * Локализация подсказок встроенных элементов React Flow (KI-167).
+ *
+ * `<Controls />` и `<MiniMap />` берут `title` и `aria-label` своих кнопок из
+ * конфига `ariaLabelConfig` (проверено в `@xyflow/system`: ключи
+ * `controls.*.ariaLabel`), поэтому переводятся одним пропом — свои кнопки
+ * писать не нужно.
+ *
+ * @param t - функция перевода react-i18next
+ * @returns частичный конфиг подписей, который React Flow смёржит с дефолтным
+ */
+function ariaLabels(t: (key: string) => string) {
+  return {
+    'controls.ariaLabel': t('canvas.controls.title'),
+    'controls.zoomIn.ariaLabel': t('canvas.controls.zoom_in'),
+    'controls.zoomOut.ariaLabel': t('canvas.controls.zoom_out'),
+    'controls.fitView.ariaLabel': t('canvas.controls.fit_view'),
+    'controls.interactive.ariaLabel': t('canvas.controls.toggle_interactive'),
+    'minimap.ariaLabel': t('canvas.minimap.title'),
+  };
+}
+
 /** Внутренняя часть канваса: живёт внутри ReactFlowProvider. */
 function CanvasInner({ onReady }: CanvasProps) {
+  const { t } = useTranslation();
   const nodes = useWorkflowStore((state) => state.nodes);
   const edges = useWorkflowStore((state) => state.edges);
   const onNodesChange = useWorkflowStore((state) => state.onNodesChange);
@@ -94,6 +118,8 @@ function CanvasInner({ onReady }: CanvasProps) {
       onNodeClick={(_event, node) => setSelectedNodeId(node.id)}
       onPaneClick={() => setSelectedNodeId(null)}
       proOptions={{ hideAttribution: true }}
+      // KI-167: подсказки кнопок Zoom/Fit/Interactive и миникарты на языке UI.
+      ariaLabelConfig={ariaLabels(t)}
       // Цвет и толщина связей — из переменных React Flow (theme.css), чтобы
       // рёбра менялись вместе с темой (R5.2); width: 2 задан в --xy-edge-stroke-width.
       // maxZoom: иначе один-два узла растягиваются на весь экран.
