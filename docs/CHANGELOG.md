@@ -18,6 +18,23 @@
 ## [Unreleased]
 
 ### Added
+- **Frontend — v0.7.0 / R5.3: i18n RU/EN (KI-126, KI-137, KI-141,
+  KI-142):**
+  - `react-i18next` + `i18next`. `web/src/i18n/index.ts` —
+    инициализация, `detectInitialLanguage` (localStorage ->
+    navigator.language -> 'ru'), `setLanguage` (язык + localStorage
+    + `<html lang>`).
+  - `web/src/i18n/ru.json` + `en.json` — 84 ключа, паритет-тест
+    (`i18n.spec.ts`, 2/2).
+  - `node-registry`: `tLabel` / `TEMP_LABELS` удалены,
+    `nodeLabelOf` -> `i18n.t()`.
+  - Компоненты (`TopBar`, `Toolbar`, `BaseNode`, `TextNode`,
+    `LLMNode`, `ImageGenNode`, `RunResultPanel`, `LoadModal`) —
+    на `useTranslation()` + `t()`; `stores/workflow.ts` -> `i18n.t()`.
+  - `TopBar`: кнопка RU/EN.
+  - **CI job `web`** (install + build + test) — закрывает KI-005
+    (frontend в CI) и KI-068 (frontend-тесты) частично.
+  - Bundle 528 -> 585 kB (+56 kB i18next).
 - **Frontend — v0.7.0 / R5.2: тёмная тема (KI-125, KI-132):**
   - `web/src/styles/theme.css` (новый) — `@theme` (светлая) +
     `.dark` (тёмная): CSS-переменные для background/foreground/
@@ -58,6 +75,20 @@
     output`), `image_generation` → `media`.
   - `Toolbar` и узлы — `tLabel(NODE_REGISTRY[type].labelKey)`;
     временный RU до R5.3 (react-i18next).
+
+### Fixed
+- **Root vitest excludes web/ (KI-137):** после R5.3 корневой
+  `pnpm test` подхватывал `web/src/i18n/i18n.spec.ts` (327/327
+  вместо 325/325). `include` сужен до `src/` + `test/`, добавлен
+  `exclude: ['web/**']`.
+- **CI: pnpm version в job web (KI-141):** `pnpm/action-setup@v4`
+  падал с `Multiple versions of pnpm specified` — `version: 12`
+  в YAML + `pnpm@12.11.2` в `package.json`. `with: version` убран,
+  версия берётся из `packageManager`.
+- **web: zod в dependencies (KI-142):** `zod` использовался в
+  `web/src/**`, но не был в `web/package.json` — локально резолвился
+  из корневого `node_modules`, в CI падало с TS2307 + TS7006.
+  Добавлен `zod: ^4.6.6`.
 
 ## [0.6.1] — 2026-10-14
 

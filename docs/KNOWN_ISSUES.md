@@ -73,8 +73,8 @@
 
 ---
 
-### KI-005 — Frontend не покрыт CI (нет сборки `web/` в GitHub Actions)
-- **Приоритет:** 🟡 Medium | **Статус:** Planned | **Запланировано:** v0.3.1
+### KI-005 — Frontend не покрыт CI (частично закрыт)
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Запланировано:** v0.3.1
 - **Файлы:** `.github/workflows/ci.yml`
 - **Описание:** CI собирает только backend (`pnpm build` + `pnpm test`).
   Frontend `web/` не проверяется — сломанный TypeScript или Vite-build
@@ -85,6 +85,10 @@
   - `pnpm build` (tsc -b + vite build)
   - (опционально) `pnpm lint` — после добавления ESLint/oxlint в web
 - **Не блокер:** пока web маленький. Добавить вместе с Task 2 или Task 3.
+- **Исправлено в:** v0.7.0 (частично, коммит `ea5571e`) — CI job
+  `web`: `pnpm install --frozen-lockfile` + `pnpm build` + `pnpm test`.
+  Линт в web-job пока не добавлен (нет скрипта `pnpm lint` в
+  `web/package.json`) — остаётся открытым.
 
 ---
 
@@ -1125,7 +1129,7 @@
 
 ---
 
-### KI-068 — У фронтенда нет тестовой инфраструктуры и lint-скрипта
+### KI-068 — У фронтенда нет тестовой инфраструктуры и lint-скрипта (частично)
 - **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
 - **Файлы:** `web/package.json`, `.github/workflows/ci.yml`
 - **Описание:** В `web/package.json` нет ни `vitest`, ни `lint`-скрипта.
@@ -1136,6 +1140,10 @@
   включить в CI (KI-005).
 - **Когда чинить:** R4.3-prep или отдельный шаг.
 - **Связанные:** KI-005.
+- **Исправлено в:** v0.7.0 (частично, коммит `ea5571e`) —
+  `vitest` + `i18n.spec.ts` (паритет ключей, 2/2), скрипты
+  `test`/`test:watch` в `web/package.json`. Остаётся: `lint`-скрипт
+  в web/, покрытие больше тестов.
 
 ---
 
@@ -1968,7 +1976,8 @@
 ---
 
 ### KI-126 — Нет i18n (RU/EN, расширяемо)
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.7.0 (коммит `ea5571e`)
 - **Файлы:** `web/src/components/*`, `web/src/stores/*`
 - **Описание:** Все строки захардкожены на русском в JSX.
   RULES 1.14 требует i18n-файлы (en.json + ru.json) + тест, но они
@@ -1982,8 +1991,21 @@
   - Язык в `localStorage` + `Accept-Language` fallback.
   - Тест: все ключи в `ru.json` есть в `en.json` и наоборот.
   - RULES 1.14 — обновить, если формулировка нужна другая.
-- **Когда чинить:** v0.7 (перед UX-полировкой).
-- **Связанные:** KI-125.
+- **Когда чинить:** — (закрыто, v0.7.0).
+- **Fix:** react-i18next + i18next. `web/src/i18n/index.ts` — init,
+  `detectInitialLanguage` (localStorage -> navigator.language -> 'ru'),
+  `setLanguage`. `ru.json` / `en.json` — 84 ключа, паритет-тест
+  (`i18n.spec.ts`, 2/2). `node-registry`: `tLabel` / `TEMP_LABELS`
+  удалены, `nodeLabelOf` -> `i18n.t()`. Компоненты (`TopBar`,
+  `Toolbar`, `BaseNode`, `TextNode`, `LLMNode`, `ImageGenNode`,
+  `RunResultPanel`, `LoadModal`) на `useTranslation()` + `t()`;
+  `stores/workflow.ts` -> `i18n.t()`. Кнопка RU/EN в `TopBar`.
+  CI job `web` (install + build + test). Bundle 528 -> 585 kB
+  (+56 kB i18next).
+- **Остаток:** KI-138 (тосты хранят текст), KI-139 (peer
+  react-i18next / TS 6), KI-140 (строки Zod вне UI).
+- **Связанные:** KI-005, KI-068, KI-137, KI-138, KI-139, KI-140,
+  KI-141, KI-142.
 
 ---
 
@@ -2228,18 +2250,139 @@
 
 ---
 
+### KI-137 — Корневой vitest подхватывает web-спеки
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.7.0 (коммит `503e1a2`)
+- **Файлы:** `vitest.config.ts` (корневой)
+- **Описание:** После R5.3 `pnpm test` в корне давал 34 files /
+  327 tests (33/325 backend + 2 web) — `include: ['**/*.spec.ts']`
+  подхватывал `web/src/i18n/i18n.spec.ts`. Backend-прогон зависел
+  от наличия `web/node_modules`.
+- **Fix:** `include` сужен до `src/**/*.spec.ts` + `test/**/*.spec.ts`,
+  добавлен `exclude: ['**/node_modules/**', '**/dist/**', 'web/**']`.
+  Root 33/325, web — своим job'ом в CI.
+- **Связанные:** KI-005, KI-068, KI-126.
+
+---
+
+### KI-138 — Тосты хранят готовый текст, а не ключ
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `web/src/stores/workflow.ts` (`notice: { kind, text }`),
+  `web/src/components/Toast.tsx`
+- **Описание:** `notice.text` формируется в сторе через `i18n.t()`
+  в момент события. При смене языка уже показанный тост остаётся
+  на прежнем языке (видно на EN-скриншоте R5.3: «Workflow
+  загружен: …»).
+- **Решение:** хранить `notice: { kind, key, params }`, переводить
+  в `Toast.tsx` через `t(key, params)`.
+- **Когда чинить:** при UX-полировке (v0.7.x или v0.8).
+- **Связанные:** KI-126.
+
+---
+
+### KI-139 — Unmet peer: react-i18next хочет TypeScript ^5
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `web/package.json`, `web/pnpm-lock.yaml`
+- **Описание:** `react-i18next@15.7.4` объявляет peer
+  `typescript: ^5`, в проекте TS 6.0.3. `pnpm peers check` ругается
+  (`✕ unmet peer typescript`). Сборка и типы работают, но при
+  `strict-peer-dependencies=true` установка упадёт.
+- **Решение:** дождаться обновления `react-i18next` с поддержкой
+  TS 6, либо `pnpm.peerDependencyRules.allowedVersions`.
+- **Когда чинить:** при обновлении react-i18next.
+- **Связанные:** KI-126.
+
+---
+
+### KI-140 — Строки вне UI-слоя остаются русскими
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `web/src/lib/api.ts`, `web/src/types/media.ts`,
+  `web/src/types/run-stream.ts`, `web/src/stores/workflow.ts`
+- **Описание:** Сообщения Zod и `console.warn` вне i18n. Часть
+  всплывает в тостах через `error.message` — в EN-режиме текст
+  ошибки будет русским.
+- **Решение:** словарь `error.*` + маппинг кодов/статусов.
+- **Когда чинить:** R5.4 или v0.8.
+- **Связанные:** KI-126, KI-138.
+
+---
+
+### KI-141 — pnpm version в CI дублировал packageManager
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.7.0 (коммит `c841bfd`)
+- **Файлы:** `.github/workflows/ci.yml`
+- **Описание:** CI job `web` падал на `pnpm/action-setup@v4`:
+  `Multiple versions of pnpm specified` — `version: 12` в YAML +
+  `pnpm@12.11.2` в `package.json` (`packageManager`).
+  `ERR_PNPM_BAD_PM_VERSION`. Backend job — без `version`, правильный.
+- **Fix:** `with: version: 12` убран из job `web` — версия берётся
+  из `packageManager` (как в backend).
+- **Связанные:** KI-005, KI-068, KI-126, RULES 6.10.
+
+---
+
+### KI-142 — zod не объявлен в web/package.json
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.7.0 (коммит `169b117`)
+- **Файлы:** `web/package.json`, `web/pnpm-lock.yaml`
+- **Описание:** `zod` использовался в `web/src/lib/api.ts`,
+  `web/src/types/media.ts`, `web/src/types/run-stream.ts`, но НЕ был
+  в `web/package.json`. Локально разрешался из корневого
+  `node_modules` (фантомная зависимость); в CI (`working-directory:
+  web`, свой `pnpm install`) — TS2307 + каскад TS7006 (параметры
+  `param`/`option`/`edge` становились `any`). 8 ошибок build.
+- **Fix:** `zod: ^4.6.6` в `web/dependencies` + lockfile.
+  TS7006 исчезли сами — побочный эффект. Аудит bare-импортов
+  подтвердил отсутствие других фантомных зависимостей.
+- **Связанные:** KI-005, KI-068, KI-126, RULES 6.11.
+
+---
+
+### KI-143 — Нет локального CI-прогона для web перед push
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `package.json` (корневой), возможно `.github/workflows/ci.yml`
+- **Описание:** KI-141 и KI-142 — две подряд CI-поломки, которые
+  локально НЕ проявлялись: `pnpm/action-setup` не валидируется
+  локально, `zod` резолвился из корневого `node_modules`.
+  Локальные `pnpm build`/`pnpm test` не эквивалентны job `web`.
+- **Решение:** скрипт `pnpm ci:web` (root) — чистый install
+  + build + test для web/. Возможно `actionlint` в pre-push.
+- **Когда чинить:** при следующей правке CI.
+- **Связанные:** KI-141, KI-142, KI-005, KI-068.
+
+---
+
+### KI-144 — web/ — самостоятельный пакет, но zod «одалживал» из корня
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Файлы:** `web/package.json`, `pnpm-workspace.yaml` (не содержит
+  `packages`)
+- **Описание:** `web/` — самостоятельный пакет (свой lockfile,
+  нет `packages` в `pnpm-workspace.yaml`), но Node/TS резолвят
+  модули вверх по дереву, поэтому `zod` находился в корневом
+  `node_modules`. Это делало зависимости web неявными (см. KI-142).
+  Сейчас zod объявлен в обоих местах (корень 4.6.6, web 4.6.7) —
+  две копии, два lockfile-резолва.
+- **Решение (архитектурное):** включить `web/` в общий workspace
+  (`pnpm-workspace.yaml` → `packages: ['web']`) — одна версия
+  зависимостей, один lockfile. ИЛИ явно оставить как есть
+  (документировать «два независимых пакета»).
+- **Когда чинить:** при следующей правке workspace.
+- **Связанные:** KI-142, KI-005.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 39 |
+| Fixed | 44 |
 | In Progress | 0 |
-| Planned | 2 |
+| Planned | 1 |
 | Deferred | 0 |
 | Documented | 6 |
-| Open | 81 |
+| Open | 85 |
 | Won't Fix | 1 |
-| **Всего** | **129** |
+| **Всего** | **137** |
 
 ---
 
