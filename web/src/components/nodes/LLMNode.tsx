@@ -103,7 +103,7 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
         <select
           value={data.model}
           // nodrag: иначе клик по списку тащит ноду вместо открытия меню.
-          className="nodrag w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-slate-300"
+          className="nodrag w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-border"
           onChange={(event) => updateNodeData(id, { model: event.target.value })}
         >
           {data.model === '' && (
@@ -130,7 +130,7 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
         </select>
 
         <p
-          className="mt-1.5 truncate text-[10px] text-slate-400"
+          className="mt-1.5 truncate text-[10px] text-muted-foreground"
           title={selected?.id ?? data.model}
         >
           {selected

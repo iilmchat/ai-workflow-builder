@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTheme } from '@/hooks/use-theme';
 import { nodeLabelOf } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
 import type { RunStatus } from '@/types/run-stream';
@@ -19,11 +20,11 @@ const ACTIVE_RUN_STATUSES: ReadonlySet<RunStatus> = new Set(['pending', 'running
 
 /** Подпись и цвет бейджа статуса запуска. */
 const RUN_STATUS_STYLE: Record<RunStatus, { text: string; className: string }> = {
-  pending: { text: 'Создаётся…', className: 'bg-slate-100 text-slate-600' },
+  pending: { text: 'Создаётся…', className: 'bg-muted text-muted-foreground' },
   running: { text: 'Выполняется…', className: 'bg-blue-100 text-blue-700' },
   completed: { text: 'Готово', className: 'bg-green-100 text-green-700' },
   failed: { text: 'Ошибка', className: 'bg-red-100 text-red-700' },
-  cancelled: { text: 'Отменён', className: 'bg-slate-100 text-slate-600' },
+  cancelled: { text: 'Отменён', className: 'bg-muted text-muted-foreground' },
 };
 
 /**
@@ -78,6 +79,7 @@ function syncWorkflowUrlParam(workflowId: string): void {
  */
 export function TopBar() {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const { resolved, setTheme } = useTheme();
 
   const name = useWorkflowStore((state) => state.currentWorkflowName);
   const setCurrentWorkflowName = useWorkflowStore(
@@ -202,7 +204,7 @@ export function TopBar() {
 
   return (
     <>
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4">
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-4">
         <span className="text-sm" aria-hidden="true">
           🧩
         </span>
@@ -213,7 +215,7 @@ export function TopBar() {
           placeholder="Название workflow"
           aria-label="Название workflow"
           // nodrag: единое правило для всех input внутри редактора.
-          className="nodrag w-64 rounded-lg border border-transparent px-2 py-1 text-sm font-medium text-slate-700 outline-none hover:border-slate-200 focus:border-slate-300"
+          className="nodrag w-64 rounded-lg border border-transparent px-2 py-1 text-sm font-medium text-foreground outline-none hover:border-border focus:border-border"
         />
 
         {runStatus !== null && (
@@ -235,9 +237,19 @@ export function TopBar() {
         <div className="ml-auto flex items-center gap-2">
           <button
             type="button"
+            onClick={() => setTheme(resolved === 'dark' ? 'light' : 'dark')}
+            aria-label={resolved === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
+            title={resolved === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
+            className="cursor-pointer rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-muted"
+          >
+            {resolved === 'dark' ? '☀' : '🌙'}
+          </button>
+
+          <button
+            type="button"
             onClick={() => setIsModalOpen(true)}
             disabled={isBusy}
-            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isLoading ? <Spinner /> : <span aria-hidden="true">📂</span>}
             Load
@@ -247,7 +259,7 @@ export function TopBar() {
             type="button"
             onClick={() => void handleSave()}
             disabled={isBusy}
-            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isSaving ? <Spinner /> : <span aria-hidden="true">💾</span>}
             Save
@@ -259,7 +271,7 @@ export function TopBar() {
             disabled={isBusy || isRunActive}
             // Атрибут для e2e/smoke: статус запуска виден без разбора текста.
             data-run-status={runStatus ?? 'idle'}
-            className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isRunActive ? <Spinner /> : <span aria-hidden="true">▶️</span>}
             {runLabel}

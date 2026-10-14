@@ -23,8 +23,8 @@ const STATUS_LABELS: Record<RunStatus, string> = {
  */
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="border-b border-slate-200 px-3 py-2 last:border-b-0">
-      <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+    <section className="border-b border-border px-3 py-2 last:border-b-0">
+      <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
         {title}
       </h3>
       {children}
@@ -132,14 +132,14 @@ export function RunResultPanel() {
   return (
     <section
       data-result-panel={selectedNodeId !== null ? 'node' : 'run'}
-      className={`flex ${isExpanded ? PANEL_HEIGHT.expanded : PANEL_HEIGHT.collapsed} shrink-0 flex-col border-t border-slate-200 bg-slate-50`}
+      className={`flex ${isExpanded ? PANEL_HEIGHT.expanded : PANEL_HEIGHT.collapsed} shrink-0 flex-col border-t border-border bg-muted`}
     >
       <header className="flex h-12 shrink-0 items-center gap-2 px-3">
-        <h2 className="text-xs font-semibold text-slate-700">{title}</h2>
+        <h2 className="text-xs font-semibold text-foreground">{title}</h2>
 
         {selectedNodeId !== null && (
           <span
-            className="truncate text-[10px] text-slate-400"
+            className="truncate text-[10px] text-muted-foreground"
             title={selectedNodeId}
           >
             {selectedNodeId}
@@ -151,7 +151,7 @@ export function RunResultPanel() {
           onClick={() => setIsExpanded((value) => !value)}
           aria-expanded={isExpanded}
           data-panel-toggle={isExpanded ? 'expanded' : 'collapsed'}
-          className="ml-auto cursor-pointer rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-100"
+          className="ml-auto cursor-pointer rounded-lg border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-muted"
         >
           {isExpanded ? '▼' : '▲'}
         </button>
@@ -163,7 +163,7 @@ export function RunResultPanel() {
             <>
               {status === undefined || status === 'pending' ? (
                 <Section title="Статус">
-                  <p className="text-xs text-slate-500">Узел ещё не выполнялся.</p>
+                  <p className="text-xs text-muted-foreground">Узел ещё не выполнялся.</p>
                 </Section>
               ) : null}
 
@@ -181,7 +181,7 @@ export function RunResultPanel() {
 
               {outputs !== undefined ? (
                 <Section title="Вывод">
-                  <pre className="text-xs font-mono text-slate-700">
+                  <pre className="text-xs font-mono text-foreground">
                     {JSON.stringify(outputs, null, 2)}
                   </pre>
                 </Section>
@@ -189,13 +189,13 @@ export function RunResultPanel() {
 
               {metrics !== null ? (
                 <Section title="Метрики">
-                  <p className="text-xs text-slate-600">{metrics}</p>
+                  <p className="text-xs text-muted-foreground">{metrics}</p>
                 </Section>
               ) : null}
 
               {logs !== undefined && logs.length > 0 ? (
                 <Section title={`Логи (${logs.length})`}>
-                  <ul className="space-y-0.5 text-xs text-slate-500">
+                  <ul className="space-y-0.5 text-xs text-muted-foreground">
                     {logs.map((line) => (
                       <li key={line}>{line}</li>
                     ))}
@@ -206,7 +206,7 @@ export function RunResultPanel() {
           ) : (
             <Section title="Запуск">
               {runStatus === null ? (
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   Запустите workflow, чтобы увидеть результат.
                 </p>
               ) : null}
@@ -226,10 +226,10 @@ export function RunResultPanel() {
               ) : null}
 
               {runStatus === 'cancelled' ? (
-                <p className="text-xs text-slate-500">Запуск отменён.</p>
+                <p className="text-xs text-muted-foreground">Запуск отменён.</p>
               ) : null}
 
-              <p className="mt-1 text-[10px] text-slate-400">
+              <p className="mt-1 text-[10px] text-muted-foreground">
                 Кликните по узлу, чтобы посмотреть его вывод, метрики и логи.
               </p>
             </Section>

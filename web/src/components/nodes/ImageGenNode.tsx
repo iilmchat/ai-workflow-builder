@@ -110,7 +110,7 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
         <select
           value={data.model ?? ''}
           // nodrag: иначе клик по списку тащит ноду вместо открытия меню.
-          className="nodrag w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-slate-300 disabled:bg-slate-50 disabled:text-slate-400"
+          className="nodrag w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-border disabled:bg-muted disabled:text-muted-foreground"
           disabled={!hasModels && !isUnavailable}
           onChange={(event) => updateNodeData(id, { model: event.target.value })}
         >
@@ -139,7 +139,7 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
         </select>
 
         {price !== null && (
-          <p className="mt-1 truncate text-[10px] text-slate-400" title={price}>
+          <p className="mt-1 truncate text-[10px] text-muted-foreground" title={price}>
             {price}
           </p>
         )}
@@ -148,7 +148,7 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
           <select
             value={aspectRatioValue}
             aria-label="Соотношение сторон"
-            className="nodrag mt-2 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-slate-300"
+            className="nodrag mt-2 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-border"
             onChange={(event) =>
               updateNodeData(id, { aspectRatio: event.target.value })
             }
@@ -174,14 +174,14 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
             <img
               src={safeMediaUrl}
               alt="Сгенерированное изображение"
-              className="w-full rounded-lg border border-slate-200"
+              className="w-full rounded-lg border border-border"
             />
           ) : isInvalidUrl ? (
             <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-amber-300 px-2 text-center text-[10px] text-amber-600">
               Некорректный URL результата
             </div>
           ) : (
-            <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-slate-300 px-2 text-center text-[10px] text-slate-400">
+            <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-border px-2 text-center text-[10px] text-muted-foreground">
               Здесь появится результат
             </div>
           )}

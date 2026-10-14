@@ -95,19 +95,19 @@ export function LoadModal({ onClose }: LoadModalProps) {
       role="presentation"
     >
       <div
-        className="flex max-h-[70vh] w-full max-w-lg flex-col rounded-xl bg-white shadow-xl"
+        className="flex max-h-[70vh] w-full max-w-lg flex-col rounded-xl bg-background shadow-xl"
         // Клик внутри окна не должен закрывать его.
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Загрузить workflow"
       >
-        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-          <h2 className="text-sm font-semibold text-slate-700">Загрузить workflow</h2>
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold text-foreground">Загрузить workflow</h2>
           <button
             type="button"
             onClick={onClose}
-            className="cursor-pointer rounded px-2 text-slate-400 hover:text-slate-600"
+            className="cursor-pointer rounded px-2 text-muted-foreground hover:text-foreground"
             aria-label="Закрыть"
           >
             ✕
@@ -115,27 +115,27 @@ export function LoadModal({ onClose }: LoadModalProps) {
         </div>
 
         <div className="min-h-24 flex-1 overflow-y-auto px-4 py-3">
-          {isLoading && <p className="text-xs text-slate-400">Загрузка…</p>}
+          {isLoading && <p className="text-xs text-muted-foreground">Загрузка…</p>}
 
           {error && !isLoading && (
             <p className="text-xs text-red-600">{error}</p>
           )}
 
           {!isLoading && !error && workflows.length === 0 && (
-            <p className="text-xs text-slate-400">Сохранённых workflow пока нет</p>
+            <p className="text-xs text-muted-foreground">Сохранённых workflow пока нет</p>
           )}
 
           <ul className="flex flex-col gap-2">
             {workflows.map((workflow) => (
               <li
                 key={workflow.id}
-                className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2"
+                className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2"
               >
                 <div className="min-w-0">
-                  <p className="truncate text-xs font-medium text-slate-700">
+                  <p className="truncate text-xs font-medium text-foreground">
                     {workflow.name}
                   </p>
-                  <p className="text-[10px] text-slate-400">
+                  <p className="text-[10px] text-muted-foreground">
                     {formatDate(workflow.createdAt)} · узлов: {workflow.nodes.length}
                   </p>
                 </div>
@@ -144,7 +144,7 @@ export function LoadModal({ onClose }: LoadModalProps) {
                   <button
                     type="button"
                     onClick={() => void handleOpen(workflow.id)}
-                    className="cursor-pointer rounded-md bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-200"
+                    className="cursor-pointer rounded-md bg-muted px-3 py-1 text-xs font-medium text-foreground hover:bg-border"
                   >
                     Открыть
                   </button>
@@ -161,11 +161,11 @@ export function LoadModal({ onClose }: LoadModalProps) {
           </ul>
         </div>
 
-        <div className="flex justify-end border-t border-slate-200 px-4 py-3">
+        <div className="flex justify-end border-t border-border px-4 py-3">
           <button
             type="button"
             onClick={onClose}
-            className="cursor-pointer rounded-lg border border-slate-200 px-4 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            className="cursor-pointer rounded-lg border border-border px-4 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
           >
             Отмена
           </button>

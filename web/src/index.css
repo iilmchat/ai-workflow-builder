@@ -1,10 +1,14 @@
-@import "tailwindcss";
+@import './styles/theme.css';
 
-/* Базовые стили приложения: канвас занимает весь экран без прокрутки. */
+/*
+ * Базовые стили приложения: канвас занимает весь экран без прокрутки.
+ * Цвета берутся из переменных темы (R5.2), поэтому body темнеет вместе с UI.
+ */
 body {
   margin: 0;
   height: 100vh;
-  background-color: #f8fafc;
+  background-color: var(--color-background);
+  color: var(--color-foreground);
   font-family:
     system-ui,
     -apple-system,

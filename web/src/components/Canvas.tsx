@@ -75,8 +75,8 @@ function CanvasInner({ onReady }: CanvasProps) {
       onNodeClick={(_event, node) => setSelectedNodeId(node.id)}
       onPaneClick={() => setSelectedNodeId(null)}
       proOptions={{ hideAttribution: true }}
-      // Связи по умолчанию тонкие и почти незаметные — делаем их чуть плотнее.
-      defaultEdgeOptions={{ style: { strokeWidth: 2, stroke: '#94a3b8' } }}
+      // Цвет и толщина связей — из переменных React Flow (theme.css), чтобы
+      // рёбра менялись вместе с темой (R5.2); width: 2 задан в --xy-edge-stroke-width.
       // maxZoom: иначе один-два узла растягиваются на весь экран.
       // При загрузке графа из backend подгоняем вид по всем узлам.
       fitView={isEmpty}

@@ -8,7 +8,7 @@ import type { RunStatus } from '@/types/run-stream';
  * сканировании исходников, поэтому динамическая сборка имён недопустима.
  */
 const STATUS_BORDER: Record<RunStatus, string> = {
-  pending: 'border-slate-300',
+  pending: 'border-node-pending',
   running: 'border-blue-500',
   completed: 'border-green-500',
   failed: 'border-red-500',
@@ -17,11 +17,11 @@ const STATUS_BORDER: Record<RunStatus, string> = {
 
 /** Лёгкая подсветка фона по статусу — визуальный акцент без «крика». */
 const STATUS_BACKGROUND: Record<RunStatus, string> = {
-  pending: 'bg-white',
+  pending: 'bg-node-bg',
   running: 'bg-blue-50',
   completed: 'bg-green-50',
   failed: 'bg-red-50',
-  cancelled: 'bg-white',
+  cancelled: 'bg-node-bg',
 };
 
 /** Бейдж-подпись в правом верхнем углу карточки (например, capability модели). */
@@ -73,7 +73,7 @@ export function BaseNode({
   return (
     <div
       data-status={status ?? 'idle'}
-      className={`relative w-60 rounded-xl border-2 ${border} ${background} shadow-sm`}
+      className={`relative w-60 rounded-xl border-2 ${border} ${background} shadow-node`}
     >
       {badges !== undefined && badges.length > 0 && (
         <span className="absolute -top-2 right-5 flex gap-1">
@@ -97,11 +97,11 @@ export function BaseNode({
         </span>
       )}
 
-      <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         <span className="text-sm" aria-hidden="true">
           {icon}
         </span>
-        <span className="text-xs font-medium text-slate-500">{title}</span>
+        <span className="text-xs font-medium text-muted-foreground">{title}</span>
       </div>
 
       <div className="px-3 py-2">{children}</div>

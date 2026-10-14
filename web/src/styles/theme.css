@@ -1,0 +1,98 @@
+@import 'tailwindcss';
+
+/*
+ * Тема v0.7 (KI-125, DESIGN § 3).
+ *
+ * Светлая — дефолт. Тёмная — через класс .dark на <html>
+ * (управляется useTheme() + inline-script в index.html).
+ *
+ * Tailwind v4 маппит --color-* в утилиты bg-*, text-*, border-*.
+ */
+
+@theme {
+  /* Базовые поверхности. */
+  --color-background: theme(colors.white);
+  --color-foreground: theme(colors.slate.900);
+  --color-muted: theme(colors.slate.100);
+  --color-muted-foreground: theme(colors.slate.500);
+  --color-border: theme(colors.slate.200);
+
+  /* Акцент (кнопки, активные элементы). */
+  --color-primary: theme(colors.blue.500);
+  --color-primary-foreground: theme(colors.white);
+
+  /* Canvas (React Flow). */
+  --color-canvas-bg: theme(colors.slate.50);
+  --color-canvas-dot: theme(colors.slate.200);
+  /* Маска миникарты: отдельная переменная, потому что color-mix с ссылкой на
+     тему Tailwind внутри .react-flow эмитит неразрешённый theme(...) (R5.2). */
+  --color-canvas-mask: color-mix(in oklab, black 10%, transparent);
+
+  /* Узлы. */
+  --color-node-bg: theme(colors.white);
+  --color-node-border: theme(colors.slate.200);
+  --color-node-shadow: color-mix(in oklab, black 5%, transparent);
+
+  /* Статусы узлов (из v0.6.1). */
+  --color-node-pending: theme(colors.slate.200);
+  --color-node-running: theme(colors.blue.400);
+  --color-node-completed: theme(colors.green.400);
+  --color-node-failed: theme(colors.red.400);
+
+  /*
+   * Тень карточек и панелей: одна утилита shadow-node на обе темы.
+   * Цвет берётся из --color-node-shadow, поэтому в тёмной теме он плотнее.
+   */
+  --shadow-node: 0 1px 2px 0 var(--color-node-shadow);
+}
+
+.dark {
+  --color-background: theme(colors.slate.950);
+  --color-foreground: theme(colors.slate.100);
+  --color-muted: theme(colors.slate.800);
+  --color-muted-foreground: theme(colors.slate.400);
+  --color-border: theme(colors.slate.800);
+
+  --color-primary: theme(colors.blue.400);
+  --color-primary-foreground: theme(colors.slate.950);
+
+  --color-canvas-bg: theme(colors.slate.900);
+  --color-canvas-dot: theme(colors.slate.700);
+  --color-canvas-mask: color-mix(in oklab, white 10%, transparent);
+
+  --color-node-bg: theme(colors.slate.900);
+  --color-node-border: theme(colors.slate.700);
+  --color-node-shadow: color-mix(in oklab, black 40%, transparent);
+
+  --color-node-pending: theme(colors.slate.700);
+  --color-node-running: theme(colors.blue.500);
+  --color-node-completed: theme(colors.green.500);
+  --color-node-failed: theme(colors.red.500);
+}
+
+/* React Flow: маппинг собственных переменных на наши. */
+.react-flow {
+  --xy-background-color: var(--color-canvas-bg);
+  --xy-background-pattern-color: var(--color-canvas-dot);
+  --xy-edge-stroke: var(--color-border);
+  --xy-edge-stroke-width: 2;
+  --xy-edge-stroke-selected: var(--color-primary);
+  --xy-connectionline-stroke: var(--color-primary);
+  --xy-attribution-background-color: transparent;
+
+  /*
+   * Служебные элементы React Flow (Controls, MiniMap, метки рёбер) — иначе
+   * они остаются светлыми на тёмном холсте.
+   */
+  --xy-controls-button-background-color: var(--color-background);
+  --xy-controls-button-background-color-hover: var(--color-muted);
+  --xy-controls-button-color: var(--color-foreground);
+  --xy-controls-button-color-hover: var(--color-foreground);
+  --xy-controls-button-border-color: var(--color-border);
+  --xy-minimap-background-color: var(--color-background);
+  --xy-minimap-mask-background-color: var(--color-canvas-mask);
+  --xy-minimap-node-background-color: var(--color-node-bg);
+  --xy-minimap-node-stroke-color: var(--color-node-border);
+  --xy-edge-label-background-color: var(--color-background);
+  --xy-edge-label-color: var(--color-foreground);
+}

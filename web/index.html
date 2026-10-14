@@ -10,6 +10,28 @@
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔧</text></svg>"
     />
     <title>Workflow Builder</title>
+    <!--
+      Тема до первого рендера (R5.2, DESIGN § 3.3): класс .dark на <html>
+      ставится инлайн-скриптом, иначе страница мигает светлой темой.
+      Логика совпадает с useTheme(): 'system' = как в операционной системе.
+    -->
+    <script>
+      (() => {
+        try {
+          const stored = localStorage.getItem('theme');
+          const isDark =
+            stored === 'dark' ||
+            (stored !== 'light' &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+          if (isDark) {
+            document.documentElement.classList.add('dark');
+          }
+        } catch {
+          /* localStorage недоступен (приватный режим) — остаёмся на светлой. */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
