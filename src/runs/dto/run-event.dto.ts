@@ -24,21 +24,48 @@ export const RunEventSchema = z.discriminatedUnion('type', [
     nodeType: z.string(),
     startedAt: z.iso.datetime(),
   }),
-  /** Узел успешно завершён; `outputs` — то, что узел отдал дальше. */
+  /**
+   * Узел успешно завершён; `outputs` — то, что узел отдал дальше.
+   *
+   * KI-075: событие несёт метрики (`costRub` / токены / `costUsd` / `logs`) —
+   * до v0.7.1 панель получала их только из snapshot после F5. Поля
+   * необязательные: старые события из Redis остаются валидными.
+   */
   z.object({
     type: z.literal('node_completed'),
     runId: z.uuid(),
     nodeId: z.string(),
     outputs: z.record(z.string(), z.unknown()),
     durationMs: z.number().int().nonnegative(),
+    /** Стоимость media-генерации в рублях (v0.6.0b.2.2). */
+    costRub: z.string().nullable().optional(),
+    /** Токены на входе (LLM). */
+    tokensIn: z.number().int().nonnegative().nullable().optional(),
+    /** Токены на выходе (LLM). */
+    tokensOut: z.number().int().nonnegative().nullable().optional(),
+    /** Стоимость LLM в долларах (v0.6.0b.2.2). */
+    costUsd: z.string().nullable().optional(),
+    /** Логи ретраев / диагностика (KI-036, KI-043). */
+    logs: z.array(z.string()).nullable().optional(),
     finishedAt: z.iso.datetime(),
   }),
-  /** Узел упал: `error` — текст для `node_runs.error`. */
+  /**
+   * Узел упал: `error` — текст для `node_runs.error`.
+   *
+   * KI-075: те же поля, что и в `node_completed`. Метрики провайдера на
+   * падении неизвестны (в `node_runs` они NULL), поэтому приходят `null`,
+   * а `logs` — реальные строки диагностики.
+   */
   z.object({
     type: z.literal('node_failed'),
     runId: z.uuid(),
     nodeId: z.string(),
     error: z.string(),
+    costRub: z.string().nullable().optional(),
+    tokensIn: z.number().int().nonnegative().nullable().optional(),
+    tokensOut: z.number().int().nonnegative().nullable().optional(),
+    costUsd: z.string().nullable().optional(),
+    logs: z.array(z.string()).nullable().optional(),
     finishedAt: z.iso.datetime(),
   }),
   /** Запуск завершён — успешно или с ошибкой (см. KI-059 о финальности). */

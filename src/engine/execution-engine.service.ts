@@ -477,6 +477,16 @@ export class ExecutionEngineService {
             nodeId,
             outputs: step.outputs,
             durationMs,
+            // KI-075: метрики кладём и в событие — панель показывает стоимость
+            // сразу, а не только после F5 (из snapshot). Те же значения, что
+            // записаны в node_runs выше (RULES 4.23: раздельно по валютам).
+            costRub:
+              step.kind === 'media' ? toNumericString(step.metrics.costRub) : null,
+            tokensIn: step.kind === 'llm' ? step.metrics.inputTokens : null,
+            tokensOut: step.kind === 'llm' ? step.metrics.outputTokens : null,
+            costUsd:
+              step.kind === 'llm' ? toNumericString(step.metrics.costUsd) : null,
+            logs,
             finishedAt: new Date().toISOString(),
           });
 
@@ -515,7 +525,7 @@ export class ExecutionEngineService {
     this.logger.error(`Узел ${nodeId} запуска ${runId} упал: ${message}`);
 
     await this.markNodeFailedAsync(nodeRun.id, message, logs, durationMs);
-    await this.publishNodeFailedAsync(runId, nodeId, message);
+    await this.publishNodeFailedAsync(runId, nodeId, message, logs);
 
     // Стек не гасим: ошибку ловит Promise.allSettled в executeAsync (RULES 1.7).
     throw failure instanceof Error ? failure : new Error(message);
@@ -745,12 +755,14 @@ export class ExecutionEngineService {
    * @param runId - uuid запуска
    * @param nodeId - `id` упавшего узла
    * @param message - текст ошибки узла
+   * @param logs - строки диагностики (ретраи, KI-036)
    * @returns промис без значения
    */
   private async publishNodeFailedAsync(
     runId: string,
     nodeId: string,
     message: string,
+    logs: string[],
   ): Promise<void> {
     try {
       await this.runEvents.publishAsync(runId, {
@@ -758,6 +770,14 @@ export class ExecutionEngineService {
         runId,
         nodeId,
         error: message,
+        // KI-075: те же поля, что и в node_completed. Метрики провайдера на
+        // падении неизвестны (в node_runs они NULL) — отправляем null,
+        // чтобы фронтенд не отличал форму события от успешного.
+        costRub: null,
+        tokensIn: null,
+        tokensOut: null,
+        costUsd: null,
+        logs,
         finishedAt: new Date().toISOString(),
       });
     } catch (error: unknown) {

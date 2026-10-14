@@ -49,6 +49,53 @@ describe('RunEventSchema', () => {
     }
   });
 
+  it('принимает метрики в node_completed / node_failed (KI-075)', () => {
+    const completed = RunEventSchema.safeParse({
+      type: 'node_completed',
+      runId: RUN_ID,
+      nodeId: 'img',
+      outputs: { imageUrl: 'https://cdn.example/result.png' },
+      durationMs: 6443,
+      costRub: '0.600000',
+      tokensIn: 128,
+      tokensOut: 256,
+      costUsd: '0.004200',
+      logs: ['попытка 1/3 упала: 429 — повтор через 1000 мс'],
+      finishedAt: ISO_NOW,
+    });
+
+    expect(completed.success).toBe(true);
+
+    const failed = RunEventSchema.safeParse({
+      type: 'node_failed',
+      runId: RUN_ID,
+      nodeId: 'llm',
+      error: 'провайдер недоступен',
+      costRub: null,
+      tokensIn: null,
+      tokensOut: null,
+      costUsd: null,
+      logs: [],
+      finishedAt: ISO_NOW,
+    });
+
+    expect(failed.success).toBe(true);
+  });
+
+  it('отклоняет отрицательные токены в node_completed (KI-075)', () => {
+    const parsed = RunEventSchema.safeParse({
+      type: 'node_completed',
+      runId: RUN_ID,
+      nodeId: 'n1',
+      outputs: {},
+      durationMs: 1,
+      tokensIn: -1,
+      finishedAt: ISO_NOW,
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
   it('принимает attempts = null и требует attemptsMade (KI-059)', () => {
     const base = {
       type: 'run_completed',
