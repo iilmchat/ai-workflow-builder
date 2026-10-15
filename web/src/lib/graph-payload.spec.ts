@@ -51,35 +51,46 @@ function edge(id: string, source: string, target: string): Edge {
   return { id, source, target };
 }
 
-describe('graph-payload: local-only узлы (KI-187)', () => {
-  it('comment объявлен local-only', () => {
-    expect([...LOCAL_ONLY_NODE_TYPES]).toEqual(['comment']);
-    expect(isLocalOnlyNodeType('comment')).toBe(true);
+describe('graph-payload: граница с backend (KI-187, KI-266)', () => {
+  it('local-only фильтр пуст — backend поддерживает аннотации (KI-266)', () => {
+    expect([...LOCAL_ONLY_NODE_TYPES]).toEqual([]);
+    expect(isLocalOnlyNodeType('comment')).toBe(false);
     expect(isLocalOnlyNodeType('text')).toBe(false);
     expect(isLocalOnlyNodeType('нечто-новое')).toBe(false);
   });
 
-  it('toBackendNodes убирает комментарии и сохраняет порядок остальных', () => {
+  it('toBackendNodes сохраняет комментарии и порядок узлов (KI-266)', () => {
     const nodes = [textNode('t1'), commentNode('c1'), textNode('t2'), commentNode('c2')];
 
-    expect(toBackendNodes(nodes).map((node) => node.id)).toEqual(['t1', 't2']);
+    expect(toBackendNodes(nodes).map((node) => node.id)).toEqual([
+      't1',
+      'c1',
+      't2',
+      'c2',
+    ]);
   });
 
-  it('toBackendNodes не трогает граф без комментариев', () => {
+  it('toBackendNodes возвращает тот же список, когда комментариев нет', () => {
     const nodes = [textNode('t1'), textNode('t2')];
 
-    expect(toBackendNodes(nodes)).toHaveLength(2);
+    expect(toBackendNodes(nodes)).toEqual(nodes);
   });
 
-  it('toBackendEdges отбрасывает связи с отфильтрованным узлом', () => {
-    const nodes = [textNode('t1'), textNode('t2')];
+  it('toBackendEdges сохраняет связи с комментариями, но режет связи с чужими узлами', () => {
+    const nodes = [textNode('t1'), textNode('t2'), commentNode('c1')];
     const edges = [
       edge('e1', 't1', 't2'),
       edge('e2', 't1', 'c1'),
       edge('e3', 'c1', 't2'),
+      // Узла `ghost` в payload нет — такая связь стала бы 400 на backend.
+      edge('e4', 't1', 'ghost'),
     ];
 
-    expect(toBackendEdges(edges, nodes).map((item) => item.id)).toEqual(['e1']);
+    expect(toBackendEdges(edges, nodes).map((item) => item.id)).toEqual([
+      'e1',
+      'e2',
+      'e3',
+    ]);
   });
 
   it('toBackendEdges сохраняет все связи, когда комментариев нет', () => {

@@ -32,6 +32,15 @@ export function executeImageGenNodeStub(_node: NodeDto): Record<string, unknown>
 }
 
 /**
+ * Типы узлов-аннотаций (комментарии/стикеры, KI-266).
+ *
+ * Не участвуют в потоке выполнения: не попадают в executionMap/levels,
+ * не создают node_runs. Хранятся в графе (workflows.nodes jsonb),
+ * переносятся между Save/Load — но игнорируются при Run.
+ */
+export const ANNOTATION_NODE_TYPES: ReadonlySet<string> = new Set(['comment']);
+
+/**
  * Ошибка: тип узла не поддерживается executor'ом.
  *
  * Наследуется от `Error`, а не от Nest `HttpException`: исключение живёт в

@@ -49,11 +49,10 @@ export type Graph = {
  * имена совпадают с backend-контрактом: `image_generation`, а не `image`
  * (v0.6.0b.2.5). UI-метка узла (`data.kind`) остаётся `image`.
  *
- * `comment` (KI-187) — исключение: узел **не отправляется** на backend
- * (`LOCAL_ONLY_NODE_TYPES` в `@/lib/graph-payload`), потому что
- * `ExecutionEngineService` бросает `UnsupportedNodeTypeException` на любой
- * незнакомый тип и валит весь запуск. Имя всё равно совпадает с типом React
- * Flow — другого контракта у него нет.
+ * `comment` (KI-187, KI-266) — узел-аннотация: сохраняется в графе наравне с
+ * остальными типами, но backend исключает его из плана выполнения
+ * (`ANNOTATION_NODE_TYPES` в `src/engine/node-executors.ts`). Имя совпадает с
+ * типом React Flow — другого контракта у него нет.
  */
 export type NodeType = 'text' | 'llm' | 'image_generation' | 'comment';
 
@@ -181,7 +180,7 @@ export interface ImageGenNodeData extends Record<string, unknown> {
  * Данные узла-комментария (KI-187).
  *
  * Стикер без портов: в потоке данных не участвует, в `executionLevels` не
- * попадает (engine backend про него не знает — узел local-only).
+ * попадает — backend исключает аннотации из плана выполнения (KI-266).
  */
 export interface CommentNodeData extends Record<string, unknown> {
   kind: 'comment';

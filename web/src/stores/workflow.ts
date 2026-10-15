@@ -640,8 +640,8 @@ function nodeDataFromApi(
       return result;
     }
     case 'comment': {
-      // KI-187: комментарий — local-only узел, backend его не хранит, поэтому
-      // ветка нужна только для графов, сохранённых в другой версии/источнике.
+      // KI-266: комментарий — полноправный узел графа: backend хранит его в
+      // `workflows.nodes` наравне с остальными и возвращает при Load.
       // KI-129: `visible` по умолчанию `true` (как в `createNode`), чтобы
       // отсутствие поля не скрывало стикер.
       const result: CommentNodeData = {
@@ -684,10 +684,9 @@ function fromApiWorkflow(workflow: ApiWorkflow): {
       continue;
     }
 
-    // KI-187: local-only узел (комментарий) в графе с backend появиться не
-    // может — `toBackendNodes` отсекает его при Save. Если такой узел всё же
-    // пришёл (прямая запись в БД, импорт из другого источника), он известен
-    // реестру, и данные собираются обычным путём.
+    // KI-266: комментарий — обычный узел графа (реестр его знает с KI-187),
+    // поэтому приходит из API наравне с остальными и собирается общим путём.
+    // Раньше он был local-only и не мог появиться в ответе backend.
     const data = nodeDataFromApi(node.type, node.data ?? {});
 
     nodes.push({
@@ -993,8 +992,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   saveWorkflowAsync: async () => {
     const { nodes, edges, currentWorkflowId, currentWorkflowName } = get();
     const name = currentWorkflowName.trim() || DEFAULT_WORKFLOW_NAME;
-    // KI-187: local-only узлы (комментарии) на backend не уходят — движок
-    // бросает `UnsupportedNodeTypeException` на незнакомый тип и роняет запуск.
+    // KI-266: комментарии уходят на backend вместе с остальными узлами —
+    // движок хранит их в графе, но в план выполнения не включает. Фильтр
+    // `toBackendNodes` оставлен как историческая точка защиты и сейчас пуст.
     const backendNodes = toBackendNodes(nodes);
     const payload = {
       name,
@@ -1062,13 +1062,15 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   runPlanAsync: async () => {
     const { nodes, edges } = get();
-    // KI-187: комментарии в план не отправляем — это UI-стикеры, а не узлы
-    // выполнения (backend вернул бы их в `order`/`levels` и попытался выполнить).
+    // KI-266: комментарии отправляем как есть — backend сам исключает
+    // аннотации из плана (`ANNOTATION_NODE_TYPES`), поэтому в `order`/`levels`
+    // их не будет и попытки выполнить стикер не возникнет.
     const backendNodes = toBackendNodes(nodes);
 
-    // Граф без узлов выполнения (только комментарии) планировать нечего —
-    // backend ответил бы «Граф не содержит узлов» (RULES 1.6: понятный UI-текст).
-    if (backendNodes.length === 0) {
+    // Граф без узлов выполнения (только комментарии) планировать нечего:
+    // backend ответил бы «Граф содержит только аннотации, нечего выполнять»
+    // (RULES 1.6: понятный UI-текст).
+    if (nodes.filter((node) => node.type !== 'comment').length === 0) {
       set({ notice: { kind: 'error', text: i18n.t('toast.graph_empty') } });
       return;
     }
@@ -1083,11 +1085,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
       const levels = levelsToMap(plan.levels);
       // В сообщении показываем подписи типов узлов из реестра, а не uuid.
-      // Ищем по отправленным узлам: в `plan.order` комментариев нет (KI-187).
+      // Ищем по всем узлам графа: в `plan.order` аннотаций нет (KI-266).
       const order = plan.order
         .map((nodeId) =>
           nodeLabelOf(
-            backendNodes.find((item) => item.id === nodeId),
+            nodes.find((item) => item.id === nodeId),
             nodeId,
           ),
         )

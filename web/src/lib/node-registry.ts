@@ -114,7 +114,8 @@ export const NODE_REGISTRY = {
     component: CommentNode,
     // Портов нет: ребро `source → comment` создать нельзя (KI-259).
     canBeInsertedOnEdge: false,
-    // Узел хранит текст в графе и на backend не уходит (KI-187).
+    // Узел хранит текст в графе; backend переносит его между Save/Load, но
+    // исключает из плана выполнения (KI-266).
     capabilities: { externalState: false, userConfig: false },
   },
 } as const satisfies Record<NodeType, NodeRegistryEntry>;

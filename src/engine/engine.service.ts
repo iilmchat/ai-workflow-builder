@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type { EdgeDto, GraphDto } from './dto/index.js';
+import { ANNOTATION_NODE_TYPES } from './node-executors.js';
 import {
   NODE_PORT_CONTRACT,
   handleIdToOutputPort,
@@ -72,6 +73,8 @@ export class EngineService {
    * Проверяются: непустой список узлов, непустые и уникальные `id`,
    * существование узлов для каждого конца связи, отсутствие self-loops и
    * циклов. Как warnings отмечаются изолированные узлы и пустой `type`.
+   * Узлы-аннотации (`ANNOTATION_NODE_TYPES`, KI-266) об изолированности не
+   * предупреждают: у стикера-заметки связей не бывает по определению.
    *
    * @param graph - валидированный DTO графа
    * @param options.requireNodes - требовать хотя бы один узел (для проверки
@@ -145,6 +148,10 @@ export class EngineService {
    * предшественники которых входят в предыдущие уровни. Такие узлы не зависят
    * друг от друга, поэтому внутри уровня их можно запускать параллельно.
    *
+   * Узлы-аннотации (`ANNOTATION_NODE_TYPES`, KI-266) в план не попадают вообще:
+   * это заметки на холсте, а не шаги выполнения. Их нет ни в `order`, ни в
+   * `levels`, ни в `executionMap`, поэтому `node_runs` для них не создаются.
+   *
    * Для каждого узла строится `executionMap`:
    * - `inputs` — что подать на вход: ключ → откуда приходит значение
    *   (`fromNode`, `fromPort`). Ключ — **имя входного порта** узла-получателя
@@ -160,26 +167,51 @@ export class EngineService {
    *
    * @param graph - валидированный DTO графа
    * @returns план выполнения графа
-   * @throws BadRequestException если в графе есть цикл или битые связи
+   * @throws BadRequestException если в графе есть цикл или битые связи, либо
+   *   если узлы есть, но все они — аннотации (выполнять нечего)
    */
   async buildExecutionPlanAsync(graph: GraphDto): Promise<ExecutionPlanDto> {
     this.assertExecutable(graph);
 
-    const index = this.buildIndex(graph);
+    // KI-266: аннотации (comment) исключаются из плана выполнения. Backend
+    // хранит их в графе (`workflows.nodes` jsonb) и переносит между Save/Load,
+    // но узлами потока они не являются: `runNodeAsync` на незнакомый тип
+    // бросает `UnsupportedNodeTypeException` и роняет весь запуск.
+    const executableNodes = graph.nodes.filter(
+      (node) => !ANNOTATION_NODE_TYPES.has(node.type),
+    );
+
+    // Пустой граф — не ошибка аннотаций: запуск «ничего» завершается успешно
+    // (`executeAsync` закрывает его `completed`, KI-037-тесты это фиксируют).
+    // А вот граф, состоящий ТОЛЬКО из стикеров, выполнять нечего — и текст
+    // ошибки должен говорить именно об этом.
+    if (graph.nodes.length > 0 && executableNodes.length === 0) {
+      throw new BadRequestException(
+        'Граф содержит только аннотации, нечего выполнять',
+      );
+    }
+
+    // Связи с аннотациями отсекаются самим `buildIndex`: их концов нет в
+    // наборе id, поэтому они уходят в `orphanEdges` и на уровни не влияют.
+    const executableGraph: GraphDto = {
+      nodes: executableNodes,
+      edges: graph.edges,
+    };
+    const index = this.buildIndex(executableGraph);
     const levels = this.kahnLevels(index);
 
     if (!levels) {
-      throw new BadRequestException(this.cycleError(graph, index));
+      throw new BadRequestException(this.cycleError(executableGraph, index));
     }
 
     const executionMap: Record<string, ExecutionNodePlan> = {};
-    for (const node of graph.nodes) {
+    for (const node of executableNodes) {
       executionMap[node.id] = { inputs: {}, dependents: [] };
     }
 
     // Индекс «id узла → узел»: нужен, чтобы вывести выходной порт источника
     // (KI-022) без повторного прохода по массиву узлов на каждую связь.
-    const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+    const nodesById = new Map(executableNodes.map((node) => [node.id, node]));
 
     for (const edge of index.edges) {
       const plan = executionMap[edge.target];
@@ -493,6 +525,13 @@ export class EngineService {
     }
 
     for (const node of index.nodes) {
+      // KI-266: аннотация (comment) — заметка на холсте, а не узел потока: у
+      // неё нет портов, поэтому связей у неё не бывает по определению, и
+      // предупреждать об изолированности не о чем.
+      if (ANNOTATION_NODE_TYPES.has(node.type)) {
+        continue;
+      }
+
       const hasIncoming = index.edges.some((edge) => edge.target === node.id);
       const hasOutgoing = (index.outgoing.get(node.id) ?? []).length > 0;
 

@@ -112,6 +112,19 @@ describe('EngineService', () => {
       );
     });
 
+    it('не предупреждает об изолированности узлов-аннотаций (KI-266)', () => {
+      const result = service.validateGraphAsync({
+        nodes: [node('A'), node('B'), node('STICKER', 'comment')],
+        edges: [edge('A', 'B')],
+      });
+
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+      // Единственный узел без связей — стикер, а для аннотации это норма:
+      // портов у неё нет, поэтому предупреждать не о чем.
+      expect(result.warnings).toEqual([]);
+    });
+
     it('возвращает warning о пустом типе узла', () => {
       const result = service.validateGraphAsync({
         nodes: [node('A', ''), node('B')],
@@ -650,6 +663,57 @@ describe('EngineService', () => {
       await expect(service.buildExecutionPlanAsync(graph)).rejects.toThrow(
         BadRequestException,
       );
+    });
+
+    it('исключает аннотации из плана выполнения (KI-266)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'text'), node('B', 'llm'), node('NOTE', 'comment')],
+        edges: [edge('A', 'B')],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      // Стикера нет ни в порядке, ни в уровнях, ни в карте выполнения:
+      // `node_runs` для аннотаций не создаются.
+      expect(plan.order).toEqual(['A', 'B']);
+      expect(plan.levels).toEqual([['A'], ['B']]);
+      expect(Object.keys(plan.executionMap)).toEqual(['A', 'B']);
+    });
+
+    it('игнорирует связи с аннотациями при построении уровней (KI-266)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'text'), node('NOTE', 'comment')],
+        edges: [edge('NOTE', 'A')],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      // Связь от стикера не создаёт вход у A и не добавляет уровень:
+      // у аннотации нет портов, поэтому такая связь просто не существует
+      // для планировщика (и не делает граф невалидным).
+      expect(plan.order).toEqual(['A']);
+      expect(plan.levels).toEqual([['A']]);
+      expect(plan.executionMap.A.inputs).toEqual({});
+    });
+
+    it('бросает BadRequestException, если в графе только аннотации (KI-266)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('N1', 'comment'), node('N2', 'comment')],
+        edges: [],
+      };
+
+      await expect(service.buildExecutionPlanAsync(graph)).rejects.toThrow(
+        'Граф содержит только аннотации, нечего выполнять',
+      );
+    });
+
+    it('на пустом графе возвращает пустой план, а не ошибку аннотаций (KI-266)', async () => {
+      // Пустой граф — не «граф из одних стикеров»: запуск «ничего» остаётся
+      // успешным (см. `завершает пустой граф без строк node_runs` в
+      // `execution-engine.service.spec.ts`).
+      const plan = await service.buildExecutionPlanAsync({ nodes: [], edges: [] });
+
+      expect(plan).toEqual({ order: [], levels: [], executionMap: {} });
     });
   });
 });

@@ -4,27 +4,29 @@ import type { AppNode, NodeType } from '@/types/graph';
 /**
  * Типы узлов, которые **не отправляются** на backend (KI-187).
  *
- * `comment` — чистый UI-стикер: backend-движок знает только `text`, `llm` и
- * `image_generation`, а `ExecutionEngineService.runNodeAsync` на любой
- * незнакомый тип бросает `UnsupportedNodeTypeException` — то есть комментарий
- * в графе уронил бы весь запуск. Поэтому узлы этого типа отсекаются на границе
- * с API (Save и `/engine/plan`).
+ * С KI-266 множество **пусто**: backend научился игнорировать аннотации
+ * (`ANNOTATION_NODE_TYPES` в `src/engine/node-executors.ts`) — `comment` не
+ * попадает в план выполнения, поэтому `UnsupportedNodeTypeException` в
+ * `runNodeAsync` больше не срабатывает, а стикеры переносятся между Save/Load
+ * как обычные узлы графа (`workflows.nodes` jsonb).
  *
- * Следствие: комментарии живут **только в текущей сессии редактора** — backend
- * их не хранит, и после перезагрузки страницы они не восстанавливаются.
- * Запись в реестре KI — в отчёте R6.4b.2a.
+ * Историческая защита: раньше здесь лежал `comment`, и узлы этого типа
+ * отсекались на границе API (Save и `/engine/plan`) — из-за этого заметки
+ * терялись после перезагрузки страницы. Точка расширения оставлена на случай
+ * нового чисто-UI типа, который backend не должен видеть вовсе.
  *
  * `Set`, а не массив: проверка идёт для каждого узла на каждом Save/Plan.
  */
-export const LOCAL_ONLY_NODE_TYPES: ReadonlySet<string> = new Set<NodeType>([
-  'comment',
-]);
+export const LOCAL_ONLY_NODE_TYPES: ReadonlySet<string> = new Set<NodeType>();
 
 /**
  * Оставляет только узлы, которые backend умеет принимать.
  *
+ * Сейчас фильтр пуст (KI-266), поэтому функция возвращает узлы как есть —
+ * включая комментарии. Порядок сохраняется.
+ *
  * @param nodes - узлы графа из редактора
- * @returns узлы без local-only типов (порядок сохраняется)
+ * @returns узлы без local-only типов
  */
 export function toBackendNodes(nodes: readonly AppNode[]): AppNode[] {
   return nodes.filter((node) => !isLocalOnlyNode(node));
@@ -43,10 +45,11 @@ function isLocalOnlyNode(node: AppNode): boolean {
 /**
  * Оставляет связи, у которых оба конца есть среди отправляемых узлов.
  *
- * Связь с отфильтрованным комментарием стала бы «битой» на backend: движок
- * добавляет ошибку `Связь X ссылается на несуществующий source/target`, и
- * сохранение/план падали бы с 400. У комментария портов нет, поэтому на
- * практике таких связей быть не должно — проверка страхует от регрессии.
+ * С KI-266 фильтр пуст, поэтому связи с комментариями уходят на backend
+ * вместе с узлами. Отсев связей с узлами, которых нет в payload, остаётся
+ * страховкой: «битая» связь (её конец отфильтрован или удалён) — это ошибка
+ * валидации графа на backend (`Связь X ссылается на несуществующий
+ * source/target`), то есть 400 на Save/Plan.
  *
  * @param edges - связи графа из редактора
  * @param backendNodes - узлы, уже прошедшие {@link toBackendNodes}
@@ -62,14 +65,11 @@ export function toBackendEdges(
 }
 
 /**
- * Отделяет узлы, которые не уходят на backend, от «настоящих» неизвестных.
+ * Проверяет, что тип узла отсекается на границе с backend.
  *
- * Нужен при загрузке графа: тип, которого нет в реестре, — это потеря данных
- * (пользователь должен увидеть предупреждение, KI-121), а local-only тип
- * отбрасывается осознанно и молча.
- *
- * @param type - значение `node.type` из API (узел не прошёл `isNodeType`)
- * @returns `true`, если тип просто не поддерживается backend
+ * @param type - значение `node.type` из API
+ * @returns `true`, если тип входит в {@link LOCAL_ONLY_NODE_TYPES}; сейчас —
+ *   всегда `false` (KI-266)
  */
 export function isLocalOnlyNodeType(type: string): boolean {
   return LOCAL_ONLY_NODE_TYPES.has(type);
