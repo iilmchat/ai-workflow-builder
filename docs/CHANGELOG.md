@@ -162,9 +162,9 @@
   `GET /workflow/share/:token`; ShareModal + ShareViewPage; Vite
   bypass для SPA (`ae5e461`, `abf88ff`).
 - **KI-183** — maxTokens для reasoning-моделей: `ModelInfo.defaultMaxTokens`
-  + env-суффикс `:reasoning` → 4096 (`<hash-3.1>`).
-- **KI-192** — System prompt у LLM-узла (backend) (`<hash-3.1>`).
-- **KI-193** — Reasoning mode (backend) (`<hash-3.1>`).
+  + env-суффикс `:reasoning` → 4096 (`283ce94`).
+- **KI-192** — System prompt у LLM-узла (backend) (`283ce94`).
+- **KI-193** — Reasoning mode (backend) (`283ce94`).
 - **KI-185** — вставка узла в связь по паттерну React Flow
   (`fcd2913`).
 - **KI-189** — направляющие (соседи из стора + ViewportPortal)
@@ -180,8 +180,8 @@
 - **KI-261** — `addNodeOnEdge`: notice `canvas.edge.gone`, если связь
   уже удалена (R6.4a-fix5).
 - **KI-188** — Cursor / Hand режимы (S / H) + `canvasMode`
-  (`<hash-4b1>`).
-- **KI-190** — Minimap toggle (hotkey M + кнопка) (`<hash-4b1>`).
+  (`e923384`).
+- **KI-190** — Minimap toggle (hotkey M + кнопка) (`e923384`).
 - **KI-265** — путь репозитория в PROMPT_V5.md приведён к
   `D:\Projects\AI\workflow-builder` (docs-коммит).
 
