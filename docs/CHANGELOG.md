@@ -84,7 +84,21 @@
   - Vite: `/workflow` bypass на `/index.html` для `Accept: text/html`.
   - i18n: 14 ключей `share.*` (ru/en 135/135).
   - Frontend tests: 24 → 29 (+5).
-
+- **LLM upgrade — backend (R6.3.1, KI-183/192/193):**
+  - `LlmGenerateOptions` — `reasoningEffort: 'off' | 'medium' | 'high'`
+    (system / maxTokens уже были).
+  - `ModelInfo` — `supportsReasoning?`, `defaultMaxTokens?`.
+  - OpenAI-совместимый: `reasoning_effort` через типизированное поле
+    SDK; 'off' → поле не отправляется; `max_tokens` приоритет:
+    options → ModelInfo → 1024.
+  - Anthropic: `system` / `max_tokens` как раньше; reasoning — warn
+    (extended thinking — v0.8.x).
+  - `LlmNodeExecutor`: `data.systemPrompt` / `data.reasoningEffort` /
+    `data.maxTokensOverride` → options; логируются только длины.
+  - Env-формат: `<id>:<modalities>[:reasoning]`; reasoning-модели
+    → `supportsReasoning=true` + `defaultMaxTokens=4096`.
+  - `llm-registry`: пропускает новые поля в `GET /llm/models`.
+  - +16 тестов (412 → 428).
 
 ### Fixed
 - **KI-201** — Auth backend (R6.1a): users, JWT-guard, `/auth/*`,
@@ -105,6 +119,10 @@
   `share_token`, `POST/DELETE /workflow/:id/share`, публичный
   `GET /workflow/share/:token`; ShareModal + ShareViewPage; Vite
   bypass для SPA (`ae5e461`, `abf88ff`).
+- **KI-183** — maxTokens для reasoning-моделей: `ModelInfo.defaultMaxTokens`
+  + env-суффикс `:reasoning` → 4096 (`<hash-3.1>`).
+- **KI-192** — System prompt у LLM-узла (backend) (`<hash-3.1>`).
+- **KI-193** — Reasoning mode (backend) (`<hash-3.1>`).
 
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
@@ -148,7 +166,11 @@
     в UI, read-only node-карточки, Zod-валидация графа в
     ShareViewPage, сообщение о сбое copy, реализация allow-copy
     (R6.6).    
-
+  - **KI-244..247** — LLM-остаток v0.8.x: Anthropic-модели
+    захардкожены (Medium), лимит токенов в трёх местах (Low),
+    ReasoningEffort покрывает только off/medium/high (Low),
+    лог движка «узлов=0» (Low).
+    
 ## [0.7.2] — 2026-10-15
 
 **Patch-релиз после v0.7.1. Yandex env + LM Studio auto-discovery + LLM/media фиксы.**

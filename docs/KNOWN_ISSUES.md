@@ -3005,7 +3005,12 @@
 - **Связанные:** KI-174, KI-175, KI-092.
 
 ### KI-183 — maxTokens не учитывает reasoning-модели
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0c (коммит `283ce94`)
+- **Fix:** `ModelInfo.defaultMaxTokens` + env-суффикс `:reasoning` →
+  4096 (обычные модели — 1024). `LlmNodeExecutor` читает
+  `data.maxTokensOverride` (приоритет над дефолтом). +тесты.
+- **Связанные:** KI-192, KI-193.
 - **Файлы:** `src/llm/providers/openai-compatible.provider.ts`
   (`DEFAULT_MAX_TOKENS`), `src/llm/llm-provider.interface.ts`
   (`LlmGenerateOptions`)
@@ -3036,7 +3041,6 @@
 
 ---
 
-
 ### KI-185 — Вставка узла в связь (hover на edge)
 - **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
 - **Файлы:** `web/src/components/Canvas.tsx`
@@ -3048,6 +3052,8 @@
   разбить edge на два (source→new, new→target).
 - **Когда чинить:** v0.8 (Canvas UX).
 - **Связанные:** KI-162, KI-127.
+
+---
 
 ### KI-186 — Хоткеи: расширенный список
 - **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
@@ -3063,6 +3069,8 @@
 - **Когда чинить:** v0.8 (Canvas UX).
 - **Связанные:** KI-162, KI-185, KI-191.
 
+---
+
 ### KI-187 — Комментарии/аннотации на холсте
 - **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
 - **Файлы:** `web/src/components/Canvas.tsx`, `web/src/stores/workflow.ts`
@@ -3073,6 +3081,8 @@
 - **Когда чинить:** v0.8.
 - **Связанные:** KI-194.
 
+---
+
 ### KI-188 — Режимы Курсор / Рука (S / H)
 - **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
 - **Файлы:** `web/src/components/Canvas.tsx`
@@ -3081,6 +3091,8 @@
 - **Решение:** `panOnDrag` toggle + хук `useHotkeys`.
 - **Когда чинить:** v0.8.
 - **Связанные:** KI-186.
+
+---
 
 ### KI-189 — Направляющие / snap при перетаскивании
 - **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
@@ -3093,6 +3105,8 @@
 - **Когда чинить:** v0.8.
 - **Связанные:** KI-186.
 
+---
+
 ### KI-190 — Мини-карта: toggle + hotkey
 - **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
 - **Файлы:** `web/src/components/Canvas.tsx`
@@ -3101,6 +3115,8 @@
 - **Решение:** toggle в правой панели + сохранение в localStorage.
 - **Когда чинить:** v0.8.
 - **Связанные:** KI-158.
+
+---
 
 ### KI-191 — Дублировать узел (Ctrl+D)
 - **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
@@ -3111,8 +3127,18 @@
 - **Когда чинить:** v0.8.
 - **Связанные:** KI-186.
 
+---
+
 ### KI-192 — System prompt у LLM-узла
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0c (коммит `283ce94`)
+- **Fix (R6.3.1, backend):** `LlmNodeExecutor` читает
+  `data.systemPrompt` (fallback `data.system`), передаёт в
+  `options.system`. OpenAI-совместимые: `messages[0].role='system'`;
+  Anthropic: поле `system`.
+- **Остаток (R6.3.2, frontend):** сворачиваемый `<textarea>` в
+  `LLMNode`.
+- **Связанные:** KI-180, KI-193.
 - **Файлы:** `web/src/components/nodes/LLMNode.tsx`,
   `web/src/types/graph.ts`, `src/llm/llm-node-executor.service.ts`
 - **Описание:** GPTunnel позволяет задать System prompt в LLM-узле
@@ -3123,8 +3149,19 @@
 - **Когда чинить:** v0.8 (High — часто нужно).
 - **Связанные:** KI-180, KI-193.
 
+---
+
 ### KI-193 — Режим размышления (Reasoning) для LLM
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0c (коммит `283ce94`)
+- **Fix (R6.3.1, backend):** `LlmGenerateOptions.reasoningEffort`
+  ('off'|'medium'|'high'); OpenAI-совместимые — `reasoning_effort`
+  через типизированное поле SDK, только если
+  `ModelInfo.supportsReasoning === true`; 'off' → поле не отправляется.
+  Anthropic extended thinking — v0.8.x (warn).
+- **Остаток (R6.3.2, frontend):** `<select>` Off/Medium/High в `LLMNode`
+  (только для моделей с `supportsReasoning === true`).
+- **Связанные:** KI-183, KI-192, KI-244, KI-246.
 - **Файлы:** `web/src/components/nodes/LLMNode.tsx`,
   `web/src/types/graph.ts`, `src/llm/llm-node-executor.service.ts`
 - **Описание:** GPTunnel даёт выбор `Off / Medium / High` для
@@ -3135,6 +3172,8 @@
   дефолт — 'off' для не-reasoning, 'medium' для reasoning.
 - **Когда чинить:** v0.8 (High — связано с KI-183).
 - **Связанные:** KI-183, KI-179, KI-192.
+
+---
 
 ### KI-194 — Note / Compare узлы
 - **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
@@ -3147,6 +3186,8 @@
 - **Когда чинить:** v0.8.
 - **Связанные:** KI-187.
 
+---
+
 ### KI-195 — Auto-save в фоне
 - **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
 - **Файлы:** `web/src/stores/workflow.ts`, `web/src/components/TopBar.tsx`
@@ -3156,6 +3197,8 @@
   индикатор «сохранено/есть изменения»; Save остаётся как fallback.
 - **Когда чинить:** v0.8.
 - **Связанные:** KI-147.
+
+---
 
 ### KI-196 — Медиа-инструменты (upscale, bg-removal, lipsync, 3D, motion)
 - **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
@@ -3167,6 +3210,8 @@
   — свой payload, могут использовать image-input).
 - **Когда чинить:** v0.9.
 - **Связанные:** KI-128, KI-105, KI-181.
+
+---
 
 ### KI-197 — Публичный share workflow (read-only ссылка)
 - **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-15
@@ -3887,18 +3932,79 @@
 
 ---
 
+### KI-244 — Anthropic-модели захардкожены в провайдере
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/llm/providers/anthropic.provider.ts`
+- **Описание:** Список моделей — `readonly models` в классе (литералом).
+  Из-за этого `defaultMaxTokens` / `supportsReasoning` для них задать
+  нельзя: env-список не предусмотрен (в отличие от GPTunnel / LM
+  Studio), лимит всегда падает на константу 1024 или явный
+  `options.maxTokens`. Для Claude с extended thinking это блокер.
+- **Решение:** env-список (`ANTHROPIC_MODELS`) или явные дефолты для
+  встроенных моделей (`claude-opus-4` → 4096, `claude-sonnet-4` →
+  4096, с поддержкой `:reasoning`).
+- **Когда чинить:** v0.8.x — при подключении Anthropic extended
+  thinking (KI-193 остаток).
+- **Связанные:** KI-193, KI-245.
+
+---
+
+### KI-245 — Лимит токенов задан в трёх местах
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/llm/providers/openai-compatible.provider.ts`,
+  `src/llm/providers/anthropic.provider.ts`,
+  `src/llm/llm-provider.factory.ts`
+- **Описание:** `DEFAULT_MAX_TOKENS = 1024` — константа в каждом
+  провайдере (2 штуки), `4096` для reasoning — литерал в фабрике.
+  Единого источника нет, легко рассинхронизировать.
+- **Решение:** один модуль `src/llm/llm-constants.ts` с
+  `DEFAULT_MAX_TOKENS` и `REASONING_MAX_TOKENS`.
+- **Когда чинить:** при следующей правке провайдеров (v0.8.x).
+- **Связанные:** KI-183.
+
+---
+
+### KI-246 — ReasoningEffort покрывает только off/medium/high
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/llm/llm-provider.interface.ts`,
+  `web/src/components/nodes/LLMNode.tsx` (R6.3.2)
+- **Описание:** `ReasoningEffort = 'off' | 'medium' | 'high'`. SDK
+  `openai@7.32.0` знает ещё `'none' | 'minimal' | 'low' | 'xhigh' |
+  'max'`. Сейчас `off` → поле не отправляется; остальные
+  расширенные режимы недоступны.
+- **Решение:** расширить union (`'low' | 'minimal' | 'xhigh'` + маппинг
+  `off → null`), когда UI покажет больше режимов.
+- **Когда чинить:** при появлении запроса от UI (v0.8.x).
+- **Связанные:** KI-193.
+
+---
+
+### KI-247 — Лог движка «узлов=0» при падении первого узла
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/engine/execution-engine.service.ts`
+- **Описание:** При падении первого узла в логе: «Запуск … завершён:
+  status=failed, узлов=0». Узел **выполнялся** (в логе есть строка
+  исполнителя), но счётчик `узлов` считает только `completed`.
+  Путает при диагностике.
+- **Решение:** логировать отдельно `completed` / `failed` /
+  `skipped`; или `узлов=N (failed=M)`.
+- **Когда чинить:** при следующей правке engine (v0.8.x).
+- **Связанные:** KI-036 (retry), KI-037 (plan-error).
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 78 |
+| Fixed | 81 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 147 |
+| Open | 148 |
 | Won't Fix | 1 |
-| **Всего** | **234** |
+| **Всего** | **238** |
 
 ---
 
