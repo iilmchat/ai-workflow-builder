@@ -166,6 +166,19 @@
   - i18n: 27 ключей `node.{http,condition,output,compare}.*`
     (ru/en 158 → 185).
   - Frontend tests: 101 → 132 (+31).
+- **Export / Import / Templates (R6.6.1, KI-108/109):**
+  - `GET /workflow/:id/export` — JSON `{ version: 1, name, nodes,
+    edges, exportedAt }` (без userId / shareToken / id).
+  - `POST /workflow/import` — создать workflow из артефакта.
+  - `GET /templates` + `POST /templates/:id/instantiate`.
+  - `src/templates/*.json` — 3 шаблона (text-llm, text-llm-image,
+    http-llm); handle IDs сверены с node-ports.ts.
+  - `TemplateLoaderService` — fail-soft, два кандидата каталога.
+  - Tests: 482 → 498 (+16).
+- **Engine — продолжение независимых уровней (R6.5.2-fix, KI-287):**
+  - Убран `break` в `executeAsync`; план проходится до конца.
+  - Зависимые узлы получают `null` и падают сами (вариант A).
+  - Tests: 479 → 482 (+3).
 
 ### Fixed
 - **KI-201** — Auth backend (R6.1a): users, JWT-guard, `/auth/*`,
@@ -235,6 +248,10 @@
   (критично — не работал `Ctrl+D`/`Ctrl+Z`) (`2efe3f3`).
 - **KI-105** — узлы `http` / `condition` / `output` / `compare`
   (backend + frontend) (`1e89cdd`, `c4f2792`).
+- **KI-287** — продолжение независимых уровней после падения узла
+  (`987bc5a`).
+- **KI-108** — Export / Import / Templates (`12ff041`).
+- **KI-109** — Export / Import / Templates (`12ff041`).
 
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
@@ -321,7 +338,16 @@
     scrollIntoView (Low).
   - **KI-287** — движок прерывает независимые уровни после первого
     падения (Medium, противоречит RULES 4.16).
-      
+  - **KI-288** — нет skipped-статуса (Medium).
+  - **KI-289** — http не считает 4xx/5xx ошибкой (Medium).
+  - **KI-290** — outputs с fallback от потомков упавших (Medium).
+  - **KI-291** — workflows.version не в артефакте (Low).
+  - **KI-292** — nest-cli assets для templates (Medium).
+  - **KI-293** — timestamptz дрейф: API отдаёт дату на 3ч раньше
+    (🟠 High).
+  - **KI-294** — ImportSchema.name без max(200) (Low).
+  - **KI-295** — WorkflowController Async-стиль (Low).
+
 ## [0.7.2] — 2026-10-15
 
 **Patch-релиз после v0.7.1. Yandex env + LM Studio auto-discovery + LLM/media фиксы.**
