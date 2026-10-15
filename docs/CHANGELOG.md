@@ -33,6 +33,7 @@
     только из токена.
   - Env: `JWT_SECRET` (min 32), `JWT_EXPIRES_IN`, `AUTH_DISABLED`.
   - CI: `JWT_SECRET` + `AUTH_DISABLED` в шаге `pnpm test`.
+  - Tests: 358 → 380 (+22).
 - **Auth — refresh-token + logout (R6.1b.1):**
   - Миграция 0005: `refresh_tokens` (uuid, sha256-хэш, cascade FK,
     2 индекса).
@@ -46,6 +47,19 @@
   - `EnvSchema.superRefine` — `NODE_ENV=production` + `AUTH_DISABLED=true`
     → отказ старта.
   - Tests: 396 → 400 (+4).
+- **Auth — frontend (R6.1b.2):**
+  - `stores/auth.ts` — zustand, access-токен в ПАМЯТИ (не localStorage).
+  - `lib/api.ts` — 401-интерцептор: refresh + retry (single-flight
+    Promise, защита от StrictMode double-effect).
+  - `lib/auth-api.ts` — login / register / refresh / logout.
+  - `components/auth/` — AuthProvider (bootstrap), LoginPage,
+    ProtectedRoute.
+  - `main.tsx` — BrowserRouter (react-router-dom v7) + AuthProvider.
+  - `App.tsx` — Routes: `/login`, `/` (ProtectedRoute).
+  - `TopBar` — user-menu (email, logout).
+  - Vite proxy: + `/auth`.
+  - i18n: 15 ключей `auth.*` (ru/en 121/121).
+  - Frontend tests: 15 → 24 (+9).
 - **Frontend Auth — fix ?workflowId= после router (R6.1b.2-fix):**
   - ProtectedRoute сохраняет search при редиректе на /login.
   - LoginPage возвращает на / с сохранённым search.
@@ -54,6 +68,9 @@
 
 
 ### Fixed
+- **KI-201** — Auth backend (R6.1a): users, JWT-guard, `/auth/*`,
+  scrypt; остаток R6.1b.1/R6.1b.2 — refresh-token, logout, frontend
+  (`88f53e4`, `4b1c149`, `316c680`).
 - **KI-202** — owner на `GET /runs/:id` и `/stream`; чужой run → 404
   (`4b1c149`).
 - **KI-204** — `userId` удалён из `CreateWorkflowSchema` и
