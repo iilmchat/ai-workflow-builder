@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/auth';
 
@@ -14,6 +14,7 @@ import { useAuthStore } from '@/stores/auth';
  */
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
+  const location = useLocation();
   const status = useAuthStore((state) => state.status);
 
   if (status === 'unknown') {
@@ -25,7 +26,10 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   }
 
   if (status !== 'authenticated') {
-    return <Navigate to="/login" replace />;
+    // KI-228: query (?workflowId=…) сохраняем — иначе ссылка на граф теряется
+    // при переходе на форму входа и после логина пользователь попадает в пустой
+    // редактор.
+    return <Navigate to={{ pathname: '/login', search: location.search }} replace />;
   }
 
   return <>{children}</>;

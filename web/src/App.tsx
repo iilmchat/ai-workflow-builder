@@ -1,9 +1,10 @@
 import { useCallback, useEffect } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import { Route, Routes, useSearchParams } from 'react-router-dom';
 import { Canvas } from '@/components/Canvas';
 import { LoginPage } from '@/components/auth/LoginPage';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { RunResultPanel } from '@/components/RunResultPanel';
+import { useAuthStore } from '@/stores/auth';
 import { Toast } from '@/components/Toast';
 import { Toolbar } from '@/components/Toolbar';
 import { TopBar } from '@/components/TopBar';
@@ -31,13 +32,18 @@ export function App() {
   const loadWorkflowAsync = useWorkflowStore((state) => state.loadWorkflowAsync);
 
   // При открытии страницы с ?workflowId=... подтягиваем сохранённый граф.
-  useEffect(() => {
-    const workflowId = new URL(window.location.href).searchParams.get('workflowId');
+  // KI-228: грузим только когда сессия готова и зависим от статуса. Иначе
+  // эффект срабатывает один раз на маунте (ещё на /login, без сессии → 401),
+  // а после логина query не меняется и граф уже не грузится.
+  const [searchParams] = useSearchParams();
+  const workflowIdParam = searchParams.get('workflowId');
+  const authStatus = useAuthStore((state) => state.status);
 
-    if (workflowId) {
-      void loadWorkflowAsync(workflowId);
+  useEffect(() => {
+    if (workflowIdParam && authStatus === 'authenticated') {
+      void loadWorkflowAsync(workflowIdParam);
     }
-  }, [loadWorkflowAsync]);
+  }, [loadWorkflowAsync, workflowIdParam, authStatus]);
 
   // Список моделей нужен не только LLM-узлам, но и созданию нового узла
   // (KI-074: модель по умолчанию = llmModels[0]), поэтому грузим его на старте.

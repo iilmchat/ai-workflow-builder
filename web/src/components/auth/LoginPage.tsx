@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import { ApiError } from '@/lib/api';
 import { loginAsync, registerAsync } from '@/lib/auth-api';
@@ -52,6 +52,7 @@ function errorKeyOf(error: unknown, translate: (key: string) => string): string 
 export function LoginPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const setSession = useAuthStore((state) => state.setSession);
 
   const [mode, setMode] = useState<Mode>('login');
@@ -99,7 +100,9 @@ export function LoginPage() {
           : await registerAsync(email, password);
 
       setSession(result.user, result.accessToken);
-      void navigate('/', { replace: true });
+      // KI-228: возвращаемся на исходный query (например, ?workflowId=…),
+      // который ProtectedRoute сохранил при редиректе на форму входа.
+      void navigate({ pathname: '/', search: location.search }, { replace: true });
     } catch (caught) {
       setError(errorKeyOf(caught, t));
     } finally {
