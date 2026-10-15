@@ -48,6 +48,9 @@ jobs:
         run: pnpm test
         env:
           DATABASE_URL: postgres://workflow:devpass123@localhost:5432/workflow_builder
+          # R6.1a: env валидируется Zod при старте приложения, JWT_SECRET обязателен.
+          JWT_SECRET: ci-secret-at-least-32-characters-long
+          AUTH_DISABLED: 'false'
 
   web:
     runs-on: ubuntu-latest
