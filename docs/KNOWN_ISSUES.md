@@ -3086,7 +3086,13 @@
 ---
 
 ### KI-187 — Комментарии/аннотации на холсте
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟢 Low | **Статус:** In Progress | **Обнаружено:** 2026-10-15
+- **Fix (R6.4b.2a, коммит `9c560cf `):** тип узла `comment`,
+  `CommentNode` (стикер без Handle), хоткеи C / Shift+C,
+  `lib/graph-payload.ts` (фильтр local-only).
+- **Остаток (R6.4b.2a-fix):** KI-266 — персистить комментарии
+  на backend (фикс `ExecutionEngineService`, откат local-only).
+- **Связанные:** KI-188, KI-194, KI-266.
 - **Файлы:** `web/src/components/Canvas.tsx`, `web/src/stores/workflow.ts`
 - **Описание:** GPTunnel позволяет оставлять текстовые заметки на
   холсте (C). У нас нет.
@@ -4229,8 +4235,8 @@
 ### KI-264 — Смоук-харнесс CDP: узкий Fetch-перехват + windowsVirtualKeyCode
 - **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
 - **Файлы:** временные скрипты смоука (вне репо)
-- **Описание:** Два класса дефектов драйвера, встретившихся при
-  смоуке R6.4b.1:
+- **Описание:** Три класса дефектов драйвера, встретившихся при
+  смоуках R6.4b.1 / R6.4b.2a:
   1. Слишком широкий `Fetch.requestPaused` (например,
      `url.includes('/workflow')`) перехватывает модули Vite
      (`/src/stores/workflow.ts`, `/node_modules/`, `?import`) и
@@ -4240,6 +4246,11 @@
   2. Синтетический `keydown` без `windowsVirtualKeyCode` часть
      нажатий теряет. Повторные переключатели (H/M/Tab) «дожимают»
      состояние обратно.
+  3. `Input.dispatchKeyEvent` для печатаемых клавиш требует
+     `type: 'keyDown'` с полем `text`; `rawKeyDown` в части прогонов
+     **не доходит** до страницы (0 keydown). `Page.captureScreenshot`
+     снимает фокус с активного элемента — после скриншота нужен
+     повторный фокус / `Page.bringToFront` перед нажатиями.     
 - **Решение:** зафиксировать оба правила в RULES § 4.33 (смоук CDP)
   или в отдельной памятке.
 - **Связанные:** KI-135 (Emulation.setFocusEmulationEnabled).
@@ -4262,18 +4273,48 @@
 
 ---
 
+### KI-266 — Комментарии не персистятся (backend роняет run на незнакомом типе)
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/engine/execution-engine.service.ts`,
+  `src/engine/engine.service.ts`, `web/src/lib/graph-payload.ts`
+- **Описание:** `ExecutionEngineService.runNodeAsync` — `switch
+  (node.type)` с `default: throw new UnsupportedNodeTypeException`.
+  Комментарий, доехавший до backend, **уронит весь run**. Из-за
+  этого frontend вынужден отсекать `comment` на границе API
+  (`lib/graph-payload.ts`) → стикеры **теряются при F5**.
+- **Решение:** (1) `buildExecutionPlanAsync` игнорирует
+  «annotation»-типы (`comment`) — не включает в `levels`/`executionMap`,
+  не создаёт `node_runs`; (2) откат `local-only`-фильтра на frontend.
+  Миграции не нужно (узлы уже хранятся в `workflows.nodes` jsonb).
+- **Влияние:** сейчас пользователь теряет заметки после перезагрузки.
+- **Связанные:** KI-187, KI-247 (лог «узлов=0»), KI-267.
+
+---
+
+### KI-267 — `loadWorkflowAsync` при ошибке схемы молчит в консоль
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/stores/workflow.ts` (`loadWorkflowAsync`)
+- **Описание:** При `ApiWorkflowSchema.parse` Zod-ошибка попадает
+  в notice, но **не в console.warn** — диагностика Load затруднена
+  (поймано в смоуке R6.4b.2a).
+- **Решение:** в catch — `console.warn('[loadWorkflow]', error)`.
+- **Когда чинить:** при следующей правке стора.
+- **Связанные:** KI-266.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
 | Fixed | 90 |
-| In Progress | 1 |
+| In Progress | 2 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 154 |
+| Open | 155 |
 | Won't Fix | 1 |
-| **Всего** | **254** |
+| **Всего** | **256** |
 
 ---
 

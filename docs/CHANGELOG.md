@@ -65,7 +65,6 @@
   - LoginPage возвращает на / с сохранённым search.
   - App читает `?workflowId=` через `useSearchParams()` +
     эффект на [workflowIdParam, authStatus].
-
 - **Share workflow (R6.2.1, backend, KI-197):**
   - `POST /workflow/:id/share` — owner → создать/обновить `share_token`
     (генерация в БД: `gen_random_uuid()`).
@@ -132,6 +131,16 @@
   - Условный `<MiniMap />` + панель режимов слева внизу.
   - Toolbar: каталог → `isCatalogOpen` из стора.
   - Frontend tests: 43 → 61 (+18).
+- **Canvas UX part 2, подшаг 2a (R6.4b.2a):**
+  - Тип узла `comment` (NODE_REGISTRY, `canBeInsertedOnEdge: false`).
+  - `CommentNode` — стикер без Handle, `usePreserveCursor` +
+    `useAutoResize`.
+  - Хоткеи C / Shift+C (создать в центре / toggle visibility).
+  - `lib/graph-payload.ts` — фильтр local-only узлов (Save/Plan).
+  - CSS: `--color-comment-bg/-border/-foreground`.
+  - i18n: `node.comment.label` / `.placeholder` (ru/en 154 → 156).
+  - Frontend tests: 61 → 66 (+5).
+  - **Остаток:** KI-266 — комментарии не персистятся (F5 → исчезают).
 
 ### Fixed
 - **KI-201** — Auth backend (R6.1a): users, JWT-guard, `/auth/*`,
@@ -234,7 +243,10 @@
     тесной раскладке (Medium).
   - **KI-264** — заметка о смоук-харнессе CDP (узкий Fetch-перехват +
     `windowsVirtualKeyCode`).
-            
+  - **KI-266** — комментарии не персистятся (backend роняет run на
+    незнакомом типе, `UnsupportedNodeTypeException`).
+  - **KI-267** — `loadWorkflowAsync` при ошибке схемы молчит в консоль.
+  
 ## [0.7.2] — 2026-10-15
 
 **Patch-релиз после v0.7.1. Yandex env + LM Studio auto-discovery + LLM/media фиксы.**
