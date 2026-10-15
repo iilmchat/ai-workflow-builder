@@ -3243,15 +3243,22 @@
   - Env: `JWT_SECRET` (min 32), `JWT_EXPIRES_IN` (default `24h`),
     `AUTH_DISABLED`.
   - Tests: 358 → 380 (+22: `auth.service` 13, `auth.controller` 9).
-- **Остаток (R6.1b):** frontend LoginPage / AuthProvider /
-  ProtectedRoute / fetch interceptor; refresh-cookie (httpOnly,
-  sameSite=strict); logout / revocation.
+- **Остаток (R6.1b.1, backend):** ✅ refresh-token (opaque +
+  rotation), logout, `POST /auth/refresh`, httpOnly cookie — коммит
+  `4b1c149`.
+- **Остаток (R6.1b.2, frontend):** LoginPage / AuthProvider /
+  ProtectedRoute / fetch interceptor (401 → refresh).
 - **Связанные:** KI-202..208.
 
 ---
 
 ### KI-202 — GET /runs/:id и SSE не проверяют владельца
-- **Приоритет:** 🔴 Critical | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🔴 Critical | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0b (коммит `4b1c149`)
+- **Fix:** `getRunAsync(id, userId?)` и `runs-stream.service` — subquery
+  owner через `workflows.user_id`; чужой run → 404 (не 403, не
+  раскрывать существование). `RunsController` передаёт `user.sub` в
+  оба эндпоинта. +3 теста.
 - **Файлы:** `src/runs/runs.controller.ts`, `src/runs/runs.service.ts`,
   `src/runs/runs-stream.service.ts`
 - **Описание:** После R6.1a `RunsController` закрыт `JwtAuthGuard`,
@@ -3284,7 +3291,12 @@
 ---
 
 ### KI-204 — Frontend шлёт userId в body/query (игнорируется)
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0b (коммит `4b1c149`)
+- **Fix:** `userId` удалён из `CreateWorkflowSchema` и
+  `ListWorkflowsQuerySchema`; владелец — только из токена
+  (`user.sub`). Zod `.strip()` сохраняет совместимость со старым
+  клиентом. +2 теста.
 - **Файлы:** `web/src/lib/api.ts`, `web/src/stores/workflow.ts`,
   `src/workflow/dto/create-workflow.dto.ts`,
   `src/workflow/dto/list-workflows-query.dto.ts`
@@ -3300,7 +3312,10 @@
 ---
 
 ### KI-205 — migrate.ts логирует DATABASE_URL с паролем
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0b (коммит `4b1c149`)
+- **Fix:** `migrate.ts` — `new URL(url).host` + `pathname` вместо
+  полного URL (пароль в лог больше не попадает).
 - **Файлы:** `migrate.ts`
 - **Описание:** `console.log('URL:', url)` печатает `DATABASE_URL`
   целиком — **пароль в открытом виде** в stdout (RULES 5.1/5.3).
@@ -3418,18 +3433,147 @@
 
 ---
 
+### KI-213 — AUTH_DISABLED=true не запрещён в production
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0b (коммит `7e921a7`)
+- **Файлы:** `src/config/env.schema.ts`, `src/config/env.schema.spec.ts`
+- **Описание:** Случайная env-переменная `AUTH_DISABLED=true` в prod
+  отключает всю авторизацию — все запросы идут от системного
+  пользователя.
+- **Fix:** `EnvSchema.superRefine` — `NODE_ENV='production'` +
+  `AUTH_DISABLED=true` → отказ старта. superRefine на итоговой
+  схеме (`WorkerEnvSchema` влита через `.shape`). +4 теста.
+- **Остаток:** KI-221 (staging/preprod), KI-222 (edge-cases схемы).
+- **Связанные:** KI-221, KI-222.
+
+---
+
+### KI-214 — Нет индекса `workflows(user_id)`
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/db/schema.ts`, `drizzle/`
+- **Описание:** Owner-подзапрос в `getRunAsync` (`inArray(workflowId,
+  select id from workflows where user_id = $1)`) сканирует таблицу —
+  индекса на `workflows.user_id` нет.
+- **Решение:** partial или обычный индекс на `workflows(user_id)`.
+- **Когда чинить:** v0.8.x (при росте числа workflow).
+- **Связанные:** KI-202.
+
+---
+
+### KI-215 — `refresh_tokens` не чистится
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/db/schema.ts`, `src/runs/` (repeatable job)
+- **Описание:** Истёкшие и отозванные строки `refresh_tokens` копятся —
+  нет периодической очистки по `expires_at`.
+- **Решение:** repeatable BullMQ job (раз в сутки) + индекс на
+  `expires_at`.
+- **Когда чинить:** v0.8.x.
+- **Связанные:** KI-201.
+
+---
+
+### KI-216 — Нет family-revocation при reuse refresh-токена
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/auth/auth.service.ts`
+- **Описание:** OAuth 2.0 BCP: при обнаружении повторного использования
+  уже ротированного refresh-токена — отозвать **все** активные токены
+  пользователя (защита от угона). Сейчас — просто 401.
+- **Решение:** при `rotateRefreshTokenAsync` — если токен уже `revoked`,
+  `UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND
+  revoked_at IS NULL`.
+- **Когда чинить:** v0.8.x.
+- **Связанные:** KI-201.
+
+---
+
+### KI-217 — `@types/express` не объявлен в devDependencies
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `package.json`, `src/auth/auth.controller.ts`
+- **Описание:** `Request` / `Response` из `express` используются в
+  `auth.controller.ts`, но `@types/express` приходит транзитивно через
+  `@nestjs/platform-express` — при смене зависимостей типы могут пропасть.
+- **Решение:** явный `@types/express` в devDependencies.
+- **Когда чинить:** при следующей чистке deps.
+- **Связанные:** —
+
+---
+
+### KI-218 — Нет юнит-тестов `parseDurationToMs` и интеграционного теста ротации
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/common/utils/parse-duration.ts`,
+  `src/auth/auth.service.spec.ts`
+- **Описание:** `parseDurationToMs` покрыт только косвенно (`7d`).
+  Нет кейсов `30s` / `15m` / `1h`, пробелов, неверного формата.
+  Ротация проверена смоуком, но не интеграционным тестом на реальной
+  БД (мок `transaction` откат не проверяет).
+- **Решение:** юнит-тесты `parseDurationToMs` + интеграционный тест
+  ротации.
+- **Когда чинить:** v0.8.x.
+- **Связанные:** KI-201.
+
+---
+
+### KI-219 — `refresh_tokens` не хранит контекст отзыва
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/db/schema.ts`
+- **Описание:** У `revoked_at` нет `reason` / IP / user-agent — при
+  разборе инцидента непонятно, кто и почему отозвал (аудит).
+- **Решение:** колонки `revoke_reason` (enum: 'logout' / 'rotation' /
+  'reuse_detected' / 'admin') + `ip` + `user_agent`.
+- **Когда чинить:** при появлении аудита.
+- **Связанные:** KI-201, KI-216.
+
+---
+
+### KI-220 — `COOKIE_SECURE=false` разрешён в production
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/config/env.schema.ts`, `src/auth/auth.cookie.ts`
+- **Описание:** Аналогично KI-213 — в prod `COOKIE_SECURE=false` явно
+  разрешён и приведёт к отправке refresh-cookie по http. Secure-флаг
+  по умолчанию берётся от `NODE_ENV`, но явный `false` его перебивает.
+- **Решение:** superRefine (production + `COOKIE_SECURE=false` → отказ)
+  или принудительный `secure: true` в prod, игнорируя env.
+- **Когда чинить:** v0.8.x (security, как KI-213).
+- **Связанные:** KI-213, KI-201.
+
+---
+
+### KI-221 — Проверка KI-213 привязана к точному `production`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/config/env.schema.ts`
+- **Описание:** Для `staging` / `preprod` (если появятся) ослабление
+  авторизации останется разрешённым. Нужен отдельный признак окружения
+  или allowlist «prod-подобных» значений `NODE_ENV`.
+- **Решение:** `ENVIRONMENT` enum или regex-проверка.
+- **Когда чинить:** при появлении staging.
+- **Связанные:** KI-213.
+
+---
+
+### KI-222 — Env-схема не покрыта кейсами `AUTH_DISABLED=''` и `'garbage'`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/config/env.schema.spec.ts`
+- **Описание:** Дешёвая регресс-защита первого кросс-полевого
+  инварианта: `AUTH_DISABLED=''` (пустая строка → undefined → ок),
+  `'garbage'` (enum-ошибка).
+- **Решение:** +2 теста в существующий `describe`.
+- **Когда чинить:** v0.8.x.
+- **Связанные:** KI-213.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 72 |
+| Fixed | 76 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 122 |
+| Open | 128 |
 | Won't Fix | 1 |
-| **Всего** | **203** |
+| **Всего** | **213** |
 
 ---
 

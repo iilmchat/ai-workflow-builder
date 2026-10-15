@@ -33,11 +33,30 @@
     только из токена.
   - Env: `JWT_SECRET` (min 32), `JWT_EXPIRES_IN`, `AUTH_DISABLED`.
   - CI: `JWT_SECRET` + `AUTH_DISABLED` в шаге `pnpm test`.
-  - Tests: 358 → 380 (+22).
+- **Auth — refresh-token + logout (R6.1b.1):**
+  - Миграция 0005: `refresh_tokens` (uuid, sha256-хэш, cascade FK,
+    2 индекса).
+  - `AuthService`: create / verify / rotate / revoke.
+  - `AuthController`: `POST /auth/refresh`, `POST /auth/logout`.
+  - httpOnly cookie (sameSite=strict, path=/auth, secure в prod).
+  - Env: `JWT_REFRESH_EXPIRES_IN`, `COOKIE_SECURE`.
+  - `cookie-parser` в deps.
+  - Tests: 380 → 396 (+16).
+- **Auth — fail-fast `AUTH_DISABLED` в prod (R6.1b.1-hotfix):**
+  - `EnvSchema.superRefine` — `NODE_ENV=production` + `AUTH_DISABLED=true`
+    → отказ старта.
+  - Tests: 396 → 400 (+4).
 
 ### Fixed
-- **KI-201** — Auth backend (R6.1a): users, JWT-guard, `/auth/*`,
-  scrypt. Остаток (frontend, refresh-cookie) — R6.1b (`88f53e4`).
+- **KI-202** — owner на `GET /runs/:id` и `/stream`; чужой run → 404
+  (`4b1c149`).
+- **KI-204** — `userId` удалён из `CreateWorkflowSchema` и
+  `ListWorkflowsQuerySchema`; владелец — только из токена
+  (`4b1c149`).
+- **KI-205** — `migrate.ts` не логирует `DATABASE_URL` с паролем
+  (`4b1c149`).
+- **KI-213** — fail-fast `AUTH_DISABLED=true` в production
+  (`7e921a7`).
 
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
@@ -60,7 +79,13 @@
   - **KI-209..212** — коллизии нумерации KI (CHANGELOG `[0.1.0]`
     использует KI-номера как идентификаторы фич), «Passport»-формулировки
     в DESIGN § 1/§ 3.1, пропуск KI-198/199, ошибочная ссылка на KI-106
-    в сообщении коммита `88f53e4` (аннотирована через `git notes`).    
+    в сообщении коммита `88f53e4` (аннотирована через `git notes`).
+  - **KI-214..222** — Auth/DB-остаток v0.8.x: нет индекса на
+    `workflows(user_id)` (Medium), `refresh_tokens` не чистится
+    (Medium), нет family-revocation на reuse (Medium),
+    `COOKIE_SECURE=false` в prod (Medium), `@types/express`
+    транзитивный, нет тестов `parseDurationToMs`, `revoked_reason`
+    отсутствует, staging-NODE_ENV, edge-cases env-схемы.
 
 ## [0.7.2] — 2026-10-15
 
