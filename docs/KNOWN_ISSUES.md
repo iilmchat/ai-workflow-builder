@@ -3994,7 +3994,11 @@
 ---
 
 ### KI-245 — Лимит токенов задан в трёх местах
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (Пакет 2, коммит bec48bf)
+- **Fix:** `src/llm/llm-constants.ts` — `DEFAULT_MAX_TOKENS` (1024)
+  и `REASONING_MAX_TOKENS` (4096) как единый источник; два провайдера
+  и фабрика импортируют оттуда.
 - **Файлы:** `src/llm/providers/openai-compatible.provider.ts`,
   `src/llm/providers/anthropic.provider.ts`,
   `src/llm/llm-provider.factory.ts`
@@ -4009,7 +4013,13 @@
 ---
 
 ### KI-246 — ReasoningEffort покрывает только off/medium/high
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (Пакет 2, коммит bec48bf)
+- **Fix:** union расширен до
+  `'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'`;
+  `resolveReasoningEffort` возвращает `Exclude<ReasoningEffort, 'off'>`
+  — расширяется автоматически вместе с union. `'off'` по-прежнему →
+  поле не отправляется.
 - **Файлы:** `src/llm/llm-provider.interface.ts`,
   `web/src/components/nodes/LLMNode.tsx` (R6.3.2)
 - **Описание:** `ReasoningEffort = 'off' | 'medium' | 'high'`. SDK
@@ -4024,7 +4034,11 @@
 ---
 
 ### KI-247 — Лог движка «узлов=0» при падении первого узла
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (Пакет 2, коммит bec48bf)
+- **Fix:** лог «Запуск … завершён» различает completed/failed:
+  `узлов выполнено=N, провалено=M` (движок прерывается на первом
+  failed, поэтому `провалено ∈ {0, 1}`).
 - **Файлы:** `src/engine/execution-engine.service.ts`
 - **Описание:** При падении первого узла в логе: «Запуск … завершён:
   status=failed, узлов=0». Узел **выполнялся** (в логе есть строка
@@ -4448,12 +4462,12 @@
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 94 |
+| Fixed | 97 |
 | In Progress | 1 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 158 |
+| Open | 155 |
 | Won't Fix | 1 |
 | **Всего** | **262** |
 

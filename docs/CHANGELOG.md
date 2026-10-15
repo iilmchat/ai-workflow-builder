@@ -188,7 +188,14 @@
   подписку на SSE-поток; `RunStreamUnavailableError` отличает
   «запуска нет» (404/401 → сброс) от сетевого сбоя
   (`531a062`).
-
+- **KI-245** — единый источник лимитов токенов
+  (`llm-constants.ts`) (`bec48bf`).
+- **KI-246** — `ReasoningEffort` расширен до
+  `minimal`/`low`/`xhigh` (тип возврата `resolveReasoningEffort` —
+  `Exclude<ReasoningEffort, 'off'>`) (`bec48bf`).
+- **KI-247** — лог движка различает `выполнено`/`провалено`
+  (`bec48bf`).
+  
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
   - **v0.8 Canvas UX:** KI-185 (вставка узла в связь),
