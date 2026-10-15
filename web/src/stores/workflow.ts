@@ -1144,12 +1144,18 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         get().applyEvent(message);
       },
       onError: () => {
-        // EventSource переподключается сам; закрываем только завершённый запуск:
-        // иначе повторное подключение принесёт новый snapshot и состояние
-        // восстановится (KI-049).
+        // KI-268: поток поднимается на `fetch` и сам переподключается, пока
+        // ошибки идут подряд (до `MAX_CONSECUTIVE_ERRORS`); закрываем только
+        // завершённый запуск — иначе повторное подключение принесёт новый
+        // snapshot и состояние восстановится (KI-049).
         if (isFinalStatus(get().runStatus)) {
           closeStreamIfAny();
         }
+      },
+      onClose: () => {
+        // Поток закрылся сам (сервер завершил ответ либо попытки исчерпаны):
+        // handle больше не нужен, повторный abort бессмыслен.
+        closeRunStream = null;
       },
       onFatalError: (attempts) => {
         const text = i18n.t('toast.stream_stalled', { count: attempts });
