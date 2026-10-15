@@ -24,6 +24,7 @@ import {
   UpdateWorkflowSchema,
   type CreateWorkflowDto,
   type ListWorkflowsQueryDto,
+  type ShareTokenDto,
   type UpdateWorkflowDto,
 } from './dto/index.js';
 import { WorkflowService } from './workflow.service.js';
@@ -151,5 +152,42 @@ export class WorkflowController {
     if (!removed) {
       throw new NotFoundException(`Workflow ${params.id} не найден`);
     }
+  }
+
+  /**
+   * `POST /workflow/:id/share` — создаёт или перевыпускает share-ссылку.
+   *
+   * Guard уже стоит на классе, поэтому дополнительный `@UseGuards` не нужен.
+   * Токен возвращается владельцу один раз и в логи не пишется (RULES 5.9).
+   *
+   * @param params - path-параметр `id` (uuid)
+   * @param user - владелец из access-токена
+   * @returns токен и относительная ссылка
+   * @throws NotFoundException если workflow не найден или чужой
+   */
+  @Post(':id/share')
+  @HttpCode(HttpStatus.OK)
+  async share(
+    @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ShareTokenDto> {
+    return this.workflowService.createShareTokenAsync(params.id, user.sub);
+  }
+
+  /**
+   * `DELETE /workflow/:id/share` — отзывает share-ссылку (`share_token = NULL`).
+   *
+   * @param params - path-параметр `id` (uuid)
+   * @param user - владелец из access-токена
+   * @returns пустой ответ со статусом 204
+   * @throws NotFoundException если workflow не найден или чужой
+   */
+  @Delete(':id/share')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async unshare(
+    @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<void> {
+    await this.workflowService.revokeShareTokenAsync(params.id, user.sub);
   }
 }

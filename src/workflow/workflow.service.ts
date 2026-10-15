@@ -1,14 +1,27 @@
-import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
-import { and, desc, eq } from 'drizzle-orm';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { workflows, type NewWorkflow, type Workflow } from '../db/schema.js';
 import type { EdgeDto, NodeDto } from '../engine/dto/index.js';
-import type { CreateWorkflowDto, UpdateWorkflowDto } from './dto/index.js';
+import type {
+  CreateWorkflowDto,
+  ShareTokenDto,
+  SharedWorkflow,
+  UpdateWorkflowDto,
+} from './dto/index.js';
 
 /** Значение limit по умолчанию для постраничного списка. */
 const DEFAULT_LIMIT = 50;
 /** Значение offset по умолчанию для постраничного списка. */
 const DEFAULT_OFFSET = 0;
+/** Префикс относительной share-ссылки (R6.2.1). */
+const SHARE_URL_PREFIX = '/workflow/share/';
 
 /**
  * Сервис CRUD-операций над workflow.
@@ -165,5 +178,94 @@ export class WorkflowService {
     return userId
       ? and(eq(workflows.id, id), eq(workflows.userId, userId))
       : eq(workflows.id, id);
+  }
+
+  /**
+   * Создаёт или перевыпускает share-токен workflow (R6.2.1).
+   *
+   * Токен — capability: доступ даёт само его знание, БД генерирует uuid v4
+   * (`gen_random_uuid()`). В логи токен не пишется (RULES 5.9). Чужой workflow
+   * неотличим от несуществующего: 404, а не 403.
+   *
+   * @param id - uuid workflow
+   * @param userId - владелец из access-токена
+   * @returns токен и относительный путь ссылки
+   * @throws NotFoundException если workflow не найден или принадлежит другому
+   */
+  async createShareTokenAsync(id: string, userId: string): Promise<ShareTokenDto> {
+    const [updated] = await this.db
+      .update(workflows)
+      .set({ shareToken: sql`gen_random_uuid()`, updatedAt: new Date() })
+      .where(this.buildAccessFilter(id, userId))
+      .returning({ shareToken: workflows.shareToken });
+
+    if (updated?.shareToken == null) {
+      throw new NotFoundException(`Workflow ${id} не найден`);
+    }
+
+    return {
+      shareToken: updated.shareToken,
+      shareUrl: `${SHARE_URL_PREFIX}${updated.shareToken}`,
+    };
+  }
+
+  /**
+   * Отзывает share-токен: `share_token = NULL` (R6.2.1).
+   *
+   * @param id - uuid workflow
+   * @param userId - владелец из access-токена
+   * @returns промис без значения
+   * @throws NotFoundException если workflow не найден или принадлежит другому
+   */
+  async revokeShareTokenAsync(id: string, userId: string): Promise<void> {
+    const revoked = await this.db
+      .update(workflows)
+      .set({ shareToken: null, updatedAt: new Date() })
+      .where(this.buildAccessFilter(id, userId))
+      .returning({ id: workflows.id });
+
+    if (revoked.length === 0) {
+      throw new NotFoundException(`Workflow ${id} не найден`);
+    }
+  }
+
+  /**
+   * Возвращает публичное представление workflow по share-токену (R6.2.1).
+   *
+   * Без проверки владельца и без аутентификации: отозванный токен — это NULL,
+   * поэтому `eq(shareToken, token)` не находит такую строку (404). В ответе нет
+   * `userId`, `shareToken` и `updatedAt` — только то, что нужно для read-only
+   * отрисовки.
+   *
+   * @param token - share-токен (uuid)
+   * @returns публичный граф
+   * @throws NotFoundException если токена нет
+   */
+  async findSharedAsync(token: string): Promise<SharedWorkflow> {
+    const [found] = await this.db
+      .select({
+        id: workflows.id,
+        name: workflows.name,
+        nodes: workflows.nodes,
+        edges: workflows.edges,
+        createdAt: workflows.createdAt,
+      })
+      .from(workflows)
+      .where(eq(workflows.shareToken, token))
+      .limit(1);
+
+    if (!found) {
+      throw new NotFoundException('Workflow по ссылке не найден');
+    }
+
+    return {
+      id: found.id,
+      name: found.name,
+      nodes: found.nodes,
+      edges: found.edges,
+      // В Drizzle-схеме createdAt без `.notNull()` (дефолт задан в БД), поэтому
+      // тип nullable — подстраховываемся, не отдавая клиенту `null`.
+      createdAt: (found.createdAt ?? new Date()).toISOString(),
+    };
   }
 }
