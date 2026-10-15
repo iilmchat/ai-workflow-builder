@@ -1,11 +1,17 @@
 import { NotFoundException } from '@nestjs/common';
 import type { INestApplication, MessageEvent } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import { of } from 'rxjs';
 import request from 'supertest';
+import { DEMO_USER_EMAIL, DEMO_USER_ID } from '../auth/auth.constants.js';
 import { RunsController } from './runs.controller.js';
 import { RunsService, type RunResponse } from './runs.service.js';
 import { RunsStreamService } from './runs-stream.service.js';
+
+/** Владелец, которого guard подставляет при `AUTH_DISABLED=true`. */
+const USER = { sub: DEMO_USER_ID, email: DEMO_USER_EMAIL };
 
 /** Стабильные идентификаторы тестовых данных. */
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
@@ -64,6 +70,10 @@ describe('RunsController', () => {
       providers: [
         { provide: RunsService, useValue: service },
         { provide: RunsStreamService, useValue: stream },
+        // JwtAuthGuard (R6.1a): AUTH_DISABLED=true — запросы идут от
+        // системного пользователя, токен в тестах не нужен.
+        { provide: JwtService, useValue: { verifyAsync: vi.fn() } },
+        { provide: ConfigService, useValue: { get: vi.fn(() => true) } },
       ],
     }).compile();
 
@@ -84,7 +94,10 @@ describe('RunsController', () => {
         .send({ workflowId: WORKFLOW_ID })
         .expect(201);
 
-      expect(service.createRunAsync).toHaveBeenCalledWith({ workflowId: WORKFLOW_ID });
+      expect(service.createRunAsync).toHaveBeenCalledWith(
+        { workflowId: WORKFLOW_ID },
+        USER.sub,
+      );
       expect(response.body).toEqual(
         expect.objectContaining({ id: RUN_ID, workflowId: WORKFLOW_ID, status: 'pending' }),
       );
@@ -100,10 +113,13 @@ describe('RunsController', () => {
     });
 
     it('делегирует создание сервису и возвращает его результат', async () => {
-      await expect(controller.create({ workflowId: WORKFLOW_ID })).resolves.toEqual(
-        runResponse,
+      await expect(
+        controller.create({ workflowId: WORKFLOW_ID }, USER),
+      ).resolves.toEqual(runResponse);
+      expect(service.createRunAsync).toHaveBeenCalledWith(
+        { workflowId: WORKFLOW_ID },
+        USER.sub,
       );
-      expect(service.createRunAsync).toHaveBeenCalledWith({ workflowId: WORKFLOW_ID });
     });
   });
 

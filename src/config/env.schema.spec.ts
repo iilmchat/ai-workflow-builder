@@ -1,9 +1,11 @@
 import { EnvSchema, WorkerEnvSchema, validateEnv } from './env.schema.js';
 
-/** Минимально валидное окружение (обязательные URL). */
+/** Минимально валидное окружение (обязательные URL и секрет подписи). */
 const baseEnv = {
   DATABASE_URL: 'postgres://workflow:devpass123@127.0.0.1:5433/workflow_builder',
   REDIS_URL: 'redis://127.0.0.1:6379',
+  // R6.1a: JWT_SECRET обязателен (min 32 символа).
+  JWT_SECRET: 'test-secret-at-least-32-characters-long',
 };
 
 describe('WorkerEnvSchema (KI-065, KI-032)', () => {

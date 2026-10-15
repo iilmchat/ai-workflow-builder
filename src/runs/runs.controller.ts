@@ -8,10 +8,14 @@ import {
   Post,
   Sse,
   SseSignal,
+  UseGuards,
 } from '@nestjs/common';
 import type { MessageEvent } from '@nestjs/common';
 import type { Observable } from 'rxjs';
 import { z } from 'zod';
+import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
+import type { JwtPayload } from '../auth/interfaces/jwt-payload.js';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import { CreateRunSchema, type CreateRunDto } from './dto/index.js';
 import { RunsService, type RunResponse } from './runs.service.js';
@@ -31,7 +35,10 @@ type RunIdParamDto = z.infer<typeof RunIdParamSchema>;
  * Префикс маршрутов — `/runs`. Валидация body/param выполняется
  * ZodValidationPipe, ошибки отдаёт глобальный HttpExceptionFilter, поэтому
  * try/catch в контроллере нет (RULES 1.6, 4.7).
+ *
+ * R6.1a: контроллер закрыт JwtAuthGuard; владелец берётся из токена.
  */
+@UseGuards(JwtAuthGuard)
 @Controller('runs')
 export class RunsController {
   constructor(
@@ -43,16 +50,18 @@ export class RunsController {
    * `POST /runs` — создаёт запуск workflow и ставит задание в очередь.
    *
    * @param dto - тело запроса, валидированное по CreateRunSchema
+   * @param user - владелец из access-токена
    * @returns публичное представление запуска со статусом 201
-   * @throws NotFoundException если workflow не найден (пробрасывается из сервиса)
+   * @throws NotFoundException если workflow не найден (или чужой)
    * @throws InternalServerErrorException если очередь недоступна
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
   async create(
     @Body(ZodValidationPipe.create(CreateRunSchema)) dto: CreateRunDto,
+    @CurrentUser() user: JwtPayload,
   ): Promise<RunResponse> {
-    return this.runsService.createRunAsync(dto);
+    return this.runsService.createRunAsync(dto, user.sub);
   }
 
   /**

@@ -1,5 +1,6 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../auth/auth.module.js';
 import { EngineModule } from '../engine/engine.module.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import { LlmModule } from '../llm/llm.module.js';
@@ -23,6 +24,8 @@ import { RunsStreamService } from './runs-stream.service.js';
 @Module({
   imports: [
     EngineModule,
+    // JwtAuthGuard на RunsController (R6.1a).
+    AuthModule,
     // ExecutionEngineService получает из него LlmNodeExecutor (R3).
     LlmModule,
     // ...а из него MediaNodeExecutor для узлов image_generation (v0.6.0b.2.2).

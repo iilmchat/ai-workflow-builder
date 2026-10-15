@@ -7,7 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { Queue } from 'bullmq';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   workflowRuns,
@@ -56,15 +56,21 @@ export class RunsService {
    * упала, запуск компенсируется статусом `failed`, а клиент получает 500.
    *
    * @param dto - валидированный DTO с идентификатором workflow
+   * @param userId - владелец из access-токена (R6.1a): если передан, чужой
+   *   workflow не запускается (404, чтобы не раскрывать существование)
    * @returns публичное представление созданного запуска
-   * @throws NotFoundException если workflow с таким id не найден
+   * @throws NotFoundException если workflow с таким id не найден или принадлежит другому пользователю
    * @throws InternalServerErrorException если не удалось поставить задание в очередь
    */
-  async createRunAsync(dto: CreateRunDto): Promise<RunResponse> {
+  async createRunAsync(dto: CreateRunDto, userId?: string): Promise<RunResponse> {
     const [workflow] = await this.db
       .select()
       .from(workflows)
-      .where(eq(workflows.id, dto.workflowId))
+      .where(
+        userId
+          ? and(eq(workflows.id, dto.workflowId), eq(workflows.userId, userId))
+          : eq(workflows.id, dto.workflowId),
+      )
       .limit(1);
 
     if (!workflow) {

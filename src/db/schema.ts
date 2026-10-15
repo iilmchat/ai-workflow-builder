@@ -23,16 +23,40 @@ export const RUN_STATUSES = [
 export type RunStatus = (typeof RUN_STATUSES)[number];
 
 /**
+ * users — учётные записи (R6.1a, KI-106).
+ *
+ * Пароль хранится как `scrypt$<salt_b64>$<hash_b64>` (node:crypto, без
+ * внешних зависимостей), соль уникальна на пользователя.
+ */
+export const users = pgTable('users', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  email: text('email').notNull().unique(),
+  passwordHash: text('password_hash').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+/** Строка таблицы `users`. */
+export type User = typeof users.$inferSelect;
+/** Значения для INSERT в `users`. */
+export type NewUser = typeof users.$inferInsert;
+
+/**
  * workflows — определение графа (узлы + связи), принадлежащее пользователю.
  */
 export const workflows = pgTable('workflows', {
   id: uuid('id').primaryKey().defaultRandom(),
-  userId: text('user_id').notNull(),
+  // R6.1a: владелец — uuid пользователя. До 0004 колонка была `text` со
+  // значением 'demo-user', миграция переводит её на системного пользователя.
+  userId: uuid('user_id').notNull(),
   name: text('name').notNull(),
   description: text('description'),
   nodes: jsonb('nodes').$type<NodeDto[]>().notNull().default([]),
   edges: jsonb('edges').$type<EdgeDto[]>().notNull().default([]),
   version: integer('version').notNull().default(1),
+  // Задел под R6.2 (Share): публичная ссылка на граф.
+  shareToken: uuid('share_token').unique(),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 });

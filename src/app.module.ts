@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
+import { AuthModule } from './auth/auth.module.js';
 import { validateEnv } from './config/env.schema.js';
 import { DbModule } from './db/db.module.js';
 import { LlmModule } from './llm/llm.module.js';
@@ -32,6 +33,7 @@ import { RunsModule } from './runs/runs.module.js';
     }),
     DbModule,
     RedisModule,
+    AuthModule,
     LlmModule,
     MediaModule,
     WorkflowModule,

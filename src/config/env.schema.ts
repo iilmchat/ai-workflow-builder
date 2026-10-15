@@ -204,6 +204,27 @@ export const EnvSchema = z.object({
   LMSTUDIO_MODELS: z
     .preprocess(emptyToUndefined, z.string().optional())
     .default(''),
+  // === Auth (R6.1a, KI-106) ===
+  /**
+   * Секрет подписи JWT (HS256). Минимум 32 символа: короткий секрет заметно
+   * снижает стойкость. В проде — из секрет-хранилища, не из репозитория.
+   */
+  JWT_SECRET: z.string().min(32),
+  /** Срок жизни access-токена (формат `ms`: `24h`, `7d`). */
+  JWT_EXPIRES_IN: z
+    .preprocess(emptyToUndefined, z.string().optional())
+    .default('24h'),
+  /**
+   * Отключает проверку токена (dev/CI): запросы выполняются от системного
+   * пользователя миграции 0004. В проде обязано быть `false`.
+   */
+  AUTH_DISABLED: z.preprocess(
+    emptyToUndefined,
+    z
+      .enum(['true', 'false'])
+      .transform((value) => value === 'true')
+      .optional(),
+  ),
   // Настройки воркера очереди (KI-065) и lease-порог (KI-032).
   ...WorkerEnvSchema.shape,
 });
