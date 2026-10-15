@@ -65,8 +65,15 @@
 
 ### 3.1. Стратегия
 
-**JWT access (15 мин) + refresh (7 дней в httpOnly cookie).**
-Passport + `@nestjs/jwt` (уже в `dependencies`).
+**R6.1a (MVP, backend):** JWT access (**24 ч**), кастомный
+`JwtAuthGuard` через `@nestjs/jwt` (без `passport-jwt`),
+пароли — `node:crypto` (scrypt, формат `scrypt$<salt>$<hash>`).
+
+**R6.1b (frontend):** refresh-cookie (httpOnly, sameSite=strict,
+7 дней) + fetch interceptor (401 → refresh → retry).
+
+**Passport:** `@nestjs/passport` остаётся в deps как задел,
+не используется в R6.1a (KI-201).
 
 **Multi-tenant готовность:** в схеме `workflows.userId` **уже есть**
 (nullable). После v0.8 — **обязателен**.
@@ -114,10 +121,17 @@ Passport + `@nestjs/jwt` (уже в `dependencies`).
 
 ### 3.6. Совместимость
 
-- Существующие workflow (`demo-user`) → **backfill** в системного
-  пользователя `system@workflow-builder.local`.
-- В dev — флаг `AUTH_DISABLED=true` (пропускает guard, использует
-  `demo-user`). **Полезно для smoke и CI.**
+- **Системный пользователь** `system@workflow-builder.local` с
+  **детерминированным UUID**
+  `00000000-0000-0000-0000-000000000001` создаётся в миграции
+  0004 (`INSERT ... ON CONFLICT DO NOTHING`).
+- **Backfill:** все `workflows.user_id`, указывавшие на `demo-user`
+  (если есть), → `system.id`.
+- **AUTH_DISABLED=true** (dev/CI) → `sub = DEMO_USER_ID`
+  (`00000000-0000-0000-0000-000000000001`) — **валидный uuid**,
+  запросы к `workflows.user_id` работают.
+- **Важно:** `demo-user` как строка **не используется** (users.id —
+  uuid; `WHERE id = 'demo-user'` упал бы в Postgres).
 
 ---
 
@@ -620,6 +634,8 @@ snapshot (deep equal через hash). Хранить `lastSavedHash: string`.
 | # | Решение | Дата |
 |---|---------|------|
 | 1 | Auth: httpOnly cookie + sameSite=strict | 2026-10-15 |
+| 6 | R6.1a — MVP (access-only, 24h, scrypt); R6.1b — refresh-cookie | 2026-10-15 |
+| 7 | DEMO_USER_ID — детерминированный uuid `000...001` (system@workflow-builder.local) | 2026-10-15 |
 | 2 | Sub-workflows: ссылка на workflow (снимок версии опционален), warning при изменении родителя | 2026-10-15 |
 | 3 | Canvas UX: 2 подшага — R6.4a (вставка/snap/duplicate/auto-save), R6.4b (hotkeys/comments/cursor-hand/minimap toggle) | 2026-10-15 |
 | 4 | Condition: MVP DSL (`>`, `<`, `===`, `includes`), sandbox — v0.9 | 2026-10-15 |
