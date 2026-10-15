@@ -1,3 +1,11 @@
+/**
+ * Режим reasoning для моделей, которые его поддерживают (R6.3.1, KI-193).
+ *
+ * `'off'` — не передавать провайдеру поле `reasoning_effort` вовсе (а не
+ * `'none'`: часть прокси не знает такого значения).
+ */
+export type ReasoningEffort = 'off' | 'medium' | 'high';
+
 /** Опции вызова LLM. */
 export interface LlmGenerateOptions {
   /** Модель (id, как её знает провайдер). */
@@ -8,6 +16,13 @@ export interface LlmGenerateOptions {
   maxTokens?: number;
   /** Температура. */
   temperature?: number;
+  /**
+   * Режим reasoning (KI-193).
+   *
+   * Передаётся провайдеру, только если `ModelInfo.supportsReasoning === true`;
+   * `'off'` и отсутствие значения означают «поле не отправлять».
+   */
+  reasoningEffort?: ReasoningEffort;
   /** AbortSignal для отмены/таймаута (RULES 4.19). */
   signal?: AbortSignal;
 }
@@ -87,6 +102,20 @@ export interface ModelInfo {
    * Минимум один: `['text']` для чисто текстовых.
    */
   readonly outputModalities: readonly ModelModality[];
+  /**
+   * Поддерживает ли модель reasoning (R6.3.1, KI-193).
+   *
+   * `true` — провайдер может передать `reasoning_effort`; отсутствие значения
+   * трактуется как `false` (поле не отправляем, чтобы не ловить 400 у прокси).
+   */
+  readonly supportsReasoning?: boolean;
+  /**
+   * Дефолтный лимит токенов ответа для этой модели (KI-183).
+   *
+   * У reasoning-моделей выше: рассуждения расходуют бюджет ответа, и при
+   * лимите 1024 `content` остаётся пустым.
+   */
+  readonly defaultMaxTokens?: number;
 }
 
 /** Провайдер LLM. */

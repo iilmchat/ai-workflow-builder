@@ -680,6 +680,8 @@ export class LlmProviderFactory {
     options: EnvModelListOptions,
   ): ModelInfo[] {
     const models: ModelInfo[] = [];
+    /** Суффикс env-записи, помечающий модель как reasoning (R6.3.1). */
+    const REASONING_SUFFIX = ':reasoning';
 
     for (const entry of raw.split(',')) {
       const trimmed = entry.trim();
@@ -691,8 +693,18 @@ export class LlmProviderFactory {
       const separatorIndex = trimmed.indexOf(':');
       const id =
         separatorIndex === -1 ? trimmed : trimmed.slice(0, separatorIndex).trim();
-      const modalitiesRaw =
+      const tail =
         separatorIndex === -1 ? '' : trimmed.slice(separatorIndex + 1).trim();
+      // R6.3.1 (KI-193): опциональный суффикс `:reasoning` идёт ПОСЛЕ
+      // модальностей: `<id>:<modalities>[:reasoning]`. Без суффикса модель
+      // считается обычной.
+      const hasReasoning =
+        tail === 'reasoning' || tail.endsWith(REASONING_SUFFIX);
+      const modalitiesRaw = hasReasoning
+        ? tail === 'reasoning'
+          ? ''
+          : tail.slice(0, -REASONING_SUFFIX.length)
+        : tail;
 
       if (id.length === 0) {
         this.logger.warn(
@@ -712,6 +724,13 @@ export class LlmProviderFactory {
         label: `${id}${options.labelSuffix}`,
         inputModalities,
         outputModalities: ENV_LIST_OUTPUT,
+        // KI-183: reasoning-модели тратят бюджет ответа на рассуждения, поэтому
+        // им сразу задаём больший лимит (4096). Обычным полям лимит НЕ задаём:
+        // провайдер возьмёт свой `DEFAULT_MAX_TOKENS` (1024) — так список
+        // моделей для них остаётся прежним.
+        ...(hasReasoning
+          ? { supportsReasoning: true, defaultMaxTokens: 4096 }
+          : {}),
       });
     }
 

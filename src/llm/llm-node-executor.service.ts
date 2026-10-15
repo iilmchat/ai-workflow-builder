@@ -1,11 +1,54 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { NodeDto } from '../engine/dto/index.js';
 import { calculateCostUsdForProvider } from './model-pricing.js';
-import { LlmProviderException } from './llm-provider.interface.js';
+import { LlmProviderException, type ReasoningEffort } from './llm-provider.interface.js';
 import { LlmService } from './llm.service.js';
 
 /** Модель по умолчанию, если узел не задал свою. */
 export const DEFAULT_LLM_MODEL = 'claude-sonnet-4-20250514';
+
+/**
+ * Читает system prompt узла (KI-192).
+ *
+ * Приоритет: `data.systemPrompt` (поле, которое пишет UI в R6.3.2) →
+ * `data.system` (совместимость с графами, сохранёнными раньше).
+ *
+ * @param node - узел графа
+ * @returns system prompt либо `undefined`
+ */
+function readSystemPrompt(node: NodeDto): string | undefined {
+  for (const value of [node.data.systemPrompt, node.data.system]) {
+    if (typeof value === 'string' && value.length > 0) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Читает режим reasoning узла (KI-193).
+ *
+ * @param value - `data.reasoningEffort` (форма не гарантирована: граф из БД)
+ * @returns валидный режим либо `undefined` — «поле не передавать»
+ */
+function readReasoningEffort(value: unknown): ReasoningEffort | undefined {
+  return value === 'off' || value === 'medium' || value === 'high'
+    ? value
+    : undefined;
+}
+
+/**
+ * Читает override лимита токенов узла (KI-183).
+ *
+ * @param value - `data.maxTokensOverride`
+ * @returns положительное целое либо `undefined` — «взять дефолт модели»
+ */
+function readMaxTokensOverride(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
+    ? value
+    : undefined;
+}
 
 /**
  * Достаёт prompt LLM-узла (KI-180).
@@ -90,12 +133,22 @@ export class LlmNodeExecutor {
       typeof node.data.model === 'string' && node.data.model.length > 0
         ? node.data.model
         : DEFAULT_LLM_MODEL;
-    const system = typeof node.data.system === 'string' ? node.data.system : undefined;
+    const system = readSystemPrompt(node);
+    // KI-192/KI-193/KI-183: параметры модели читаются из `data.*`, не из
+    // `inputs` — это настройки узла, а не данные графа.
+    const reasoningEffort = readReasoningEffort(node.data.reasoningEffort);
+    const maxTokensOverride = readMaxTokensOverride(node.data.maxTokensOverride);
 
-    // RULES 5.9: в лог идут только модель, длина промпта и токены — не текст.
-    this.logger.log(`LLM-узел ${node.id}: model=${model}, promptLen=${prompt.length}`);
+    // RULES 5.9: в лог идут только модель, длины и режимы — не тексты промптов.
+    this.logger.log(
+      `LLM-узел ${node.id}: model=${model}, promptLen=${prompt.length}, systemLen=${system?.length ?? 0}, reasoning=${reasoningEffort ?? 'off'}, maxTokens=${maxTokensOverride ?? 'default'}`,
+    );
 
-    const result = await this.llm.generateAsync(prompt, model, system ? { system } : {});
+    const result = await this.llm.generateAsync(prompt, model, {
+      ...(system === undefined ? {} : { system }),
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+      ...(maxTokensOverride === undefined ? {} : { maxTokens: maxTokensOverride }),
+    });
     const usage = result.usage;
     const usedModel = usage?.model ?? model;
     const metrics: LlmNodeMetrics = {

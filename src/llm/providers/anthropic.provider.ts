@@ -118,12 +118,25 @@ export class AnthropicProvider implements ILlmProvider {
     }
 
     const signal = options.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
+    // KI-183: дефолтный лимит берём из декларации модели, если она есть.
+    const modelInfo = this.models.find((item) => item.id === options.model);
+
+    // KI-193: extended thinking у Anthropic требует beta-заголовков, поэтому
+    // reasoning в R6.3.1 не поддержан — предупреждаем и идём без него.
+    if (options.reasoningEffort !== undefined && options.reasoningEffort !== 'off') {
+      this.logger.warn(
+        `Anthropic: reasoning не поддержан (extended thinking — v0.8.x), модель ${options.model}`,
+      );
+    }
 
     try {
       const response = await this.client.messages.create(
         {
           model: options.model,
-          max_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
+          max_tokens:
+            options.maxTokens ??
+            modelInfo?.defaultMaxTokens ??
+            DEFAULT_MAX_TOKENS,
           temperature: options.temperature,
           system: options.system,
           messages: [{ role: 'user', content: prompt }],

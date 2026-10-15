@@ -20,6 +20,15 @@ export interface LlmModelInfo {
   inputModalities: readonly ModelModality[];
   /** Модальности выхода (для фильтра и бейджей в UI). */
   outputModalities: readonly ModelModality[];
+  /**
+   * Модель поддерживает reasoning (R6.3.1, KI-193).
+   *
+   * Поле есть только у reasoning-моделей: UI (R6.3.2) показывает переключатель
+   * режима лишь тогда, когда провайдер это умеет.
+   */
+  supportsReasoning?: boolean;
+  /** Дефолтный лимит токенов ответа модели (KI-183), если он ей задан. */
+  defaultMaxTokens?: number;
 }
 
 /**
@@ -119,6 +128,14 @@ export class LlmRegistryService {
           // группирует модели, а карточка узла рисует бейджи.
           inputModalities: model.inputModalities,
           outputModalities: model.outputModalities,
+          // R6.3.1: признаки reasoning и дефолтный лимит нужны UI (R6.3.2).
+          // Обычным моделям поля не добавляем, чтобы не менять их снимок.
+          ...(model.supportsReasoning === true
+            ? { supportsReasoning: true }
+            : {}),
+          ...(model.defaultMaxTokens === undefined
+            ? {}
+            : { defaultMaxTokens: model.defaultMaxTokens }),
         })),
       );
   }

@@ -16,6 +16,42 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_TOKENS = 1024;
 
 /**
+ * Определяет значение `reasoning_effort` для запроса (R6.3.1, KI-193).
+ *
+ * Поле уходит в upstream только для моделей с `supportsReasoning === true`:
+ * у остальных часть прокси отвечает 400 на неизвестный параметр. `'off'` и
+ * отсутствие значения означают «поле не отправлять».
+ *
+ * @param logger - логгер провайдера
+ * @param providerName - имя провайдера (для сообщения)
+ * @param options - опции вызова (модель и режим reasoning)
+ * @param modelInfo - декларация модели, если она есть в списке провайдера
+ * @returns `'medium'`/`'high'` для SDK либо `null` — «поле не передавать»
+ */
+function resolveReasoningEffort(
+  logger: Logger,
+  providerName: string,
+  options: LlmGenerateOptions,
+  modelInfo: ModelInfo | undefined,
+): 'medium' | 'high' | null {
+  const effort = options.reasoningEffort;
+
+  if (effort === undefined || effort === 'off') {
+    return null;
+  }
+
+  if (modelInfo?.supportsReasoning !== true) {
+    logger.warn(
+      `${providerName}: reasoning_effort не поддержан моделью ${options.model} — поле не отправлено`,
+    );
+
+    return null;
+  }
+
+  return effort;
+}
+
+/**
  * Извлекает метрики использования токенов из ответа OpenAI.
  *
  * `usage` в ответе необязателен, поэтому значение проверяется явно (RULES 1.17).
@@ -240,6 +276,15 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
     const upstreamModel = this.resolveModel
       ? this.resolveModel(options.model)
       : options.model;
+    // KI-183/KI-193: декларация модели даёт дефолтный лимит токенов и признак
+    // поддержки reasoning.
+    const modelInfo = this.models.find((item) => item.id === options.model);
+    const reasoningEffort = resolveReasoningEffort(
+      this.logger,
+      this.name,
+      options,
+      modelInfo,
+    );
 
     // Результат разбора выносится за `try`, чтобы ошибка «пустой ответ»
     // (KI-179) не переоборачивалась в `toProviderException`.
@@ -251,8 +296,17 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
         {
           model: upstreamModel,
           // Актуальное поле лимита ответа (в SDK есть и deprecated max_tokens).
-          max_completion_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
+          // KI-183: приоритет — явный override → дефолт модели → константа.
+          max_completion_tokens:
+            options.maxTokens ??
+            modelInfo?.defaultMaxTokens ??
+            DEFAULT_MAX_TOKENS,
           temperature: options.temperature,
+          // KI-193: поле добавляем только для моделей, помеченных как
+          // поддерживающие reasoning, — иначе часть прокси отвечает 400.
+          ...(reasoningEffort === null
+            ? {}
+            : { reasoning_effort: reasoningEffort }),
           messages: [
             ...(options.system
               ? [{ role: 'system' as const, content: options.system }]
