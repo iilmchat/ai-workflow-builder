@@ -46,6 +46,12 @@
   - `EnvSchema.superRefine` — `NODE_ENV=production` + `AUTH_DISABLED=true`
     → отказ старта.
   - Tests: 396 → 400 (+4).
+- **Frontend Auth — fix ?workflowId= после router (R6.1b.2-fix):**
+  - ProtectedRoute сохраняет search при редиректе на /login.
+  - LoginPage возвращает на / с сохранённым search.
+  - App читает `?workflowId=` через `useSearchParams()` +
+    эффект на [workflowIdParam, authStatus].
+
 
 ### Fixed
 - **KI-202** — owner на `GET /runs/:id` и `/stream`; чужой run → 404
@@ -57,6 +63,8 @@
   (`4b1c149`).
 - **KI-213** — fail-fast `AUTH_DISABLED=true` в production
   (`7e921a7`).
+- **KI-228** — `?workflowId=` терялся при миграции на react-router
+  (три звена: ProtectedRoute, LoginPage, App) (`4eb4664`).
 
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
@@ -86,6 +94,12 @@
     `COOKIE_SECURE=false` в prod (Medium), `@types/express`
     транзитивный, нет тестов `parseDurationToMs`, `revoked_reason`
     отсутствует, staging-NODE_ENV, edge-cases env-схемы.
+  - **KI-223..227, 229..232** — Auth UX + router-остаток v0.8.x:
+    bootstrap 401 vs сеть (Medium), logout best-effort (Medium),
+    маппинг 400 в LoginPage, красный 401 в консоли, `meAsync` +
+    alias `@/`, `syncWorkflowUrlParam` через `replaceState`,
+    тесты на ProtectedRoute/App (jsdom), multi-tab refresh-rotation
+    (Medium), Welcome screen с шаблонами (Medium, после KI-109).    
 
 ## [0.7.2] — 2026-10-15
 

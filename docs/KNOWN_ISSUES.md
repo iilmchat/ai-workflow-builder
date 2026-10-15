@@ -3246,8 +3246,9 @@
 - **Остаток (R6.1b.1, backend):** ✅ refresh-token (opaque +
   rotation), logout, `POST /auth/refresh`, httpOnly cookie — коммит
   `4b1c149`.
-- **Остаток (R6.1b.2, frontend):** LoginPage / AuthProvider /
-  ProtectedRoute / fetch interceptor (401 → refresh).
+- **Остаток (R6.1b.2, frontend):** ✅ LoginPage / AuthProvider /
+  ProtectedRoute / 401-interceptor — коммиты `316c680` +
+  `4eb4664`. **R6.1 (Auth) завершён.**
 - **Связанные:** KI-202..208.
 
 ---
@@ -3562,18 +3563,174 @@
 
 ---
 
+### KI-223 — Bootstrap не различает 401 и сетевую ошибку
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/lib/api.ts` (`runRefreshAsync`),
+  `web/src/components/auth/AuthProvider.tsx`
+- **Описание:** `runRefreshAsync` ловит любую ошибку и делает
+  `clearSession()` → при недоступном backend пользователь
+  выбрасывается на /login с status='guest', хотя cookie могла быть
+  валидной.
+- **Решение:** различать `ApiError.status === 401` и сетевой сбой
+  (status отсутствует) → в последнем случае status='unknown' +
+  баннер «нет связи» + retry.
+- **Когда чинить:** v0.8.x.
+- **Связанные:** KI-201, KI-224.
+
+---
+
+### KI-224 — Logout best-effort без отзыва refresh-токена
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/components/TopBar.tsx` (`handleLogout`)
+- **Описание:** При сбое `POST /auth/logout` локальная сессия
+  чистится, но refresh-токен на сервере остаётся валидным до 7 дней.
+- **Решение:** retry / очередь; или не чистить локальную сессию при
+  неудачном logout.
+- **Когда чинить:** v0.8.x.
+- **Связанные:** KI-201.
+
+---
+
+### KI-225 — Неточный маппинг 400 в LoginPage
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/components/auth/LoginPage.tsx`
+- **Описание:** `400` от backend показывается как «не удалось
+  связаться с сервером» — неточно.
+- **Решение:** различать `400` и сетевую ошибку.
+- **Когда чинить:** при UX-полировке.
+- **Связанные:** KI-201.
+
+---
+
+### KI-226 — Красный 401 в консоли на неаутентифицированном заходе
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/auth/auth.controller.ts` (POST /auth/refresh),
+  `web/src/components/auth/AuthProvider.tsx`
+- **Описание:** Bootstrap-refresh без cookie → backend 401 → красная
+  строка в консоли. Убрать нельзя (cookie httpOnly).
+- **Решение:** принять как косметику, либо отдавать 204/200 с
+  `{ user: null }` для «нет сессии».
+- **Когда чинить:** при полировке.
+- **Связанные:** KI-201.
+
+---
+
+### KI-227 — `meAsync` мёртвый + alias `@/` в vitest
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/lib/auth-api.ts`, `web/vitest.config.ts`
+- **Описание:** `meAsync` не используется. Alias `@/` в
+  `web/vitest.config.ts` не настроен — тесты компонентов (jsdom,
+  KI-155) не заведутся.
+- **Решение:** убрать `meAsync` или задействовать; alias — вместе
+  с KI-155.
+- **Когда чинить:** при работе над KI-155.
+- **Связанные:** KI-155.
+
+---
+
+### KI-228 — `?workflowId=` теряется при миграции на react-router
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0b (коммит `4eb4664`)
+- **Файлы:** `web/src/App.tsx`,
+  `web/src/components/auth/ProtectedRoute.tsx`,
+  `web/src/components/auth/LoginPage.tsx`
+- **Описание:** После R6.1b.2 (react-router-dom + ProtectedRoute)
+  `?workflowId=` терялся **на трёх звеньях**:
+  1. `ProtectedRoute` → `<Navigate to="/login" replace />` — без search.
+  2. `LoginPage` → `navigate('/', { replace: true })` — без search.
+  3. `App` читал `URLSearchParams` один раз на маунте (до логина → пусто).
+  Итог: при заходе по прямой ссылке пользователь попадал на форму
+  входа, а после логина — на пустой /; граф не грузился.
+- **Fix:** `Navigate to={{ pathname: '/login', search: location.search }}`;
+  `navigate({ pathname: '/', search: location.search }, { replace: true })`;
+  `useSearchParams() + useEffect([workflowIdParam, authStatus])`.
+  Побочный плюс: запрос графа не уходит до готовности сессии.
+- **Связанные:** KI-229, KI-230.
+
+---
+
+### KI-229 — `syncWorkflowUrlParam` через `history.replaceState` — роутер не знает
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/components/TopBar.tsx` (`syncWorkflowUrlParam`)
+- **Описание:** Функция использует `history.replaceState` → роутер
+  о новом search не знает: после Save `useSearchParams()` отдаёт
+  старое значение. Сейчас безвредно (граф уже в сторе), но ловушка
+  для будущих фич.
+- **Решение:** использовать `navigate(..., { replace: true })`
+  react-router (с сохранением текущего search), а не `replaceState`.
+- **Когда чинить:** при следующей правке TopBar.
+- **Связанные:** KI-228.
+
+---
+
+### KI-230 — Нет unit-тестов на `ProtectedRoute` / `App`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/components/auth/ProtectedRoute.tsx`,
+  `web/src/App.tsx`
+- **Описание:** Регрессия `?workflowId=` (KI-228) ловится только
+  CDP-смоуком; unit-тестов нет — нужен jsdom (KI-155).
+- **Решение:** после KI-155 — тесты на редирект и сохранение search.
+- **Когда чинить:** вместе с KI-155.
+- **Связанные:** KI-155, KI-228.
+
+---
+
+### KI-231 — Multi-tab не координирует refresh-rotation
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/lib/api.ts` (`refreshSessionAsync`)
+- **Описание:** Single-flight `refreshPromise` защищает **внутри
+  одного таба** (и StrictMode double-effect), но **не между
+  табами**. При F5 в двух табах одновременно — оба делают
+  `POST /auth/refresh` с одной cookie; первый ротирует, второй
+  получает 401 (revoked) и выбрасывает пользователя на /login.
+- **Решение:** `BroadcastChannel` (или `navigator.locks`) для
+  координации rotation между табами; альтернатива — backend
+  rotation с grace-окном.
+- **Когда чинить:** v0.8.x (multi-tab — реальный use-case).
+- **Связанные:** KI-201, KI-224.
+
+---
+
+### KI-232 — Welcome screen с шаблонами при старте
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/App.tsx` (условие показа),
+  `web/src/components/WelcomeScreen.tsx` (новый),
+  `web/src/i18n/{ru,en}.json`
+- **Описание:** GPTunnel при открытии редактора показывает
+  welcome-экран: 3 карточки-шаблона («Изображение из текста»,
+  «Картинка → видео», «Идея → AI-промпт → изображение»),
+  кнопка «Скрыть» и чекбокс «Больше не показывать». У нас при
+  открытии `/` без `?workflowId=` — пустой canvas.
+- **Решение:**
+  - Показ при `nodes.length === 0 && !currentWorkflowId &&
+    !localStorage.welcomeDismissed`.
+  - 3-5 шаблонов (связано с KI-109): «Text→Image»,
+    «Text→LLM→Image», «Idea→Prompt→Image», «http→LLM»,
+    «LLM→Compare».
+  - Клик по карточке → `POST /templates/:id/instantiate` (из KI-109) →
+    открыть в редакторе.
+  - Галочка «Больше не показывать» → `localStorage.welcomeDismissed=true`.
+  - Кнопка «Скрыть» — одноразовый dismiss.
+  - i18n: `welcome.title`, `welcome.subtitle`, `welcome.dismiss`,
+    `welcome.neverShow`, `welcome.template.*` (5 штук).
+- **Когда чинить:** v0.8.x — **после R6.6** (Templates), т.к.
+  зависит от `POST /templates/:id/instantiate`.
+- **Связанные:** KI-109, KI-196 (v0.9), DESIGN v0.8 § 9.3.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 76 |
+| Fixed | 77 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 128 |
+| Open | 137 |
 | Won't Fix | 1 |
-| **Всего** | **213** |
+| **Всего** | **223** |
 
 ---
 
