@@ -195,7 +195,20 @@
   `Exclude<ReasoningEffort, 'off'>`) (`bec48bf`).
 - **KI-247** — лог движка различает `выполнено`/`провалено`
   (`bec48bf`).
-  
+- **KI-186** — расширенный список хоткеев
+  (S/H/F/M/Tab/C/Shift+C/Ctrl+D/Ctrl+Z/Ctrl+Shift+Z) (`e923384`,
+  `2efe3f3`).
+- **KI-217** — `@types/express` в devDeps (правка не потребовалась —
+  уже был) (`4a214f7`).
+- **KI-220** — `COOKIE_SECURE=false` в production → отказ старта
+  (`4a214f7`).
+- **KI-221** — `NODE_ENV=staging`/`preprod` считаются prod-подобными
+  (`4a214f7`).
+- **KI-236** — `workflows.createdAt/updatedAt` → `.notNull()` +
+  `withTimezone` (`4a214f7`).
+- **KI-274** — `matchesHotkey`: `ctrl+*` биндинги не срабатывали
+  (критично — не работал `Ctrl+D`/`Ctrl+Z`) (`2efe3f3`).
+
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
   - **v0.8 Canvas UX:** KI-185 (вставка узла в связь),
@@ -271,7 +284,11 @@
   - **KI-272** — `onFatalError` потока не снимает «выполняется» (Low).
   - **KI-273** — расширенные хоткеи (Ctrl+A/C/V/S, Shift+Backspace) —
     отложены в v0.8.x (не критично для MVP).    
-
+  - **KI-275** — CDP-смоук: hidden-страница молча отбрасывает OS-ввод
+    (Medium).
+  - **KI-276** — Ctrl+Z не работает при фокусе в поле ввода узла (Low).
+  - **KI-277** — Load не чистит историю undo (Low).
+  
 ## [0.7.2] — 2026-10-15
 
 **Patch-релиз после v0.7.1. Yandex env + LM Studio auto-discovery + LLM/media фиксы.**

@@ -3063,7 +3063,14 @@
 ---
 
 ### KI-186 — Хоткеи: расширенный список
-- **Приоритет:** 🟡 Medium | **Статус:** In Progress | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (R6.4b.1 + R6.4b.2b, коммиты e923384 + 2efe3f3)
+- **Fix:** закрыты S/H/F/M/Tab/C/Shift+C/Ctrl+D/Ctrl+Z/Ctrl+Shift+Z.
+  Приоритет `ctrl+*` → `shift+*` → одиночные (R6.4b.1). Найден и
+  исправлен баг `matchesHotkey` (см. KI-274) — из-за него `ctrl+*`
+  биндинги не срабатывали вообще.
+- **Остаток:** KI-273 (Ctrl+A/C/V/S, Ctrl+Shift+Backspace → v0.8.x).
+- **Связанные:** KI-187, KI-188, KI-190, KI-191, KI-273, KI-274.
 - **Fix (R6.4b.1, коммит `e923384`):** ✅ Ctrl+D, S (cursor),
   H (hand), F (fit view), M (minimap), Tab (каталог). useHotkeys
   переписан на обратно-совместимый API (HotkeyBinding + allow).
@@ -3585,7 +3592,10 @@
 ---
 
 ### KI-217 — `@types/express` не объявлен в devDependencies
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (проверено при Пакете 3, коммит 4a214f7)
+- **Fix:** правка не потребовалась — `@types/express@^5.0.0` уже
+  присутствует в devDeps (добавлено при R6.1a/R6.1b).
 - **Файлы:** `package.json`, `src/auth/auth.controller.ts`
 - **Описание:** `Request` / `Response` из `express` используются в
   `auth.controller.ts`, но `@types/express` приходит транзитивно через
@@ -3624,7 +3634,10 @@
 ---
 
 ### KI-220 — `COOKIE_SECURE=false` разрешён в production
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (Пакет 3, коммит 4a214f7)
+- **Fix:** superRefine: `NODE_ENV=production` + `COOKIE_SECURE=false`
+  → отказ старта. +2 теста.
 - **Файлы:** `src/config/env.schema.ts`, `src/auth/auth.cookie.ts`
 - **Описание:** Аналогично KI-213 — в prod `COOKIE_SECURE=false` явно
   разрешён и приведёт к отправке refresh-cookie по http. Secure-флаг
@@ -3637,7 +3650,11 @@
 ---
 
 ### KI-221 — Проверка KI-213 привязана к точному `production`
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (Пакет 3, коммит 4a214f7)
+- **Fix:** NODE_ENV enum += `staging`/`preprod`; superRefine обе
+  проверки (AUTH_DISABLED, COOKIE_SECURE) применяются к prod-подобным
+  через `isProdLike`. +3 теста.
 - **Файлы:** `src/config/env.schema.ts`
 - **Описание:** Для `staging` / `preprod` (если появятся) ослабление
   авторизации останется разрешённым. Нужен отдельный признак окружения
@@ -3862,7 +3879,10 @@
 ---
 
 ### KI-236 — `workflows.createdAt/updatedAt` без `.notNull()` в схеме
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (Пакет 3, коммит 4a214f7)
+- **Fix:** колонки приведены к
+  `timestamp(..., { withTimezone: true }).notNull().defaultNow()`.
 - **Файлы:** `src/db/schema.ts` (`workflows`),
   `src/workflow/workflow.service.ts` (`findSharedAsync`)
 - **Описание:** Drizzle-типы `Date | null` (в БД `NOT NULL DEFAULT
@@ -4287,7 +4307,10 @@
   6. Хук, работающий после F5 (перехват кадров SSE, **запись
      `console.log`**), надо ставить через
      `Page.addScriptToEvaluateOnNewDocument` — иначе восстановленная
-     подписка стартует раньше инъекции и кадры теряются.            
+     подписка стартует раньше инъекции и кадры теряются.
+  7. **Проверять `document.visibilityState` перед вводом** — в
+     видимом Chrome с `document.hidden === true` OS-ввод молча
+     отбрасывается. См. KI-275.                 
 - **Решение:** зафиксировать оба правила в RULES § 4.33 (смоук CDP)
   или в отдельной памятке.
 - **Связанные:** KI-135 (Emulation.setFocusEmulationEnabled).
@@ -4458,18 +4481,80 @@
 
 ---
 
+### KI-274 — `matchesHotkey`: `ctrl+*` биндинги не срабатывали никогда
+- **Приоритет:** 🔴 High | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (R6.4b.2b, коммит 2efe3f3)
+- **Файлы:** `web/src/lib/hotkeys-utils.ts`, `web/src/lib/hotkeys-utils.spec.ts`
+- **Описание:** После строгой сверки модификаторов функция возвращала
+  `!pressed.ctrl && !pressed.alt && !pressed.meta` — то есть `false`
+  для любого сочетания с `ctrl`. Не работали `Ctrl+D` (R6.4a),
+  `Ctrl+Z`/`Ctrl+Shift+Z`, `ctrl+s` из тестов. Существующий тест
+  `Ctrl+S ⟂ Ctrl+Shift+S` покрывал корректное поведение, но падал —
+  расхождение не заметили.
+- **Fix:** сверка `pressedCtrl !== binding.ctrl || …` (строго) +
+  `isSingleKey || !pressed.shift` для нестрогого shift у одиночных
+  клавиш (поведение R6.4b.1 сохранено). +5 регресс-тестов.
+- **Связанные:** KI-186, KI-191.
+
+---
+
+### KI-275 — CDP-смоук: hidden-страница молча отбрасывает OS-ввод
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** временные скрипты смоука
+- **Описание:** В видимом Chrome стенда `document.hidden === true` и
+  `Input.dispatchKeyEvent` / `dispatchMouseEvent` **не доходят** до
+  страницы (0 событий при `hasFocus === true`). `Page.bringToFront`,
+  `Page.setWebLifecycleState`, `Emulation.setDeviceMetricsOverride`,
+  `SetForegroundWindow` / `AttachThreadInput` не помогают. Симптом
+  неотличим от бага приложения — первые прогоны дали ложный FAIL.
+- **Решение:** в смоуке проверять `document.visibilityState` до
+  нажатий; при `hidden` — запускать headless Chrome (`--headless=new`).
+  В отчёт добавлять строку «видимость страницы».
+- **Связанные:** KI-264, KI-135.
+
+---
+
+### KI-276 — Ctrl+Z не работает при фокусе в поле ввода узла
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/components/Canvas.tsx`,
+  `web/src/hooks/use-hotkeys.ts`
+- **Описание:** Хук игнорирует события из
+  `input`/`textarea`/`select`/`contenteditable` — Ctrl+Z в textarea
+  узла отменяет локальную правку браузера, а не действие графа.
+  Для «отменить набор текста» ожидаемо, для «отменить последнее
+  действие графа» — нет.
+- **Решение (обсудить):** `allow`-исключение для `ctrl+z` при фокусе
+  в полях узлов, либо явно задокументировать текущее поведение в
+  DESIGN v0.8 § 7.2.
+- **Связанные:** KI-186, KI-274.
+
+---
+
+### KI-277 — Load не чистит историю undo
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/stores/workflow.ts` (`loadWorkflowAsync`)
+- **Описание:** `newWorkflow` историю очищает, `loadWorkflowAsync` —
+  нет. Возможны оба варианта: «откатить Load» (текущее) или
+  «Load = новый документ». Требует решения по UX.
+- **Решение:** определиться в DESIGN v0.8 § 7.2 и либо очищать
+  `past`/`future` в `loadWorkflowAsync`, либо зафиксировать текущее
+  поведение тестом.
+- **Связанные:** KI-274, KI-186.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 97 |
-| In Progress | 1 |
+| Fixed | 103 |
+| In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 155 |
+| Open | 154 |
 | Won't Fix | 1 |
-| **Всего** | **262** |
+| **Всего** | **266** |
 
 ---
 
