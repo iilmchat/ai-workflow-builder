@@ -48,6 +48,8 @@
   "loadModal.nodes": "nodes: {{count}}",
   "loadModal.title": "Load workflow",
   "node.delete": "Delete node",
+  "node.comment.label": "Comment",
+  "node.comment.placeholder": "Note text…",
   "node.image.alt": "Generated image",
   "node.image.aspect_ratio": "Aspect ratio",
   "node.image.error": "Generation failed",

@@ -13,7 +13,11 @@ import type { Node } from '@xyflow/react';
  * (`ApiGraphNode.data` — `Record<string, unknown>`), иначе `Node<TextNodeData,
  * 'text'>` и `toApiNode` перестанут компилироваться.
  */
-export type NodeData = TextNodeData | LlmNodeData | ImageGenNodeData;
+export type NodeData =
+  | TextNodeData
+  | LlmNodeData
+  | ImageGenNodeData
+  | CommentNodeData;
 
 /** Узел графа — совместим с backend-DTO `NodeDto`. */
 export type GraphNode = {
@@ -44,8 +48,14 @@ export type Graph = {
  * Значение `type` узла уходит в backend как есть (`NodeDto.type`), поэтому
  * имена совпадают с backend-контрактом: `image_generation`, а не `image`
  * (v0.6.0b.2.5). UI-метка узла (`data.kind`) остаётся `image`.
+ *
+ * `comment` (KI-187) — исключение: узел **не отправляется** на backend
+ * (`LOCAL_ONLY_NODE_TYPES` в `@/lib/graph-payload`), потому что
+ * `ExecutionEngineService` бросает `UnsupportedNodeTypeException` на любой
+ * незнакомый тип и валит весь запуск. Имя всё равно совпадает с типом React
+ * Flow — другого контракта у него нет.
  */
-export type NodeType = 'text' | 'llm' | 'image_generation';
+export type NodeType = 'text' | 'llm' | 'image_generation' | 'comment';
 
 /**
  * Категории узлов для каталога (KI-127, § 5.2 DESIGN v0.7).
@@ -167,13 +177,39 @@ export interface ImageGenNodeData extends Record<string, unknown> {
   prompt?: string;
 }
 
+/**
+ * Данные узла-комментария (KI-187).
+ *
+ * Стикер без портов: в потоке данных не участвует, в `executionLevels` не
+ * попадает (engine backend про него не знает — узел local-only).
+ */
+export interface CommentNodeData extends Record<string, unknown> {
+  kind: 'comment';
+  /** Текст комментария. */
+  text: string;
+  /**
+   * Видимость на холсте (KI-187, хоткей `Shift+C`).
+   *
+   * `false` — узел скрыт (`CommentNode` возвращает `null`); `undefined`
+   * трактуется как «видим» — так старые графы и узлы, созданные до появления
+   * поля, не исчезают с холста.
+   */
+  visible?: boolean;
+}
+
 /** Узел Text в терминах React Flow. */
 export type TextFlowNode = Node<TextNodeData, 'text'>;
 /** Узел LLM в терминах React Flow. */
 export type LlmFlowNode = Node<LlmNodeData, 'llm'>;
 /** Узел генерации изображений в терминах React Flow. */
 export type ImageGenFlowNode = Node<ImageGenNodeData, 'image_generation'>;
+/** Узел-комментарий в терминах React Flow (KI-187). */
+export type CommentFlowNode = Node<CommentNodeData, 'comment'>;
 
 /** Любой узел редактора. */
-export type AppNode = TextFlowNode | LlmFlowNode | ImageGenFlowNode;
+export type AppNode =
+  | TextFlowNode
+  | LlmFlowNode
+  | ImageGenFlowNode
+  | CommentFlowNode;
 

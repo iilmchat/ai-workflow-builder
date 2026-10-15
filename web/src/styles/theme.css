@@ -41,6 +41,15 @@
   --color-node-failed: theme(colors.red.400);
 
   /*
+   * Узел-комментарий (KI-187): «бумажный» стикер, отличимый от карточек данных.
+   * Объявлен в @theme, чтобы значение было готовой переменной, а не
+   * color-mix() со ссылкой на тему Tailwind — RULES 4.32 (KI-134).
+   */
+  --color-comment-bg: theme(colors.amber.50);
+  --color-comment-border: theme(colors.amber.300);
+  --color-comment-foreground: theme(colors.amber.950);
+
+  /*
    * Тень карточек и панелей: одна утилита shadow-node на обе темы.
    * Цвет берётся из --color-node-shadow, поэтому в тёмной теме он плотнее.
    */
@@ -71,6 +80,11 @@
   --color-node-running: theme(colors.blue.500);
   --color-node-completed: theme(colors.green.500);
   --color-node-failed: theme(colors.red.500);
+
+  /* KI-187: в тёмной теме стикер — приглушённый янтарный, текст светлый. */
+  --color-comment-bg: theme(colors.amber.950);
+  --color-comment-border: theme(colors.amber.700);
+  --color-comment-foreground: theme(colors.amber.100);
 }
 
 /* React Flow: маппинг собственных переменных на наши. */

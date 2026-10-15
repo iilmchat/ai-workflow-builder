@@ -22,7 +22,7 @@ import { useHotkeys } from '@/hooks/use-hotkeys';
 import { computeGraphHash } from '@/lib/graph-hash';
 import { findGuides, type HelperLines } from '@/lib/graph-guides';
 import { canInsertOnEdge } from '@/lib/node-registry';
-import { useWorkflowStore, type CanvasMode, type FindCenterHandler } from '@/stores/workflow';
+import { useWorkflowStore, type CanvasMode, type FindCenterHandler, type Position } from '@/stores/workflow';
 import { useTranslation } from 'react-i18next';
 
 /** Шаг сетки привязки узлов (KI-189). */
@@ -41,6 +41,15 @@ const AUTO_SAVE_DELAY_MS = 3000;
  * массив типизирован `CanvasMode`: опечатка в литерале не пройдёт tsc.
  */
 const CANVAS_MODE_BUTTONS: readonly CanvasMode[] = ['select', 'pan'];
+
+/**
+ * Габариты стикера-комментария для центрирования (KI-187).
+ *
+ * `w-56` = 224 px; высота приблизительная — текст растёт по содержимому
+ * (KI-169), а точный размер React Flow узнаёт только после первого рендера.
+ */
+const COMMENT_DEFAULT_WIDTH = 224;
+const COMMENT_DEFAULT_HEIGHT = 96;
 
 /**
  * Реестр типов связей React Flow (KI-185).
@@ -122,6 +131,11 @@ function CanvasInner({ onReady }: CanvasProps) {
   const setShowMinimap = useWorkflowStore((state) => state.setShowMinimap);
   const isCatalogOpen = useWorkflowStore((state) => state.isCatalogOpen);
   const setCatalogOpen = useWorkflowStore((state) => state.setCatalogOpen);
+  // KI-187: комментарии-стикеры — создание по `C`, видимость по `Shift+C`.
+  const addNode = useWorkflowStore((state) => state.addNode);
+  const toggleCommentsVisibility = useWorkflowStore(
+    (state) => state.toggleCommentsVisibility,
+  );
   const isEmpty = nodes.length === 0;
   // KI-189: направляющие выравнивания (ручная реализация — `useAligning`
   // доступен только в @xyflow/pro).
@@ -132,7 +146,7 @@ function CanvasInner({ onReady }: CanvasProps) {
   const pendingEdgeId = useWorkflowStore((state) => state.pendingEdgeId);
   const clearPendingEdge = useWorkflowStore((state) => state.clearPendingEdge);
 
-  const { getViewport, fitView } = useReactFlow();
+  const { getViewport, fitView, screenToFlowPosition } = useReactFlow();
 
   /**
    * Переводит центр контейнера из экранных координат в координаты холста
@@ -149,6 +163,30 @@ function CanvasInner({ onReady }: CanvasProps) {
       y: (height / 2 - viewport.y) / viewport.zoom,
     };
   }, [getViewport]);
+
+  /**
+   * Позиция нового узла так, чтобы его **центр** совпал с центром холста
+   * (KI-187, хоткей `C`).
+   *
+   * `screenToFlowPosition` предпочтительнее ручного пересчёта: React Flow сам
+   * учитывает пан/зум и отступы панелей, поэтому стикер появляется там, куда
+   * смотрит пользователь, а не в углу. Вычитаем половину габаритов карточки —
+   * у `addNode` позиция означает левый верхний угол.
+   */
+  const commentPositionAtCenter = useCallback((): Position => {
+    const container = document.querySelector<HTMLElement>('.react-flow');
+    const rect = container?.getBoundingClientRect();
+    const screenCenter = {
+      x: (rect?.left ?? 0) + (rect?.width ?? window.innerWidth) / 2,
+      y: (rect?.top ?? 0) + (rect?.height ?? window.innerHeight) / 2,
+    };
+    const center = screenToFlowPosition(screenCenter);
+
+    return {
+      x: center.x - COMMENT_DEFAULT_WIDTH / 2,
+      y: center.y - COMMENT_DEFAULT_HEIGHT / 2,
+    };
+  }, [screenToFlowPosition]);
 
   // Отдаём функцию поиска центра наружу ровно один раз: повторные вызовы
   // дёргали бы состояние приложения на каждом ре-рендере канваса.
@@ -199,10 +237,11 @@ function CanvasInner({ onReady }: CanvasProps) {
     );
   }, []);
 
-  // KI-186: хоткеи холста (S/H/F/M/Tab). `ctrl+d` (KI-191) живёт в той же карте:
-  // хук сам проверяет сочетания с `ctrl` раньше одиночных, поэтому `Ctrl+D` и
-  // `D` не конфликтуют, а `preventDefault` для дублирования по-прежнему вызывает
-  // сам обработчик (поведение R6.4a сохранено).
+  // KI-186/KI-187: хоткеи холста (S/H/F/M/C/Tab, Shift+C). `ctrl+d` (KI-191)
+  // живёт в той же карте: хук сам проверяет сочетания с `ctrl` раньше одиночных,
+  // поэтому `Ctrl+D`/`Ctrl+C` не конфликтуют с одиночными `D`/`C`, а
+  // `preventDefault` для дублирования по-прежнему вызывает сам обработчик
+  // (поведение R6.4a сохранено).
   useHotkeys(
     {
       // Ctrl+D — дублировать выделенный узел (KI-191).
@@ -224,6 +263,11 @@ function CanvasInner({ onReady }: CanvasProps) {
       },
       // M — показать/скрыть миникарту (KI-190).
       m: () => setShowMinimap(!showMinimap),
+      // C — новый комментарий в центре холста (KI-187). Одиночный `c` не
+      // перехватывает `Ctrl+C`: у сочетаний с `ctrl` приоритет в хуке.
+      c: () => addNode('comment', commentPositionAtCenter()),
+      // Shift+C — показать/скрыть все комментарии (KI-187).
+      'shift+c': () => toggleCommentsVisibility(),
       // Tab — общий каталог узлов (KI-186). `preventDefault` гасит переход
       // фокуса, `stopPropagation` не пускает Tab в обработчики React Flow.
       // `allow` нужен, когда каталог уже открыт: фокус стоит в его поиске
@@ -242,6 +286,9 @@ function CanvasInner({ onReady }: CanvasProps) {
       fitView,
       showMinimap,
       setShowMinimap,
+      addNode,
+      commentPositionAtCenter,
+      toggleCommentsVisibility,
       isCatalogOpen,
       setCatalogOpen,
     ],

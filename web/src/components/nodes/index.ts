@@ -7,6 +7,7 @@
  */
 export { nodeTypes, NODE_REGISTRY } from '@/lib/node-registry';
 
+export { CommentNode } from './CommentNode';
 export { ImageGenNode } from './ImageGenNode';
 export { LLMNode } from './LLMNode';
 export { TextNode } from './TextNode';

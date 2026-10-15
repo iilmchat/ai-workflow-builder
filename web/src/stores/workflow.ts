@@ -30,6 +30,7 @@ import type { MediaModelInfo } from '@/types/media';
 import {
   DEFAULT_LLM_MODEL_ID,
   type AppNode,
+  type CommentNodeData,
   type ImageGenNodeData,
   type LlmNodeData,
   type NodeType,
@@ -43,6 +44,10 @@ import {
   NODE_DEFAULT_WIDTH,
 } from '@/lib/graph-edit';
 import { computeGraphHash } from '@/lib/graph-hash';
+import {
+  toBackendEdges,
+  toBackendNodes,
+} from '@/lib/graph-payload';
 import type {
   RunEventMessage,
   RunStatus,
@@ -50,7 +55,7 @@ import type {
 } from '@/types/run-stream';
 
 /** Позиция узла на холсте. */
-type Position = { x: number; y: number };
+export type Position = { x: number; y: number };
 
 /**
  * Режим холста (KI-188): `select` — рамка выделения, `pan` — перемещение.
@@ -457,6 +462,16 @@ export interface WorkflowState {
    * @param open - `true` — открыть, `false` — закрыть
    */
   setCatalogOpen: (open: boolean) => void;
+
+  /**
+   * Переключает видимость всех комментариев (KI-187, хоткей `Shift+C`).
+   *
+   * Скрывает стикеры, если виден хотя бы один; иначе показывает все. Так
+   * `Shift+C` работает как «показать/скрыть комментарии», а не как «инвертировать
+   * каждый» (иначе смешанное состояние переворачивалось бы в противоположное
+   * у каждого узла).
+   */
+  toggleCommentsVisibility: () => void;
 }
 
 /**
@@ -506,6 +521,13 @@ function createNode(
           model: defaultMediaModelId ?? '',
         },
       };
+    case 'comment':
+      return {
+        ...shared,
+        type: 'comment',
+        // KI-187: стикер создаётся видимым; текст пользователь вводит сам.
+        data: { kind: 'comment', text: '', visible: true },
+      };
     // Нет default: — новый NodeType поймает tsc (KI-129).
   }
 }
@@ -535,7 +557,7 @@ function toApiEdge(edge: Edge): ApiGraphEdge {
 function nodeDataFromApi(
   type: NodeType,
   data: Record<string, unknown>,
-): TextNodeData | LlmNodeData | ImageGenNodeData {
+): TextNodeData | LlmNodeData | ImageGenNodeData | CommentNodeData {
   switch (type) {
     case 'text':
       return {
@@ -617,6 +639,19 @@ function nodeDataFromApi(
 
       return result;
     }
+    case 'comment': {
+      // KI-187: комментарий — local-only узел, backend его не хранит, поэтому
+      // ветка нужна только для графов, сохранённых в другой версии/источнике.
+      // KI-129: `visible` по умолчанию `true` (как в `createNode`), чтобы
+      // отсутствие поля не скрывало стикер.
+      const result: CommentNodeData = {
+        kind: 'comment',
+        text: typeof data.text === 'string' ? data.text : '',
+        visible: data.visible !== false,
+      };
+
+      return result;
+    }
     // Нет default: — новый NodeType поймает tsc (KI-129).
   }
 }
@@ -649,6 +684,10 @@ function fromApiWorkflow(workflow: ApiWorkflow): {
       continue;
     }
 
+    // KI-187: local-only узел (комментарий) в графе с backend появиться не
+    // может — `toBackendNodes` отсекает его при Save. Если такой узел всё же
+    // пришёл (прямая запись в БД, импорт из другого источника), он известен
+    // реестру, и данные собираются обычным путём.
     const data = nodeDataFromApi(node.type, node.data ?? {});
 
     nodes.push({
@@ -954,10 +993,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   saveWorkflowAsync: async () => {
     const { nodes, edges, currentWorkflowId, currentWorkflowName } = get();
     const name = currentWorkflowName.trim() || DEFAULT_WORKFLOW_NAME;
+    // KI-187: local-only узлы (комментарии) на backend не уходят — движок
+    // бросает `UnsupportedNodeTypeException` на незнакомый тип и роняет запуск.
+    const backendNodes = toBackendNodes(nodes);
     const payload = {
       name,
-      nodes: nodes.map(toApiNode),
-      edges: edges.map(toApiEdge),
+      nodes: backendNodes.map(toApiNode),
+      edges: toBackendEdges(edges, backendNodes).map(toApiEdge),
     };
 
     set({ isSaving: true, error: null });
@@ -1020,8 +1062,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   runPlanAsync: async () => {
     const { nodes, edges } = get();
+    // KI-187: комментарии в план не отправляем — это UI-стикеры, а не узлы
+    // выполнения (backend вернул бы их в `order`/`levels` и попытался выполнить).
+    const backendNodes = toBackendNodes(nodes);
 
-    if (nodes.length === 0) {
+    // Граф без узлов выполнения (только комментарии) планировать нечего —
+    // backend ответил бы «Граф не содержит узлов» (RULES 1.6: понятный UI-текст).
+    if (backendNodes.length === 0) {
       set({ notice: { kind: 'error', text: i18n.t('toast.graph_empty') } });
       return;
     }
@@ -1030,16 +1077,17 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
     try {
       const plan = await planWorkflowAsync(
-        nodes.map(toApiNode),
-        edges.map(toApiEdge),
+        backendNodes.map(toApiNode),
+        toBackendEdges(edges, backendNodes).map(toApiEdge),
       );
 
       const levels = levelsToMap(plan.levels);
       // В сообщении показываем подписи типов узлов из реестра, а не uuid.
+      // Ищем по отправленным узлам: в `plan.order` комментариев нет (KI-187).
       const order = plan.order
         .map((nodeId) =>
           nodeLabelOf(
-            nodes.find((item) => item.id === nodeId),
+            backendNodes.find((item) => item.id === nodeId),
             nodeId,
           ),
         )
@@ -1342,4 +1390,20 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   },
 
   setCatalogOpen: (open) => set({ isCatalogOpen: open }),
+
+  toggleCommentsVisibility: () =>
+    set((state) => {
+      // Скрываем, если виден хотя бы один стикер; иначе показываем все.
+      const hide = state.nodes.some(
+        (node) => node.type === 'comment' && node.data.visible !== false,
+      );
+
+      return {
+        nodes: state.nodes.map((node) =>
+          node.type === 'comment'
+            ? { ...node, data: { ...node.data, visible: !hide } }
+            : node,
+        ),
+      };
+    }),
 }));

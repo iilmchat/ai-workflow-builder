@@ -1,11 +1,13 @@
 import type { ComponentType } from 'react';
 import type { NodeProps, NodeTypes } from '@xyflow/react';
+import { CommentNode } from '@/components/nodes/CommentNode';
 import { ImageGenNode } from '@/components/nodes/ImageGenNode';
 import { LLMNode } from '@/components/nodes/LLMNode';
 import { TextNode } from '@/components/nodes/TextNode';
 import i18n from '@/i18n';
 import type {
   AppNode,
+  CommentFlowNode,
   ImageGenFlowNode,
   LlmFlowNode,
   NodeCategory,
@@ -24,7 +26,8 @@ import type {
 export type NodeComponent =
   | ComponentType<NodeProps<TextFlowNode>>
   | ComponentType<NodeProps<LlmFlowNode>>
-  | ComponentType<NodeProps<ImageGenFlowNode>>;
+  | ComponentType<NodeProps<ImageGenFlowNode>>
+  | ComponentType<NodeProps<CommentFlowNode>>;
 
 /**
  * Описание узла в реестре: единый источник правды.
@@ -98,6 +101,21 @@ export const NODE_REGISTRY = {
     // Есть `text-input` (target) и `image-output` (source).
     canBeInsertedOnEdge: true,
     capabilities: { externalState: false, userConfig: true },
+  },
+  comment: {
+    labelKey: 'node.comment.label',
+    // 📝 занят Text-узлом, поэтому у стикера — «🗒» (заметка).
+    icon: '🗒',
+    // Категория `input`: комментарий — это ввод пользователя (свободный текст),
+    // а не вычислительный инструмент. Отдельную категорию не заводим: пустые
+    // секции каталог и так не показывает, а новая категория потребовала бы
+    // ещё и ключ `catalog.category.*` в обоих i18n-файлах.
+    category: 'input',
+    component: CommentNode,
+    // Портов нет: ребро `source → comment` создать нельзя (KI-259).
+    canBeInsertedOnEdge: false,
+    // Узел хранит текст в графе и на backend не уходит (KI-187).
+    capabilities: { externalState: false, userConfig: false },
   },
 } as const satisfies Record<NodeType, NodeRegistryEntry>;
 

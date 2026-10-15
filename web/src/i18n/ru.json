@@ -52,6 +52,8 @@
   "loadModal.nodes": "узлов: {{count}}",
   "loadModal.title": "Загрузить workflow",
   "node.delete": "Удалить узел",
+  "node.comment.label": "Комментарий",
+  "node.comment.placeholder": "Текст заметки…",
   "node.image.alt": "Сгенерированное изображение",
   "node.image.aspect_ratio": "Соотношение сторон",
   "node.image.error": "Ошибка генерации",
