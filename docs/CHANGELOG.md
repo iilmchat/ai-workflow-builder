@@ -66,6 +66,25 @@
   - App читает `?workflowId=` через `useSearchParams()` +
     эффект на [workflowIdParam, authStatus].
 
+- **Share workflow (R6.2.1, backend, KI-197):**
+  - `POST /workflow/:id/share` — owner → создать/обновить `share_token`
+    (генерация в БД: `gen_random_uuid()`).
+  - `DELETE /workflow/:id/share` — owner → revoke.
+  - `GET /workflow/share/:token` — публичный, без auth, read-only;
+    ответ без `userId` / `shareToken` / `updatedAt`.
+  - Owner-check переиспользует `buildAccessFilter`; чужой → 404.
+  - +12 тестов (400 → 412).
+- **Share workflow — frontend (R6.2.2, KI-197):**
+  - `TopBar` — кнопка «Поделиться» (disabled без `currentWorkflowId`).
+  - `ShareModal` — создать / копировать / отозвать; предупреждение
+    KI-233 («По ссылке будут видны все данные графа»).
+  - `ShareViewPage` — route `/workflow/share/:token` (без
+    ProtectedRoute); read-only ReactFlow + баннер «Только просмотр».
+  - `lib/share-api.ts`, `lib/share-url.ts` (+ spec), `stores/share.ts`.
+  - Vite: `/workflow` bypass на `/index.html` для `Accept: text/html`.
+  - i18n: 14 ключей `share.*` (ru/en 135/135).
+  - Frontend tests: 24 → 29 (+5).
+
 
 ### Fixed
 - **KI-201** — Auth backend (R6.1a): users, JWT-guard, `/auth/*`,
@@ -82,6 +101,10 @@
   (`7e921a7`).
 - **KI-228** — `?workflowId=` терялся при миграции на react-router
   (три звена: ProtectedRoute, LoginPage, App) (`4eb4664`).
+- **KI-197** — публичный share workflow (backend + frontend):
+  `share_token`, `POST/DELETE /workflow/:id/share`, публичный
+  `GET /workflow/share/:token`; ShareModal + ShareViewPage; Vite
+  bypass для SPA (`ae5e461`, `abf88ff`).
 
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
@@ -116,7 +139,15 @@
     маппинг 400 в LoginPage, красный 401 в консоли, `meAsync` +
     alias `@/`, `syncWorkflowUrlParam` через `replaceState`,
     тесты на ProtectedRoute/App (jsdom), multi-tab refresh-rotation
-    (Medium), Welcome screen с шаблонами (Medium, после KI-109).    
+    (Medium), Welcome screen с шаблонами (Medium, после KI-109).
+  - **KI-233..243** — Share-остаток v0.8.x: sanitize публичного
+    ответа (Medium), rate-limit публичных ручек (Medium, вместе с
+    KI-206), бессрочность + аудит ссылки, `.notNull()` на
+    `createdAt`/`updatedAt`, перевыпуск токена без предупреждения,
+    SPA-proxy в prod (High, KI-238), предупреждение о перевыпуске
+    в UI, read-only node-карточки, Zod-валидация графа в
+    ShareViewPage, сообщение о сбое copy, реализация allow-copy
+    (R6.6).    
 
 ## [0.7.2] — 2026-10-15
 
