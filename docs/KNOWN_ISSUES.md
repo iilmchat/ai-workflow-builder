@@ -3067,9 +3067,11 @@
 - **Fix (R6.4b.1, коммит `e923384`):** ✅ Ctrl+D, S (cursor),
   H (hand), F (fit view), M (minimap), Tab (каталог). useHotkeys
   переписан на обратно-совместимый API (HotkeyBinding + allow).
-- **Остаток (R6.4b.2):** Ctrl+A, Ctrl+C/V, Ctrl+Z / Ctrl+Shift+Z
-  (undo/redo), Ctrl+S, C / Shift+C (комментарии),
-  Ctrl+Shift+Backspace.
+- **Fix (R6.4b.2b):** Ctrl+Z / Ctrl+Shift+Z (undo/redo) — см.
+  коммит R6.4b.2b.
+- **Остаток:** Ctrl+A / Ctrl+C / Ctrl+V / Ctrl+S / Ctrl+Shift+Backspace
+  → **KI-273** (отложено в v0.8.x, не критично).
+- **Связанные:** KI-187, KI-188, KI-190, KI-191, KI-273.
 - **Связанные:** KI-187, KI-188, KI-190, KI-191.
 - **Файлы:** `web/src/components/Canvas.tsx`, `web/src/hooks/use-hotkeys.ts`
 - **Описание:** У GPTunnel полный список: Tab (добавить узел),
@@ -4267,7 +4269,11 @@
      `Authorization` (даже при валидном токене). Реальные заголовки
      доступны в `Network.requestWillBeSentExtraInfo` (или через
      `Fetch.requestPaused`). Для проверки «Bearer ушёл» — использовать
-     только второй.              
+     только второй.       
+  6. Хук, работающий после F5 (перехват кадров SSE, **запись
+     `console.log`**), надо ставить через
+     `Page.addScriptToEvaluateOnNewDocument` — иначе восстановленная
+     подписка стартует раньше инъекции и кадры теряются.            
 - **Решение:** зафиксировать оба правила в RULES § 4.33 (смоук CDP)
   или в отдельной памятке.
 - **Связанные:** KI-135 (Emulation.setFocusEmulationEnabled).
@@ -4380,7 +4386,19 @@
 ---
 
 ### KI-271 — После F5 посреди запуска прогресс не восстанавливается
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (R6.4b.2a-fix3, коммит 531a062)
+- **Fix:** `runId` синхронизируется с адресной строкой (`?runId=`,
+  `lib/url-sync.ts`): пишется при старте Run, убирается на
+  `run_completed(final:true)` и на финальном snapshot;
+  `loadWorkflowAsync` при наличии `?runId=` не сбрасывает состояние
+  запуска, а подписывается на поток заново — snapshot возвращает
+  статусы узлов и run-уровня. Недоступный запуск (404/401) даёт
+  `RunStreamUnavailableError`: URL очищается, состояние сбрасывается,
+  повторов нет.
+- **Остаток:** KI-063 (окно между попытками job'а — `?runId=` может
+  очиститься преждевременно; закроется с KI-063).
+- **Связанные:** KI-268, KI-063, KI-049.
 - **Файлы:** `web/src/stores/workflow.ts` (`loadWorkflowAsync` →
   `resetRunState`), `web/src/App.tsx`, `web/src/lib/run-stream.ts`
 - **Описание:** Reload в момент `runStatus='running'` → после
@@ -4409,18 +4427,35 @@
 
 ---
 
+### KI-273 — Расширенные хоткеи: Ctrl+A / Ctrl+C / Ctrl+V / Ctrl+S / Ctrl+Shift+Backspace
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/hooks/use-hotkeys.ts`, `web/src/components/Canvas.tsx`
+- **Описание:** DESIGN v0.8 § 7.2 перечисляет полный список хоткеев.
+  После R6.4b.2b закрыты: Ctrl+D, S, H, F, M, Tab, C, Shift+C,
+  Ctrl+Z, Ctrl+Shift+Z. **Остаток** (отложен сознательно — не критично
+  для MVP): Ctrl+A (выделить все), Ctrl+C/Ctrl+V (копи/паст узлов),
+  Ctrl+S (сохранить — сейчас Save только кнопкой),
+  Ctrl+Shift+Backspace (очистить промпт выделенных).
+- **Решение:** (1) Ctrl+A / Ctrl+C / Ctrl+V — буфер узлов в памяти
+  + вставка с offset; (2) Ctrl+S — `saveWorkflowAsync()`; (3)
+  Ctrl+Shift+Backspace — `updateNodeData` пустого `prompt`.
+- **Когда чинить:** v0.8.x (после R6.7) — не блокер продукта.
+- **Связанные:** KI-186, KI-191, KI-195.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 93 |
+| Fixed | 94 |
 | In Progress | 1 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
 | Open | 158 |
 | Won't Fix | 1 |
-| **Всего** | **261** |
+| **Всего** | **262** |
 
 ---
 
