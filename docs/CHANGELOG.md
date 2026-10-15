@@ -17,6 +17,28 @@
 ---
 ## [Unreleased]
 
+### Added
+- **Auth backend (R6.1a, KI-201):**
+  - Миграция 0004: `users` (uuid), системный пользователь
+    `00000000-0000-0000-0000-000000000001`
+    (`system@workflow-builder.local`), `workflows.user_id`
+    **text → uuid** с backfill (65 строк), `share_token` (задел R6.2).
+  - `AuthService` — register / login / me, scrypt (node:crypto),
+    `JwtService.signAsync`.
+  - `JwtAuthGuard` (кастомный, `@nestjs/jwt`) + `@CurrentUser`.
+  - `AuthController`: `POST /auth/register`, `POST /auth/login`,
+    `GET /auth/me`.
+  - `AUTH_DISABLED=true` (dev/CI) → системный пользователь.
+  - `WorkflowController` / `RunsController`: guards; владелец —
+    только из токена.
+  - Env: `JWT_SECRET` (min 32), `JWT_EXPIRES_IN`, `AUTH_DISABLED`.
+  - CI: `JWT_SECRET` + `AUTH_DISABLED` в шаге `pnpm test`.
+  - Tests: 358 → 380 (+22).
+
+### Fixed
+- **KI-201** — Auth backend (R6.1a): users, JWT-guard, `/auth/*`,
+  scrypt. Остаток (frontend, refresh-cookie) — R6.1b (`88f53e4`).
+
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
   - **v0.8 Canvas UX:** KI-185 (вставка узла в связь),
@@ -31,6 +53,14 @@
   - **KI-107 не тронут:** в KNOWN_ISSUES.md это «Параллельные
     media-узлы и rate limit», а не Share — детали Share
     заведены отдельным KI-197.
+  - **KI-202..208** — Auth-остаток: `GET /runs/:id` без owner (🔴
+    Critical), FK на users, `userId` в DTO, `migrate.ts` логирует
+    URL, rate-limit/refresh/logout, scrypt-параметры,
+    `@nestjs/passport` в deps.
+  - **KI-209..212** — коллизии нумерации KI (CHANGELOG `[0.1.0]`
+    использует KI-номера как идентификаторы фич), «Passport»-формулировки
+    в DESIGN § 1/§ 3.1, пропуск KI-198/199, ошибочная ссылка на KI-106
+    в сообщении коммита `88f53e4` (аннотирована через `git notes`).    
 
 ## [0.7.2] — 2026-10-15
 
@@ -773,6 +803,13 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
   (по аналогии с инцидентом KI-039 в IIChatTools).
 
 ### Planned
+
+> **Внимание:** KI-номера в этом разделе — **исторические идентификаторы
+> фич из плана v0.1.0**, а не ссылки на реестр `KNOWN_ISSUES.md`.
+> С момента создания реестра нумерация разошлась: например, здесь
+> `KI-106` = «Аутентификация», в реестре `KI-106` = «Идемпотентность
+> media». Актуальные записи — только в `KNOWN_ISSUES.md` (см. KI-209).
+
 - **KI-101** — Visual canvas для редактирования workflow (React + @xyflow/react).
 - **KI-102** — LLM-провайдеры (Anthropic, OpenAI, локальные).
 - **KI-103** — Image-generation провайдеры (Replicate, FAL, OpenAI Images).

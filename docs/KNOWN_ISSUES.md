@@ -3203,7 +3203,218 @@
   дочернего workflow; версионирование ссылки.
 - **Когда чинить:** v0.8 — подшаг **R6.7** (~4 ч, DESIGN v0.8
   Approved 2026-10-15).
-- **Связанные:** KI-106, KI-108, KI-109, KI-197.
+- **Связанные:** KI-201, KI-108, KI-109, KI-197.
+
+---
+
+### KI-201 — Auth backend (R6.1a): users, JWT, scrypt
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-12
+- **Исправлено в:** v0.8.0a (коммит `88f53e4`)
+- **Файлы:** `src/auth/`, `src/db/schema.ts`,
+  `drizzle/0004_add_users.sql`, `src/config/env.schema.ts`,
+  `src/workflow/workflow.controller.ts`,
+  `src/workflow/workflow.module.ts`, `src/runs/runs.controller.ts`,
+  `src/runs/runs.module.ts`, `src/runs/runs.service.ts`,
+  `src/app.module.ts`, `.env.example`, `.github/workflows/ci.yml`
+- **Описание:** Auth как фича была в `[0.1.0] → ### Planned` в
+  CHANGELOG под «KI-106» (устаревшая ссылка). В реестре
+  `KNOWN_ISSUES.md` отдельной записи не существовало. Заведена
+  задним числом как KI-201.
+- **Fix (R6.1a, backend):**
+  - Миграция 0004: `users` (uuid), системный пользователь
+    `00000000-0000-0000-0000-000000000001`
+    (`system@workflow-builder.local`, `password_hash =
+    scrypt$disabled$disabled` — вход невозможен),
+    `workflows.user_id` **text → uuid** с backfill (65 строк:
+    41 `demo-user` + 24 smoke), `workflows.share_token` (задел R6.2).
+  - `AuthService`: `registerAsync` / `loginAsync` / `getMeAsync` /
+    `hashPasswordAsync` (scrypt через `node:crypto`, формат
+    `scrypt$<salt_b64>$<hash_b64>`) / `verifyPasswordAsync`
+    (timingSafeEqual) / `generateAccessToken`.
+  - `JwtAuthGuard` (кастомный, `@nestjs/jwt`, без `passport-jwt`) +
+    `@CurrentUser`.
+  - `AuthController`: `POST /auth/register` (201),
+    `POST /auth/login` (200), `GET /auth/me` (200/401).
+  - `AUTH_DISABLED=true` (dev/CI) → `sub = DEMO_USER_ID` (валидный
+    uuid системного пользователя).
+  - `WorkflowController` / `RunsController` под `JwtAuthGuard`;
+    владелец — **только из токена** (`user.sub`), `userId` из
+    body/query игнорируется.
+  - Env: `JWT_SECRET` (min 32), `JWT_EXPIRES_IN` (default `24h`),
+    `AUTH_DISABLED`.
+  - Tests: 358 → 380 (+22: `auth.service` 13, `auth.controller` 9).
+- **Остаток (R6.1b):** frontend LoginPage / AuthProvider /
+  ProtectedRoute / fetch interceptor; refresh-cookie (httpOnly,
+  sameSite=strict); logout / revocation.
+- **Связанные:** KI-202..208.
+
+---
+
+### KI-202 — GET /runs/:id и SSE не проверяют владельца
+- **Приоритет:** 🔴 Critical | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/runs/runs.controller.ts`, `src/runs/runs.service.ts`,
+  `src/runs/runs-stream.service.ts`
+- **Описание:** После R6.1a `RunsController` закрыт `JwtAuthGuard`,
+  но `GET /runs/:id` и `GET /runs/:id/stream` **не проверяют
+  принадлежность запуска пользователю**. Зная uuid чужого run,
+  аутентифицированный пользователь прочитает его (и SSE-поток).
+  Проверка есть только на `POST /runs` (через `createRunAsync(dto,
+  userId)` + фильтр по `workflows.user_id`).
+- **Решение:** join `workflow_runs → workflows.user_id` в
+  `getRunAsync` и в `runs-stream.service`; 404 при чужом
+  (не раскрывать существование).
+- **Когда чинить:** R6.1.x (сразу после R6.1b).
+- **Связанные:** KI-201, KI-203.
+
+---
+
+### KI-203 — Нет FK workflows.user_id → users.id
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/db/schema.ts`, `drizzle/`
+- **Описание:** После R6.1a `workflows.user_id` — uuid NOT NULL, но
+  **без foreign key** на `users.id`. Удаление пользователя →
+  dangling `user_id` (колонка «висит» на несуществующем id). Нет
+  политики ON DELETE.
+- **Решение:** `.references(() => users.id, { onDelete: 'cascade' })`
+  в schema; миграция. Политика: **cascade** (удаление пользователя →
+  удалить его workflows) — для MVP.
+- **Когда чинить:** v0.8.x.
+- **Связанные:** KI-201, KI-202.
+
+---
+
+### KI-204 — Frontend шлёт userId в body/query (игнорируется)
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/lib/api.ts`, `web/src/stores/workflow.ts`,
+  `src/workflow/dto/create-workflow.dto.ts`,
+  `src/workflow/dto/list-workflows-query.dto.ts`
+- **Описание:** После R6.1a backend берёт владельца **только из
+  токена**, но DTO/query **продолжают принимать `userId`**. Фронт
+  (не тронут, R6.1b) отправляет его. Пока безвредно, но API вводит
+  в заблуждение.
+- **Решение:** убрать `userId` из `CreateWorkflowSchema` и
+  `ListWorkflowsQuerySchema`; во фронте — убрать из запросов.
+- **Когда чинить:** R6.1b.
+- **Связанные:** KI-201.
+
+---
+
+### KI-205 — migrate.ts логирует DATABASE_URL с паролем
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `migrate.ts`
+- **Описание:** `console.log('URL:', url)` печатает `DATABASE_URL`
+  целиком — **пароль в открытом виде** в stdout (RULES 5.1/5.3).
+  Видно при `pnpm db:migrate`.
+- **Решение:** не логировать URL; логировать только host/port/db
+  (без user/password) или вообще ничего.
+- **Когда чинить:** v0.8.x (одна строка).
+- **Связанные:** RULES 5.1, 5.3.
+
+---
+
+### KI-206 — Нет rate limiting / refresh / logout
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/auth/`
+- **Описание:** MVP R6.1a: без rate-limit на `/auth/login` (брутфорс
+  не ограничен); нет refresh-токена (R6.1b), нет logout/revocation.
+- **Решение:** `@nestjs/throttler` для login; refresh + logout в R6.1b.
+- **Когда чинить:** R6.1b (refresh/logout) + v0.8.x (throttle).
+- **Связанные:** KI-201.
+
+---
+
+### KI-207 — Параметры scrypt не фиксированы в хэше
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/auth/auth.service.ts`
+- **Описание:** Формат `scrypt$<salt>$<hash>` не хранит N/r/p.
+  Используются дефолты Node (N=16384, r=8, p=1). При смене дефолтов
+  Node старые пароли перестанут проверяться.
+- **Решение:** расширить формат `scrypt$N$r$p$salt$hash`; либо
+  фиксировать константы в коде и не менять без миграции.
+- **Когда чинить:** v0.8.x.
+- **Связанные:** KI-201.
+
+---
+
+### KI-208 — @nestjs/passport в deps не используется
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `package.json`
+- **Описание:** `@nestjs/passport@^12.0.0` остаётся в `dependencies`,
+  но после R6.1a (Auth — кастомный `JwtAuthGuard` через `@nestjs/jwt`,
+  без `passport-jwt`) не импортируется нигде. DESIGN v0.8 § 3.1
+  оставляет как «задел».
+- **Решение:** удалить из deps (если Passport не планируется) или
+  задокументировать причину оставить.
+- **Когда чинить:** при следующей чистке deps.
+- **Связанные:** KI-201.
+
+---
+
+### KI-209 — KI-номера в CHANGELOG `[0.1.0] → ### Planned` — не ссылки на реестр
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `docs/CHANGELOG.md`
+- **Описание:** Раздел `[0.1.0] → ### Planned` содержит строки вида
+  `KI-106 — Аутентификация (JWT + Passport)`. Эти KI-номера —
+  **исторические идентификаторы фич** из плана v0.1.0, а не ссылки на
+  реестр. С момента создания `KNOWN_ISSUES.md` нумерация разошлась:
+  там `KI-106` = «Идемпотентность media». Именно из-за этой коллизии
+  в R6.1a была ошибочно заведена запись «KI-106 → Fixed» (откачена,
+  см. KI-212).
+- **Решение:** (1) добавить оговорку в начало `### Planned`;
+  (2) провести разовую ревизию — сверить все `KI-\d+` из CHANGELOG
+  с реестром на совпадение смысла (потенциально другие коллизии).
+- **Когда чинить:** оговорка — docs-коммит R6.1a (сейчас); ревизия —
+  отдельной задачей v0.8.x.
+- **Связанные:** KI-212, RULES 3.18.
+
+---
+
+### KI-210 — DESIGN v0.8 § 1 / § 3.1 называют guard «Passport»-овым
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `docs/development/v0.8/DESIGN_V08_FEATURES.md`
+- **Описание:** § 1 «Backend API — auth (JWT + Passport)» и § 3.1
+  «`JwtAuthGuard` (Passport) — на `WorkflowController`» — фактически
+  **неверны после R6.1a**: реализован кастомный `JwtAuthGuard` на
+  `@nestjs/jwt` без `passport-jwt` (см. § 3.1, строки 68–70 — они
+  прямо это утверждают). KI-208 покрывает только deps, а не
+  формулировки.
+- **Решение:** поправить § 1 и § 3.1 в DESIGN; в § 3.1 уточнить
+  «кастомный, `@nestjs/jwt`».
+- **Когда чинить:** docs-коммит R6.1a (сейчас).
+- **Связанные:** KI-208, KI-201.
+
+---
+
+### KI-211 — Пропущены номера KI-198 и KI-199
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `docs/KNOWN_ISSUES.md` («Правила ведения»)
+- **Описание:** В реестре после KI-197 сразу KI-200 — номера KI-198
+  и KI-199 отсутствуют. Причина не установлена. Дырка сама по себе
+  не ошибка (номера не переиспользуются), но без правила следующий
+  автор решит, что записи потеряны, и попробует «заполнить» их.
+- **Решение:** зафиксировать в «Правилах ведения» `KNOWN_ISSUES.md`:
+  «номера KI не переиспользуются; пропуски допустимы; продолжать
+  с max+1 (RULES § 3.18)».
+- **Когда чинить:** docs-коммит R6.1a (сейчас).
+- **Связанные:** RULES 3.18.
+
+---
+
+### KI-212 — Сообщение коммита `88f53e4` содержит ошибочный «KI-106»
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** git history (коммит `88f53e4`)
+- **Описание:** Коммит `88f53e4` (`feat(auth): users + JWT auth
+  (R6.1a, KI-106)`) содержит ошибочную ссылку на KI-106 (в реестре =
+  идемпотентность media). Правильная ссылка — KI-201. Переписывать
+  историю (`--amend`, `git filter-repo`) не будем (RULES § 6.6 —
+  только `--force-with-lease` при согласовании; для публичной main —
+  нежелательно).
+- **Решение:** аннотировать через `git notes add 88f53e4 -m
+  "KI-106 -> KI-201"`; `git push origin refs/notes/commits`.
+  Перенумерация уже отражена в `[Unreleased] → ### Fixed`.
+- **Когда чинить:** docs-коммит R6.1a (git notes — сразу после push
+  docs).
+- **Связанные:** KI-201, KI-209.
 
 ---
 
@@ -3211,14 +3422,14 @@
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 71 |
+| Fixed | 72 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 111 |
+| Open | 122 |
 | Won't Fix | 1 |
-| **Всего** | **191** |
+| **Всего** | **203** |
 
 ---
 
@@ -3230,3 +3441,11 @@
 4. Статус: Open / In Progress / Fixed / Documented / Deferred / Won't Fix / Resolved.
 5. Для Fixed — обязательно указывается «Исправлено в: vX.Y.Z» и список файлов.
 6. Для Deferred — указывается «Запланировано: vX.Y.Z» и причина отсрочки.
+7. **Номера KI не переиспользуются.** Пропущенные номера (например,
+   KI-198, KI-199) — допустимы, это следы откаченных/перенесённых
+   записей. Не «заполнять» пропуск — продолжать с максимального
+   существующего +1 (RULES § 3.18).
+8. **KI-номера в других документах (CHANGELOG, DESIGN) могут быть
+   историческими идентификаторами фич, а не ссылками на реестр.**
+   Перед использованием любого «предложенного» номера — сверить
+   с реестром (RULES § 3.18, KI-209).

@@ -4,7 +4,7 @@
 **Версия:** 1.0 (final)
 **Дата:** 2026-10-15
 **Статус:** Approved
-**Закрывает (Fixed):** KI-106, 108, 109, 183, 185, 186, 187, 188, 189,
+**Закрывает (Fixed):** KI-201, 108, 109, 183, 185, 186, 187, 188, 189,
 190, 191, 192, 193, 194, 195, 197
 **Связанные:** KI-105, 128 (v0.9), KI-196 (v0.9)
 **RULES:** 2.5, 2.14
@@ -22,7 +22,7 @@
 
 | Направление | KI | Приоритет |
 |---|---|---|
-| **Auth + Share** | KI-106, KI-197 | 🟠 High |
+| **Auth + Share** | KI-201, KI-197 | 🟠 High |
 | **LLM upgrade** | KI-192 (system prompt), KI-193 (reasoning), KI-183 (maxTokens) | 🟠 High |
 | **Canvas UX** | KI-185, 186, 187, 188, 189, 190, 191, 195 | 🟡 Medium |
 | **Node types** | KI-105, KI-194 | 🟡 Medium |
@@ -44,7 +44,7 @@
 
 **Три слоя изменений:**
 
-1. **Backend API** — auth (JWT + Passport), share (shareToken),
+1. **Backend API** — auth (JWT, кастомный guard), share (shareToken),
    sub-workflow executor. **Изолированные модули**, не трогают
    существующий Engine / Runner.
 2. **Frontend editor** — Canvas UX (7 фич), LLM upgrade (system/
@@ -61,7 +61,7 @@
 
 ---
 
-## 3. Auth (KI-106)
+## 3. Auth (KI-201)
 
 ### 3.1. Стратегия
 
@@ -73,7 +73,7 @@
 7 дней) + fetch interceptor (401 → refresh → retry).
 
 **Passport:** `@nestjs/passport` остаётся в deps как задел,
-не используется в R6.1a (KI-201).
+не используется в R6.1a (KI-208).
 
 **Multi-tenant готовность:** в схеме `workflows.userId` **уже есть**
 (nullable). После v0.8 — **обязателен**.
@@ -106,7 +106,7 @@
 
 ### 3.4. Guards
 
-- `JwtAuthGuard` (Passport) — на `WorkflowController`,
+- `JwtAuthGuard` (кастомный, `@nestjs/jwt`) — на `WorkflowController`,
   `RunsController`, `LlmController` (кроме `/llm/models` — публичный).
 - `@CurrentUser()` — декоратор, инжектит `userId` из JWT.
 - **Все запросы** к `/workflow`, `/runs` — фильтр по `userId`.
@@ -531,7 +531,7 @@ snapshot (deep equal через hash). Хранить `lastSavedHash: string`.
 
 | Подшаг | Что | KI | ~Время |
 |---|---|---|---|
-| **R6.1** | Auth — users, JWT, guards, frontend login | KI-106 | 4 ч |
+| **R6.1** | Auth — users, JWT, guards, frontend login | KI-201 | 4 ч |
 | **R6.2** | Share — share_token, read-only, копирование | KI-197 | 3 ч |
 | **R6.3** | LLM upgrade — system/reasoning/maxTokens | KI-192, 193, 183 | 3 ч |
 | **R6.4** | Canvas UX — 8 фич | KI-185..191, 195 | 6 ч |
