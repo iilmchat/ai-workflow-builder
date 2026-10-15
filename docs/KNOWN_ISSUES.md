@@ -4262,7 +4262,12 @@
      (`import('/src/stores/workflow.ts')`) создаёт **второй экземпляр**
      Zustand-стора, если Vite отдал приложению `?t=<timestamp>` после
      инвалидации. Обход — брать URL из
-     `performance.getEntriesByType('resource')` (с реальным `?t=`).         
+     `performance.getEntriesByType('resource')` (с реальным `?t=`).
+  5. `Network.requestWillBeSent` **не содержит** заголовок
+     `Authorization` (даже при валидном токене). Реальные заголовки
+     доступны в `Network.requestWillBeSentExtraInfo` (или через
+     `Fetch.requestPaused`). Для проверки «Bearer ушёл» — использовать
+     только второй.              
 - **Решение:** зафиксировать оба правила в RULES § 4.33 (смоук CDP)
   или в отдельной памятке.
 - **Связанные:** KI-135 (Emulation.setFocusEmulationEnabled).
@@ -4324,7 +4329,14 @@
 ---
 
 ### KI-268 — SSE-поток запуска недоступен при AUTH_DISABLED=false
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (R6.4b.2a-fix2, коммит 5374164)
+- **Fix:** `subscribeToRunStream` переведён с `EventSource` на
+  `fetch` + `ReadableStream` (`Authorization: Bearer`,
+  `AbortSignal`, refresh на 401, до 3 повторов, `onClose`);
+  разбор кадров — `lib/sse-parser.ts` (+7 тестов).
+- **Остаток:** KI-271 (F5 посреди Run), KI-272 (onFatalError).
+- **Связанные:** KI-063, KI-202, KI-060, KI-271, KI-272.
 - **Файлы:** `web/src/lib/run-stream.ts`,
   `src/runs/runs.controller.ts`
 - **Описание:** `EventSource` не умеет передавать `Authorization` →
@@ -4367,18 +4379,48 @@
 
 ---
 
+### KI-271 — После F5 посреди запуска прогресс не восстанавливается
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/stores/workflow.ts` (`loadWorkflowAsync` →
+  `resetRunState`), `web/src/App.tsx`, `web/src/lib/run-stream.ts`
+- **Описание:** Reload в момент `runStatus='running'` → после
+  загрузки `runId=null`, `runStatus=null`, новых запросов
+  `/runs/:id/stream` нет, тогда как в БД запуск завершился штатно.
+  Раньше переподключение давал `EventSource` (KI-049); с `fetch`
+  автоперезапуска после reload нет — нужна явная логика resume.
+- **Решение:** хранить `runId` в URL (`?runId=`) или
+  `sessionStorage`; после загрузки графа — подписываться заново
+  (`snapshot` из БД восстановит статусы узлов и итог).
+- **Связанные:** KI-268, KI-049, KI-063.
+
+---
+
+### KI-272 — `onFatalError` потока не снимает «выполняется»
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/stores/workflow.ts`
+  (`startRunAsync.onFatalError`)
+- **Описание:** После 3 ошибок подряд подписка закрыта, `runError`
+  заполнен, но `runStatus` остаётся `pending`/`running` →
+  `isRunActive` держит кнопку Run заблокированной, бейдж
+  «Выполняется…» без потока.
+- **Решение:** в `onFatalError` выставлять `runStatus: 'failed'`
+  (или отдельный статус «поток прерван») вместе с тостом.
+- **Связанные:** KI-268, KI-060.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 92 |
+| Fixed | 93 |
 | In Progress | 1 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 157 |
+| Open | 158 |
 | Won't Fix | 1 |
-| **Всего** | **259** |
+| **Всего** | **261** |
 
 ---
 

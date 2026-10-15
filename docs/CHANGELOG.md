@@ -184,6 +184,9 @@
 - **KI-190** — Minimap toggle (hotkey M + кнопка) (`e923384`).
 - **KI-265** — путь репозитория в PROMPT_V5.md приведён к
   `D:\Projects\AI\workflow-builder` (docs-коммит).
+  - **KI-271** — после F5 посреди запуска прогресс не восстанавливается
+    (Medium).
+  - **KI-272** — `onFatalError` потока не снимает «выполняется» (Low).  
 
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
@@ -251,6 +254,10 @@
     frontend больше не отсекает `comment` при Save/Plan
     (`55beb6d`).
   - **KI-187** — комментарии/аннотации на холсте (`55beb6d`).
+  - **KI-268** — SSE-поток запуска авторизуется через `fetch`
+    с Bearer-заголовком (`ReadableStream`); `EventSource` не умеет
+    заголовки → 401 при `AUTH_DISABLED=false`
+    (`5374164`).  
 
 ## [0.7.2] — 2026-10-15
 
