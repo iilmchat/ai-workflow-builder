@@ -99,6 +99,18 @@
     → `supportsReasoning=true` + `defaultMaxTokens=4096`.
   - `llm-registry`: пропускает новые поля в `GET /llm/models`.
   - +16 тестов (412 → 428).
+- **LLM upgrade — frontend (R6.3.2, KI-183/192/193):**
+  - `LlmNodeData` += `systemPrompt?`, `reasoningEffort?`,
+    `maxTokensOverride?`.
+  - `LLMNode` — сворачиваемый System prompt; `<select>` Reasoning
+    (только при `supportsReasoning === true`); `<input>` Max tokens
+    (placeholder = defaultMaxTokens).
+  - `lib/llm-node-fields.ts` — REASONING_EFFORTS + валидаторы.
+  - `lib/api.ts` — Zod-схема += `supportsReasoning` / `defaultMaxTokens`
+    (иначе strip — KI-149).
+  - `nodeDataFromApi` — переносит новые поля (паттерн KI-129).
+  - i18n: 10 ключей `node.llm.*` (ru/en 145/145).
+  - Frontend tests: 29 → 33 (+4).
 
 ### Fixed
 - **KI-201** — Auth backend (R6.1a): users, JWT-guard, `/auth/*`,
@@ -170,6 +182,9 @@
     захардкожены (Medium), лимит токенов в трёх местах (Low),
     ReasoningEffort покрывает только off/medium/high (Low),
     лог движка «узлов=0» (Low).
+  - **KI-248..251** — frontend LLM-остаток v0.8.x: `reasoningEffort`
+    не сбрасывается при смене модели, union в 3 местах,
+    placeholder без пояснения, нет unit-теста на `nodeDataFromApi`.
     
 ## [0.7.2] — 2026-10-15
 

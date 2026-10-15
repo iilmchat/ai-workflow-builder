@@ -3136,8 +3136,8 @@
   `data.systemPrompt` (fallback `data.system`), передаёт в
   `options.system`. OpenAI-совместимые: `messages[0].role='system'`;
   Anthropic: поле `system`.
-- **Остаток (R6.3.2, frontend):** сворачиваемый `<textarea>` в
-  `LLMNode`.
+- **Fix (R6.3.2, frontend):** сворачиваемый `<textarea>` в `LLMNode`
+  (коммит `fd50a31`).
 - **Связанные:** KI-180, KI-193.
 - **Файлы:** `web/src/components/nodes/LLMNode.tsx`,
   `web/src/types/graph.ts`, `src/llm/llm-node-executor.service.ts`
@@ -3159,8 +3159,8 @@
   через типизированное поле SDK, только если
   `ModelInfo.supportsReasoning === true`; 'off' → поле не отправляется.
   Anthropic extended thinking — v0.8.x (warn).
-- **Остаток (R6.3.2, frontend):** `<select>` Off/Medium/High в `LLMNode`
-  (только для моделей с `supportsReasoning === true`).
+- **Fix (R6.3.2, frontend):** `<select>` Off/Medium/High в `LLMNode`
+  (только при `supportsReasoning === true`) — коммит `fd50a31`.
 - **Связанные:** KI-183, KI-192, KI-244, KI-246.
 - **Файлы:** `web/src/components/nodes/LLMNode.tsx`,
   `web/src/types/graph.ts`, `src/llm/llm-node-executor.service.ts`
@@ -3993,6 +3993,62 @@
 
 ---
 
+### KI-248 — `reasoningEffort` не сбрасывается при смене модели
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/components/nodes/LLMNode.tsx`
+- **Описание:** При смене модели на модель без `supportsReasoning`
+  поле `data.reasoningEffort` остаётся в графе (backend игнорирует
+  через проверку `supportsReasoning`, но в JSON мусор).
+- **Решение:** при изменении `data.model` — если у новой модели
+  `supportsReasoning !== true` → `updateNodeData(id, { reasoningEffort: undefined })`.
+- **Когда чинить:** v0.8.x (при UX-полировке).
+- **Связанные:** KI-193, KI-249.
+
+---
+
+### KI-249 — Union `ReasoningEffort` продублирован в трёх местах
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/llm/llm-provider.interface.ts`,
+  `web/src/lib/llm-node-fields.ts`, `web/src/types/graph.ts`
+- **Описание:** Union `'off'|'medium'|'high'` объявлен на backend и
+  дважды на frontend (`types/graph.ts` + `lib/llm-node-fields.ts`).
+  При добавлении `low`/`minimal` (KI-246) легко забыть одно место.
+- **Решение:** `types/graph.ts` импортирует `ReasoningEffort` из
+  `lib/llm-node-fields.ts`; backend/frontend синхронизировать через
+  общий источник (или паритет-тест на строку-литерал).
+- **Когда чинить:** при расширении union (KI-246).
+- **Связанные:** KI-246, KI-248.
+
+---
+
+### KI-250 — Placeholder «Max tokens» без пояснения
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/components/nodes/LLMNode.tsx`,
+  `web/src/i18n/{ru,en}.json`
+- **Описание:** При известном `defaultMaxTokens` placeholder —
+  голое число (4096) без пояснения, что это «по умолчанию».
+- **Решение:** i18n-шаблон с интерполяцией
+  (`node.llm.maxTokens.placeholder = 'По умолчанию: {{value}}'`).
+- **Когда чинить:** при UX-полировке.
+- **Связанные:** KI-183.
+
+---
+
+### KI-251 — Нет unit-теста на `nodeDataFromApi` (LLM-поля)
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/stores/workflow.ts`,
+  `web/src/stores/workflow.spec.ts` (нет)
+- **Описание:** Перенос `systemPrompt` / `reasoningEffort` /
+  `maxTokensOverride` в `nodeDataFromApi` покрыт только CDP-смоуком.
+  Валидаторы вынесены в `llm-node-fields.ts` и покрыты тестами, а
+  сам маппинг — нет.
+- **Решение:** unit-тест на `nodeDataFromApi` (или выделить
+  `mapLlmNodeFromApi` в `lib/*` и покрыть).
+- **Когда чинить:** вместе с KI-155 (frontend-инфраструктура тестов).
+- **Связанные:** KI-155, KI-192, KI-193.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
@@ -4002,9 +4058,9 @@
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 148 |
+| Open | 152 |
 | Won't Fix | 1 |
-| **Всего** | **238** |
+| **Всего** | **242** |
 
 ---
 
