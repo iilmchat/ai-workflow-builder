@@ -277,3 +277,47 @@ describe('AUTH_DISABLED в production (KI-213)', () => {
     expect(parsed.AUTH_DISABLED).toBeUndefined();
   });
 });
+
+describe('COOKIE_SECURE в production (KI-220)', () => {
+  it('отклоняет COOKIE_SECURE=false при NODE_ENV=production', () => {
+    expect(() =>
+      validateEnv({ ...baseEnv, NODE_ENV: 'production', COOKIE_SECURE: 'false' }),
+    ).toThrow('COOKIE_SECURE=false недопустим в production');
+  });
+
+  it('принимает COOKIE_SECURE=true в production', () => {
+    const result = validateEnv({
+      ...baseEnv,
+      NODE_ENV: 'production',
+      COOKIE_SECURE: 'true',
+    });
+
+    expect(result.COOKIE_SECURE).toBe(true);
+  });
+});
+
+describe('staging / preprod считаются prod-подобными (KI-221)', () => {
+  it('отклоняет AUTH_DISABLED=true при NODE_ENV=staging', () => {
+    expect(() =>
+      validateEnv({ ...baseEnv, NODE_ENV: 'staging', AUTH_DISABLED: 'true' }),
+    ).toThrow('AUTH_DISABLED=true недопустим в production');
+  });
+
+  it('отклоняет COOKIE_SECURE=false при NODE_ENV=preprod', () => {
+    expect(() =>
+      validateEnv({ ...baseEnv, NODE_ENV: 'preprod', COOKIE_SECURE: 'false' }),
+    ).toThrow('COOKIE_SECURE=false недопустим в production');
+  });
+
+  it('разрешает безопасные значения в staging', () => {
+    const result = validateEnv({
+      ...baseEnv,
+      NODE_ENV: 'staging',
+      AUTH_DISABLED: 'false',
+      COOKIE_SECURE: 'true',
+    });
+
+    expect(result.AUTH_DISABLED).toBe(false);
+    expect(result.COOKIE_SECURE).toBe(true);
+  });
+});

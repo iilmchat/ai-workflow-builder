@@ -82,8 +82,8 @@ export const workflows = pgTable('workflows', {
   version: integer('version').notNull().default(1),
   // Задел под R6.2 (Share): публичная ссылка на граф.
   shareToken: uuid('share_token').unique(),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
 /**

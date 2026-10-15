@@ -81,7 +81,7 @@ export type WorkerEnv = z.infer<typeof WorkerEnvSchema>;
  */
 export const EnvSchema = z.object({
   /** Режим работы приложения. */
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  NODE_ENV: z.enum(['development', 'test', 'production', 'staging', 'preprod']).default('development'),
   /** Порт HTTP-сервера. */
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   /** Строка подключения к PostgreSQL (в Docker compose проброшен порт 5433). */
@@ -254,15 +254,30 @@ export const EnvSchema = z.object({
    * схеме, поэтому видит `NODE_ENV` и `AUTH_DISABLED` одновременно
    * (`WorkerEnvSchema` влита через `.shape` и своей проверки не имеет).
    */
-  .superRefine((env, ctx) => {
-    if (env.NODE_ENV === 'production' && env.AUTH_DISABLED === true) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'AUTH_DISABLED=true недопустим в production (security)',
-        path: ['AUTH_DISABLED'],
-      });
-    }
-  });
+.superRefine((env, ctx) => {
+  // KI-221: prod-подобные окружения (staging, preprod) требуют тех же
+  // ограничений безопасности, что и production.
+  const isProdLike =
+    env.NODE_ENV === 'production' ||
+    env.NODE_ENV === 'staging' ||
+    env.NODE_ENV === 'preprod';
+
+  if (isProdLike && env.AUTH_DISABLED === true) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'AUTH_DISABLED=true недопустим в production (security)',
+      path: ['AUTH_DISABLED'],
+    });
+  }
+  // KI-220: запрет на понижение secure-флага refresh-cookie в prod.
+  if (isProdLike && env.COOKIE_SECURE === false) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'COOKIE_SECURE=false недопустим в production (security)',
+      path: ['COOKIE_SECURE'],
+    });
+  }
+});
 
 /** Валидированная конфигурация окружения (с применёнными значениями по умолчанию). */
 export type Env = z.infer<typeof EnvSchema>;
