@@ -13,6 +13,7 @@ import { EngineModule } from './engine/engine.module.js';
 import { NodesModule } from './nodes/nodes.module.js';
 import { RedisModule } from './redis/redis.module.js';
 import { RunsModule } from './runs/runs.module.js';
+import { TemplatesModule } from './templates/templates.module.js';
 
 @Module({
   imports: [
@@ -40,6 +41,9 @@ import { RunsModule } from './runs/runs.module.js';
     EngineModule,
     NodesModule,
     RunsModule,
+    // R6.6.1: шаблоны (GET /templates, POST /templates/:id/instantiate).
+    // Импортирует WorkflowModule ради WorkflowService.importAsync.
+    TemplatesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

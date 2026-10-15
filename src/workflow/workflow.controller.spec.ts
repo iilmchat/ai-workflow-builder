@@ -1,8 +1,11 @@
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, type INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
+import request from 'supertest';
+import { DEMO_USER_ID } from '../auth/auth.constants.js';
 import type { Workflow } from '../db/schema.js';
+import type { ExportWorkflowDto } from './dto/index.js';
 import { WorkflowController } from './workflow.controller.js';
 import { WorkflowService } from './workflow.service.js';
 
@@ -131,5 +134,122 @@ describe('WorkflowController', () => {
         NotFoundException,
       );
     });
+  });
+});
+
+/** Артефакт экспорта: то, что отдаёт сервис и принимает импорт (R6.6.1). */
+const artifact: ExportWorkflowDto = {
+  version: 1,
+  name: 'My workflow',
+  nodes: [
+    {
+      id: 'n1',
+      type: 'text',
+      position: { x: 0, y: 0 },
+      data: { kind: 'text', value: '' },
+    },
+  ],
+  edges: [],
+  exportedAt: '2026-10-16T00:00:00.000Z',
+};
+
+describe('WorkflowController — export/import (R6.6.1)', () => {
+  let app: INestApplication;
+  let service: {
+    createAsync: ReturnType<typeof vi.fn>;
+    findAllAsync: ReturnType<typeof vi.fn>;
+    findOneAsync: ReturnType<typeof vi.fn>;
+    updateAsync: ReturnType<typeof vi.fn>;
+    removeAsync: ReturnType<typeof vi.fn>;
+    exportAsync: ReturnType<typeof vi.fn>;
+    importAsync: ReturnType<typeof vi.fn>;
+  };
+
+  beforeEach(async () => {
+    service = {
+      createAsync: vi.fn(),
+      findAllAsync: vi.fn(),
+      findOneAsync: vi.fn(),
+      updateAsync: vi.fn(),
+      removeAsync: vi.fn(),
+      exportAsync: vi.fn(() => Promise.resolve(artifact)),
+      importAsync: vi.fn(() => Promise.resolve(workflow)),
+    };
+
+    const moduleRef = await Test.createTestingModule({
+      controllers: [WorkflowController],
+      providers: [
+        { provide: WorkflowService, useValue: service },
+        // AUTH_DISABLED=true → запросы идут от системного пользователя
+        // (как в workflow-share.spec.ts), поэтому владельца можно проверить.
+        { provide: JwtService, useValue: { verifyAsync: vi.fn() } },
+        { provide: ConfigService, useValue: { get: vi.fn(() => true) } },
+      ],
+    }).compile();
+
+    app = moduleRef.createNestApplication();
+    await app.init();
+  });
+
+  afterEach(async () => {
+    await app.close();
+    vi.restoreAllMocks();
+  });
+
+  it('GET /workflow/:id/export — 200, артефакт версии 1 без служебных полей', async () => {
+    const response = await request(app.getHttpServer())
+      .get(`/workflow/${WORKFLOW_ID}/export`)
+      .expect(200);
+
+    expect(response.body).toEqual(artifact);
+    // Sharable-артефакт: ровно пять полей, ни одного служебного.
+    expect(Object.keys(response.body).sort()).toEqual([
+      'edges',
+      'exportedAt',
+      'name',
+      'nodes',
+      'version',
+    ]);
+    expect(response.body).not.toHaveProperty('id');
+    expect(response.body).not.toHaveProperty('userId');
+    expect(response.body).not.toHaveProperty('shareToken');
+    expect(response.body).not.toHaveProperty('createdAt');
+    expect(response.body.version).toBe(1);
+    expect(service.exportAsync).toHaveBeenCalledWith(WORKFLOW_ID, DEMO_USER_ID);
+  });
+
+  it('GET /workflow/:id/export — 404, если workflow чужой или не существует', async () => {
+    service.exportAsync.mockRejectedValue(new NotFoundException('Workflow не найден'));
+
+    await request(app.getHttpServer()).get(`/workflow/${WORKFLOW_ID}/export`).expect(404);
+  });
+
+  it('GET /workflow/:id/export — 400 на не-uuid id', async () => {
+    await request(app.getHttpServer()).get('/workflow/not-a-uuid/export').expect(400);
+    expect(service.exportAsync).not.toHaveBeenCalled();
+  });
+
+  it('POST /workflow/import — 201, владелец берётся из токена, а не из body', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/workflow/import')
+      .send({ ...artifact, id: 'evil-id', userId: 'attacker', shareToken: 'evil' })
+      .expect(201);
+
+    expect(response.body).toEqual({ ...workflow, createdAt: expect.any(String), updatedAt: expect.any(String) });
+    // Лишние ключи отброшены Zod'ом: подменить владельца или id через body нельзя.
+    expect(service.importAsync).toHaveBeenCalledWith(artifact, DEMO_USER_ID);
+  });
+
+  it('POST /workflow/import — 400 без обязательного version', async () => {
+    const { version, ...withoutVersion } = artifact;
+
+    expect(version).toBe(1);
+
+    await request(app.getHttpServer())
+      .post('/workflow/import')
+      .send(withoutVersion)
+      .expect(400);
+
+    expect(service.importAsync).not.toHaveBeenCalled();
   });
 });

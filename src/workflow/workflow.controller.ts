@@ -22,7 +22,10 @@ import {
   CreateWorkflowSchema,
   ListWorkflowsQuerySchema,
   UpdateWorkflowSchema,
+  ImportWorkflowSchema,
   type CreateWorkflowDto,
+  type ExportWorkflowDto,
+  type ImportWorkflowDto,
   type ListWorkflowsQueryDto,
   type ShareTokenDto,
   type UpdateWorkflowDto,
@@ -83,6 +86,56 @@ export class WorkflowController {
     @CurrentUser() user: JwtPayload,
   ): Promise<Workflow[]> {
     return this.workflowService.findAllAsync(user.sub, query.limit, query.offset);
+  }
+
+  /**
+   * `POST /workflow/import` — создаёт workflow из экспортированного артефакта
+   * (R6.6.1, DESIGN v0.8 § 9).
+   *
+   * Объявлен **до** параметрических маршрутов (`:id`, `:id/share`) сознательно:
+   * Nest сопоставляет маршруты в порядке объявления, и хотя `import` — это
+   * отдельный статический сегмент (конфликта с `:id` нет: у `:id` тоже один
+   * сегмент, но `POST /workflow/import` попал бы в `@Post(':id')`, если такой
+   * появится позже), порядок «сначала статика, потом параметры» избавляет от
+   * сюрпризов при добавлении новых ручек.
+   *
+   * Владелец берётся из токена: `userId` в артефакте отсутствует по построению,
+   * и подставить чужого владельца через body невозможно.
+   *
+   * @param dto - тело запроса, валидированное по ImportWorkflowSchema
+   * @param user - владелец нового workflow из access-токена
+   * @returns созданный workflow со статусом 201
+   */
+  @Post('import')
+  @HttpCode(HttpStatus.CREATED)
+  async importAsync(
+    @Body(ZodValidationPipe.create(ImportWorkflowSchema)) dto: ImportWorkflowDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<Workflow> {
+    return this.workflowService.importAsync(dto, user.sub);
+  }
+
+  /**
+   * `GET /workflow/:id/export` — выгружает workflow владельца в sharable JSON
+   * (R6.6.1, DESIGN v0.8 § 9).
+   *
+   * Ответ — сам артефакт, без envelope. `id`/`userId`/`shareToken`/`createdAt`
+   * в него не попадают: служебные поля не выбираются из БД (см.
+   * `WorkflowService.exportAsync`), поэтому утечка capability-токена исключена
+   * структурно, а не фильтрацией после выборки.
+   *
+   * @param params - path-параметр `id` (uuid)
+   * @param user - владелец из access-токена
+   * @returns артефакт `{ version, name, nodes, edges, exportedAt }`
+   * @throws NotFoundException если workflow не существует или чужой
+   */
+  @Get(':id/export')
+  @HttpCode(HttpStatus.OK)
+  async exportAsync(
+    @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ExportWorkflowDto> {
+    return this.workflowService.exportAsync(params.id, user.sub);
   }
 
   /**

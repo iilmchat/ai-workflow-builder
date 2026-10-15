@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "name": "Text → LLM",
+  "description": "Базовый: текстовый ввод в LLM",
+  "exportedAt": "2026-10-16T00:00:00.000Z",
+  "nodes": [
+    {
+      "id": "t1",
+      "type": "text",
+      "position": { "x": 0, "y": 0 },
+      "data": { "kind": "text", "value": "" }
+    },
+    {
+      "id": "l1",
+      "type": "llm",
+      "position": { "x": 320, "y": 0 },
+      "data": { "kind": "llm", "model": "" }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "t1",
+      "target": "l1",
+      "sourceHandle": "text-output",
+      "targetHandle": "text-input"
+    }
+  ]
+}

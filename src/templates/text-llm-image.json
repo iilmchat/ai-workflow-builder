@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "name": "Text → LLM → Image",
+  "description": "Текст → LLM → генерация изображения по ответу модели",
+  "exportedAt": "2026-10-16T00:00:00.000Z",
+  "nodes": [
+    {
+      "id": "t1",
+      "type": "text",
+      "position": { "x": 0, "y": 0 },
+      "data": { "kind": "text", "value": "" }
+    },
+    {
+      "id": "l1",
+      "type": "llm",
+      "position": { "x": 320, "y": 0 },
+      "data": { "kind": "llm", "model": "" }
+    },
+    {
+      "id": "g1",
+      "type": "image_generation",
+      "position": { "x": 640, "y": 0 },
+      "data": { "kind": "image", "model": "" }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "t1",
+      "target": "l1",
+      "sourceHandle": "text-output",
+      "targetHandle": "text-input"
+    },
+    {
+      "id": "e2",
+      "source": "l1",
+      "target": "g1",
+      "sourceHandle": "text-output",
+      "targetHandle": "text-input"
+    }
+  ]
+}

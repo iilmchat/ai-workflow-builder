@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "name": "HTTP → LLM",
+  "description": "Запрос по HTTP, ответ уходит в LLM на обработку",
+  "exportedAt": "2026-10-16T00:00:00.000Z",
+  "nodes": [
+    {
+      "id": "h1",
+      "type": "http",
+      "position": { "x": 0, "y": 0 },
+      "data": { "kind": "http", "method": "GET", "url": "" }
+    },
+    {
+      "id": "l1",
+      "type": "llm",
+      "position": { "x": 320, "y": 0 },
+      "data": { "kind": "llm", "model": "" }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "h1",
+      "target": "l1",
+      "sourceHandle": "http-output",
+      "targetHandle": "text-input"
+    }
+  ]
+}

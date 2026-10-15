@@ -11,6 +11,8 @@ import { workflows, type NewWorkflow, type Workflow } from '../db/schema.js';
 import type { EdgeDto, NodeDto } from '../engine/dto/index.js';
 import type {
   CreateWorkflowDto,
+  ExportWorkflowDto,
+  ImportWorkflowDto,
   ShareTokenDto,
   SharedWorkflow,
   UpdateWorkflowDto,
@@ -22,6 +24,14 @@ const DEFAULT_LIMIT = 50;
 const DEFAULT_OFFSET = 0;
 /** Префикс относительной share-ссылки (R6.2.1). */
 const SHARE_URL_PREFIX = '/workflow/share/';
+/**
+ * Версия формата экспорта (R6.6.1, DESIGN v0.8 § 9).
+ *
+ * Это версия **артефакта**, а не колонка `workflows.version`: экспорт всегда
+ * помечается единицей, иначе строка с другим значением колонки дала бы файл,
+ * который не проходит `ImportWorkflowSchema` (`z.literal(1)`).
+ */
+const EXPORT_FORMAT_VERSION = 1 as const;
 
 /**
  * Сервис CRUD-операций над workflow.
@@ -59,6 +69,39 @@ export class WorkflowService {
       .returning();
 
     this.logger.debug(`Workflow создан: id=${created.id}, userId=${created.userId}`);
+
+    return created;
+  }
+
+  /**
+   * Импортирует workflow: создаёт **новую** запись у текущего владельца
+   * (R6.6.1, DESIGN v0.8 § 9).
+   *
+   * Служебные поля артефакта (`exportedAt`, `version`) в БД не переносятся:
+   * `version` — версия формата экспорта, а не колонка `workflows.version`, а
+   * `exportedAt` описывает момент выгрузки, а не создания копии. `id` нового
+   * графа генерирует БД (`gen_random_uuid()`), поэтому повторный импорт одного
+   * файла даёт независимые workflow.
+   *
+   * Отдельного INSERT здесь нет намеренно: вставка делегируется
+   * {@link createAsync}, чтобы у импорта и создания был ровно один путь записи
+   * (иначе разошлись бы дефолты и набор колонок).
+   *
+   * Транзакция (RULES 4.22) не нужна: запись одна, связанных изменений нет.
+   *
+   * @param dto - валидированный артефакт (то, что отдаёт `GET /workflow/:id/export`)
+   * @param userId - владелец нового workflow (uuid из access-токена)
+   * @returns созданный workflow
+   */
+  async importAsync(dto: ImportWorkflowDto, userId: string): Promise<Workflow> {
+    const created = await this.createAsync(
+      { name: dto.name, nodes: dto.nodes, edges: dto.edges },
+      userId,
+    );
+
+    this.logger.debug(
+      `Workflow импортирован: id=${created.id}, узлов=${dto.nodes.length}, связей=${dto.edges.length}`,
+    );
 
     return created;
   }
@@ -105,6 +148,48 @@ export class WorkflowService {
       .limit(1);
 
     return found ?? null;
+  }
+
+  /**
+   * Экспортирует workflow владельца в sharable JSON (R6.6.1, DESIGN v0.8 § 9).
+   *
+   * Выборка идёт явной проекцией (`name`, `nodes`, `edges`) с фильтром по
+   * владельцу, а не `select()` целиком: так служебные поля (`id`, `userId`,
+   * `shareToken`, `createdAt`) не могут попасть в артефакт даже случайно — это
+   * структурная гарантия, а не договорённость (артефакт уходит наружу, и
+   * `shareToken` в нём был бы capability-утечкой, RULES 5.9).
+   *
+   * `exportedAt` — момент выгрузки в ISO-8601, информационное поле: импорт его
+   * игнорирует.
+   *
+   * @param id - uuid workflow
+   * @param userId - владелец из access-токена
+   * @returns артефакт `{ version, name, nodes, edges, exportedAt }`
+   * @throws NotFoundException если workflow не существует или чужой
+   */
+  async exportAsync(id: string, userId: string): Promise<ExportWorkflowDto> {
+    const [found] = await this.db
+      .select({
+        name: workflows.name,
+        nodes: workflows.nodes,
+        edges: workflows.edges,
+      })
+      .from(workflows)
+      .where(this.buildAccessFilter(id, userId))
+      .limit(1);
+
+    // Чужой workflow неотличим от несуществующего: 404, а не 403 (как share).
+    if (!found) {
+      throw new NotFoundException(`Workflow ${id} не найден`);
+    }
+
+    return {
+      version: EXPORT_FORMAT_VERSION,
+      name: found.name,
+      nodes: found.nodes,
+      edges: found.edges,
+      exportedAt: new Date().toISOString(),
+    };
   }
 
   /**
