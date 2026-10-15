@@ -607,6 +607,133 @@ describe('ExecutionEngineService', () => {
     expect(eventTypes()).toEqual(['run_started']);
   });
 
+  it('R6.5.1: выполняет граф http → text и пишет outputs http в node_runs', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve({
+        status: 200,
+        headers: new Headers(),
+        text: () => Promise.resolve('{"ip":"127.0.0.1"}'),
+      } as unknown as Response),
+    );
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const graph: GraphDto = {
+        nodes: [
+          node('A', 'http', { method: 'GET', url: 'https://example.com/get', timeoutMs: 5000 }),
+          node('B', 'text', { value: 'после http' }),
+        ],
+        edges: [],
+      };
+
+      const result = await service.executeAsync(RUN_ID, graph);
+
+      expect(result.status).toBe('completed');
+      expect(result.executedNodes).toBe(2);
+
+      const httpRow = fake.rows.find((row) => row.nodeId === 'A');
+
+      expect(httpRow?.status).toBe('completed');
+      expect(httpRow?.nodeType).toBe('http');
+      expect(httpRow?.outputs).toEqual({ status: 200, body: '{"ip":"127.0.0.1"}' });
+      // У http-узла нет метрик: обе колонки стоимости остаются NULL (KI-038).
+      expect(httpRow?.costUsd).toBeNull();
+      expect(httpRow?.costRub).toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fake.run.status).toBe('completed');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('R6.5.1: http без url падает с понятной ошибкой и не повторяется', async () => {
+    const fetchMock = vi.fn();
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const graph: GraphDto = { nodes: [node('A', 'http', { method: 'GET' })], edges: [] };
+
+      await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow(
+        'Узел http: не задан url',
+      );
+
+      expect(fake.rows[0].status).toBe('failed');
+      expect(fake.rows[0].error).toContain('не задан url');
+      // Детерминированная ошибка: сеть не дёргалась, повторов не было (KI-041).
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(fake.rows[0].logs).toEqual([]);
+      expect(fake.run.status).toBe('failed');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('R6.5.1: compare получает оба входа a и b (per-handle fallback)', async () => {
+    const graph: GraphDto = {
+      nodes: [
+        node('A', 'text', { value: 'одинаково' }),
+        node('B', 'text', { value: 'одинаково' }),
+        node('C', 'compare', { mode: 'diff' }),
+      ],
+      edges: [edge('e1', 'A', 'C', 'text-output', 'a'), edge('e2', 'B', 'C', 'text-output', 'b')],
+    };
+
+    const result = await service.executeAsync(RUN_ID, graph);
+
+    expect(result.status).toBe('completed');
+
+    const compareRow = fake.rows.find((row) => row.nodeId === 'C');
+
+    // У `compare` нет контракта в NODE_PORT_CONTRACT намеренно: контракт описал
+    // бы один вход, и вторая связь перекрыла бы первую (KI-035). Без контракта
+    // работает fallback по targetHandle — оба операнда доходят до исполнителя.
+    expect(compareRow?.inputs).toEqual({ a: 'одинаково', b: 'одинаково' });
+    expect(compareRow?.outputs).toEqual({ diff: '', equal: true });
+  });
+
+  it('R6.5.1: condition получает нормализованный вход input и отдаёт result', async () => {
+    const graph: GraphDto = {
+      nodes: [
+        node('A', 'text', { value: '5' }),
+        node('B', 'condition', { left: 'input.value', operator: '>', right: '3' }),
+      ],
+      edges: [edge('e1', 'A', 'B', 'text-output', 'input')],
+    };
+
+    const result = await service.executeAsync(RUN_ID, graph);
+
+    expect(result.status).toBe('completed');
+
+    const conditionRow = fake.rows.find((row) => row.nodeId === 'B');
+
+    expect(conditionRow?.inputs).toEqual({ input: '5' });
+    expect(conditionRow?.outputs).toEqual({
+      result: true,
+      evaluated: { left: 5, right: 3 },
+    });
+  });
+
+  it('R6.5.1: output подписывает вход именем из data.name', async () => {
+    const graph: GraphDto = {
+      nodes: [
+        node('A', 'text', { value: 'текст из text-узла' }),
+        node('B', 'output', { name: 'my_output' }),
+      ],
+      edges: [edge('e1', 'A', 'B', 'text-output', 'prompt')],
+    };
+
+    const result = await service.executeAsync(RUN_ID, graph);
+
+    expect(result.status).toBe('completed');
+
+    const outputRow = fake.rows.find((row) => row.nodeId === 'B');
+
+    expect(outputRow?.inputs).toEqual({ prompt: 'текст из text-узла' });
+    expect(outputRow?.outputs).toEqual({ my_output: 'текст из text-узла' });
+  });
+
   it('KI-037: ошибка планирования закрывает запуск failed, а не оставляет pending', async () => {
     const graph: GraphDto = {
       nodes: [node('A', 'text'), node('B', 'text')],

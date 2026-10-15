@@ -19,6 +19,10 @@ import type { GraphDto, NodeDto } from './dto/index.js';
 import { EngineService, type ExecutionPlanDto } from './engine.service.js';
 import {
   UnsupportedNodeTypeException,
+  executeCompareNode,
+  executeConditionNode,
+  executeHttpNode,
+  executeOutputNode,
   executeTextNode,
 } from './node-executors.js';
 
@@ -590,14 +594,20 @@ export class ExecutionEngineService {
    *
    * Метод асинхронный (RULES 1.4): `llm`-узел ходит в провайдера через
    * {@link LlmNodeExecutor} и возвращает метрики в USD, `image_generation` —
-   * через {@link MediaNodeExecutor} с метриками в рублях, `text` — чистое
-   * преобразование без метрик.
+   * через {@link MediaNodeExecutor} с метриками в рублях, `http` (R6.5.1) —
+   * сетевой запрос, остальные (`text`, `condition`, `output`, `compare`) —
+   * чистые преобразования без метрик.
+   *
+   * Ни один из новых типов R6.5.1 не помечается `retryable`: `http` может иметь
+   * побочные эффекты (POST/PUT/DELETE), а `condition`/`output`/`compare`
+   * детерминированы — повтор не изменит результат (KI-041).
    *
    * @param node - узел графа
    * @param inputs - нормализованные входы узла (KI-034: ключ `prompt`/`text`)
    * @param runId - id запуска (нужен media-узлу для ключа идемпотентности)
    * @returns выходы узла и метрики вызова (`null` для чистых преобразований)
    * @throws UnsupportedNodeTypeException если тип узла неизвестен
+   * @throws NodeDataValidationException если `data` узла не прошли Zod-схему
    * @throws LlmProviderException если вызов LLM-провайдера упал
    * @throws MediaProviderException если генерация media упала
    */
@@ -609,6 +619,26 @@ export class ExecutionEngineService {
     switch (node.type) {
       case 'text':
         return { kind: 'plain', outputs: executeTextNode(node), metrics: null };
+      case 'http': {
+        const outputs = await executeHttpNode(node.data, inputs);
+
+        return { kind: 'plain', outputs, metrics: null };
+      }
+      case 'condition': {
+        const outputs = executeConditionNode(node.data, inputs);
+
+        return { kind: 'plain', outputs, metrics: null };
+      }
+      case 'output': {
+        const outputs = executeOutputNode(node.data, inputs);
+
+        return { kind: 'plain', outputs, metrics: null };
+      }
+      case 'compare': {
+        const outputs = executeCompareNode(node.data, inputs);
+
+        return { kind: 'plain', outputs, metrics: null };
+      }
       case 'llm': {
         const result = await this.llmExecutor.executeAsync(node, inputs);
 

@@ -53,6 +53,36 @@ export const NODE_PORT_CONTRACT: Record<string, NodePortContract> = {
     targetHandleId: 'text-input',
     inputPortName: 'prompt',
   },
+  // R6.5.1 (KI-105). У `http` вход — фолбэк для URL, поэтому нормализованное имя
+  // совпадает с тем, что читает исполнитель (`inputs.prompt`).
+  http: {
+    sourceHandleId: 'http-output',
+    outputPortName: 'result',
+    targetHandleId: 'text-input',
+    inputPortName: 'prompt',
+  },
+  // Условие читает `inputs.input` (см. `executeConditionNode`), ветки true/false
+  // пока получают один и тот же результат — маршрутизация в v0.8.x.
+  condition: {
+    sourceHandleId: 'condition-output',
+    outputPortName: 'result',
+    targetHandleId: 'condition-input',
+    inputPortName: 'input',
+  },
+  // Терминальный узел: вход — то, что попадёт в `outputs[data.name]`.
+  output: {
+    sourceHandleId: 'output-output',
+    outputPortName: 'result',
+    targetHandleId: 'text-input',
+    inputPortName: 'prompt',
+  },
+  // `compare` сознательно БЕЗ контракта: `NodePortContract` описывает один
+  // вход, а узлу нужны два (`a` и `b`). С контрактом обе связи свернулись бы
+  // в один ключ (KI-035) и второй операнд потерялся бы. Без контракта работает
+  // fallback `targetHandle → sourceHandle → edge.id`, то есть `inputs.a` и
+  // `inputs.b` — ровно то, что читает `executeCompareNode`.
+  // Per-handle контракт (именованные входы/выходы) — KI-278; отсутствие
+  // типизированного контракта у `compare` — KI-279.
 };
 
 /**
