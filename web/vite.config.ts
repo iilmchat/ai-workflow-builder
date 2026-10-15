@@ -19,6 +19,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // R6.1b.2: /auth/* уходит на backend вместе с httpOnly refresh-cookie.
+      '/auth': 'http://localhost:3000',
       '/workflow': 'http://localhost:3000',
       '/engine': 'http://localhost:3000',
       // Модели для селекта LLM-узла (`GET /llm/models`, R4.1b): обычный JSON,

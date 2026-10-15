@@ -1,9 +1,12 @@
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import i18n, { setLanguage, type Language } from '@/i18n';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import { useTheme } from '@/hooks/use-theme';
+import { logoutAsync } from '@/lib/auth-api';
 import { nodeLabelOf } from '@/lib/node-registry';
+import { useAuthStore } from '@/stores/auth';
 import { useWorkflowStore } from '@/stores/workflow';
 import type { RunStatus } from '@/types/run-stream';
 import { LoadModal } from './LoadModal';
@@ -99,9 +102,29 @@ function clearWorkflowUrlParam(): void {
  */
 export function TopBar() {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const { resolved, setTheme } = useTheme();
   const { t, i18n: i18nInstance } = useTranslation();
   const currentLang = i18nInstance.language as Language;
+  const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
+
+  /**
+   * Выходит из аккаунта: отзывает refresh-токен и чистит сессию.
+   *
+   * Сбой запроса не должен запирать пользователя в интерфейсе, поэтому
+   * локальную сессию сбрасываем в любом случае (R6.1b.2).
+   */
+  const handleLogout = async () => {
+    try {
+      await logoutAsync();
+    } catch {
+      // backend недоступен — выходим локально
+    }
+
+    useAuthStore.getState().clearSession();
+    void navigate('/login', { replace: true });
+  };
 
   const name = useWorkflowStore((state) => state.currentWorkflowName);
   const setCurrentWorkflowName = useWorkflowStore(
@@ -357,6 +380,38 @@ export function TopBar() {
             {isRunActive ? <Spinner /> : <span aria-hidden="true">▶️</span>}
             {runLabel}
           </button>
+
+          {user !== null && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setIsUserMenuOpen((value) => !value)}
+                aria-label={t('auth.user.email')}
+                aria-expanded={isUserMenuOpen}
+                data-user-menu=""
+                className="flex max-w-40 cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+              >
+                <span aria-hidden="true">👤</span>
+                <span className="truncate">{user.email}</span>
+              </button>
+
+              {isUserMenuOpen && (
+                <div className="absolute right-0 top-full z-20 mt-2 w-56 rounded-xl border border-border bg-background p-2 shadow-node">
+                  <p className="truncate px-2 py-1 text-xs text-muted-foreground" title={user.email}>
+                    {user.email}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void handleLogout()}
+                    data-user-logout=""
+                    className="mt-1 w-full cursor-pointer rounded-lg px-2 py-1.5 text-left text-sm text-foreground hover:bg-muted"
+                  >
+                    {t('auth.user.logout')}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </header>
 

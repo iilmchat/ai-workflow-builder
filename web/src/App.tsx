@@ -1,5 +1,8 @@
 import { useCallback, useEffect } from 'react';
+import { Route, Routes } from 'react-router-dom';
 import { Canvas } from '@/components/Canvas';
+import { LoginPage } from '@/components/auth/LoginPage';
+import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { RunResultPanel } from '@/components/RunResultPanel';
 import { Toast } from '@/components/Toast';
 import { Toolbar } from '@/components/Toolbar';
@@ -76,16 +79,27 @@ export function App() {
   );
 
   return (
-    <div className="relative flex h-screen w-screen flex-col">
-      <TopBar />
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <div className="relative flex h-screen w-screen flex-col">
+              <TopBar />
 
-      <div className="relative min-h-0 flex-1">
-        <Canvas onReady={handleCanvasReady} />
-        <Toolbar onAddNode={handleAddNode} />
-      </div>
+              <div className="relative min-h-0 flex-1">
+                <Canvas onReady={handleCanvasReady} />
+                <Toolbar onAddNode={handleAddNode} />
+              </div>
 
-      <RunResultPanel />
-      <Toast />
-    </div>
+              <RunResultPanel />
+              <Toast />
+            </div>
+          </ProtectedRoute>
+        }
+      />
+      {/* Задел R6.2 (Share): <Route path="/workflow/share/:token" element={<SharePage />} /> */}
+    </Routes>
   );
 }

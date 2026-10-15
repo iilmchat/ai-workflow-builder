@@ -1,10 +1,14 @@
 import { z } from 'zod';
+import { getAccessToken, useAuthStore } from '@/stores/auth';
 import {
   MediaModelInfoSchema,
   type MediaModelInfo,
   type MediaModelType,
 } from '@/types/media';
 import { RunStatusSchema } from '@/types/run-stream';
+// Циклический импорт `api -> auth-api -> api` безопасен: `refreshAsync`
+// вызывается в рантайме, а не на этапе оценки модулей.
+import { refreshAsync } from './auth-api';
 
 /** База API: пустая строка — запросы идут на dev-сервер и проксируются Vite. */
 const API_BASE = '';
@@ -143,35 +147,112 @@ function errorMessageFrom(body: unknown, status: number): string {
 }
 
 /**
- * Выполняет запрос к API и разбирает JSON.
+ * Пути, для которых 401 — ожидаемый ответ, а не признак истёкшего access.
+ *
+ * Их обрабатывает UI (`/auth/login` показывает «неверный пароль», `/auth/logout`
+ * идемпотентен), поэтому рекурсивный refresh и подстановка токена не нужны.
+ */
+const AUTH_PATHS_WITHOUT_REFRESH = [
+  '/auth/login',
+  '/auth/register',
+  '/auth/refresh',
+  '/auth/logout',
+];
+
+/** Идущий refresh — single-flight: параллельные 401 ждут один и тот же промис. */
+let refreshPromise: Promise<boolean> | null = null;
+
+/**
+ * Проверяет, относится ли путь к «публичным» ручкам auth.
+ *
+ * @param url - путь запроса
+ * @returns `true`, если 401 здесь ожидаем
+ */
+function isAuthPathWithoutRefresh(url: string): boolean {
+  return AUTH_PATHS_WITHOUT_REFRESH.some((path) => url.startsWith(path));
+}
+
+/**
+ * Обновляет access-токен по refresh-cookie и синхронизирует стор.
+ *
+ * Single-flight: сколько бы запросов ни получили 401, на backend уйдёт один
+ * `POST /auth/refresh` — иначе вторая ротация отозвала бы только что выданный
+ * токен. Используется и интерцептором, и `AuthProvider` при загрузке страницы.
+ *
+ * @returns `true`, если сессия восстановлена, иначе `false`
+ */
+export async function refreshSessionAsync(): Promise<boolean> {
+  if (refreshPromise === null) {
+    refreshPromise = runRefreshAsync();
+  }
+
+  return refreshPromise;
+}
+
+/**
+ * Выполняет единственный refresh и сбрасывает single-flight-состояние.
+ *
+ * @returns `true`, если сессия восстановлена
+ */
+async function runRefreshAsync(): Promise<boolean> {
+  try {
+    const result = await refreshAsync();
+
+    useAuthStore.getState().setSession(result.user, result.accessToken);
+
+    return true;
+  } catch {
+    // Refresh упал (cookie нет/истекла/отозвана) — сессии больше нет.
+    useAuthStore.getState().clearSession();
+
+    return false;
+  } finally {
+    refreshPromise = null;
+  }
+}
+
+/**
+ * Отправляет запрос: подставляет access-токен из стора.
  *
  * @param url - путь относительно API_BASE
  * @param options - опции fetch
- * @returns разобранный ответ
- * @throws ApiError при сетевой ошибке, не-2xx статусе или пустом ответе там,
- *   где ожидался JSON
+ * @param forceToken - перезаписать уже переданный `Authorization` (повтор
+ *   после refresh обязан идти с новым токеном)
+ * @returns ответ fetch
+ * @throws ApiError при сетевой ошибке
  */
-export async function requestAsync<T>(
+async function sendAsync(
   url: string,
-  options: RequestInit = {},
-): Promise<T> {
-  let response: Response;
+  options: RequestInit,
+  forceToken = false,
+): Promise<Response> {
+  const headers = new Headers(options.headers);
+  const token = getAccessToken();
+
+  headers.set('Content-Type', 'application/json');
+
+  if (token !== null && !isAuthPathWithoutRefresh(url) && (forceToken || !headers.has('Authorization'))) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
 
   try {
-    response = await fetch(`${API_BASE}${url}`, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    });
+    return await fetch(`${API_BASE}${url}`, { ...options, headers });
   } catch {
     // fetch падает только на сетевых ошибках и CORS: backend недоступен.
     throw new ApiError(
       'Не удалось связаться с сервером. Проверьте, запущен ли backend на порту 3000',
     );
   }
+}
 
+/**
+ * Разбирает ответ: JSON, пустое тело, ошибки.
+ *
+ * @param response - ответ fetch
+ * @returns разобранное тело
+ * @throws ApiError при не-2xx статусе или невалидном JSON
+ */
+async function parseResponseAsync<T>(response: Response): Promise<T> {
   const text = await response.text();
   let body: unknown = null;
 
@@ -191,6 +272,36 @@ export async function requestAsync<T>(
   }
 
   return body as T;
+}
+
+/**
+ * Выполняет запрос к API и разбирает JSON.
+ *
+ * R6.1b.2: при 401 (кроме ручек auth) один раз обновляет access по
+ * refresh-cookie и повторяет запрос с новым токеном. Если refresh не удался,
+ * стор переходит в `guest`, а наверх уходит исходная 401.
+ *
+ * @param url - путь относительно API_BASE
+ * @param options - опции fetch
+ * @returns разобранный ответ
+ * @throws ApiError при сетевой ошибке, не-2xx статусе или пустом ответе там,
+ *   где ожидался JSON
+ */
+export async function requestAsync<T>(
+  url: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const response = await sendAsync(url, options);
+
+  if (response.status === 401 && !isAuthPathWithoutRefresh(url)) {
+    const refreshed = await refreshSessionAsync();
+
+    if (refreshed) {
+      return parseResponseAsync<T>(await sendAsync(url, options, true));
+    }
+  }
+
+  return parseResponseAsync<T>(response);
 }
 
 /**
