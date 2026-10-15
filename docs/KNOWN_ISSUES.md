@@ -3063,7 +3063,14 @@
 ---
 
 ### KI-186 — Хоткеи: расширенный список
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟡 Medium | **Статус:** In Progress | **Обнаружено:** 2026-10-15
+- **Fix (R6.4b.1, коммит `<hash-4b1>`):** ✅ Ctrl+D, S (cursor),
+  H (hand), F (fit view), M (minimap), Tab (каталог). useHotkeys
+  переписан на обратно-совместимый API (HotkeyBinding + allow).
+- **Остаток (R6.4b.2):** Ctrl+A, Ctrl+C/V, Ctrl+Z / Ctrl+Shift+Z
+  (undo/redo), Ctrl+S, C / Shift+C (комментарии),
+  Ctrl+Shift+Backspace.
+- **Связанные:** KI-187, KI-188, KI-190, KI-191.
 - **Файлы:** `web/src/components/Canvas.tsx`, `web/src/hooks/use-hotkeys.ts`
 - **Описание:** У GPTunnel полный список: Tab (добавить узел),
   S (курсор), H (рука), F (вписать), C (комментарий), Shift+C
@@ -3091,7 +3098,11 @@
 ---
 
 ### KI-188 — Режимы Курсор / Рука (S / H)
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (R6.4b.1, коммит `<hash-4b1>`)
+- **Fix:** hotkeys S / H + кнопки в панели; `canvasMode` в сторе +
+  localStorage; `panOnDrag` / `selectionOnDrag` / курсор обёртки.
+- **Связанные:** KI-186.
 - **Файлы:** `web/src/components/Canvas.tsx`
 - **Описание:** GPTunnel: S — selection, H — pan (рука). У нас — обе
   через мышь (без hotkey).
@@ -3122,7 +3133,11 @@
 ---
 
 ### KI-190 — Мини-карта: toggle + hotkey
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (R6.4b.1, коммит `<hash-4b1>`)
+- **Fix:** hotkey M + кнопка в панели; `showMinimap` в сторе +
+  localStorage; условный рендер `<MiniMap />`.
+- **Связанные:** KI-158 (контраст), KI-170 (aria-label — оставлен Open).
 - **Файлы:** `web/src/components/Canvas.tsx`
 - **Описание:** GPTunnel: мини-карта включается/выключается через
   правую панель. У нас — всегда показана (KI-158 — контраст).
@@ -4211,18 +4226,54 @@
 
 ---
 
+### KI-264 — Смоук-харнесс CDP: узкий Fetch-перехват + windowsVirtualKeyCode
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** временные скрипты смоука (вне репо)
+- **Описание:** Два класса дефектов драйвера, встретившихся при
+  смоуке R6.4b.1:
+  1. Слишком широкий `Fetch.requestPaused` (например,
+     `url.includes('/workflow')`) перехватывает модули Vite
+     (`/src/stores/workflow.ts`, `/node_modules/`, `?import`) и
+     отдаёт `application/json` вместо JS → «Failed to load module
+     script», холст не рендерится. Фикс — пропускать запросы к
+     `/src/`, `/node_modules/`, `/@vite/`, `/@fs/`, `?import`, `?t=`.
+  2. Синтетический `keydown` без `windowsVirtualKeyCode` часть
+     нажатий теряет. Повторные переключатели (H/M/Tab) «дожимают»
+     состояние обратно.
+- **Решение:** зафиксировать оба правила в RULES § 4.33 (смоук CDP)
+  или в отдельной памятке.
+- **Связанные:** KI-135 (Emulation.setFocusEmulationEnabled).
+
+---
+
+### KI-265 — Расхождение пути репозитория в PROMPT_V5.md
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (docs-коммит R6.4b.1)
+- **Файлы:** `docs/development/PROMPT_V5.md`
+- **Описание:** В PROMPT_V5.md § 3 указывался путь
+  `D:\Projects\AI\workflow-builder`, а промпты задач R6.x —
+  `C:\Projects\AI\ai-workflow-builder` (не существовал). Из-за
+  расхождения dsh в начале сессии R6.4b.1 получал устаревший снимок
+  дерева (без R6.4a). Репозиторий окончательно переехал на
+  `D:\Projects\AI\workflow-builder`.
+- **Fix:** путь в PROMPT_V5.md приведён к `D:\Projects\AI\workflow-builder`;
+  впредь указывать единый путь во всех промптах.
+- **Связанные:** KI-264.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 87 |
-| In Progress | 0 |
+| Fixed | 90 |
+| In Progress | 1 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 156 |
+| Open | 154 |
 | Won't Fix | 1 |
-| **Всего** | **252** |
+| **Всего** | **254** |
 
 ---
 

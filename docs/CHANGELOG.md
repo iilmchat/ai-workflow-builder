@@ -120,7 +120,19 @@
   - `snapToGrid + snapGrid=[8,8]` + направляющие в `<ViewportPortal>`.
   - Индикатор «✓ Сохранено / ● Есть изменения» в TopBar.
   - Frontend tests: 29 → 40 (+11).
-  
+- **Canvas UX part 2, подшаг 1 (R6.4b.1):**
+  - `useHotkeys` — обратно-совместимый API (`HotkeyBinding` с
+    `preventDefault` / `stopPropagation` / `allow`); приоритет
+    `ctrl+*` → `shift+*` → одиночные — на этапе подписки.
+  - `lib/hotkeys-utils.ts` + 18 тестов (чистый парсер).
+  - `stores/workflow`: `canvasMode` / `showMinimap` / `isCatalogOpen`
+    + localStorage.
+  - Canvas: S (cursor), H (hand), F (fit view), M (minimap),
+    Tab (каталог); `panOnDrag` / `selectionOnDrag`; курсор.
+  - Условный `<MiniMap />` + панель режимов слева внизу.
+  - Toolbar: каталог → `isCatalogOpen` из стора.
+  - Frontend tests: 43 → 61 (+18).
+
 ### Fixed
 - **KI-201** — Auth backend (R6.1a): users, JWT-guard, `/auth/*`,
   scrypt; остаток R6.1b.1/R6.1b.2 — refresh-token, logout, frontend
@@ -158,6 +170,11 @@
   (R6.4a-fix5).
 - **KI-261** — `addNodeOnEdge`: notice `canvas.edge.gone`, если связь
   уже удалена (R6.4a-fix5).
+- **KI-188** — Cursor / Hand режимы (S / H) + `canvasMode`
+  (`<hash-4b1>`).
+- **KI-190** — Minimap toggle (hotkey M + кнопка) (`<hash-4b1>`).
+- **KI-265** — путь репозитория в PROMPT_V5.md приведён к
+  `D:\Projects\AI\workflow-builder` (docs-коммит).
 
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
@@ -215,7 +232,9 @@
   - **KI-262..263** — Canvas UX-остаток: `canBeInsertedOnEdge` не
     синхронизирован с Handle в компоненте (Low), перекрытие при
     тесной раскладке (Medium).
-        
+  - **KI-264** — заметка о смоук-харнессе CDP (узкий Fetch-перехват +
+    `windowsVirtualKeyCode`).
+            
 ## [0.7.2] — 2026-10-15
 
 **Patch-релиз после v0.7.1. Yandex env + LM Studio auto-discovery + LLM/media фиксы.**
