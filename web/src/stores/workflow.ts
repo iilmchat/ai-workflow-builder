@@ -35,6 +35,7 @@ import {
   type NodeType,
   type TextNodeData,
 } from '@/types/graph';
+import { validateMaxTokensOverride, validateReasoningEffort } from '@/lib/llm-node-fields';
 import type {
   RunEventMessage,
   RunStatus,
@@ -403,7 +404,7 @@ function nodeDataFromApi(
             ? data.value
             : '';
 
-      return {
+      const result: LlmNodeData = {
         kind: 'llm',
         // Модель НЕ подменяем (KI-069): если id неизвестен текущему списку,
         // селект покажет его как «(недоступно)». Молчаливая подмена на первый
@@ -412,6 +413,27 @@ function nodeDataFromApi(
         // KI-180: промпт узла. Старые workflow хранили его в `value`.
         prompt,
       };
+
+      // R6.3.2 (KI-192/193/183): переносим настройки модели. KI-122/129 —
+      // поля со значением `undefined` не присваиваем вовсе, иначе Load терял
+      // выбор пользователя, а следующий Save затирал его в БД.
+      if (typeof data.systemPrompt === 'string') {
+        result.systemPrompt = data.systemPrompt;
+      }
+
+      const reasoningEffort = validateReasoningEffort(data.reasoningEffort);
+
+      if (reasoningEffort !== undefined) {
+        result.reasoningEffort = reasoningEffort;
+      }
+
+      const maxTokensOverride = validateMaxTokensOverride(data.maxTokensOverride);
+
+      if (maxTokensOverride !== undefined) {
+        result.maxTokensOverride = maxTokensOverride;
+      }
+
+      return result;
     }
     case 'image_generation': {
       // KI-122: переносим `model`/`aspectRatio`, иначе Load терял выбор

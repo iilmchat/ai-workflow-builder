@@ -117,6 +117,22 @@ export interface LlmNodeData extends Record<string, unknown> {
    * (`inputs.prompt` приоритетнее).
    */
   prompt?: string;
+  /**
+   * System prompt узла (R6.3.2, KI-192).
+   *
+   * Backend отправляет его первым system-сообщением; тексты промптов в логи не
+   * пишутся (RULES 5.9).
+   */
+  systemPrompt?: string;
+  /**
+   * Режим reasoning (R6.3.2, KI-193).
+   *
+   * Поле показывается только для моделей с `supportsReasoning`; `'off'` —
+   * «не передавать провайдеру».
+   */
+  reasoningEffort?: 'off' | 'medium' | 'high';
+  /** Override лимита токенов ответа (R6.3.2, KI-183); пусто — дефолт модели. */
+  maxTokensOverride?: number;
 }
 
 /** Данные узла `image_generation`: id модели, соотношение, URL. */

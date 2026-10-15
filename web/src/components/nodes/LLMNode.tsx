@@ -1,9 +1,14 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode, type NodeBadge } from '@/components/nodes/BaseNode';
 import { useAutoResize } from '@/hooks/use-auto-resize';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
+import {
+  MAX_TOKENS_LIMIT,
+  validateMaxTokensOverride,
+  validateReasoningEffort,
+} from '@/lib/llm-node-fields';
 import { groupLlmModelsForSelect } from '@/lib/llm-models';
 import { NODE_REGISTRY } from '@/lib/node-registry';
 import type { LlmModelInfo } from '@/lib/api';
@@ -88,6 +93,25 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
 
   useAutoResize(promptRef, data.prompt ?? '');
 
+  // R6.3.2: system prompt — сворачиваемый блок (по умолчанию свёрнут, но у
+  // загруженного workflow значение уже есть — тогда сразу раскрыт).
+  const [isSystemOpen, setIsSystemOpen] = useState(
+    (data.systemPrompt ?? '').length > 0,
+  );
+
+  // KI-157: system prompt пишется в стор на каждый символ — сохраняем курсор.
+  const handleSystemChange = usePreserveCursor<HTMLTextAreaElement>(
+    useCallback(
+      (value: string) => updateNodeData(id, { systemPrompt: value }),
+      [id, updateNodeData],
+    ),
+  );
+
+  // KI-169: поле растёт по тексту.
+  const systemRef = useRef<HTMLTextAreaElement>(null);
+
+  useAutoResize(systemRef, data.systemPrompt ?? '');
+
   // Список грузится лениво при появлении LLM-узла и кэшируется в сторе,
   // поэтому запрос уходит один раз на сессию, а не на каждый узел.
   useEffect(() => {
@@ -100,6 +124,14 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
   // молчаливой подмены модели больше нет (KI-069).
   const isUnavailable = data.model !== '' && selected === undefined;
   const groups = groupLlmModelsForSelect(llmModels);
+  // R6.3.2 (KI-193): переключатель режима показываем только моделям, которые
+  // backend помечает как способные к reasoning.
+  const supportsReasoning = selected?.supportsReasoning === true;
+  // Подсказка лимита: дефолт модели (KI-183), иначе — общий текст i18n.
+  const maxTokensPlaceholder =
+    selected?.defaultMaxTokens === undefined
+      ? t('node.llm.maxTokens.placeholder')
+      : String(selected.defaultMaxTokens);
 
   return (
     <>
@@ -159,6 +191,79 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
           placeholder={t('node.llm.placeholder')}
           className="nodrag mt-2 w-full resize-none overflow-hidden rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
           onChange={handlePromptChange}
+        />
+
+        {/* R6.3.2 (KI-192): system prompt — по умолчанию свёрнут, чтобы не
+            раздувать карточку. */}
+        <button
+          type="button"
+          onClick={() => setIsSystemOpen((open) => !open)}
+          aria-expanded={isSystemOpen}
+          aria-label={
+            isSystemOpen
+              ? t('node.llm.system.hide')
+              : t('node.llm.system.show')
+          }
+          data-system-toggle=""
+          className="nodrag mt-2 flex w-full cursor-pointer items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground"
+        >
+          <span aria-hidden="true">{isSystemOpen ? '▼' : '▶'}</span>
+          {t('node.llm.system.label')}
+        </button>
+
+        {isSystemOpen && (
+          <textarea
+            ref={systemRef}
+            rows={2}
+            value={data.systemPrompt ?? ''}
+            placeholder={t('node.llm.system.placeholder')}
+            data-system-prompt=""
+            className="nodrag mt-1 w-full resize-none overflow-hidden rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+            onChange={handleSystemChange}
+          />
+        )}
+
+        {/* R6.3.2 (KI-193): режим reasoning — только для моделей, которые его
+            поддерживают (иначе backend всё равно проигнорирует поле). */}
+        {supportsReasoning && (
+          <select
+            value={data.reasoningEffort ?? 'off'}
+            aria-label={t('node.llm.reasoning.label')}
+            data-reasoning=""
+            className="nodrag mt-2 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+            onChange={(event) =>
+              updateNodeData(id, {
+                reasoningEffort: validateReasoningEffort(event.target.value),
+              })
+            }
+          >
+            <option value="off">{t('node.llm.reasoning.off')}</option>
+            <option value="medium">{t('node.llm.reasoning.medium')}</option>
+            <option value="high">{t('node.llm.reasoning.high')}</option>
+          </select>
+        )}
+
+        {/* R6.3.2 (KI-183): override лимита токенов ответа; пусто — дефолт
+            модели (backend возьмёт `defaultMaxTokens`). */}
+        <input
+          type="number"
+          inputMode="numeric"
+          min={1}
+          max={MAX_TOKENS_LIMIT}
+          value={data.maxTokensOverride ?? ''}
+          placeholder={maxTokensPlaceholder}
+          aria-label={t('node.llm.maxTokens.label')}
+          data-max-tokens=""
+          className="nodrag mt-2 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+          onChange={(event) =>
+            updateNodeData(id, {
+              maxTokensOverride: validateMaxTokensOverride(
+                event.target.value === ''
+                  ? undefined
+                  : Number(event.target.value),
+              ),
+            })
+          }
         />
 
         <p

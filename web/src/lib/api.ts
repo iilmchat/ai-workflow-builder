@@ -102,6 +102,10 @@ export const LlmModelInfoSchema = z.object({
   label: z.string(),
   inputModalities: z.array(ModelModalitySchema),
   outputModalities: z.array(ModelModalitySchema),
+  // R6.3.2 (KI-193/KI-183): признаки reasoning и дефолтный лимит токенов.
+  // Zod отбрасывает неописанные поля, поэтому их нужно объявить явно (KI-149).
+  supportsReasoning: z.boolean().optional(),
+  defaultMaxTokens: z.number().optional(),
 });
 
 /** Модель в терминах API: id для вызова, label и модальности для интерфейса. */
