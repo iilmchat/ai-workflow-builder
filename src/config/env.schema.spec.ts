@@ -241,3 +241,39 @@ describe('переменные GPTunnel (v0.6.0b.1)', () => {
     ).toBe(false);
   });
 });
+
+describe('AUTH_DISABLED в production (KI-213)', () => {
+  it('отклоняет AUTH_DISABLED=true при NODE_ENV=production', () => {
+    expect(() =>
+      validateEnv({ ...baseEnv, NODE_ENV: 'production', AUTH_DISABLED: 'true' }),
+    ).toThrow('AUTH_DISABLED=true недопустим в production');
+  });
+
+  it('принимает AUTH_DISABLED=false в production', () => {
+    const result = validateEnv({
+      ...baseEnv,
+      NODE_ENV: 'production',
+      AUTH_DISABLED: 'false',
+    });
+
+    expect(result.AUTH_DISABLED).toBe(false);
+  });
+
+  it('разрешает AUTH_DISABLED=true в dev и CI', () => {
+    const dev = EnvSchema.parse({ ...baseEnv, AUTH_DISABLED: 'true' });
+    const test = EnvSchema.parse({
+      ...baseEnv,
+      NODE_ENV: 'test',
+      AUTH_DISABLED: 'true',
+    });
+
+    expect(dev.AUTH_DISABLED).toBe(true);
+    expect(test.AUTH_DISABLED).toBe(true);
+  });
+
+  it('не падает, если AUTH_DISABLED не задан', () => {
+    const parsed = EnvSchema.parse({ ...baseEnv, NODE_ENV: 'production' });
+
+    expect(parsed.AUTH_DISABLED).toBeUndefined();
+  });
+});

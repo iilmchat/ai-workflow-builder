@@ -245,7 +245,24 @@ export const EnvSchema = z.object({
   ),
   // Настройки воркера очереди (KI-065) и lease-порог (KI-032).
   ...WorkerEnvSchema.shape,
-});
+})
+  /**
+   * Fail-fast: отказ старта при `AUTH_DISABLED=true` в production.
+   *
+   * Иначе случайная env-переменная отключает всю авторизацию, и все запросы
+   * идут от системного пользователя (KI-213). Проверка стоит на итоговой
+   * схеме, поэтому видит `NODE_ENV` и `AUTH_DISABLED` одновременно
+   * (`WorkerEnvSchema` влита через `.shape` и своей проверки не имеет).
+   */
+  .superRefine((env, ctx) => {
+    if (env.NODE_ENV === 'production' && env.AUTH_DISABLED === true) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'AUTH_DISABLED=true недопустим в production (security)',
+        path: ['AUTH_DISABLED'],
+      });
+    }
+  });
 
 /** Валидированная конфигурация окружения (с применёнными значениями по умолчанию). */
 export type Env = z.infer<typeof EnvSchema>;
