@@ -150,6 +150,14 @@
   (`fcd2913`).
 - **KI-258** — каталог вставки: `w-72` + `placement="down"`
   (`fcd2913`).
+- **KI-259** — `addNodeOnEdge`: тип без входного порта больше не удаляет
+  связь; `NODE_REGISTRY.canBeInsertedOnEdge` + фильтр каталога
+  (R6.4a-fix5).
+- **KI-260** — `addNodeOnEdge`: узел вставляется по центру связи
+  (`insertPositionOnEdge`, размер — `measured` узла того же типа)
+  (R6.4a-fix5).
+- **KI-261** — `addNodeOnEdge`: notice `canvas.edge.gone`, если связь
+  уже удалена (R6.4a-fix5).
 
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
@@ -204,7 +212,10 @@
     вне сетки, хэш на каждом изменении, Ctrl+D фокус на копию,
     structuredClone, addNodeOnEdge без входного порта (High),
     позиция узла, молчание при отсутствующей связи.    
-    
+  - **KI-262..263** — Canvas UX-остаток: `canBeInsertedOnEdge` не
+    синхронизирован с Handle в компоненте (Low), перекрытие при
+    тесной раскладке (Medium).
+        
 ## [0.7.2] — 2026-10-15
 
 **Patch-релиз после v0.7.1. Yandex env + LM Studio auto-discovery + LLM/media фиксы.**
