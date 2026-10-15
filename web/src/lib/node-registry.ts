@@ -1,17 +1,25 @@
 import type { ComponentType } from 'react';
 import type { NodeProps, NodeTypes } from '@xyflow/react';
 import { CommentNode } from '@/components/nodes/CommentNode';
+import { CompareNode } from '@/components/nodes/CompareNode';
+import { ConditionNode } from '@/components/nodes/ConditionNode';
+import { HttpNode } from '@/components/nodes/HttpNode';
 import { ImageGenNode } from '@/components/nodes/ImageGenNode';
 import { LLMNode } from '@/components/nodes/LLMNode';
+import { OutputNode } from '@/components/nodes/OutputNode';
 import { TextNode } from '@/components/nodes/TextNode';
 import i18n from '@/i18n';
 import type {
   AppNode,
   CommentFlowNode,
+  CompareFlowNode,
+  ConditionFlowNode,
+  HttpFlowNode,
   ImageGenFlowNode,
   LlmFlowNode,
   NodeCategory,
   NodeType,
+  OutputFlowNode,
   TextFlowNode,
 } from '@/types/graph';
 
@@ -27,7 +35,11 @@ export type NodeComponent =
   | ComponentType<NodeProps<TextFlowNode>>
   | ComponentType<NodeProps<LlmFlowNode>>
   | ComponentType<NodeProps<ImageGenFlowNode>>
-  | ComponentType<NodeProps<CommentFlowNode>>;
+  | ComponentType<NodeProps<CommentFlowNode>>
+  | ComponentType<NodeProps<HttpFlowNode>>
+  | ComponentType<NodeProps<ConditionFlowNode>>
+  | ComponentType<NodeProps<OutputFlowNode>>
+  | ComponentType<NodeProps<CompareFlowNode>>;
 
 /**
  * Описание узла в реестре: единый источник правды.
@@ -116,6 +128,46 @@ export const NODE_REGISTRY = {
     canBeInsertedOnEdge: false,
     // Узел хранит текст в графе; backend переносит его между Save/Load, но
     // исключает из плана выполнения (KI-266).
+    capabilities: { externalState: false, userConfig: false },
+  },
+  // R6.5.2 (KI-105, DESIGN v0.8 § 8): четыре вычислительных узла. У всех есть
+  // входной порт (`canBeInsertedOnEdge: true`), кроме того у `http` есть
+  // пользовательская конфигурация до запуска — адрес и метод запроса.
+  http: {
+    labelKey: 'node.http.label',
+    icon: '🌐',
+    category: 'tools',
+    component: HttpNode,
+    // Вход `text-input` (порт `prompt`) — из него берётся URL-фолбэк.
+    canBeInsertedOnEdge: true,
+    capabilities: { externalState: false, userConfig: true },
+  },
+  condition: {
+    labelKey: 'node.condition.label',
+    icon: '🔀',
+    category: 'tools',
+    component: ConditionNode,
+    // Вход `condition-input` (порт `input`). Выходов визуально два
+    // (`true-output`/`false-output`), маршрутизации веток в v0.8 нет (KI-278).
+    canBeInsertedOnEdge: true,
+    capabilities: { externalState: false, userConfig: false },
+  },
+  output: {
+    labelKey: 'node.output.label',
+    icon: '📤',
+    category: 'output',
+    component: OutputNode,
+    // Вход `text-input` (порт `prompt`); выходов нет — узел терминальный.
+    canBeInsertedOnEdge: true,
+    capabilities: { externalState: false, userConfig: false },
+  },
+  compare: {
+    labelKey: 'node.compare.label',
+    icon: '⚖️',
+    category: 'ai',
+    component: CompareNode,
+    // Два входа `a`/`b` — оба target-хендлы, поэтому вставка в связь возможна.
+    canBeInsertedOnEdge: true,
     capabilities: { externalState: false, userConfig: false },
   },
 } as const satisfies Record<NodeType, NodeRegistryEntry>;

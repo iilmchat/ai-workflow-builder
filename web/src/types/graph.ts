@@ -17,7 +17,11 @@ export type NodeData =
   | TextNodeData
   | LlmNodeData
   | ImageGenNodeData
-  | CommentNodeData;
+  | CommentNodeData
+  | HttpNodeData
+  | ConditionNodeData
+  | OutputNodeData
+  | CompareNodeData;
 
 /** Узел графа — совместим с backend-DTO `NodeDto`. */
 export type GraphNode = {
@@ -53,8 +57,21 @@ export type Graph = {
  * остальными типами, но backend исключает его из плана выполнения
  * (`ANNOTATION_NODE_TYPES` в `src/engine/node-executors.ts`). Имя совпадает с
  * типом React Flow — другого контракта у него нет.
+ *
+ * R6.5.2 (KI-105, DESIGN v0.8 § 8): добавлены четыре вычислительных узла —
+ * `http` (§ 8.1), `condition` (§ 8.2), `output` (§ 8.3) и `compare` (§ 8.5).
+ * Узел `note` из DESIGN § 8.4 отдельным типом **не** заводится: он реализован
+ * как `comment` ещё в R6.4b.2a (KI-187), дублировать его не нужно.
  */
-export type NodeType = 'text' | 'llm' | 'image_generation' | 'comment';
+export type NodeType =
+  | 'text'
+  | 'llm'
+  | 'image_generation'
+  | 'comment'
+  | 'http'
+  | 'condition'
+  | 'output'
+  | 'compare';
 
 /**
  * Категории узлов для каталога (KI-127, § 5.2 DESIGN v0.7).
@@ -196,6 +213,105 @@ export interface CommentNodeData extends Record<string, unknown> {
   visible?: boolean;
 }
 
+/**
+ * Методы HTTP-узла (DESIGN v0.8 § 8.1).
+ *
+ * Набор совпадает с backend-схемой `HttpNodeDataSchema` (`src/engine/node-executors.ts`,
+ * R6.5.1): значения уходят в граф как есть, поэтому UI не должен предлагать
+ * метод, который backend отвергнет.
+ */
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+
+/**
+ * Данные узла `http` (R6.5.2, DESIGN v0.8 § 8.1).
+ *
+ * Порты (`src/engine/node-ports.ts`, R6.5.1): вход `text-input` → порт `prompt`
+ * (URL-фолбэк, если поле пустое), выход `http-output` → порт `result`.
+ */
+export interface HttpNodeData extends Record<string, unknown> {
+  kind: 'http';
+  /** HTTP-метод запроса. */
+  method: HttpMethod;
+  /**
+   * Абсолютный URL (`http`/`https`).
+   *
+   * Пустая строка — валидное состояние: backend возьмёт адрес из входа
+   * `prompt` (`executeHttpNode`), поэтому узел остаётся запускаемым с одним
+   * Text-предшественником.
+   */
+  url: string;
+  /** Заголовки запроса; `undefined` — не заданы (KI-129: пустых ключей нет). */
+  headers?: Record<string, string>;
+  /**
+   * Тело запроса (JSON).
+   *
+   * Показывается в UI только для методов с телом (`POST`/`PUT`/`DELETE`):
+   * у `GET` оно всё равно отбрасывается исполнителем.
+   */
+  body?: string;
+  /** Таймаут запроса в мс; `undefined` — дефолт backend (30 000 мс). */
+  timeoutMs?: number;
+}
+
+/** Операции сравнения узла `condition` (DESIGN v0.8 § 8.2, MVP-DSL). */
+export type ConditionOperator = '>' | '<' | '>=' | '<=' | '===' | 'includes';
+
+/** Операция условия по умолчанию — как в `createNode` (§ 8.2). */
+export const DEFAULT_CONDITION_OPERATOR: ConditionOperator = '===';
+
+/**
+ * Данные узла `condition` (R6.5.2, DESIGN v0.8 § 8.2).
+ *
+ * Порты (`src/engine/node-ports.ts`, R6.5.1): вход `condition-input` → порт
+ * `input`. Выходов у узла два (`true-output` / `false-output`), но
+ * зарегистрированный контракт описывает один источник (`condition-output`),
+ * поэтому оба хендла дают один и тот же порт `result` — маршрутизации веток в
+ * v0.8 нет, обе ветки выполняются (KI-278).
+ */
+export interface ConditionNodeData extends Record<string, unknown> {
+  kind: 'condition';
+  /** Левая часть: `input.X` либо литерал (`5`, `'abc'`, `true`). */
+  left: string;
+  /** Операция сравнения. */
+  operator: ConditionOperator;
+  /** Правая часть: `input.X` либо литерал. */
+  right: string;
+}
+
+/** Имя выхода узла `output` по умолчанию (как в `createNode`). */
+export const DEFAULT_OUTPUT_NAME = 'result';
+
+/**
+ * Данные узла `output` (R6.5.2, DESIGN v0.8 § 8.3).
+ *
+ * Терминальный узел: вход `text-input` → порт `prompt`, выходов нет. Значение
+ * первого непустого входа попадает в `node_runs.outputs` под ключом `name`.
+ */
+export interface OutputNodeData extends Record<string, unknown> {
+  kind: 'output';
+  /**
+   * Ключ, под которым результат попадёт в `outputs`.
+   *
+   * Backend требует непустое имя (`OutputNodeDataSchema`: `min(1)`), но UI
+   * значение не подменяет: пустое поле честно роняет запуск с ошибкой
+   * валидации, а не превращается молча в `result` (ср. KI-069).
+   */
+  name: string;
+}
+
+/**
+ * Данные узла `compare` (R6.5.2, DESIGN v0.8 § 8.5).
+ *
+ * Порты: два входа `a`/`b` (без записи в `NODE_PORT_CONTRACT`, поэтому ключ
+ * входа берётся из `edge.targetHandle` — KI-279) и один выход `text-output`.
+ * Режим пока один: `llm-judge` из DESIGN § 8.5 — задача v0.8.x.
+ */
+export interface CompareNodeData extends Record<string, unknown> {
+  kind: 'compare';
+  /** Режим сравнения; backend поддерживает только `diff`. */
+  mode: 'diff';
+}
+
 /** Узел Text в терминах React Flow. */
 export type TextFlowNode = Node<TextNodeData, 'text'>;
 /** Узел LLM в терминах React Flow. */
@@ -204,11 +320,23 @@ export type LlmFlowNode = Node<LlmNodeData, 'llm'>;
 export type ImageGenFlowNode = Node<ImageGenNodeData, 'image_generation'>;
 /** Узел-комментарий в терминах React Flow (KI-187). */
 export type CommentFlowNode = Node<CommentNodeData, 'comment'>;
+/** Узел HTTP-запроса в терминах React Flow (R6.5.2). */
+export type HttpFlowNode = Node<HttpNodeData, 'http'>;
+/** Узел условия в терминах React Flow (R6.5.2). */
+export type ConditionFlowNode = Node<ConditionNodeData, 'condition'>;
+/** Терминальный узел вывода в терминах React Flow (R6.5.2). */
+export type OutputFlowNode = Node<OutputNodeData, 'output'>;
+/** Узел сравнения в терминах React Flow (R6.5.2). */
+export type CompareFlowNode = Node<CompareNodeData, 'compare'>;
 
 /** Любой узел редактора. */
 export type AppNode =
   | TextFlowNode
   | LlmFlowNode
   | ImageGenFlowNode
-  | CommentFlowNode;
+  | CommentFlowNode
+  | HttpFlowNode
+  | ConditionFlowNode
+  | OutputFlowNode
+  | CompareFlowNode;
 

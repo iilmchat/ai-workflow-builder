@@ -29,14 +29,27 @@ import { pickDefaultMediaModel } from '@/lib/media';
 import { canInsertOnEdge, isNodeType, nodeLabelOf } from '@/lib/node-registry';
 import type { MediaModelInfo } from '@/types/media';
 import {
+  DEFAULT_CONDITION_OPERATOR,
   DEFAULT_LLM_MODEL_ID,
+  DEFAULT_OUTPUT_NAME,
   type AppNode,
   type CommentNodeData,
+  type CompareNodeData,
+  type ConditionNodeData,
+  type HttpNodeData,
   type ImageGenNodeData,
   type LlmNodeData,
+  type NodeData,
   type NodeType,
-  type TextNodeData,
+  type OutputNodeData,
 } from '@/types/graph';
+import {
+  DEFAULT_HTTP_METHOD,
+  validateHttpHeaders,
+  validateHttpMethod,
+  validateTimeoutMs,
+} from '@/lib/http-node-fields';
+import { validateConditionOperator } from '@/lib/condition-node-fields';
 import { validateMaxTokensOverride, validateReasoningEffort } from '@/lib/llm-node-fields';
 import {
   cloneNodesForDuplicate,
@@ -690,6 +703,36 @@ function createNode(
         // KI-187: стикер создаётся видимым; текст пользователь вводит сам.
         data: { kind: 'comment', text: '', visible: true },
       };
+    // R6.5.2 (KI-105): четыре вычислительных узла DESIGN v0.8 § 8. Поля-ключи
+    // `headers`/`body`/`timeoutMs` у `http` не создаём заранее: `undefined`-ключ
+    // — это пустое поле в JSON и лишний ключ в `Object.keys(data)` (KI-129).
+    case 'http':
+      return {
+        ...shared,
+        type: 'http',
+        data: { kind: 'http', method: DEFAULT_HTTP_METHOD, url: '' },
+      };
+    case 'condition':
+      return {
+        ...shared,
+        type: 'condition',
+        // Оператор по умолчанию — строгое равенство: самый предсказуемый
+        // вариант для строкового входа от Text-узла.
+        data: { kind: 'condition', left: '', operator: DEFAULT_CONDITION_OPERATOR, right: '' },
+      };
+    case 'output':
+      return {
+        ...shared,
+        type: 'output',
+        data: { kind: 'output', name: DEFAULT_OUTPUT_NAME },
+      };
+    case 'compare':
+      return {
+        ...shared,
+        type: 'compare',
+        // Режим в v0.8 один (DESIGN § 8.5): `llm-judge` — задача v0.8.x.
+        data: { kind: 'compare', mode: 'diff' },
+      };
     // Нет default: — новый NodeType поймает tsc (KI-129).
   }
 }
@@ -716,10 +759,7 @@ function toApiEdge(edge: Edge): ApiGraphEdge {
 }
 
 /** Собирает данные узла из ответа backend с учётом его типа. */
-function nodeDataFromApi(
-  type: NodeType,
-  data: Record<string, unknown>,
-): TextNodeData | LlmNodeData | ImageGenNodeData | CommentNodeData {
+function nodeDataFromApi(type: NodeType, data: Record<string, unknown>): NodeData {
   switch (type) {
     case 'text':
       return {
@@ -811,6 +851,69 @@ function nodeDataFromApi(
         text: typeof data.text === 'string' ? data.text : '',
         visible: data.visible !== false,
       };
+
+      return result;
+    }
+    // R6.5.2 (KI-105): четыре вычислительных узла. Все значения приходят из
+    // `jsonb` без типов, поэтому каждое проверяется (typeof / lib-валидатор), а
+    // поля со значением `undefined` не присваиваются вовсе (KI-129) — иначе
+    // Load терял бы настройки автора, а следующий Save затирал их в БД.
+    case 'http': {
+      const result: HttpNodeData = {
+        kind: 'http',
+        method: validateHttpMethod(data.method),
+        // Пустой URL — валидное состояние: адрес возьмётся из входа `prompt`.
+        url: typeof data.url === 'string' ? data.url : '',
+      };
+
+      const headers = validateHttpHeaders(data.headers);
+
+      if (headers !== undefined) {
+        result.headers = headers;
+      }
+
+      if (typeof data.body === 'string') {
+        result.body = data.body;
+      }
+
+      const timeoutMs = validateTimeoutMs(data.timeoutMs);
+
+      if (timeoutMs !== undefined) {
+        result.timeoutMs = timeoutMs;
+      }
+
+      return result;
+    }
+    case 'condition': {
+      // KI-069-принцип здесь не работает: операцию нельзя «оставить как есть»,
+      // если её нет в `<select>` (неизвестное значение не отрисовать), а
+      // валидный Save других значений и не создаёт — Zod-схема backend
+      // принимает ровно шесть операций MVP-DSL.
+      const result: ConditionNodeData = {
+        kind: 'condition',
+        left: typeof data.left === 'string' ? data.left : '',
+        operator: validateConditionOperator(data.operator),
+        right: typeof data.right === 'string' ? data.right : '',
+      };
+
+      return result;
+    }
+    case 'output': {
+      // Имя не подменяем (ср. KI-069): пустое значение честно упадёт на
+      // валидации backend (`name`: `min(1)`), а не превратится молча в
+      // `result` — иначе следующий Save перезаписал бы выбор автора.
+      const result: OutputNodeData = {
+        kind: 'output',
+        name: typeof data.name === 'string' ? data.name : '',
+      };
+
+      return result;
+    }
+    case 'compare': {
+      // Режим пока один: `llm-judge` из DESIGN § 8.5 — задача v0.8.x, и Zod
+      // backend его отвергнет, поэтому чужое значение не переносим (иначе узел
+      // стал бы незапускаемым).
+      const result: CompareNodeData = { kind: 'compare', mode: 'diff' };
 
       return result;
     }

@@ -8,6 +8,10 @@
 export { nodeTypes, NODE_REGISTRY } from '@/lib/node-registry';
 
 export { CommentNode } from './CommentNode';
+export { CompareNode } from './CompareNode';
+export { ConditionNode } from './ConditionNode';
+export { HttpNode } from './HttpNode';
 export { ImageGenNode } from './ImageGenNode';
 export { LLMNode } from './LLMNode';
+export { OutputNode } from './OutputNode';
 export { TextNode } from './TextNode';

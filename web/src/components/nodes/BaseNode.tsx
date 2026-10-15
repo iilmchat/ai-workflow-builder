@@ -44,6 +44,14 @@ interface BaseNodeProps {
   status?: RunStatus;
   /** Дополнительные бейджи (capabilities модели, v0.6.0a). */
   badges?: NodeBadge[];
+  /**
+   * Дополнительный `data-*` атрибут корня карточки (R6.5.2).
+   *
+   * Нужен узлам, которые обязаны быть адресуемы из смоука и e2e по типу
+   * (`[data-http-node]`, `[data-compare-node]`): служебный `data-id` React Flow
+   * несёт id узла, а не его тип. У `CommentNode` для этого свой корень.
+   */
+  dataNodeAttr?: { readonly name: string; readonly value: string };
   /** Удаляет узел вместе с его связями (A2). */
   onDelete: () => void;
   /** Содержимое тела карточки. */
@@ -68,6 +76,7 @@ export function BaseNode({
   executionLevel,
   status,
   badges,
+  dataNodeAttr,
   onDelete,
   children,
 }: BaseNodeProps) {
@@ -78,6 +87,12 @@ export function BaseNode({
   return (
     <div
       data-status={status ?? 'idle'}
+      // Имя атрибута задаёт узел (`data-http-node` и т.п.): вычислимый ключ
+      // через spread — единственный способ отдать React атрибут с динамическим
+      // именем, не собирая его строкой в className.
+      {...(dataNodeAttr === undefined
+        ? {}
+        : { [dataNodeAttr.name]: dataNodeAttr.value })}
       // `group/node` — чтобы кнопка удаления (A2) показывалась при наведении
       // именно на этот узел, а не на любой узел холста.
       className={`group/node relative w-60 rounded-xl border-2 ${border} ${background} shadow-node`}
