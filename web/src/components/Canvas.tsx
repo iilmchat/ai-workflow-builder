@@ -22,7 +22,7 @@ import { useHotkeys } from '@/hooks/use-hotkeys';
 import { computeGraphHash } from '@/lib/graph-hash';
 import { findGuides, type HelperLines } from '@/lib/graph-guides';
 import { canInsertOnEdge } from '@/lib/node-registry';
-import { useWorkflowStore, type FindCenterHandler } from '@/stores/workflow';
+import { useWorkflowStore, type CanvasMode, type FindCenterHandler } from '@/stores/workflow';
 import { useTranslation } from 'react-i18next';
 
 /** Шаг сетки привязки узлов (KI-189). */
@@ -33,6 +33,14 @@ const GUIDE_TOLERANCE = 4;
 
 /** Задержка автосохранения после правки графа (KI-195), мс. */
 const AUTO_SAVE_DELAY_MS = 3000;
+
+/**
+ * Режимы холста в панели (KI-188), порядок кнопок — как в DESIGN.
+ *
+ * Клавиша режима совпадает с хоткеем (`S` — курсор, `H` — рука), поэтому
+ * массив типизирован `CanvasMode`: опечатка в литерале не пройдёт tsc.
+ */
+const CANVAS_MODE_BUTTONS: readonly CanvasMode[] = ['select', 'pan'];
 
 /**
  * Реестр типов связей React Flow (KI-185).
@@ -106,6 +114,14 @@ function CanvasInner({ onReady }: CanvasProps) {
   const lastSavedHash = useWorkflowStore((state) => state.lastSavedHash);
   const markSaved = useWorkflowStore((state) => state.markSaved);
   const saveWorkflowAsync = useWorkflowStore((state) => state.saveWorkflowAsync);
+  // KI-186: режим холста, видимость миникарты и общий каталог узлов живут в
+  // сторе — их меняют и горячие клавиши, и кнопки панели режимов, и `Toolbar`.
+  const canvasMode = useWorkflowStore((state) => state.canvasMode);
+  const setCanvasMode = useWorkflowStore((state) => state.setCanvasMode);
+  const showMinimap = useWorkflowStore((state) => state.showMinimap);
+  const setShowMinimap = useWorkflowStore((state) => state.setShowMinimap);
+  const isCatalogOpen = useWorkflowStore((state) => state.isCatalogOpen);
+  const setCatalogOpen = useWorkflowStore((state) => state.setCatalogOpen);
   const isEmpty = nodes.length === 0;
   // KI-189: направляющие выравнивания (ручная реализация — `useAligning`
   // доступен только в @xyflow/pro).
@@ -116,7 +132,7 @@ function CanvasInner({ onReady }: CanvasProps) {
   const pendingEdgeId = useWorkflowStore((state) => state.pendingEdgeId);
   const clearPendingEdge = useWorkflowStore((state) => state.clearPendingEdge);
 
-  const { getViewport } = useReactFlow();
+  const { getViewport, fitView } = useReactFlow();
 
   /**
    * Переводит центр контейнера из экранных координат в координаты холста
@@ -183,9 +199,13 @@ function CanvasInner({ onReady }: CanvasProps) {
     );
   }, []);
 
-  // KI-191: Ctrl+D дублирует выделенный узел (R6.4b расширит список клавиш).
+  // KI-186: хоткеи холста (S/H/F/M/Tab). `ctrl+d` (KI-191) живёт в той же карте:
+  // хук сам проверяет сочетания с `ctrl` раньше одиночных, поэтому `Ctrl+D` и
+  // `D` не конфликтуют, а `preventDefault` для дублирования по-прежнему вызывает
+  // сам обработчик (поведение R6.4a сохранено).
   useHotkeys(
     {
+      // Ctrl+D — дублировать выделенный узел (KI-191).
       'ctrl+d': (event) => {
         if (selectedNodeId === null) {
           return;
@@ -194,8 +214,37 @@ function CanvasInner({ onReady }: CanvasProps) {
         event.preventDefault();
         duplicateNodes([selectedNodeId]);
       },
+      // S — режим «Курсор»: рамка выделения вместо перемещения холста (KI-188).
+      s: () => setCanvasMode('select'),
+      // H — режим «Рука»: перетаскивание холста (KI-188).
+      h: () => setCanvasMode('pan'),
+      // F — вписать все узлы в видимую область (KI-186).
+      f: () => {
+        void fitView({ duration: 200 });
+      },
+      // M — показать/скрыть миникарту (KI-190).
+      m: () => setShowMinimap(!showMinimap),
+      // Tab — общий каталог узлов (KI-186). `preventDefault` гасит переход
+      // фокуса, `stopPropagation` не пускает Tab в обработчики React Flow.
+      // `allow` нужен, когда каталог уже открыт: фокус стоит в его поиске
+      // (`autoFocus`), а иначе клавиша не закрыла бы каталог.
+      tab: {
+        preventDefault: true,
+        stopPropagation: true,
+        allow: () => isCatalogOpen,
+        handler: () => setCatalogOpen(!isCatalogOpen),
+      },
     },
-    [selectedNodeId, duplicateNodes],
+    [
+      selectedNodeId,
+      duplicateNodes,
+      setCanvasMode,
+      fitView,
+      showMinimap,
+      setShowMinimap,
+      isCatalogOpen,
+      setCatalogOpen,
+    ],
   );
 
   // KI-195: автосохранение через 3 секунды после последней правки. Сохраняем
@@ -220,115 +269,181 @@ function CanvasInner({ onReady }: CanvasProps) {
   );
 
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      nodeTypes={nodeTypes}
-      // KI-185: кастомное ребро с кнопками «+»/«×». `edgeTypes` — константа
-      // модуля, `DEFAULT_EDGE_OPTIONS` подставляет тип связям без своего `type`
-      // (в том числе загруженным из backend).
-      edgeTypes={edgeTypes}
-      defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
-      // KI-189: привязка к сетке 8×8, направляющие — поверх (см. ниже).
-      snapToGrid
-      snapGrid={SNAP_GRID}
-      // KI-189-fix: `onNodeDrag` третьим аргументом отдаёт только dragged-узлы,
-      // поэтому соседей для направляющих обработчик берёт из стора.
-      onNodeDrag={(_event, node) => handleNodeDrag(node)}
-      onNodeDragStop={() => setHelperLines({})}
-      onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
-      onConnect={onConnect}
-      // A1: по умолчанию React Flow v12 удаляет только по `Backspace`, из-за
-      // чего привычная клавиша `Delete` не работала. Возвращаем обе.
-      deleteKeyCode={DELETE_KEY_CODES}
-      // A1: удаление узла сносит и его связи, чтобы в графе не оставалось
-      // висячих рёбер (React Flow убирает их сам — фиксируем это тестом).
-      onNodesDelete={(deleted) => {
-        for (const node of deleted) {
-          removeNode(node.id);
-        }
-      }}
-      // Клик по узлу показывает его результат в нижней панели (R4.3b),
-      // клик по пустому месту возвращает панель к run-уровню. Клик по связи или
-      // порту эти обработчики не дёргает, поэтому выбор не «слетает».
-      onNodeClick={(_event, node) => setSelectedNodeId(node.id)}
-      onPaneClick={() => setSelectedNodeId(null)}
-      proOptions={{ hideAttribution: true }}
-      // KI-167: подсказки кнопок Zoom/Fit/Interactive и миникарты на языке UI.
-      ariaLabelConfig={ariaLabels(t)}
-      // Цвет и толщина связей — из переменных React Flow (theme.css), чтобы
-      // рёбра менялись вместе с темой (R5.2); width: 2 задан в --xy-edge-stroke-width.
-      // maxZoom: иначе один-два узла растягиваются на весь экран.
-      // При загрузке графа из backend подгоняем вид по всем узлам.
-      fitView={isEmpty}
-      fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
-    >
-      <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
-      <Controls />
-      <MiniMap />
+    <>
+      {/* KI-188: курсор контейнера повторяет режим холста — «рука» в pan,
+          обычная стрелка в select. */}
+      <div
+        className={`h-full w-full ${
+          canvasMode === 'pan' ? 'cursor-grab' : 'cursor-default'
+        }`}
+      >
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          // KI-185: кастомное ребро с кнопками «+»/«×». `edgeTypes` — константа
+          // модуля, `DEFAULT_EDGE_OPTIONS` подставляет тип связям без своего `type`
+          // (в том числе загруженным из backend).
+          edgeTypes={edgeTypes}
+          defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
+          // KI-188: в режиме «Рука» перетаскивание пустого места двигает холст,
+          // в режиме «Курсор» — рисует рамку выделения (`selectionOnDrag`),
+          // поэтому `panOnDrag` и `selectionOnDrag` взаимоисключающие.
+          panOnDrag={canvasMode === 'pan'}
+          selectionOnDrag={canvasMode === 'select'}
+          // KI-189: привязка к сетке 8×8, направляющие — поверх (см. ниже).
+          snapToGrid
+          snapGrid={SNAP_GRID}
+          // KI-189-fix: `onNodeDrag` третьим аргументом отдаёт только dragged-узлы,
+          // поэтому соседей для направляющих обработчик берёт из стора.
+          onNodeDrag={(_event, node) => handleNodeDrag(node)}
+          onNodeDragStop={() => setHelperLines({})}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          // A1: по умолчанию React Flow v12 удаляет только по `Backspace`, из-за
+          // чего привычная клавиша `Delete` не работала. Возвращаем обе.
+          deleteKeyCode={DELETE_KEY_CODES}
+          // A1: удаление узла сносит и его связи, чтобы в графе не оставалось
+          // висячих рёбер (React Flow убирает их сам — фиксируем это тестом).
+          onNodesDelete={(deleted) => {
+            for (const node of deleted) {
+              removeNode(node.id);
+            }
+          }}
+          // Клик по узлу показывает его результат в нижней панели (R4.3b),
+          // клик по пустому месту возвращает панель к run-уровню. Клик по связи или
+          // порту эти обработчики не дёргает, поэтому выбор не «слетает».
+          onNodeClick={(_event, node) => setSelectedNodeId(node.id)}
+          onPaneClick={() => setSelectedNodeId(null)}
+          proOptions={{ hideAttribution: true }}
+          // KI-167: подсказки кнопок Zoom/Fit/Interactive и миникарты на языке UI.
+          ariaLabelConfig={ariaLabels(t)}
+          // Цвет и толщина связей — из переменных React Flow (theme.css), чтобы
+          // рёбра менялись вместе с темой (R5.2); width: 2 задан в --xy-edge-stroke-width.
+          // maxZoom: иначе один-два узла растягиваются на весь экран.
+          // При загрузке графа из backend подгоняем вид по всем узлам.
+          fitView={isEmpty}
+          fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
+        >
+          <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
+          <Controls />
+          {/* KI-190: миникарту можно скрыть (хоткей `M` или кнопка панели
+              режимов). KI-158 (контраст) учтён в theme.css; KI-170
+              (`aria-label` у `<MiniMap />`) остаётся открытым. */}
+          {showMinimap && <MiniMap />}
 
-      {/* KI-185 (fix4): кнопки «+»/«×» живут в самом ребре
-          (`InsertableEdge`) — Canvas их больше не рисует и не хранит hover. */}
+          {/* KI-185 (fix4): кнопки «+»/«×» живут в самом ребре
+              (`InsertableEdge`) — Canvas их больше не рисует и не хранит hover. */}
 
-      {pendingEdgeId !== null && (
-        // Ширина задана явно: у обёртки нет содержимого собственного размера,
-        // и `inset-x-0` внутри поповера схлопывался в 0 (KI-258).
-        <div className="absolute left-1/2 top-4 z-30 w-72 -translate-x-1/2">
-          <NodeCatalogPopover
-            open
-            placement="down"
-            // KI-259: в связь можно вставить только типы с входным портом
-            // (единый источник правды — `NODE_REGISTRY.canBeInsertedOnEdge`).
-            filter={canInsertOnEdge}
-            onClose={clearPendingEdge}
-            onAddNode={(type) => {
-              addNodeOnEdge(pendingEdgeId, type);
-              clearPendingEdge();
-            }}
-          />
+          {pendingEdgeId !== null && (
+            // Ширина задана явно: у обёртки нет содержимого собственного размера,
+            // и `inset-x-0` внутри поповера схлопывался в 0 (KI-258).
+            <div className="absolute left-1/2 top-4 z-30 w-72 -translate-x-1/2">
+              <NodeCatalogPopover
+                open
+                placement="down"
+                // KI-259: в связь можно вставить только типы с входным портом
+                // (единый источник правды — `NODE_REGISTRY.canBeInsertedOnEdge`).
+                filter={canInsertOnEdge}
+                onClose={clearPendingEdge}
+                onAddNode={(type) => {
+                  addNodeOnEdge(pendingEdgeId, type);
+                  clearPendingEdge();
+                }}
+              />
+            </div>
+          )}
+
+          {/* KI-189: направляющие выравнивания. Слой рендерится через
+              `<ViewportPortal>` — он живёт внутри `.react-flow__viewport` и
+              трансформируется вместе с холстом, поэтому координаты линий — в
+              координатах потока (без пересчёта в экранные).
+              `overflow-visible` обязателен: без него svg обрезает линию по своему
+              боксу (размер вьюпорта), и при pan/zoom линия пропадает.
+              `pointer-events-none` — слой не должен перехватывать кнопки «+»/«×». */}
+          {(helperLines.vertical !== undefined ||
+            helperLines.horizontal !== undefined) && (
+            <ViewportPortal>
+              <svg className="pointer-events-none absolute inset-0 z-10 h-full w-full overflow-visible">
+                {helperLines.vertical !== undefined && (
+                  <line
+                    data-helper-line="vertical"
+                    x1={helperLines.vertical}
+                    x2={helperLines.vertical}
+                    y1={-100000}
+                    y2={100000}
+                    stroke="var(--color-primary)"
+                    strokeWidth={1}
+                    strokeDasharray="4 4"
+                  />
+                )}
+                {helperLines.horizontal !== undefined && (
+                  <line
+                    data-helper-line="horizontal"
+                    x1={-100000}
+                    x2={100000}
+                    y1={helperLines.horizontal}
+                    y2={helperLines.horizontal}
+                    stroke="var(--color-primary)"
+                    strokeWidth={1}
+                    strokeDasharray="4 4"
+                  />
+                )}
+              </svg>
+            </ViewportPortal>
+          )}
+        </ReactFlow>
+      </div>
+
+      {/* KI-188/KI-190: панель режимов холста. Живёт вне `<ReactFlow>`, но внутри
+          его провайдера; `pointer-events-none` на обёртке + `pointer-events-auto`
+          на кнопках — так панель не перехватывает pan/zoom вокруг себя.
+          Показывается и на пустом холсте: режим и миникарта — настройки вида,
+          а не свойство графа. */}
+      <div className="pointer-events-none absolute bottom-6 left-4 z-20">
+        <div className="pointer-events-auto flex items-center gap-1 rounded-xl bg-background p-1 shadow-lg ring-1 ring-border">
+          {CANVAS_MODE_BUTTONS.map((mode) => {
+            const active = canvasMode === mode;
+
+            return (
+              <button
+                key={mode}
+                type="button"
+                data-canvas-mode={mode}
+                aria-pressed={active}
+                aria-label={t(`canvas.mode.${mode}`)}
+                title={t(`canvas.mode.${mode}`)}
+                onClick={() => setCanvasMode(mode)}
+                className={`cursor-pointer rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                  active
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-muted'
+                }`}
+              >
+                {mode === 'select' ? '🖱' : '✋'} {t(`canvas.mode.${mode}`)}
+              </button>
+            );
+          })}
+
+          <button
+            type="button"
+            data-canvas-minimap-toggle="true"
+            aria-pressed={showMinimap}
+            aria-label={t('canvas.minimap.toggle')}
+            title={t('canvas.minimap.toggle')}
+            onClick={() => setShowMinimap(!showMinimap)}
+            className={`cursor-pointer rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+              showMinimap
+                ? 'bg-primary text-primary-foreground'
+                : 'text-foreground hover:bg-muted'
+            }`}
+          >
+            <span aria-hidden="true">🗺</span> {t('canvas.minimap.toggle')}
+          </button>
         </div>
-      )}
-
-      {/* KI-189: направляющие выравнивания. Слой рендерится через
-          `<ViewportPortal>` — он живёт внутри `.react-flow__viewport` и
-          трансформируется вместе с холстом, поэтому координаты линий — в
-          координатах потока (без пересчёта в экранные).
-          `overflow-visible` обязателен: без него svg обрезает линию по своему
-          боксу (размер вьюпорта), и при pan/zoom линия пропадает.
-          `pointer-events-none` — слой не должен перехватывать кнопки «+»/«×». */}
-      {(helperLines.vertical !== undefined ||
-        helperLines.horizontal !== undefined) && (
-        <ViewportPortal>
-          <svg className="pointer-events-none absolute inset-0 z-10 h-full w-full overflow-visible">
-            {helperLines.vertical !== undefined && (
-              <line
-                data-helper-line="vertical"
-                x1={helperLines.vertical}
-                x2={helperLines.vertical}
-                y1={-100000}
-                y2={100000}
-                stroke="var(--color-primary)"
-                strokeWidth={1}
-                strokeDasharray="4 4"
-              />
-            )}
-            {helperLines.horizontal !== undefined && (
-              <line
-                data-helper-line="horizontal"
-                x1={-100000}
-                x2={100000}
-                y1={helperLines.horizontal}
-                y2={helperLines.horizontal}
-                stroke="var(--color-primary)"
-                strokeWidth={1}
-                strokeDasharray="4 4"
-              />
-            )}
-          </svg>
-        </ViewportPortal>
-      )}
-    </ReactFlow>
+      </div>
+    </>
   );
 }
 

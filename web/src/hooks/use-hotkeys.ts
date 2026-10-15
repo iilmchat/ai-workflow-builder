@@ -1,99 +1,117 @@
 import { useEffect } from 'react';
+import {
+  bindingPriority,
+  isInputElement,
+  matchesHotkey,
+  parseBinding,
+  parseKey,
+} from '@/lib/hotkeys-utils';
 
 /** Обработчик горячей клавиши. */
-type HotkeyHandler = (event: KeyboardEvent) => void;
-
-/** Элементы, в которых горячие клавиши не должны перехватываться. */
-const EDITABLE_TAGS = ['INPUT', 'TEXTAREA', 'SELECT'];
+export type HotkeyHandler = (event: KeyboardEvent) => void;
 
 /**
- * Проверяет, что фокус находится в поле ввода.
+ * Расширенное описание горячей клавиши (KI-186).
  *
- * @returns `true`, если активный элемент — input/textarea/select или
- *   contenteditable (в нём пользователь печатает текст, а не управляет графом)
+ * Объектная форма нужна там, где одного вызова обработчика мало:
+ * - `preventDefault` — погасить действие браузера (`Tab` уводит фокус,
+ *   `Ctrl+S` открывает «Сохранить страницу»);
+ * - `stopPropagation` — не пускать событие дальше по DOM (в React Flow его
+ *   успевают увидеть обработчики панели);
+ * - `allow` — разрешить срабатывание, когда фокус стоит в поле ввода: нужно
+ *   `Tab`, закрывающему каталог, — поиск в поповере получает фокус автоматически
+ *   (`autoFocus`), и без этого исключения каталог закрывался бы только мышью.
  */
-function isEditingText(): boolean {
-  const element = document.activeElement;
+export interface HotkeyBinding {
+  /** Что выполнить при нажатии. */
+  readonly handler: HotkeyHandler;
+  /** Вызвать `event.preventDefault()` до обработчика. */
+  readonly preventDefault?: boolean;
+  /** Вызвать `event.stopPropagation()` до обработчика. */
+  readonly stopPropagation?: boolean;
+  /**
+   * Исключение из правила «в полях ввода клавиши не перехватываем».
+   *
+   * @param active - активный элемент документа
+   * @returns `true`, если биндинг всё же должен сработать
+   */
+  readonly allow?: (active: Element | null) => boolean;
+}
 
-  if (element === null) {
-    return false;
-  }
+/** Карта «описание клавиши → обработчик или расширенное описание». */
+export type HotkeyBindings = Record<string, HotkeyHandler | HotkeyBinding>;
 
-  if (element instanceof HTMLElement && element.isContentEditable) {
-    return true;
-  }
-
-  return EDITABLE_TAGS.includes(element.tagName);
+/** Приводит запись bindings к расширенной форме. */
+function toBinding(value: HotkeyHandler | HotkeyBinding): HotkeyBinding {
+  return typeof value === 'function' ? { handler: value } : value;
 }
 
 /**
- * Разбирает описание клавиши вида `ctrl+d` / `shift+c` / `delete`.
+ * Централизованный обработчик горячих клавиш (KI-186, R6.4b.1).
  *
- * @param binding - описание клавиши в lower-case
- * @returns модификаторы и саму клавишу
+ * Поведение:
+ * - события из полей ввода (`input`/`textarea`/`select`/`contenteditable`)
+ *   игнорируются — иначе `S` в текстовом узле переключал бы режим холста;
+ *   исключение задаётся полем `allow` у биндинга;
+ * - приоритет: `ctrl+*` (а также `alt`/`meta`) > `shift+*` > одиночные, поэтому
+ *   `Ctrl+S` не срабатывает как одиночный `S`;
+ * - модификаторы `ctrl`/`alt`/`meta` проверяются строго, `shift` у одиночных
+ *   клавиш — нестрого (детали в `matchesHotkey`);
+ * - listener вешается на `document` в capture-фазе: работает и когда фокус на
+ *   кнопке React Flow, и когда вложенный обработчик вызывает `stopPropagation`;
+ * - `preventDefault`/`stopPropagation` вызываются **до** обработчика, если
+ *   указаны в описании биндинга (для `Ctrl+D` их по-прежнему вызывает сам
+ *   обработчик — поведение R6.4a сохранено).
+ *
+ * @param bindings - карта «клавиша → обработчик»; ключи в lower-case, например
+ *   `'s'`, `'ctrl+d'`, `'shift+c'`, `'tab'`
+ * @param deps - зависимости эффекта: при изменении listener пересоздаётся
  */
-function parseBinding(binding: string): {
-  ctrl: boolean;
-  shift: boolean;
-  alt: boolean;
-  meta: boolean;
-  key: string;
-} {
-  const parts = binding.toLowerCase().split('+');
-  const key = parts.at(-1) ?? '';
-
-  return {
-    ctrl: parts.includes('ctrl'),
-    shift: parts.includes('shift'),
-    alt: parts.includes('alt'),
-    meta: parts.includes('meta'),
-    key,
-  };
-}
-
-/**
- * Централизованный обработчик горячих клавиш (KI-191).
- *
- * Особенности:
- * - события из полей ввода игнорируются (иначе `Ctrl+D` ломал бы ввод);
- * - модификаторы проверяются строго: `ctrl+d` не сработает на `Ctrl+Shift+D`;
- * - listener вешается на `document` в capture-фазе, поэтому работает, даже
- *   когда фокус на кнопке React Flow.
- *
- * В R6.4a используется только `ctrl+d`; R6.4b расширит список, API не меняется.
- *
- * @param bindings - карта «клавиша → обработчик» (ключи в lower-case)
- * @param deps - зависимости: при изменении listener пересоздаётся
- */
-export function useHotkeys(
-  bindings: Record<string, HotkeyHandler>,
-  deps: unknown[] = [],
-): void {
+export function useHotkeys(bindings: HotkeyBindings, deps: unknown[] = []): void {
   useEffect(() => {
+    // Раскладываем биндинги по приоритету один раз на подписку, а не на каждое
+    // нажатие: порядок в объекте задаёт пользователь, а приоритет — хук.
+    const prioritized = Object.entries(bindings)
+      .map(([binding, value]) => {
+        const parsed = parseBinding(binding);
+
+        return { parsed, entry: toBinding(value), priority: bindingPriority(parsed) };
+      })
+      .sort((left, right) => right.priority - left.priority);
+
     /**
-     * Обрабатывает `keydown` и вызывает подходящий обработчик.
+     * Обрабатывает `keydown` и вызывает первый подошедший обработчик.
      *
      * @param event - событие клавиатуры
      */
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (isEditingText()) {
+      const pressed = parseKey(event);
+
+      if (pressed === null) {
         return;
       }
 
-      for (const [binding, handler] of Object.entries(bindings)) {
-        const parsed = parseBinding(binding);
+      const active = document.activeElement;
 
-        if (
-          event.key.toLowerCase() !== parsed.key ||
-          event.ctrlKey !== parsed.ctrl ||
-          event.shiftKey !== parsed.shift ||
-          event.altKey !== parsed.alt ||
-          event.metaKey !== parsed.meta
-        ) {
+      for (const { parsed, entry } of prioritized) {
+        if (!matchesHotkey(pressed, parsed)) {
           continue;
         }
 
-        handler(event);
+        if (isInputElement(active) && entry.allow?.(active) !== true) {
+          return;
+        }
+
+        if (entry.preventDefault === true) {
+          event.preventDefault();
+        }
+
+        if (entry.stopPropagation === true) {
+          event.stopPropagation();
+        }
+
+        entry.handler(event);
+
         return;
       }
     };

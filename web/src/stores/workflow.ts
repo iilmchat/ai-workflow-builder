@@ -53,6 +53,70 @@ import type {
 type Position = { x: number; y: number };
 
 /**
+ * Режим холста (KI-188): `select` — рамка выделения, `pan` — перемещение.
+ *
+ * Значение живёт в `localStorage`, поэтому строка — единственный формат,
+ * который можно записать без сериализации.
+ */
+export type CanvasMode = 'select' | 'pan';
+
+/** Ключ `localStorage` с режимом холста (KI-188). */
+const CANVAS_MODE_STORAGE_KEY = 'canvasMode';
+
+/** Ключ `localStorage` с видимостью миникарты (KI-190). */
+const SHOW_MINIMAP_STORAGE_KEY = 'showMinimap';
+
+/**
+ * Читает режим холста из `localStorage` (KI-188).
+ *
+ * Значение проверяется: в хранилище могло остаться что-то из другой версии
+ * приложения, а `canvasMode === 'pan'` участвует в логике перетаскивания.
+ *
+ * @returns `'select'` или `'pan'`; `'select'` при отсутствии/невалидном значении
+ */
+function readCanvasMode(): CanvasMode {
+  try {
+    const stored = window.localStorage.getItem(CANVAS_MODE_STORAGE_KEY);
+
+    return stored === 'pan' || stored === 'select' ? stored : 'select';
+  } catch {
+    // Приватный режим браузера может запретить доступ к localStorage: холст
+    // должен открыться с дефолтным режимом, а не упасть на импорте модуля.
+    return 'select';
+  }
+}
+
+/**
+ * Читает видимость миникарты из `localStorage` (KI-190).
+ *
+ * @returns `true`, если миникарта была показана или настройки ещё нет
+ */
+function readShowMinimap(): boolean {
+  try {
+    const stored = window.localStorage.getItem(SHOW_MINIMAP_STORAGE_KEY);
+
+    return stored === null ? true : stored === 'true';
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Записывает значение в `localStorage`, не падая при запрете доступа.
+ *
+ * @param key - ключ хранилища
+ * @param value - строковое значение
+ */
+function writeStorage(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Настройка не критична для работы редактора: молча остаёмся с текущим
+    // состоянием в памяти (приватный режим, переполненная квота).
+  }
+}
+
+/**
  * Закрытие текущего SSE-потока запуска.
  *
  * Хранится в модульной переменной, а не в состоянии стора: это не данные для
@@ -348,6 +412,51 @@ export interface WorkflowState {
   /** Canvas регистрирует здесь функцию поиска центра вьюпорта. */
   findCenter: FindCenterHandler | null;
   setFindCenter: (handler: FindCenterHandler) => void;
+
+  /**
+   * Режим холста (KI-188): `select` — рамка выделения, `pan` — перемещение.
+   *
+   * Инициализируется из `localStorage` (ключ `canvasMode`), поэтому режим
+   * переживает перезагрузку страницы. Переключается клавишами `S`/`H` и
+   * кнопками панели режимов.
+   */
+  canvasMode: CanvasMode;
+  /**
+   * Переключает режим холста и сохраняет его в `localStorage` (KI-188).
+   *
+   * @param mode - новый режим
+   */
+  setCanvasMode: (mode: CanvasMode) => void;
+
+  /**
+   * Видимость миникарты (KI-190).
+   *
+   * Инициализируется из `localStorage` (ключ `showMinimap`); при отсутствии
+   * настройки миникарта показана.
+   */
+  showMinimap: boolean;
+  /**
+   * Показывает/скрывает миникарту и сохраняет выбор в `localStorage` (KI-190).
+   *
+   * @param show - `true` — показать, `false` — скрыть
+   */
+  setShowMinimap: (show: boolean) => void;
+
+  /**
+   * Открыт ли общий каталог узлов (KI-186, хоткей `Tab`).
+   *
+   * Состояние живёт в сторе, а не в `Toolbar`: каталог открывают два разных
+   * места — кнопка «+» в тулбаре и клавиша `Tab` на холсте. Каталог **вставки
+   * узла в связь** (KI-185) использует отдельное поле `pendingEdgeId` и это
+   * состояние не трогает.
+   */
+  isCatalogOpen: boolean;
+  /**
+   * Открывает/закрывает общий каталог узлов (KI-186).
+   *
+   * @param open - `true` — открыть, `false` — закрыть
+   */
+  setCatalogOpen: (open: boolean) => void;
 }
 
 /**
@@ -614,6 +723,12 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   notice: null,
 
   findCenter: null,
+
+  // KI-188/KI-190: UI-настройки холста читаются из localStorage на старте —
+  // это оценка при импорте модуля, до монтирования компонентов.
+  canvasMode: readCanvasMode(),
+  showMinimap: readShowMinimap(),
+  isCatalogOpen: false,
 
   /** Каталог вставки узла в связь закрыт (KI-185). */
   pendingEdgeId: null,
@@ -1215,4 +1330,16 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   setNotice: (notice) => set({ notice }),
 
   setFindCenter: (handler) => set({ findCenter: handler }),
+
+  setCanvasMode: (mode) => {
+    writeStorage(CANVAS_MODE_STORAGE_KEY, mode);
+    set({ canvasMode: mode });
+  },
+
+  setShowMinimap: (show) => {
+    writeStorage(SHOW_MINIMAP_STORAGE_KEY, String(show));
+    set({ showMinimap: show });
+  },
+
+  setCatalogOpen: (open) => set({ isCatalogOpen: open }),
 }));
