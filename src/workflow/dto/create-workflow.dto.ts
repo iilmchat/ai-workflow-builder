@@ -1,11 +1,13 @@
 import { z } from 'zod';
 
-/** Zod-схема создания workflow. */
+/**
+ * Zod-схема создания workflow.
+ *
+ * KI-204: `userId` убран — владелец берётся из access-токена. Zod по умолчанию
+ * отбрасывает неизвестные ключи, поэтому старый клиент с `userId` в теле
+ * получит 201, а поле будет проигнорировано (совместимость до R6.1b.2).
+ */
 export const CreateWorkflowSchema = z.object({
-  userId: z
-    .string()
-    .min(1, 'userId обязателен')
-    .max(100, 'userId не длиннее 100 символов'),
   name: z
     .string()
     .min(1, 'name обязателен')

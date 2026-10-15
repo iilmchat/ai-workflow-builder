@@ -215,6 +215,24 @@ export const EnvSchema = z.object({
     .preprocess(emptyToUndefined, z.string().optional())
     .default('24h'),
   /**
+   * Срок жизни refresh-токена (R6.1b). Формат `<N><s|m|h|d>` — парсится
+   * `parseDurationToMs` без зависимости от пакета `ms`.
+   */
+  JWT_REFRESH_EXPIRES_IN: z
+    .preprocess(emptyToUndefined, z.string().optional())
+    .default('7d'),
+  /**
+   * Флаг `Secure` у refresh-cookie (R6.1b). Если не задан — считается
+   * `NODE_ENV === 'production'`: в dev/CI cookie ходит по http.
+   */
+  COOKIE_SECURE: z.preprocess(
+    emptyToUndefined,
+    z
+      .enum(['true', 'false'])
+      .transform((value) => value === 'true')
+      .optional(),
+  ),
+  /**
    * Отключает проверку токена (dev/CI): запросы выполняются от системного
    * пользователя миграции 0004. В проде обязано быть `false`.
    */

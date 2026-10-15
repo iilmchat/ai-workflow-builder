@@ -36,6 +36,13 @@
       "when": 1792048944813,
       "tag": "0004_add_users",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792052841540,
+      "tag": "0005_refresh_tokens",
+      "breakpoints": true
     }
   ]
 }

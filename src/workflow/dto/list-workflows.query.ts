@@ -3,14 +3,11 @@ import { z } from 'zod';
 /**
  * Zod-схема query-параметров списка workflow.
  *
+ * KI-204: `userId` убран — владелец берётся из access-токена; лишний
+ * query-параметр от старого клиента просто игнорируется.
  * `limit`/`offset` приходят строками, поэтому приводятся через `z.coerce`.
  */
 export const ListWorkflowsQuerySchema = z.object({
-  userId: z
-    .string()
-    .min(1, 'userId обязателен')
-    .max(100, 'userId не длиннее 100 символов')
-    .optional(),
   limit: z.coerce
     .number()
     .int('limit должен быть целым числом')

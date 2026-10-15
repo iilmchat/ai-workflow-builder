@@ -64,8 +64,8 @@ export class WorkflowController {
     @Body(ZodValidationPipe.create(CreateWorkflowSchema)) dto: CreateWorkflowDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<Workflow> {
-    // `userId` из тела игнорируется: владельца определяет токен (R6.1a).
-    return this.workflowService.createAsync({ ...dto, userId: user.sub });
+    // Владелец — только из токена (R6.1a); в body его больше нет (KI-204).
+    return this.workflowService.createAsync(dto, user.sub);
   }
 
   /**

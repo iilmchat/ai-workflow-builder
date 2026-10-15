@@ -6,11 +6,12 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
-import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { eq } from 'drizzle-orm';
+import { and, eq, gt, isNull } from 'drizzle-orm';
+import { parseDurationToMs } from '../common/utils/parse-duration.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { users, type User } from '../db/schema.js';
+import { refreshTokens, users, type User } from '../db/schema.js';
 import type { LoginDto } from './dto/login.dto.js';
 import type { RegisterDto } from './dto/register.dto.js';
 import type { JwtPayload } from './interfaces/jwt-payload.js';
@@ -33,6 +34,21 @@ const SALT_BYTES = 16;
 const KEY_LENGTH = 64;
 /** Метка схемы хранения пароля. */
 const HASH_SCHEME = 'scrypt';
+/** Длина opaque refresh-токена в байтах (R6.1b). */
+const REFRESH_TOKEN_BYTES = 32;
+
+/**
+ * Считает sha256-хэш refresh-токена.
+ *
+ * В БД хранится только хэш: сам токен знает лишь клиент, поэтому дамп
+ * `refresh_tokens` не позволяет войти (RULES 5.1/5.9).
+ *
+ * @param token - opaque refresh-токен
+ * @returns hex-строка хэша
+ */
+function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
 /** Единое сообщение для неудачного входа: не подсказываем, что именно неверно. */
 const INVALID_CREDENTIALS_MESSAGE = 'Неверный email или пароль';
 
@@ -227,5 +243,147 @@ export class AuthService {
    */
   private normalizeEmail(email: string): string {
     return email.trim().toLowerCase();
+  }
+
+  /**
+   * Создаёт opaque refresh-токен и сохраняет его хэш.
+   *
+   * @param userId - id пользователя (uuid)
+   * @returns токен для cookie и момент истечения
+   */
+  async createRefreshTokenAsync(
+    userId: string,
+  ): Promise<{ token: string; expiresAt: Date }> {
+    const token = randomBytes(REFRESH_TOKEN_BYTES).toString('base64url');
+    const expiresAt = new Date(Date.now() + this.refreshTtlMs());
+
+    await this.db
+      .insert(refreshTokens)
+      .values({ userId, tokenHash: hashToken(token), expiresAt });
+
+    return { token, expiresAt };
+  }
+
+  /**
+   * Ищет активный refresh-токен по хэшу.
+   *
+   * @param token - opaque refresh-токен из cookie
+   * @returns владелец и id строки либо `null` (нет, отозван, истёк)
+   */
+  async verifyRefreshTokenAsync(
+    token: string,
+  ): Promise<{ userId: string; tokenId: string } | null> {
+    const [found] = await this.db
+      .select({ id: refreshTokens.id, userId: refreshTokens.userId })
+      .from(refreshTokens)
+      .where(
+        and(
+          eq(refreshTokens.tokenHash, hashToken(token)),
+          isNull(refreshTokens.revokedAt),
+          gt(refreshTokens.expiresAt, new Date()),
+        ),
+      )
+      .limit(1);
+
+    return found === undefined
+      ? null
+      : { userId: found.userId, tokenId: found.id };
+  }
+
+  /**
+   * Ротирует refresh-токен: старый отзывается, выдаётся новый access + refresh.
+   *
+   * Всё в одной транзакции (RULES 4.22): отзыв старого и вставка нового
+   * неделимы, иначе сбой между ними оставил бы пользователя без сессии.
+   * Отзыв идёт с условием `revoked_at IS NULL`: если строку уже отозвал
+   * параллельный запрос, ротация не состоится — это защита от гонки и от
+   * повторного использования перехваченного токена.
+   *
+   * @param oldToken - текущий refresh-токен из cookie
+   * @returns новая пара токенов и пользователь либо `null`, если токен неактивен
+   */
+  async rotateRefreshTokenAsync(oldToken: string): Promise<{
+    accessToken: string;
+    user: UserPublic;
+    newRefresh: { token: string; expiresAt: Date };
+  } | null> {
+    const verified = await this.verifyRefreshTokenAsync(oldToken);
+
+    if (verified === null) {
+      return null;
+    }
+
+    const token = randomBytes(REFRESH_TOKEN_BYTES).toString('base64url');
+    const expiresAt = new Date(Date.now() + this.refreshTtlMs());
+
+    const user = await this.db.transaction(async (tx) => {
+      const revoked = await tx
+        .update(refreshTokens)
+        .set({ revokedAt: new Date() })
+        .where(
+          and(
+            eq(refreshTokens.id, verified.tokenId),
+            isNull(refreshTokens.revokedAt),
+          ),
+        )
+        .returning({ id: refreshTokens.id });
+
+      if (revoked.length === 0) {
+        return null;
+      }
+
+      await tx.insert(refreshTokens).values({
+        userId: verified.userId,
+        tokenHash: hashToken(token),
+        expiresAt,
+      });
+
+      const [found] = await tx
+        .select()
+        .from(users)
+        .where(eq(users.id, verified.userId))
+        .limit(1);
+
+      return found ?? null;
+    });
+
+    if (user === null) {
+      return null;
+    }
+
+    return {
+      accessToken: await this.generateAccessTokenAsync(user),
+      user: toPublic(user),
+      newRefresh: { token, expiresAt },
+    };
+  }
+
+  /**
+   * Отзывает refresh-токен (logout). Идемпотентно: повторный вызов — no-op.
+   *
+   * @param token - opaque refresh-токен из cookie
+   * @returns промис без значения
+   */
+  async revokeRefreshTokenAsync(token: string): Promise<void> {
+    await this.db
+      .update(refreshTokens)
+      .set({ revokedAt: new Date() })
+      .where(
+        and(
+          eq(refreshTokens.tokenHash, hashToken(token)),
+          isNull(refreshTokens.revokedAt),
+        ),
+      );
+  }
+
+  /**
+   * Срок жизни refresh-токена в миллисекундах.
+   *
+   * @returns TTL из `JWT_REFRESH_EXPIRES_IN`
+   */
+  private refreshTtlMs(): number {
+    return parseDurationToMs(
+      this.config.getOrThrow<string>('JWT_REFRESH_EXPIRES_IN'),
+    );
   }
 }

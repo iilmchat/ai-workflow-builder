@@ -7,7 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { Queue } from 'bullmq';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   workflowRuns,
@@ -112,15 +112,33 @@ export class RunsService {
   /**
    * Возвращает запуск workflow по идентификатору.
    *
+   * KI-202: если передан `userId`, чужой запуск неотличим от несуществующего —
+   * отдаём 404, а не 403, чтобы не раскрывать факт существования.
+   *
    * @param id - uuid запуска
+   * @param userId - владелец из access-токена (необязательный)
    * @returns публичное представление запуска
-   * @throws NotFoundException если запуск не найден
+   * @throws NotFoundException если запуск не найден или принадлежит другому
    */
-  async getRunAsync(id: string): Promise<RunResponse> {
+  async getRunAsync(id: string, userId?: string): Promise<RunResponse> {
     const [run] = await this.db
       .select()
       .from(workflowRuns)
-      .where(eq(workflowRuns.id, id))
+      .where(
+        userId === undefined
+          ? eq(workflowRuns.id, id)
+          : and(
+              eq(workflowRuns.id, id),
+              // Владелец запуска — владелец его workflow.
+              inArray(
+                workflowRuns.workflowId,
+                this.db
+                  .select({ id: workflows.id })
+                  .from(workflows)
+                  .where(eq(workflows.userId, userId)),
+              ),
+            ),
+      )
       .limit(1);
 
     if (!run) {

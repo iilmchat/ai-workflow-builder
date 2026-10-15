@@ -188,9 +188,9 @@ describe('WorkflowService', () => {
 
   describe('createAsync', () => {
     it('вставляет запись через Drizzle и возвращает созданный workflow', async () => {
-      const dto = { userId: 'user-1', name: 'My workflow', nodes: [], edges: [] };
+      const dto = { name: 'My workflow', nodes: [], edges: [] };
 
-      const result = await service.createAsync(dto);
+      const result = await service.createAsync(dto, 'user-1');
 
       expect(db.insert).toHaveBeenCalledWith(workflows);
       expect(insertChain.values).toHaveBeenCalledWith({
@@ -208,16 +208,19 @@ describe('WorkflowService', () => {
       const nodes = [{ id: 'n1', type: 'llm' }];
       const edges = [{ from: 'n1', to: 'n2' }];
 
-      await service.createAsync({
-        userId: 'user-2',
-        name: 'Graph',
-        description: 'описание',
-        nodes,
-        edges,
-      });
+      await service.createAsync(
+        {
+          name: 'Graph',
+          description: 'описание',
+          nodes,
+          edges,
+        },
+        'user-2',
+      );
 
       expect(insertChain.values).toHaveBeenCalledWith(
         expect.objectContaining({
+          userId: 'user-2',
           description: 'описание',
           nodes,
           edges,

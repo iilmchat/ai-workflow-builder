@@ -2,6 +2,7 @@ import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
+import { createHash } from 'node:crypto';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import type { User } from '../db/schema.js';
 import { AuthService } from './auth.service.js';
@@ -12,6 +13,8 @@ const EMAIL = 'user@example.com';
 const PASSWORD = 'test1234';
 const CREATED_AT = new Date('2024-01-01T00:00:00.000Z');
 const TOKEN = 'signed.jwt.token';
+/** id строки `refresh_tokens` в моках. */
+const TOKEN_ID = '44444444-4444-4444-8444-444444444444';
 
 /** Строка `users` без учёта `passwordHash` (его подставляет тест). */
 const baseUser: Omit<User, 'passwordHash'> = {
@@ -25,17 +28,32 @@ describe('AuthService', () => {
   let selectLimit: ReturnType<typeof vi.fn>;
   let insertValues: ReturnType<typeof vi.fn>;
   let insertReturning: ReturnType<typeof vi.fn>;
+  let updateReturning: ReturnType<typeof vi.fn>;
+  let updateSet: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     selectLimit = vi.fn(() => Promise.resolve([]));
     insertReturning = vi.fn(() => Promise.resolve([]));
     insertValues = vi.fn(() => ({ returning: insertReturning }));
+    updateReturning = vi.fn(() => Promise.resolve([{ id: TOKEN_ID }]));
+    updateSet = vi.fn(() => ({
+      where: vi.fn(() => ({ returning: updateReturning })),
+    }));
+
+    const update = vi.fn(() => ({ set: updateSet }));
+    const insert = vi.fn(() => ({ values: insertValues }));
+    const select = vi.fn(() => ({
+      from: vi.fn(() => ({ where: vi.fn(() => ({ limit: selectLimit })) })),
+    }));
 
     const db = {
-      select: vi.fn(() => ({
-        from: vi.fn(() => ({ where: vi.fn(() => ({ limit: selectLimit })) })),
-      })),
-      insert: vi.fn(() => ({ values: insertValues })),
+      select,
+      insert,
+      update,
+      // R6.1b: ротация refresh-токена идёт в транзакции (RULES 4.22).
+      transaction: vi.fn((callback: (tx: unknown) => Promise<unknown>) =>
+        callback({ select, insert, update }),
+      ),
     };
 
     const moduleRef = await Test.createTestingModule({
@@ -184,6 +202,88 @@ describe('AuthService', () => {
       ).resolves.toBe(false);
       await expect(service.verifyPasswordAsync(PASSWORD, 'plain')).resolves.toBe(false);
       await expect(service.verifyPasswordAsync(PASSWORD, '')).resolves.toBe(false);
+    });
+  });
+
+  describe('refresh-токены (R6.1b)', () => {
+    it('createRefreshTokenAsync отдаёт токен, а в БД пишет только хэш', async () => {
+      const result = await service.createRefreshTokenAsync(USER_ID);
+
+      expect(result.token.length).toBeGreaterThan(20);
+      expect(result.expiresAt.getTime()).toBeGreaterThan(Date.now());
+
+      const [values] = insertValues.mock.calls[0] as [
+        { userId: string; tokenHash: string },
+      ];
+
+      expect(values.userId).toBe(USER_ID);
+      expect(values.tokenHash).toBe(
+        createHash('sha256').update(result.token).digest('hex'),
+      );
+      expect(values.tokenHash).not.toBe(result.token);
+    });
+
+    it('verifyRefreshTokenAsync возвращает владельца для активного токена', async () => {
+      selectLimit.mockResolvedValue([{ id: TOKEN_ID, userId: USER_ID }]);
+
+      await expect(service.verifyRefreshTokenAsync('opaque')).resolves.toEqual({
+        userId: USER_ID,
+        tokenId: TOKEN_ID,
+      });
+    });
+
+    it('verifyRefreshTokenAsync возвращает null для неизвестного/отозванного/истёкшего', async () => {
+      selectLimit.mockResolvedValue([]);
+
+      await expect(service.verifyRefreshTokenAsync('opaque')).resolves.toBeNull();
+    });
+
+    it('rotateRefreshTokenAsync отзывает старый и выдаёт access + новый refresh', async () => {
+      selectLimit.mockResolvedValue([
+        {
+          id: TOKEN_ID,
+          userId: USER_ID,
+          email: EMAIL,
+          createdAt: CREATED_AT,
+          passwordHash: 'scrypt$x$y',
+        },
+      ]);
+
+      const result = await service.rotateRefreshTokenAsync('opaque-old');
+
+      expect(result?.accessToken).toBe(TOKEN);
+      expect(result?.user.email).toBe(EMAIL);
+      expect(result?.newRefresh.token).not.toBe('opaque-old');
+      expect(updateSet).toHaveBeenCalledWith(
+        expect.objectContaining({ revokedAt: expect.any(Date) }),
+      );
+
+      const calls = insertValues.mock.calls;
+      const [inserted] = calls[calls.length - 1] as [{ tokenHash: string }];
+
+      expect(inserted.tokenHash).not.toBe(result?.newRefresh.token);
+    });
+
+    it('rotateRefreshTokenAsync возвращает null при гонке (токен уже отозван)', async () => {
+      selectLimit.mockResolvedValue([
+        { id: TOKEN_ID, userId: USER_ID, email: EMAIL, createdAt: CREATED_AT },
+      ]);
+      updateReturning.mockResolvedValue([]);
+
+      await expect(service.rotateRefreshTokenAsync('opaque-old')).resolves.toBeNull();
+      expect(insertValues).not.toHaveBeenCalled();
+    });
+
+    it('rotateRefreshTokenAsync возвращает null для неизвестного токена', async () => {
+      await expect(service.rotateRefreshTokenAsync('opaque-old')).resolves.toBeNull();
+    });
+
+    it('revokeRefreshTokenAsync помечает токен отозванным', async () => {
+      await service.revokeRefreshTokenAsync('opaque');
+
+      expect(updateSet).toHaveBeenCalledWith(
+        expect.objectContaining({ revokedAt: expect.any(Date) }),
+      );
     });
   });
 });

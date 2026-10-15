@@ -35,8 +35,11 @@ describe('RunsController', () => {
     assertRunExistsAsync: ReturnType<typeof vi.fn>;
     streamAsync: ReturnType<typeof vi.fn>;
   };
+  /** KI-202: переключается в тестах 401-путей (guard реальный). */
+  let authDisabled: boolean;
 
   beforeEach(async () => {
+    authDisabled = true;
     service = {
       createRunAsync: vi.fn(() => Promise.resolve(runResponse)),
       getRunAsync: vi.fn(() => Promise.resolve(runResponse)),
@@ -73,7 +76,12 @@ describe('RunsController', () => {
         // JwtAuthGuard (R6.1a): AUTH_DISABLED=true — запросы идут от
         // системного пользователя, токен в тестах не нужен.
         { provide: JwtService, useValue: { verifyAsync: vi.fn() } },
-        { provide: ConfigService, useValue: { get: vi.fn(() => true) } },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: vi.fn((key: string) => (key === 'AUTH_DISABLED' ? authDisabled : undefined)),
+          },
+        },
       ],
     }).compile();
 
@@ -127,7 +135,7 @@ describe('RunsController', () => {
     it('GET /runs/:id отвечает 200 и делегирует в сервис', async () => {
       const response = await request(app.getHttpServer()).get(`/runs/${RUN_ID}`).expect(200);
 
-      expect(service.getRunAsync).toHaveBeenCalledWith(RUN_ID);
+      expect(service.getRunAsync).toHaveBeenCalledWith(RUN_ID, USER.sub);
       expect(response.body.id).toBe(RUN_ID);
     });
 
@@ -135,6 +143,26 @@ describe('RunsController', () => {
       service.getRunAsync.mockRejectedValue(new NotFoundException('Запуск не найден'));
 
       await request(app.getHttpServer()).get(`/runs/${RUN_ID}`).expect(404);
+    });
+
+    it('GET /runs/:id передаёт владельца из токена (KI-202)', async () => {
+      await request(app.getHttpServer()).get(`/runs/${RUN_ID}`).expect(200);
+
+      expect(service.getRunAsync).toHaveBeenCalledWith(RUN_ID, USER.sub);
+    });
+
+    it('GET /runs/:id отвечает 401 без токена при AUTH_DISABLED=false', async () => {
+      authDisabled = false;
+
+      await request(app.getHttpServer()).get(`/runs/${RUN_ID}`).expect(401);
+      expect(service.getRunAsync).not.toHaveBeenCalled();
+    });
+
+    it('GET /runs/:id/stream отвечает 401 без токена при AUTH_DISABLED=false', async () => {
+      authDisabled = false;
+
+      await request(app.getHttpServer()).get(`/runs/${RUN_ID}/stream`).expect(401);
+      expect(stream.assertRunExistsAsync).not.toHaveBeenCalled();
     });
   });
 
@@ -145,8 +173,8 @@ describe('RunsController', () => {
         .expect(200)
         .expect('Content-Type', /text\/event-stream/);
 
-      expect(stream.assertRunExistsAsync).toHaveBeenCalledWith(RUN_ID);
-      expect(stream.streamAsync).toHaveBeenCalledWith(RUN_ID, expect.anything());
+      expect(stream.assertRunExistsAsync).toHaveBeenCalledWith(RUN_ID, USER.sub);
+      expect(stream.streamAsync).toHaveBeenCalledWith(RUN_ID, expect.anything(), USER.sub);
       expect(response.text).toContain('data: {"type":"snapshot"');
       expect(response.text).toContain('"type":"run_completed"');
     });

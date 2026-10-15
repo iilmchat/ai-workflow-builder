@@ -74,8 +74,10 @@ export class RunsController {
   @Get(':id')
   async findOne(
     @Param(ZodValidationPipe.create(RunIdParamSchema)) params: RunIdParamDto,
+    @CurrentUser() user: JwtPayload,
   ): Promise<RunResponse> {
-    return this.runsService.getRunAsync(params.id);
+    // KI-202: владелец обязателен — чужой запуск отдаёт 404.
+    return this.runsService.getRunAsync(params.id, user.sub);
   }
 
   /**
@@ -99,9 +101,11 @@ export class RunsController {
   async streamRun(
     @Param(ZodValidationPipe.create(RunIdParamSchema)) params: RunIdParamDto,
     @SseSignal() signal: AbortSignal,
+    @CurrentUser() user: JwtPayload,
   ): Promise<Observable<MessageEvent>> {
-    await this.runsStreamService.assertRunExistsAsync(params.id);
+    // KI-202: проверка владельца до открытия потока (иначе чужой run утекал бы).
+    await this.runsStreamService.assertRunExistsAsync(params.id, user.sub);
 
-    return this.runsStreamService.streamAsync(params.id, signal);
+    return this.runsStreamService.streamAsync(params.id, signal, user.sub);
   }
 }

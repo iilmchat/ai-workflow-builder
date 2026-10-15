@@ -53,11 +53,12 @@ export class RunsStreamService {
    * сообщении, поэтому исключение успевает стать HTTP-ошибкой).
    *
    * @param runId - uuid запуска
+   * @param userId - владелец из access-токена (KI-202): чужой запуск → 404
    * @returns промис без значения
-   * @throws NotFoundException если запуск не найден
+   * @throws NotFoundException если запуск не найден или чужой
    */
-  async assertRunExistsAsync(runId: string): Promise<void> {
-    await this.runsService.getRunAsync(runId);
+  async assertRunExistsAsync(runId: string, userId?: string): Promise<void> {
+    await this.runsService.getRunAsync(runId, userId);
   }
 
   /**
@@ -76,9 +77,14 @@ export class RunsStreamService {
    * @param runId - uuid запуска
    * @param signal - `AbortSignal` запроса: аборится при отключении клиента
    *   (`@SseSignal()`), закрывая подписку на Redis (RULES 4.19)
+   * @param userId - владелец из access-токена (KI-202), пробрасывается в снимок
    * @returns Observable SSE-сообщений (`data` — JSON `RunStreamMessage`)
    */
-  streamAsync(runId: string, signal: AbortSignal): Observable<MessageEvent> {
+  streamAsync(
+    runId: string,
+    signal: AbortSignal,
+    userId?: string,
+  ): Observable<MessageEvent> {
     return new Observable<MessageEvent>((subscriber) => {
       const keepAlive = setInterval(() => {
         if (!subscriber.closed) {
@@ -90,7 +96,7 @@ export class RunsStreamService {
       // Не держим процесс живым из-за таймера (важно для тестов и shutdown).
       keepAlive.unref();
 
-      void this.consumeAsync(runId, signal, subscriber).finally(() => {
+      void this.consumeAsync(runId, signal, subscriber, userId).finally(() => {
         clearInterval(keepAlive);
       });
 
@@ -106,12 +112,14 @@ export class RunsStreamService {
    * @param runId - uuid запуска
    * @param signal - сигнал отключения клиента
    * @param subscriber - подписчик SSE-потока
+   * @param userId - владелец из access-токена (KI-202)
    * @returns промис без значения (завершается вместе с потоком)
    */
   private async consumeAsync(
     runId: string,
     signal: AbortSignal,
     subscriber: Subscriber<MessageEvent>,
+    userId?: string,
   ): Promise<void> {
     const iterator = this.runEvents
       .subscribeAsync(runId, signal)
@@ -121,7 +129,9 @@ export class RunsStreamService {
     const firstEvent = iterator.next();
 
     try {
-      const snapshot = RunStreamMessageSchema.parse(await this.buildSnapshotAsync(runId));
+      const snapshot = RunStreamMessageSchema.parse(
+        await this.buildSnapshotAsync(runId, userId),
+      );
 
       if (!signal.aborted) {
         subscriber.next({ data: snapshot });
@@ -160,11 +170,15 @@ export class RunsStreamService {
    * Собирает снимок состояния запуска: строка `workflow_runs` + все `node_runs`.
    *
    * @param runId - uuid запуска
+   * @param userId - владелец из access-токена (KI-202)
    * @returns снимок состояния (первое сообщение потока)
-   * @throws NotFoundException если запуск не найден
+   * @throws NotFoundException если запуск не найден или чужой
    */
-  private async buildSnapshotAsync(runId: string): Promise<SnapshotMessage> {
-    const run = await this.runsService.getRunAsync(runId);
+  private async buildSnapshotAsync(
+    runId: string,
+    userId?: string,
+  ): Promise<SnapshotMessage> {
+    const run = await this.runsService.getRunAsync(runId, userId);
 
     // Порядок по `nodeId` детерминирован (в отличие от nullable `started_at`);
     // UI сортирует узлы так, как ему нужно.

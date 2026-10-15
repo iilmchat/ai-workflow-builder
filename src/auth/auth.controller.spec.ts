@@ -3,6 +3,7 @@ import { UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
+import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { AuthController } from './auth.controller.js';
 import { AuthService, type AuthResult } from './auth.service.js';
@@ -12,6 +13,10 @@ const USER_ID = '33333333-3333-4333-8333-333333333333';
 const EMAIL = 'user@example.com';
 const TOKEN = 'signed.jwt.token';
 const CREATED_AT = '2024-01-01T00:00:00.000Z';
+/** Opaque refresh-токен и имя его cookie (R6.1b). */
+const REFRESH_TOKEN = 'opaque-refresh-token';
+const REFRESH_COOKIE = 'refresh_token';
+const EXPIRES_AT = '2026-10-22T00:00:00.000Z';
 
 const authResult: AuthResult = {
   accessToken: TOKEN,
@@ -38,6 +43,18 @@ describe('AuthController', () => {
       getMeAsync: vi.fn(() =>
         Promise.resolve({ id: USER_ID, email: EMAIL, createdAt: new Date(CREATED_AT) }),
       ),
+      // R6.1b: refresh-токен выдаётся cookie, в теле его нет.
+      createRefreshTokenAsync: vi.fn(() =>
+        Promise.resolve({ token: REFRESH_TOKEN, expiresAt: new Date(EXPIRES_AT) }),
+      ),
+      rotateRefreshTokenAsync: vi.fn(() =>
+        Promise.resolve({
+          accessToken: TOKEN,
+          user: authResult.user,
+          newRefresh: { token: `${REFRESH_TOKEN}-new`, expiresAt: new Date(EXPIRES_AT) },
+        }),
+      ),
+      revokeRefreshTokenAsync: vi.fn(() => Promise.resolve()),
     };
 
     const moduleRef = await Test.createTestingModule({
@@ -47,12 +64,20 @@ describe('AuthController', () => {
         { provide: JwtService, useValue: { verifyAsync } },
         {
           provide: ConfigService,
-          useValue: { get: vi.fn(() => authDisabled) },
+          useValue: {
+            get: vi.fn((key: string) =>
+              key === 'AUTH_DISABLED' ? authDisabled : undefined,
+            ),
+            getOrThrow: vi.fn(() => '7d'),
+          },
         },
       ],
     }).compile();
 
     app = moduleRef.createNestApplication();
+    // Как в main.ts: без парсера `req.cookies` пуст, и refresh/logout не видят
+    // httpOnly-cookie (R6.1b).
+    app.use(cookieParser());
     await app.init();
   });
 
@@ -104,6 +129,22 @@ describe('AuthController', () => {
       expect(response.body).toEqual(expect.objectContaining({ accessToken: TOKEN }));
     });
 
+    it('ставит httpOnly refresh-cookie (R6.1b)', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: EMAIL, password: 'test1234' })
+        .expect(200);
+
+      const cookie = String(response.headers['set-cookie']);
+
+      expect(cookie).toContain(`${REFRESH_COOKIE}=${REFRESH_TOKEN}`);
+      expect(cookie).toContain('HttpOnly');
+      expect(cookie).toContain('Path=/auth');
+      expect(cookie).toContain('SameSite=Strict');
+      // В теле refresh-токена быть не должно (RULES 5.9).
+      expect(response.body).not.toHaveProperty('refreshToken');
+    });
+
     it('отвечает 401 при неверном пароле', async () => {
       service.loginAsync.mockRejectedValue(
         new UnauthorizedException('Неверный email или пароль'),
@@ -150,6 +191,54 @@ describe('AuthController', () => {
       expect(service.getMeAsync).toHaveBeenCalledWith(
         '00000000-0000-0000-0000-000000000001',
       );
+    });
+  });
+
+  describe('POST /auth/refresh', () => {
+    it('отвечает 401 без cookie', async () => {
+      await request(app.getHttpServer()).post('/auth/refresh').expect(401);
+      expect(service.rotateRefreshTokenAsync).not.toHaveBeenCalled();
+    });
+
+    it('отвечает 200 и ставит новый cookie при валидном токене', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', `${REFRESH_COOKIE}=${REFRESH_TOKEN}`)
+        .expect(200);
+
+      expect(response.body).toEqual(expect.objectContaining({ accessToken: TOKEN }));
+      expect(service.rotateRefreshTokenAsync).toHaveBeenCalledWith(REFRESH_TOKEN);
+
+      const refreshedCookie = String(response.headers['set-cookie']);
+
+      expect(refreshedCookie).toContain(`${REFRESH_COOKIE}=${REFRESH_TOKEN}-new`);
+      expect(refreshedCookie).toContain('HttpOnly');
+    });
+
+    it('отвечает 401, если токен отозван или истёк', async () => {
+      service.rotateRefreshTokenAsync.mockResolvedValue(null);
+
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', `${REFRESH_COOKIE}=${REFRESH_TOKEN}`)
+        .expect(401);
+    });
+  });
+
+  describe('POST /auth/logout', () => {
+    it('отвечает 204, отзывает токен и очищает cookie', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/logout')
+        .set('Cookie', `${REFRESH_COOKIE}=${REFRESH_TOKEN}`)
+        .expect(204);
+
+      expect(service.revokeRefreshTokenAsync).toHaveBeenCalledWith(REFRESH_TOKEN);
+      expect(String(response.headers['set-cookie'])).toContain(`${REFRESH_COOKIE}=;`);
+    });
+
+    it('отвечает 204 без cookie (идемпотентный выход)', async () => {
+      await request(app.getHttpServer()).post('/auth/logout').expect(204);
+      expect(service.revokeRefreshTokenAsync).not.toHaveBeenCalled();
     });
   });
 });

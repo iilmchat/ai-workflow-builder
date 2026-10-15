@@ -26,17 +26,18 @@ export class WorkflowService {
   /**
    * Создаёт новый workflow.
    *
-   * `userId` берётся из DTO (пока это строка), `nodes`/`edges` приходят уже
-   * с применёнными значениями по умолчанию `[]`.
+   * Владелец приходит из access-токена аргументом (KI-204: в DTO его больше
+   * нет), `nodes`/`edges` — уже с применёнными значениями по умолчанию `[]`.
    *
    * @param dto - валидированные данные создания workflow
+   * @param userId - id владельца (uuid из токена)
    * @returns созданная запись workflow
    */
-  async createAsync(dto: CreateWorkflowDto): Promise<Workflow> {
+  async createAsync(dto: CreateWorkflowDto, userId: string): Promise<Workflow> {
     const [created] = await this.db
       .insert(workflows)
       .values({
-        userId: dto.userId,
+        userId,
         name: dto.name,
         description: dto.description,
         nodes: dto.nodes,

@@ -63,20 +63,22 @@ describe('WorkflowController', () => {
 
   describe('create', () => {
     it('делегирует создание сервису и возвращает результат', async () => {
-      const dto = { userId: 'user-1', name: 'My workflow', nodes: [], edges: [] };
+      const dto = { userId: 'attacker', name: 'My workflow', nodes: [], edges: [] };
 
       await expect(controller.create(dto, USER)).resolves.toEqual(workflow);
-      // userId из тела перекрывается владельцем из токена (R6.1a).
-      expect(service.createAsync).toHaveBeenCalledWith({ ...dto, userId: USER.sub });
+      // KI-204: `userId` из тела игнорируется — владелец приходит из токена
+      // вторым аргументом сервиса.
+      expect(service.createAsync).toHaveBeenCalledWith(dto, USER.sub);
     });
   });
 
   describe('findAll', () => {
     it('передаёт userId из токена, limit и offset в сервис', async () => {
-      const query = { userId: 'user-1', limit: 10, offset: 20 };
+      const query = { userId: 'attacker', limit: 10, offset: 20 };
 
       await expect(controller.findAll(query, USER)).resolves.toEqual([workflow]);
-      expect(service.findAllAsync).toHaveBeenCalledWith('user-1', 10, 20);
+      // KI-204: чужой `userId` из query не влияет — фильтр строится по токену.
+      expect(service.findAllAsync).toHaveBeenCalledWith(USER.sub, 10, 20);
     });
   });
 
