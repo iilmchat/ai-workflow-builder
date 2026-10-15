@@ -121,18 +121,19 @@ export function parseBinding(binding: string): ParsedHotkey {
 /**
  * Проверяет, что нажатие соответствует биндингу.
  *
- * Семантика: у биндинга набор модификаторов должен совпасть с нажатым
- * **точно**, кроме одного исключения — одиночной клавише Shift не мешает
- * (`S` — это и `s`, и `Shift+S`: пользователь не отпускает Shift мгновенно,
- * получая заглавную букву). Поэтому:
- * - `ctrl`/`alt`/`meta` — строго (`ctrl+d` не срабатывает на `Ctrl+Shift+D`);
- * - одиночная клавиша требует отсутствия `ctrl`/`alt`/`meta`, но переживает
- *   зажатый `Shift`;
- * - биндинг со своим `shift` (`shift+c`) требует `Shift` явно и не срабатывает
- *   на `Ctrl+Shift+C`.
+ * Семантика:
+ * - `ctrl`/`alt`/`meta` сверяются **строго** — и в сторону «нажато, а в
+ *   биндинге нет» (`ctrl+s` не перехватывает одиночный `s`), и в сторону
+ *   «в биндинге есть, а не нажато» (`ctrl+d` не срабатывает без Ctrl);
+ * - у сочетания с `ctrl`/`alt`/`meta` `shift` тоже строгий: `ctrl+s` — это
+ *   ровно Ctrl+S, а `Ctrl+Shift+S` в него не попадает;
+ * - `shift` нестрогий только для **одиночной** клавиши: `S` — это и `s`, и
+ *   `Shift+S` (пользователь не отпускает Shift мгновенно, получая заглавную
+ *   букву);
+ * - биндинг со своим `shift` (`shift+c`) требует Shift явно.
  *
- * Благодаря строгости одиночный `s` не может перехватить `Ctrl+S` — это вторая
- * половина правила приоритета `ctrl+*` > `shift+*` > одиночные.
+ * Благодаря строгости `ctrl` одиночный `s` не может перехватить `Ctrl+S` — это
+ * вторая половина правила приоритета `ctrl+*` > `shift+*` > одиночные.
  *
  * @param pressed - разобранное нажатие из {@link parseKey}
  * @param binding - разобранный биндинг из {@link parseBinding}
@@ -146,22 +147,32 @@ export function matchesHotkey(
     return false;
   }
 
+  const { ctrl: pressedCtrl, alt: pressedAlt, meta: pressedMeta } = pressed;
+
   if (
-    pressed.ctrl !== binding.ctrl ||
-    pressed.alt !== binding.alt ||
-    pressed.meta !== binding.meta
+    pressedCtrl !== binding.ctrl ||
+    pressedAlt !== binding.alt ||
+    pressedMeta !== binding.meta
   ) {
     return false;
   }
 
+  const isSingleKey = !binding.ctrl && !binding.alt && !binding.meta;
+
   if (binding.shift) {
-    // `shift+c` — строгое сочетание: `Ctrl+Shift+C` сюда не попадает.
-    return pressed.shift && !pressed.ctrl && !pressed.alt && !pressed.meta;
+    // `shift+c` — требует Shift явно (`Ctrl+Shift+C` отсекается выше, на
+    // строгой сверке `ctrl`).
+    return pressed.shift;
   }
 
-  // Одиночная клавиша переживает зажатый Shift (заглавная буква — та же клавиша),
-  // но не `Ctrl`/`Alt`/`Meta`: иначе одиночный `S` перехватывал бы `Ctrl+S`.
-  return !pressed.ctrl && !pressed.alt && !pressed.meta;
+  // Одиночная клавиша переживает зажатый Shift (заглавная буква — та же
+  // клавиша); сочетание с `ctrl`/`alt`/`meta` — нет: `Ctrl+Shift+S` не должен
+  // уходить в обработчик `Ctrl+S`.
+  //
+  // R6.4b.2b-fix: раньше эта ветка безусловно возвращала `false` для любого
+  // `ctrl`/`alt`/`meta`-биндинга (проверялись поля **нажатия** наоборот —
+  // `!pressed.ctrl && …`), из-за чего `Ctrl+D` (R6.4a) не срабатывал вовсе.
+  return isSingleKey || !pressed.shift;
 }
 
 /**

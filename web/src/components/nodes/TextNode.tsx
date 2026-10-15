@@ -1,8 +1,9 @@
 import { useCallback, useRef } from 'react';
-import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
+import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode } from '@/components/nodes/BaseNode';
 import { useAutoResize } from '@/hooks/use-auto-resize';
+import { useNodeDataHistory } from '@/hooks/use-node-data-history';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import { NODE_REGISTRY } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
@@ -18,7 +19,8 @@ import {
  * Входов нет, на выходе — типизированный порт `text` (синий).
  */
 export function TextNode({ id, data }: NodeProps<TextFlowNode>) {
-  const { updateNodeData } = useReactFlow();
+  // R6.4b.2b: правка поля проходит через историю графа (склейка по времени).
+  const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
   // Уровень выполнения появляется после Run (/engine/plan).
   const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);

@@ -126,6 +126,11 @@ export function TopBar() {
   const runStatus = useWorkflowStore((state) => state.runStatus);
   const runError = useWorkflowStore((state) => state.runError);
   const newWorkflow = useWorkflowStore((state) => state.newWorkflow);
+  // R6.4b.2b: история правок графа — кнопки и их доступность.
+  const undo = useWorkflowStore((state) => state.undo);
+  const redo = useWorkflowStore((state) => state.redo);
+  const canUndo = useWorkflowStore((state) => state.past.length > 0);
+  const canRedo = useWorkflowStore((state) => state.future.length > 0);
 
   // KI-157: имя пишется в хранилище на каждый символ, без сохранения выделения
   // курсор прыгал бы в конец при правке середины названия.
@@ -321,6 +326,34 @@ export function TopBar() {
             className="cursor-pointer rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
           >
             {currentLang === 'ru' ? 'EN' : 'RU'}
+          </button>
+
+          {/* R6.4b.2b: откат/повтор правок графа (DESIGN v0.8 § 7.2). Стоят
+              перед файловыми операциями: это действия над текущим графом.
+              `disabled` считается из глубины стопок истории селектором —
+              отдельного поля «есть что откатить» не нужно. */}
+          <button
+            type="button"
+            data-topbar-undo=""
+            onClick={undo}
+            disabled={!canUndo}
+            title={t('topbar.undo')}
+            aria-label={t('topbar.undo')}
+            className="cursor-pointer rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            ↶
+          </button>
+
+          <button
+            type="button"
+            data-topbar-redo=""
+            onClick={redo}
+            disabled={!canRedo}
+            title={t('topbar.redo')}
+            aria-label={t('topbar.redo')}
+            className="cursor-pointer rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            ↷
           </button>
 
           {/* A3: «Новый» — рядом с Load, до него: это первое действие в ряду

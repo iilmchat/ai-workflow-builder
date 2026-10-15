@@ -301,10 +301,104 @@ const EMPTY_METRICS: NodeRunMetrics = {
 /** Функция поиска центра вьюпорта, которую отдаёт Canvas. */
 export type FindCenterHandler = () => Position;
 
+/**
+ * Снимок графа для undo/redo (DESIGN v0.8 § 7.2).
+ *
+ * Снимок хранит **только** `nodes`/`edges`: состояние запуска
+ * (`runStatus`, `nodeStatuses`, `runId`, …) и UI-выделение к графу не
+ * относятся и откату не подлежат.
+ */
+export interface GraphSnapshot {
+  /** Узлы графа на момент снимка (глубокая копия). */
+  readonly nodes: readonly AppNode[];
+  /** Связи графа на момент снимка (глубокая копия). */
+  readonly edges: readonly Edge[];
+}
+
+/**
+ * История правок графа (DESIGN v0.8 § 7.2).
+ *
+ * `past` — стопка снимков «до изменения» (последний элемент — ближайший
+ * откат), `future` — отменённые состояния для повтора. Обе стопки живут в
+ * том же Zustand-сторе, что и граф: так `pushHistory` вызывается из тех же
+ * actions, что меняют `nodes`/`edges`, без синхронизации двух хранилищ.
+ */
+export interface HistorySlice {
+  /** Снимки «до изменения»; последний элемент — цель ближайшего `undo`. */
+  past: GraphSnapshot[];
+  /** Отменённые состояния; первый элемент — цель ближайшего `redo`. */
+  future: GraphSnapshot[];
+}
+
+/**
+ * Глубина истории: сколько последних правок можно откатить (DESIGN v0.8 § 7.2).
+ *
+ * Старые снимки вытесняются по FIFO: память не растёт при долгой сессии.
+ */
+const HISTORY_MAX_DEPTH = 50;
+
+/**
+ * Окно склейки правок полей узла, мс (R6.4b.2b).
+ *
+ * Правка текста в узле — это `updateNodeData` на каждый символ, и по одному
+ * снимку на символ стек в 50 записей исчерпывался бы за одну фразу. Правки
+ * одного поля, разделённые меньшим интервалом, склеиваются в один шаг отката:
+ * `Ctrl+Z` после набора текста откатывает фразу целиком.
+ */
+const FIELD_EDIT_COALESCE_MS = 1000;
+
+/**
+ * Момент последней склейки правок полей (`0` — склейки нет).
+ *
+ * Живёт на уровне модуля, а не в сторе: значение — техническая отметка
+ * времени, обновление которой не должно вызывать ре-рендер подписчиков.
+ */
+let lastFieldEditAt = 0;
+
 /** Состояние редактора графа. */
-export interface WorkflowState {
+export interface WorkflowState extends HistorySlice {
   nodes: AppNode[];
   edges: Edge[];
+
+  /**
+   * Кладёт снимок текущего графа в `past` (DESIGN v0.8 § 7.2).
+   *
+   * Вызывается **до** изменения `nodes`/`edges` — снимок описывает состояние
+   * «как было». Новое действие очищает `future`: ветка повтора после правки
+   * графа недостижима.
+   */
+  pushHistory: () => void;
+  /**
+   * Кладёт снимок, если предыдущая правка поля была больше окна склейки назад
+   * (R6.4b.2b).
+   *
+   * Нужен для правок, которые приходят не через actions стора
+   * (`updateNodeData` из React Flow): иначе каждый символ текста занял бы
+   * отдельный шаг истории.
+   */
+  pushHistoryCoalesced: () => void;
+  /**
+   * Откат: последний снимок `past` становится текущим графом, а прежнее
+   * состояние уходит в `future`.
+   */
+  undo: () => void;
+  /**
+   * Повтор: первый снимок `future` становится текущим графом, а прежнее
+   * состояние возвращается в `past`.
+   */
+  redo: () => void;
+  /**
+   * Есть ли что откатывать.
+   *
+   * @returns `true`, если `past` непуст
+   */
+  canUndo: () => boolean;
+  /**
+   * Есть ли что повторять.
+   *
+   * @returns `true`, если `future` непуст
+   */
+  canRedo: () => boolean;
 
   /** id текущего workflow (null — ещё не сохранён). */
   currentWorkflowId: string | null;
@@ -791,11 +885,152 @@ function messageOf(error: unknown): string {
 }
 
 /**
+ * Делает глубокий снимок графа для истории (DESIGN v0.8 § 7.2).
+ *
+ * `structuredClone` выбран вместо ручного копирования: узлы React Flow —
+ * вложенные структуры (`data`, `measured`, `position`), а поверхностная копия
+ * оставила бы в снимке ссылки на живые объекты, и откат вернул бы изменённое
+ * состояние. Клонируются только данные: функций и React-элементов в
+ * `AppNode` нет.
+ *
+ * @param nodes - текущие узлы графа
+ * @param edges - текущие связи графа
+ * @returns снимок с глубокими копиями узлов и связей
+ */
+function snapshotOf(nodes: AppNode[], edges: Edge[]): GraphSnapshot {
+  return {
+    nodes: structuredClone(nodes),
+    edges: structuredClone(edges),
+  };
+}
+
+/**
+ * Восстанавливает снимок графа после undo/redo (DESIGN v0.8 § 7.2).
+ *
+ * Помимо самих `nodes`/`edges` сбрасывается `executionLevels`: план
+ * выполнения описывает прежний граф, и подсветка уровней после отката
+ * указывала бы на несуществующие узлы. Выделенные узлы восстанавливаются
+ * вместе с графом (`selected` — часть React Flow-состояния узла), а
+ * `selectedNodeId` правит вызывающий: снимок его не хранит.
+ *
+ * @param snapshot - снимок, который становится текущим графом
+ * @returns поля состояния для `set` (граф + сброшенный план)
+ */
+function restorePatch(snapshot: GraphSnapshot): {
+  nodes: AppNode[];
+  edges: Edge[];
+  executionLevels: Record<string, number>;
+} {
+  return {
+    nodes: [...snapshot.nodes],
+    edges: [...snapshot.edges],
+    executionLevels: {},
+  };
+}
+
+/**
  * Стор редактора workflow: состояние графа, сохранение и план выполнения.
  */
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   nodes: [],
   edges: [],
+
+  // R6.4b.2b: история правок графа. Пустые стопки на старте — откатывать
+  // нечего, а снимок пустого графа в `past` дал бы «холостой» Ctrl+Z.
+  past: [],
+  future: [],
+
+  pushHistory: () => {
+    const { nodes, edges, past } = get();
+    const nextPast = [...past, snapshotOf(nodes, edges)];
+
+    // FIFO: старая история вытесняется, чтобы сессия не росла в памяти.
+    if (nextPast.length > HISTORY_MAX_DEPTH) {
+      nextPast.shift();
+    }
+
+    // Новое действие обрывает ветку повтора: `future` относится к отменённому
+    // будущему, которого после правки графа уже не будет.
+    lastFieldEditAt = 0;
+    set({ past: nextPast, future: [] });
+  },
+
+  pushHistoryCoalesced: () => {
+    const now = Date.now();
+
+    // Первая правка после паузы — обычный снимок; продолжение набора текста
+    // (в пределах окна) остаётся в том же шаге истории.
+    if (now - lastFieldEditAt >= FIELD_EDIT_COALESCE_MS) {
+      get().pushHistory();
+      // Отметку ставим после снимка: `pushHistory` сбрасывает её в `0`
+      // (новое действие обрывает окно склейки), поэтому иначе каждая
+      // следующая правка поля считалась бы первой.
+      lastFieldEditAt = now;
+
+      return;
+    }
+
+    // Снимок уже лежит в `past` — окно склейки двигаем, чтобы долгий
+    // непрерывный ввод не превратился в серию шагов.
+    lastFieldEditAt = now;
+  },
+
+  undo: () => {
+    const { past, future, nodes, edges } = get();
+    const previous = past.at(-1);
+
+    if (previous === undefined) {
+      return;
+    }
+
+    set({
+      past: past.slice(0, -1),
+      // Текущее состояние уходит вперёд стопки повтора: порядок `redo` —
+      // от ближайшего отменённого к самому старому.
+      future: [snapshotOf(nodes, edges), ...future],
+      ...restorePatch(previous),
+    });
+
+    // KI-187: выделение сбрасываем, если восстановленный граф не содержит
+    // выбранного узла — иначе нижняя панель показывала бы данные узла,
+    // которого после отката нет (та же логика, что в `removeNode`).
+    const { selectedNodeId } = get();
+
+    if (
+      selectedNodeId !== null &&
+      !previous.nodes.some((node) => node.id === selectedNodeId)
+    ) {
+      set({ selectedNodeId: null });
+    }
+  },
+
+  redo: () => {
+    const { past, future, nodes, edges } = get();
+    const next = future.at(0);
+
+    if (next === undefined) {
+      return;
+    }
+
+    set({
+      past: [...past, snapshotOf(nodes, edges)],
+      future: future.slice(1),
+      ...restorePatch(next),
+    });
+
+    const { selectedNodeId } = get();
+
+    if (
+      selectedNodeId !== null &&
+      !next.nodes.some((node) => node.id === selectedNodeId)
+    ) {
+      set({ selectedNodeId: null });
+    }
+  },
+
+  canUndo: () => get().past.length > 0,
+
+  canRedo: () => get().future.length > 0,
 
   currentWorkflowId: null,
   currentWorkflowName: DEFAULT_WORKFLOW_NAME,
@@ -839,8 +1074,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   /** Каталог вставки узла в связь закрыт (KI-185). */
   pendingEdgeId: null,
 
-  addNode: (type, position) =>
-    set((state) => {
+  addNode: (type, position) => {
+    // R6.4b.2b: состояние «до» попадает в историю (DESIGN v0.8 § 7.2).
+    get().pushHistory();
+
+    return set((state) => {
       // Модель нового LLM-узла берём из загруженного списка (KI-074), чтобы
       // узел сразу был запускаемым; fallback — дефолтный id из types/graph.
       // Для image-узла — первая media-модель (v0.6.0b.2.3).
@@ -862,7 +1100,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         // После правки графа прежний план выполнения уже неактуален.
         executionLevels: {},
       };
-    }),
+    });
+  },
 
   onNodesChange: (changes) =>
     set((state) => {
@@ -883,8 +1122,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   onEdgesChange: (changes) =>
     set((state) => ({ edges: applyEdgeChanges(changes, state.edges) })),
 
-  onConnect: (connection) =>
-    set((state) => {
+  onConnect: (connection) => {
+    // R6.4b.2b: новая связь — обычная отменяемая правка графа.
+    get().pushHistory();
+
+    return set((state) => {
       // id генерируем сами: backend требует непустой id у каждой связи.
       const nextEdges = addEdge(connection, state.edges).map((edge) =>
         edge.id.startsWith('xy-edge__')
@@ -893,10 +1135,14 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       );
 
       return { edges: nextEdges, executionLevels: {} };
-    }),
+    });
+  },
 
-  removeNode: (nodeId) =>
-    set((state) => {
+  removeNode: (nodeId) => {
+    // R6.4b.2b: удаление узла (вместе с его связями) откатывается одним шагом.
+    get().pushHistory();
+
+    return set((state) => {
       // Узел без своих связей оставил бы висячие рёбра: React Flow попытался бы
       // нарисовать связь к несуществующему узлу.
       const edges = state.edges.filter(
@@ -911,13 +1157,18 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         // План выполнения после правки графа неактуален.
         executionLevels: {},
       };
-    }),
+    });
+  },
 
-  removeEdge: (edgeId) =>
-    set((state) => ({
+  removeEdge: (edgeId) => {
+    // R6.4b.2b: удаление связи — отдельный шаг истории.
+    get().pushHistory();
+
+    return set((state) => ({
       edges: state.edges.filter((edge) => edge.id !== edgeId),
       executionLevels: {},
-    })),
+    }));
+  },
 
   newWorkflow: () => {
     // Поток предыдущего запуска закрываем, иначе его события продолжали бы
@@ -926,6 +1177,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({
       nodes: [],
       edges: [],
+      // R6.4b.2b: «Новый» — это новый документ, а не правка графа: история
+      // прежнего workflow очищается. Иначе после Load + «Новый» Ctrl+Z вернул
+      // бы узлы чужого workflow, а `future` позволил бы «повторить» их.
+      past: [],
+      future: [],
       currentWorkflowId: null,
       currentWorkflowName: DEFAULT_WORKFLOW_NAME,
       executionLevels: {},
@@ -943,6 +1199,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       attempts: null,
       runHasMoreAttempts: false,
     });
+    // Сброс истории обнуляет и окно склейки правок полей.
+    lastFieldEditAt = 0;
   },
 
   addNodeOnEdge: (edgeId, type) => {
@@ -996,6 +1254,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       pickDefaultMediaModel(state.mediaModels),
     );
 
+    // R6.4b.2b: снимок — только после всех проверок выше: отказ вставки
+    // (связь исчезла, тип не вставляется) граф не меняет, и шаг истории был бы
+    // «холостым».
+    get().pushHistory();
+
     set({
       nodes: [
         ...state.nodes.map((existing) => ({ ...existing, selected: false })),
@@ -1041,6 +1304,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       if (copies.length === 0) {
         return {};
       }
+
+      // R6.4b.2b: снимок берём здесь, а не «первой строкой»: при пустом
+      // результате дублирования граф не меняется, и шаг истории был бы
+      // «холостым» (Ctrl+Z выглядел бы как неработающий).
+      get().pushHistory();
 
       return {
         nodes: [

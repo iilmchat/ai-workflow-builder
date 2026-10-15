@@ -140,6 +140,8 @@
   "topbar.dirty": "● Есть изменения",
   "topbar.theme.to_dark": "Тёмная тема",
   "topbar.theme.to_light": "Светлая тема",
+  "topbar.undo": "Отменить",
+  "topbar.redo": "Повторить",
   "share.allowCopy": "Разрешить копирование",
   "share.close": "Закрыть",
   "share.copied": "Скопировано",

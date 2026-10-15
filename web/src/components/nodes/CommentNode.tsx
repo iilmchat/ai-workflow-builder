@@ -1,7 +1,8 @@
 import { useCallback, useRef } from 'react';
-import { useReactFlow, type NodeProps } from '@xyflow/react';
+import { type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { useAutoResize } from '@/hooks/use-auto-resize';
+import { useNodeDataHistory } from '@/hooks/use-node-data-history';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import { NODE_REGISTRY } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
@@ -27,7 +28,8 @@ import type { CommentFlowNode } from '@/types/graph';
  * @returns стикер с `<textarea>` либо `null`, если комментарии скрыты (`Shift+C`)
  */
 export function CommentNode({ id, data }: NodeProps<CommentFlowNode>) {
-  const { updateNodeData } = useReactFlow();
+  // R6.4b.2b: текст заметки проходит через историю графа (склейка по времени).
+  const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
   const removeNode = useWorkflowStore((state) => state.removeNode);
 

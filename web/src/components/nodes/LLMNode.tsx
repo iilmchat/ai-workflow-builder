@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
+import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode, type NodeBadge } from '@/components/nodes/BaseNode';
 import { useAutoResize } from '@/hooks/use-auto-resize';
+import { useNodeDataHistory } from '@/hooks/use-node-data-history';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import {
   MAX_TOKENS_LIMIT,
@@ -70,7 +71,9 @@ function badgesForModel(model: LlmModelInfo | undefined): NodeBadge[] {
  * чтобы vision-модель не выбирали для чисто текстовой задачи.
  */
 export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
-  const { updateNodeData } = useReactFlow();
+  // R6.4b.2b: правки полей узла проходят через историю графа (склейка текста
+  // по времени, селекты — отдельными шагами).
+  const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
   // Уровень выполнения появляется после Run (/engine/plan).
   const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);

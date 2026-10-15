@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
+import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode } from '@/components/nodes/BaseNode';
 import i18n from '@/i18n';
 import { useAutoResize } from '@/hooks/use-auto-resize';
+import { useNodeDataHistory } from '@/hooks/use-node-data-history';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import {
   MediaNodeOutputsSchema,
@@ -66,7 +67,9 @@ function formatPrice(model: MediaModelInfo): string | null {
  *    «Генерация…» во время выполнения и «Ошибка генерации» при падении.
  */
 export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
-  const { updateNodeData } = useReactFlow();
+  // R6.4b.2b: правки полей узла проходят через историю графа (склейка текста
+  // по времени, селекты — отдельными шагами).
+  const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
   // Уровень выполнения появляется после Run (/engine/plan).
   const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);

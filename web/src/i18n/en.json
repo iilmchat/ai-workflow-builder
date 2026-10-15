@@ -140,6 +140,8 @@
   "topbar.dirty": "● Unsaved changes",
   "topbar.theme.to_dark": "Dark theme",
   "topbar.theme.to_light": "Light theme",
+  "topbar.undo": "Undo",
+  "topbar.redo": "Redo",
   "share.allowCopy": "Allow copying",
   "share.close": "Close",
   "share.copied": "Copied",

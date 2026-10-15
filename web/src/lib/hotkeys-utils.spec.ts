@@ -99,6 +99,66 @@ describe('parseBinding / matchesHotkey (KI-186)', () => {
     ).toBe(false);
   });
 
+  it('ctrl+d срабатывает на Ctrl+D (R6.4b.2b-fix: раньше не срабатывал)', () => {
+    expect(
+      matchesHotkey(parseKey(keyEvent('d', { ctrlKey: true }))!, parseBinding('ctrl+d')),
+    ).toBe(true);
+  });
+
+  it('ctrl+z срабатывает на Ctrl+Z и не срабатывает без Ctrl', () => {
+    expect(
+      matchesHotkey(parseKey(keyEvent('z', { ctrlKey: true }))!, parseBinding('ctrl+z')),
+    ).toBe(true);
+    expect(matchesHotkey(parseKey(keyEvent('z'))!, parseBinding('ctrl+z'))).toBe(false);
+  });
+
+  it('одиночная клавиша переживает зажатый Shift, сочетание — нет', () => {
+    // `Shift+S` — та же клавиша, что `s`.
+    expect(
+      matchesHotkey(parseKey(keyEvent('S', { shiftKey: true }))!, parseBinding('s')),
+    ).toBe(true);
+    // `Ctrl+Shift+Z` не должно уходить в обработчик `Ctrl+Z`.
+    expect(
+      matchesHotkey(
+        parseKey(keyEvent('Z', { ctrlKey: true, shiftKey: true }))!,
+        parseBinding('ctrl+z'),
+      ),
+    ).toBe(false);
+  });
+
+  it('ctrl+shift+z срабатывает только с Ctrl+Shift+Z', () => {
+    expect(
+      matchesHotkey(
+        parseKey(keyEvent('Z', { ctrlKey: true, shiftKey: true }))!,
+        parseBinding('ctrl+shift+z'),
+      ),
+    ).toBe(true);
+    // Без Shift — это уже другой биндинг (ctrl+z).
+    expect(
+      matchesHotkey(parseKey(keyEvent('z', { ctrlKey: true }))!, parseBinding('ctrl+shift+z')),
+    ).toBe(false);
+    // Только Shift — одиночный сценарий, не сочетание с Ctrl.
+    expect(
+      matchesHotkey(parseKey(keyEvent('Z', { shiftKey: true }))!, parseBinding('ctrl+shift+z')),
+    ).toBe(false);
+  });
+
+  it('alt/meta в биндинге тоже сверяются строго', () => {
+    expect(
+      matchesHotkey(
+        parseKey(keyEvent('k', { altKey: true }))!,
+        parseBinding('alt+k'),
+      ),
+    ).toBe(true);
+    expect(matchesHotkey(parseKey(keyEvent('k'))!, parseBinding('alt+k'))).toBe(false);
+    expect(
+      matchesHotkey(
+        parseKey(keyEvent('k', { metaKey: true }))!,
+        parseBinding('meta+k'),
+      ),
+    ).toBe(true);
+  });
+
   it('одиночный S не срабатывает на Ctrl+S (разные приоритеты)', () => {
     expect(
       matchesHotkey(parseKey(keyEvent('S', { ctrlKey: true }))!, parseBinding('s')),

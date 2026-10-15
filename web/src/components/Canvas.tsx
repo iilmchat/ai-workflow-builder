@@ -136,6 +136,9 @@ function CanvasInner({ onReady }: CanvasProps) {
   const toggleCommentsVisibility = useWorkflowStore(
     (state) => state.toggleCommentsVisibility,
   );
+  // R6.4b.2b: откат/повтор правок графа (DESIGN v0.8 § 7.2).
+  const undo = useWorkflowStore((state) => state.undo);
+  const redo = useWorkflowStore((state) => state.redo);
   const isEmpty = nodes.length === 0;
   // KI-189: направляющие выравнивания (ручная реализация — `useAligning`
   // доступен только в @xyflow/pro).
@@ -237,6 +240,19 @@ function CanvasInner({ onReady }: CanvasProps) {
     );
   }, []);
 
+  /**
+   * Кладёт в историю состояние графа «до перетаскивания» (R6.4b.2b).
+   *
+   * Снимок делается **на старте** drag, а не на финише: React Flow применяет
+   * финальную позицию к узлам раньше, чем зовёт `onNodeDragStop`, поэтому там
+   * снимок содержал бы уже перемещённый узел, и откат был бы пустым. На старте
+   * поток `position`-изменений (`dragging: true`) ещё не пришёл — состояние
+   * стора совпадает с состоянием до перетаскивания.
+   */
+  const handleNodeDragStart = useCallback(() => {
+    useWorkflowStore.getState().pushHistory();
+  }, []);
+
   // KI-186/KI-187: хоткеи холста (S/H/F/M/C/Tab, Shift+C). `ctrl+d` (KI-191)
   // живёт в той же карте: хук сам проверяет сочетания с `ctrl` раньше одиночных,
   // поэтому `Ctrl+D`/`Ctrl+C` не конфликтуют с одиночными `D`/`C`, а
@@ -244,6 +260,20 @@ function CanvasInner({ onReady }: CanvasProps) {
   // (поведение R6.4a сохранено).
   useHotkeys(
     {
+      // R6.4b.2b: Ctrl+Z — откат, Ctrl+Shift+Z — повтор. Сочетания с `ctrl`
+      // хук проверяет раньше одиночных, поэтому `Ctrl+Z` не «доедает» до `Z`
+      // (одиночного биндинга `z` нет), а `Ctrl+Shift+Z` имеет приоритет над
+      // `Ctrl+Z` за счёт строгой проверки `shift` в `matchesHotkey`.
+      // `preventDefault` — чтобы браузер не отменял правку в поле ввода,
+      // когда каталог узлов открыт и фокус стоит в его поиске (KI-186).
+      'ctrl+z': {
+        preventDefault: true,
+        handler: () => undo(),
+      },
+      'ctrl+shift+z': {
+        preventDefault: true,
+        handler: () => redo(),
+      },
       // Ctrl+D — дублировать выделенный узел (KI-191).
       'ctrl+d': (event) => {
         if (selectedNodeId === null) {
@@ -291,6 +321,8 @@ function CanvasInner({ onReady }: CanvasProps) {
       toggleCommentsVisibility,
       isCatalogOpen,
       setCatalogOpen,
+      undo,
+      redo,
     ],
   );
 
@@ -344,6 +376,8 @@ function CanvasInner({ onReady }: CanvasProps) {
           // KI-189-fix: `onNodeDrag` третьим аргументом отдаёт только dragged-узлы,
           // поэтому соседей для направляющих обработчик берёт из стора.
           onNodeDrag={(_event, node) => handleNodeDrag(node)}
+          // R6.4b.2b: снимок «до перетаскивания» — один шаг истории на весь drag.
+          onNodeDragStart={handleNodeDragStart}
           onNodeDragStop={() => setHelperLines({})}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
