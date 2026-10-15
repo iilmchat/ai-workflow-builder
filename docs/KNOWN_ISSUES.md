@@ -3086,7 +3086,14 @@
 ---
 
 ### KI-187 — Комментарии/аннотации на холсте
-- **Приоритет:** 🟢 Low | **Статус:** In Progress | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (R6.4b.2a + fix, коммиты 9c560cf + 55beb6d)
+- **Fix (R6.4b.2a, frontend):** тип узла `comment`, `CommentNode`
+  (стикер без Handle), хоткеи C / Shift+C.
+- **Fix (R6.4b.2a-fix, backend):** `ANNOTATION_NODE_TYPES` +
+  фильтр в `buildExecutionPlanAsync` — комментарии персистятся
+  (Save → F5 → восстановление), но не участвуют в Run.
+- **Связанные:** KI-188, KI-194, KI-266, KI-269.
 - **Fix (R6.4b.2a, коммит `9c560cf `):** тип узла `comment`,
   `CommentNode` (стикер без Handle), хоткеи C / Shift+C,
   `lib/graph-payload.ts` (фильтр local-only).
@@ -4250,7 +4257,12 @@
      `type: 'keyDown'` с полем `text`; `rawKeyDown` в части прогонов
      **не доходит** до страницы (0 keydown). `Page.captureScreenshot`
      снимает фокус с активного элемента — после скриншота нужен
-     повторный фокус / `Page.bringToFront` перед нажатиями.     
+     повторный фокус / `Page.bringToFront` перед нажатиями. 
+  4. CDP-импорт модуля стора из страницы
+     (`import('/src/stores/workflow.ts')`) создаёт **второй экземпляр**
+     Zustand-стора, если Vite отдал приложению `?t=<timestamp>` после
+     инвалидации. Обход — брать URL из
+     `performance.getEntriesByType('resource')` (с реальным `?t=`).         
 - **Решение:** зафиксировать оба правила в RULES § 4.33 (смоук CDP)
   или в отдельной памятке.
 - **Связанные:** KI-135 (Emulation.setFocusEmulationEnabled).
@@ -4274,7 +4286,8 @@
 ---
 
 ### KI-266 — Комментарии не персистятся (backend роняет run на незнакомом типе)
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.8.0e (R6.4b.2a-fix, коммит 55beb6d)
 - **Файлы:** `src/engine/execution-engine.service.ts`,
   `src/engine/engine.service.ts`, `web/src/lib/graph-payload.ts`
 - **Описание:** `ExecutionEngineService.runNodeAsync` — `switch
@@ -4288,6 +4301,13 @@
   Миграции не нужно (узлы уже хранятся в `workflows.nodes` jsonb).
 - **Влияние:** сейчас пользователь теряет заметки после перезагрузки.
 - **Связанные:** KI-187, KI-247 (лог «узлов=0»), KI-267.
+- **Fix:** `ANNOTATION_NODE_TYPES` в `src/engine/node-executors.ts`;
+  `buildExecutionPlanAsync` фильтрует аннотации (нет в
+  `order`/`levels`/`executionMap`, нет `node_runs`); граф только
+  из аннотаций → 400 «Граф содержит только аннотации, нечего
+  выполнять»; `validateGraphAsync` не пишет warning об
+  изолированности аннотации; фронт-фильтр `LOCAL_ONLY_NODE_TYPES`
+  опустошён — Save/Plan шлют `comment` как есть.
 
 ---
 
@@ -4303,18 +4323,62 @@
 
 ---
 
+### KI-268 — SSE-поток запуска недоступен при AUTH_DISABLED=false
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/lib/run-stream.ts`,
+  `src/runs/runs.controller.ts`
+- **Описание:** `EventSource` не умеет передавать `Authorization` →
+  `GET /runs/:id/stream` получает 401, даже если access-токен есть.
+  UI вечно «Создаётся…», при этом `workflow_runs.status='failed'`.
+  **С включённой авторизацией прогресс запуска в UI не работает
+  вообще** (ни узлов, ни логов, ни финального статуса).
+- **Решение:** переписать подписку на `fetch` + `ReadableStream`
+  с Bearer-заголовком (или одноразовый stream-токен, или
+  cookie-аутентификация этого маршрута).
+- **Влияние:** обнаруживается только при `AUTH_DISABLED=false`
+  (смоуки до R6.4b.2a-fix шли с `true`).
+- **Связанные:** KI-063, KI-202, KI-060.
+
+---
+
+### KI-269 — /engine/sort не исключает аннотации
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `src/engine/engine.service.ts` (`topologicalSortAsync`)
+- **Описание:** `POST /engine/sort` с `[text, comment]` вернул
+  `order=["t1","c1"]`, хотя `/engine/plan` для того же графа —
+  `["t1"]`. Расхождение контрактов двух эндпоинтов.
+- **Решение:** вынести фильтр аннотаций в общий приватный хелпер
+  и применить в обоих методах.
+- **Когда чинить:** при следующей правке engine.
+- **Связанные:** KI-266.
+
+---
+
+### KI-270 — фронт шлёт мёртвый `userId: 'demo-user'` в POST /workflow
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Файлы:** `web/src/stores/workflow.ts` (`DEFAULT_USER_ID`),
+  `src/workflow/workflow.controller.ts`
+- **Описание:** Backend владельца берёт из JWT и поле игнорирует
+  (проверено — workflow принадлежит uuid пользователя), но
+  `demo-user` как строка противоречит DESIGN v0.8 § 3.6
+  («`demo-user` как строка не используется»; `users.id` — uuid).
+- **Решение:** убрать `userId` из клиентского DTO создания.
+- **Связанные:** KI-201, KI-202.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 90 |
-| In Progress | 2 |
+| Fixed | 92 |
+| In Progress | 1 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 155 |
+| Open | 157 |
 | Won't Fix | 1 |
-| **Всего** | **256** |
+| **Всего** | **259** |
 
 ---
 

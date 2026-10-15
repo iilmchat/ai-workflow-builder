@@ -246,7 +246,12 @@
   - **KI-266** — комментарии не персистятся (backend роняет run на
     незнакомом типе, `UnsupportedNodeTypeException`).
   - **KI-267** — `loadWorkflowAsync` при ошибке схемы молчит в консоль.
-  
+  - **KI-266** — комментарии-стикеры персистятся: backend исключает
+    аннотации из плана выполнения (`ANNOTATION_NODE_TYPES`),
+    frontend больше не отсекает `comment` при Save/Plan
+    (`55beb6d`).
+  - **KI-187** — комментарии/аннотации на холсте (`55beb6d`).
+
 ## [0.7.2] — 2026-10-15
 
 **Patch-релиз после v0.7.1. Yandex env + LM Studio auto-discovery + LLM/media фиксы.**
