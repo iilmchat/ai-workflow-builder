@@ -41,6 +41,16 @@ export interface NodeRegistryEntry {
   readonly category: NodeCategory;
   /** React-компонент узла. */
   readonly component: NodeComponent;
+  /**
+   * Можно ли вставить узел этого типа в существующую связь (KI-259).
+   *
+   * `true` только если у узла есть **входной** порт (`Handle type="target"`):
+   * иначе ребро `source → новый узел` не создать — React Flow не найдёт target
+   * handle и вернёт ошибку `error008`. Поле — единый источник правды: по нему
+   * фильтруется каталог вставки (`NodeCatalogPopover.filter`) и защищается
+   * `addNodeOnEdge` в сторе.
+   */
+  readonly canBeInsertedOnEdge: boolean;
   /** Capabilities — задел под KI-128 (сервисные узлы). */
   readonly capabilities: {
     /** Узел хранит внешнее состояние (БД, индекс, память). */
@@ -67,6 +77,8 @@ export const NODE_REGISTRY = {
     icon: '📝',
     category: 'input',
     component: TextNode,
+    // Входного порта нет: у TextNode только `text-output` (source).
+    canBeInsertedOnEdge: false,
     capabilities: { externalState: false, userConfig: false },
   },
   llm: {
@@ -74,6 +86,8 @@ export const NODE_REGISTRY = {
     icon: '🤖',
     category: 'ai',
     component: LLMNode,
+    // Есть `text-input` (target) и `text-output` (source).
+    canBeInsertedOnEdge: true,
     capabilities: { externalState: false, userConfig: false },
   },
   image_generation: {
@@ -81,6 +95,8 @@ export const NODE_REGISTRY = {
     icon: '🖼',
     category: 'media',
     component: ImageGenNode,
+    // Есть `text-input` (target) и `image-output` (source).
+    canBeInsertedOnEdge: true,
     capabilities: { externalState: false, userConfig: true },
   },
 } as const satisfies Record<NodeType, NodeRegistryEntry>;
@@ -100,6 +116,21 @@ export const NODE_TYPES = Object.keys(NODE_REGISTRY) as NodeType[];
  */
 export function isNodeType(value: string): value is NodeType {
   return value in NODE_REGISTRY;
+}
+
+/**
+ * Можно ли вставить узел этого типа в существующую связь (KI-259).
+ *
+ * Обёртка над полем реестра `canBeInsertedOnEdge`: один источник правды и для
+ * фильтра каталога (`NodeCatalogPopover.filter`), и для защиты в
+ * `addNodeOnEdge`. Функция, а не инлайн-предикат, чтобы передавать её пропом
+ * без пересоздания на каждом рендере.
+ *
+ * @param type - тип узла из реестра
+ * @returns `true`, если у узла есть входной порт и ребро `source → новый узел` создаётся
+ */
+export function canInsertOnEdge(type: NodeType): boolean {
+  return NODE_REGISTRY[type].canBeInsertedOnEdge;
 }
 
 /**

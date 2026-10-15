@@ -36,6 +36,8 @@
   "canvas.minimap.title": "Миникарта",
   "canvas.edge.insert": "Вставить узел в связь",
   "canvas.edge.delete": "Удалить связь",
+  "canvas.edge.gone": "Связь уже удалена",
+  "canvas.edge.cannotInsert": "Этот тип узла нельзя вставить в связь",
   "error.unknown": "Неизвестная ошибка",
   "error.run_failed": "Запуск завершился с ошибкой",
   "loadModal.close": "Закрыть",

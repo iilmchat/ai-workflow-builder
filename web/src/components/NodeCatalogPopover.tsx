@@ -18,6 +18,14 @@ interface NodeCatalogPopoverProps {
    * (KI-185), якорь которого стоит у верхней кромки холста.
    */
   readonly placement?: 'up' | 'down';
+  /**
+   * Дополнительный фильтр типов (KI-259).
+   *
+   * Каталог вставки узла в связь передаёт `canInsertOnEdge`: типы без входного
+   * порта (Text) в списке не показываются, потому что ребро `source → новый
+   * узел` для них не создаётся. Без фильтра показываются все типы.
+   */
+  readonly filter?: (type: NodeType) => boolean;
 }
 
 /** Узел в каталоге: тип, иконка и переведённая подпись. */
@@ -49,12 +57,14 @@ interface CatalogSection {
  * @param props.onClose - закрыть поповер
  * @param props.onAddNode - добавить узел выбранного типа
  * @param props.placement - направление раскрытия (по умолчанию вверх)
+ * @param props.filter - дополнительный фильтр типов (по умолчанию — все типы)
  */
 export function NodeCatalogPopover({
   open,
   onClose,
   onAddNode,
   placement = 'up',
+  filter,
 }: NodeCatalogPopoverProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
@@ -62,7 +72,8 @@ export function NodeCatalogPopover({
   const containerRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  // Секции — из реестра: порядок категорий из NODE_CATEGORIES, пустые не показываем.
+  // Секции — из реестра: порядок категорий из NODE_CATEGORIES, пустые не
+  // показываем. `filter` отсекает типы, которые нельзя вставить в связь (KI-259).
   const sections = useMemo<CatalogSection[]>(() => {
     const needle = query.trim().toLowerCase();
 
@@ -71,6 +82,7 @@ export function NodeCatalogPopover({
       nodes: NODE_TYPES.filter(
         (type) => NODE_REGISTRY[type].category === category,
       )
+        .filter((type) => filter === undefined || filter(type))
         .map((type) => ({
           type,
           icon: NODE_REGISTRY[type].icon,
@@ -80,7 +92,7 @@ export function NodeCatalogPopover({
           (node) => needle === '' || node.label.toLowerCase().includes(needle),
         ),
     })).filter((section) => section.nodes.length > 0);
-  }, [query, t]);
+  }, [query, t, filter]);
 
   /** Плоский список узлов: по нему ходят стрелки, пропуская заголовки секций. */
   const flatNodes = useMemo(

@@ -25,7 +25,7 @@ import {
 import { subscribeToRunStream } from '@/lib/run-stream';
 import { levelsToMap } from '@/lib/plan';
 import { pickDefaultMediaModel } from '@/lib/media';
-import { isNodeType, nodeLabelOf } from '@/lib/node-registry';
+import { canInsertOnEdge, isNodeType, nodeLabelOf } from '@/lib/node-registry';
 import type { MediaModelInfo } from '@/types/media';
 import {
   DEFAULT_LLM_MODEL_ID,
@@ -36,7 +36,12 @@ import {
   type TextNodeData,
 } from '@/types/graph';
 import { validateMaxTokensOverride, validateReasoningEffort } from '@/lib/llm-node-fields';
-import { cloneNodesForDuplicate } from '@/lib/graph-edit';
+import {
+  cloneNodesForDuplicate,
+  insertPositionOnEdge,
+  NODE_DEFAULT_HEIGHT,
+  NODE_DEFAULT_WIDTH,
+} from '@/lib/graph-edit';
 import { computeGraphHash } from '@/lib/graph-hash';
 import type {
   RunEventMessage,
@@ -253,8 +258,15 @@ export interface WorkflowState {
    * @param edgeId - id удаляемой связи
    */
   removeEdge: (edgeId: string) => void;
-  /** Вставить узел в связь: старая связь делится на две (KI-185). */
-  addNodeOnEdge: (edgeId: string, type: NodeType) => void;
+  /**
+   * Вставить узел в связь: старая связь делится на две (KI-185).
+   *
+   * @param edgeId - id связи, в которую вставляем узел
+   * @param type - тип вставляемого узла
+   * @returns `true`, если узел вставлен; `false`, если связь уже удалена
+   *   (KI-261) или тип нельзя вставить (KI-259) — в обоих случаях с notice
+   */
+  addNodeOnEdge: (edgeId: string, type: NodeType) => boolean;
   /**
    * Связь, для которой открыт каталог вставки узла (KI-185): `null` — закрыт.
    *
@@ -712,57 +724,88 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     });
   },
 
-  addNodeOnEdge: (edgeId, type) =>
-    set((state) => {
-      const edge = state.edges.find((item) => item.id === edgeId);
+  addNodeOnEdge: (edgeId, type) => {
+    const state = get();
+    const edge = state.edges.find((item) => item.id === edgeId);
 
-      if (!edge) {
-        return {};
-      }
+    // KI-261: связь могли удалить, пока открыт каталог вставки. Молчать нельзя:
+    // пользователь выбрал пункт каталога и должен понять, почему ничего не вышло.
+    if (!edge) {
+      set({ notice: { kind: 'error', text: i18n.t('canvas.edge.gone') } });
+      return false;
+    }
 
-      const source = state.nodes.find((node) => node.id === edge.source);
-      const target = state.nodes.find((node) => node.id === edge.target);
-      // Центр связи: середина отрезка между узлами — вставлять узел «по линии»
-      // удобнее, чем в произвольную точку.
-      const position = {
-        x: ((source?.position.x ?? 0) + (target?.position.x ?? 0)) / 2,
-        y: ((source?.position.y ?? 0) + (target?.position.y ?? 0)) / 2,
-      };
-      const node = createNode(
-        type,
-        position,
-        state.nodes.length,
-        state.llmModels[0]?.id,
-        pickDefaultMediaModel(state.mediaModels),
-      );
+    // KI-259: у типа без входного порта ребро `source → новый узел` не создать
+    // (React Flow не найдёт target handle и вернёт error008). Исходную связь НЕ
+    // удаляем — иначе граф потерял бы связь, а узел остался бы висеть без входов.
+    // Каталог такие типы не показывает; проверка — защита от регрессии.
+    if (!canInsertOnEdge(type)) {
+      set({ notice: { kind: 'error', text: i18n.t('canvas.edge.cannotInsert') } });
+      return false;
+    }
 
-      return {
-        nodes: [
-          ...state.nodes.map((existing) => ({ ...existing, selected: false })),
-          { ...node, selected: true },
-        ],
-        // Старая связь заменяется двумя: source → новый узел → target.
-        edges: [
-          ...state.edges.filter((item) => item.id !== edgeId),
-          {
-            id: `edge-${crypto.randomUUID()}`,
-            source: edge.source,
-            sourceHandle: edge.sourceHandle ?? null,
-            target: node.id,
-            targetHandle: null,
-          },
-          {
-            id: `edge-${crypto.randomUUID()}`,
-            source: node.id,
-            sourceHandle: null,
-            target: edge.target,
-            targetHandle: edge.targetHandle ?? null,
-          },
-        ],
-        selectedNodeId: node.id,
-        executionLevels: {},
-      };
-    }),
+    const source = state.nodes.find((node) => node.id === edge.source);
+    const target = state.nodes.find((node) => node.id === edge.target);
+    // KI-260: точный размер нового узла до первого рендера неизвестен, поэтому
+    // берём `measured` уже существующего узла того же типа, иначе — дефолт.
+    const sample = state.nodes.find((node) => node.type === type);
+    const size = {
+      width: sample?.measured?.width ?? NODE_DEFAULT_WIDTH,
+      height: sample?.measured?.height ?? NODE_DEFAULT_HEIGHT,
+    };
+    const position = insertPositionOnEdge(
+      {
+        position: source?.position ?? { x: 0, y: 0 },
+        width: source?.measured?.width,
+        height: source?.measured?.height,
+      },
+      {
+        position: target?.position ?? { x: 0, y: 0 },
+        width: target?.measured?.width,
+        height: target?.measured?.height,
+      },
+      size,
+    );
+
+    const node = createNode(
+      type,
+      position,
+      state.nodes.length,
+      state.llmModels[0]?.id,
+      pickDefaultMediaModel(state.mediaModels),
+    );
+
+    set({
+      nodes: [
+        ...state.nodes.map((existing) => ({ ...existing, selected: false })),
+        { ...node, selected: true },
+      ],
+      // Старая связь заменяется двумя: source → новый узел → target.
+      // `targetHandle: null` — React Flow подставит первый входной порт узла
+      // (типы без входного порта отсекает проверка `canInsertOnEdge` выше).
+      edges: [
+        ...state.edges.filter((item) => item.id !== edgeId),
+        {
+          id: `edge-${crypto.randomUUID()}`,
+          source: edge.source,
+          sourceHandle: edge.sourceHandle ?? null,
+          target: node.id,
+          targetHandle: null,
+        },
+        {
+          id: `edge-${crypto.randomUUID()}`,
+          source: node.id,
+          sourceHandle: null,
+          target: edge.target,
+          targetHandle: edge.targetHandle ?? null,
+        },
+      ],
+      selectedNodeId: node.id,
+      executionLevels: {},
+    });
+
+    return true;
+  },
 
   requestInsertOnEdge: (edgeId) => set({ pendingEdgeId: edgeId }),
 

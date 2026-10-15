@@ -21,6 +21,7 @@ import { useDebouncedEffect } from '@/hooks/use-debounced-effect';
 import { useHotkeys } from '@/hooks/use-hotkeys';
 import { computeGraphHash } from '@/lib/graph-hash';
 import { findGuides, type HelperLines } from '@/lib/graph-guides';
+import { canInsertOnEdge } from '@/lib/node-registry';
 import { useWorkflowStore, type FindCenterHandler } from '@/stores/workflow';
 import { useTranslation } from 'react-i18next';
 
@@ -277,6 +278,9 @@ function CanvasInner({ onReady }: CanvasProps) {
           <NodeCatalogPopover
             open
             placement="down"
+            // KI-259: в связь можно вставить только типы с входным портом
+            // (единый источник правды — `NODE_REGISTRY.canBeInsertedOnEdge`).
+            filter={canInsertOnEdge}
             onClose={clearPendingEdge}
             onAddNode={(type) => {
               addNodeOnEdge(pendingEdgeId, type);

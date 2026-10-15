@@ -77,6 +77,8 @@
   "node.llm.maxTokens.placeholder": "Default",
   "canvas.edge.insert": "Insert node into connection",
   "canvas.edge.delete": "Delete connection",
+  "canvas.edge.gone": "Connection was already removed",
+  "canvas.edge.cannotInsert": "This node type cannot be inserted into a connection",
   "node.text.label": "Text",
   "node.text.placeholder": "Enter text...",
   "run.status.attempt": "{{base}} (attempt {{current}}/{{total}})",

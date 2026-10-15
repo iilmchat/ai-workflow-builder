@@ -1,7 +1,77 @@
 import type { AppNode } from '@/types/graph';
+import { NODE_WIDTH } from './graph-guides';
 
 /** Смещение копии узла при дублировании (KI-191). */
 export const DUPLICATE_OFFSET = 30;
+
+/**
+ * Ширина узла по умолчанию, px (KI-260).
+ *
+ * Берётся из `graph-guides`, где та же константа задаёт fallback для
+ * направляющих: ширина карточки (`w-60` = 240 px) должна совпадать в обоих
+ * расчётах.
+ */
+export const NODE_DEFAULT_WIDTH = NODE_WIDTH;
+
+/**
+ * Высота узла по умолчанию, px (KI-260).
+ *
+ * Приблизительная: точный размер React Flow знает только после первого рендера
+ * (`node.measured`), а позицию вставляемого узла нужно вычислить до него.
+ * Поэтому для уже существующего узла того же типа стор подставляет его
+ * `measured.height`, а это значение — только запасной вариант.
+ */
+export const NODE_DEFAULT_HEIGHT = 100;
+
+/** Размер узла в потоке, px. */
+export interface NodeSize {
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Узел для расчёта позиции: левый верхний угол + известный размер. */
+export interface NodeAnchor {
+  readonly position: { x: number; y: number };
+  readonly width?: number;
+  readonly height?: number;
+}
+
+/**
+ * Позиция нового узла по центру связи (KI-260).
+ *
+ * Середина связи считается по граням портов: по X — между правой гранью
+ * источника и левой гранью приёмника (связи в редакторе идут слева направо),
+ * по Y — между вертикальными центрами узлов. Новый узел ставится так, чтобы
+ * его центр совпал с этой точкой.
+ *
+ * Прежний расчёт использовал среднее `top-left` углов источника и приёмника,
+ * поэтому узел «съезжал» вправо-вниз от линии связи и накрывал соседей.
+ *
+ * @param source - узел-источник связи
+ * @param target - узел-приёмник связи
+ * @param size - ожидаемый размер вставляемого узла (по умолчанию 240×100)
+ * @returns позиция левого верхнего угла вставляемого узла
+ */
+export function insertPositionOnEdge(
+  source: NodeAnchor,
+  target: NodeAnchor,
+  size: NodeSize = { width: NODE_DEFAULT_WIDTH, height: NODE_DEFAULT_HEIGHT },
+): { x: number; y: number } {
+  const sourceWidth = source.width ?? NODE_DEFAULT_WIDTH;
+  const sourceHeight = source.height ?? NODE_DEFAULT_HEIGHT;
+  const targetHeight = target.height ?? NODE_DEFAULT_HEIGHT;
+
+  const centerX =
+    (source.position.x + sourceWidth + target.position.x) / 2;
+  const centerY =
+    (source.position.y +
+      sourceHeight / 2 +
+      target.position.y +
+      targetHeight / 2) /
+    2;
+
+  return { x: centerX - size.width / 2, y: centerY - size.height / 2 };
+}
 
 /**
  * Готовит копии узлов для дублирования (KI-191).
