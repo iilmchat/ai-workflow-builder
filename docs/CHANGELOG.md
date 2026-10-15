@@ -154,7 +154,19 @@
   - `node-ports.ts`: контракты http/condition/output; compare намеренно
     без контракта (KI-278).
   - Tests: 438 → 479 (+41).
-  
+- **Engine — frontend узлов http/condition/output/compare (R6.5.2):**
+  - `NodeType` += 4; `HttpNodeData` / `ConditionNodeData` /
+    `OutputNodeData` / `CompareNodeData`; `AppNode` += 4.
+  - 4 компонента: HttpNode (метод/URL/body/timeout), ConditionNode
+    (2 выхода T/F), OutputNode (0 выходов, имя), CompareNode
+    (2 входа a/b, mode=diff).
+  - `NODE_REGISTRY` — 4 записи (tools / tools / output / ai);
+    `canBeInsertedOnEdge: true`.
+  - `BaseNode` — новый проп `dataNodeAttr` (аддитивно).
+  - i18n: 27 ключей `node.{http,condition,output,compare}.*`
+    (ru/en 158 → 185).
+  - Frontend tests: 101 → 132 (+31).
+
 ### Fixed
 - **KI-201** — Auth backend (R6.1a): users, JWT-guard, `/auth/*`,
   scrypt; остаток R6.1b.1/R6.1b.2 — refresh-token, logout, frontend
@@ -221,6 +233,8 @@
   `withTimezone` (`4a214f7`).
 - **KI-274** — `matchesHotkey`: `ctrl+*` биндинги не срабатывали
   (критично — не работал `Ctrl+D`/`Ctrl+Z`) (`2efe3f3`).
+- **KI-105** — узлы `http` / `condition` / `output` / `compare`
+  (backend + frontend) (`1e89cdd`, `c4f2792`).
 
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
@@ -301,7 +315,13 @@
     (Medium).
   - **KI-276** — Ctrl+Z не работает при фокусе в поле ввода узла (Low).
   - **KI-277** — Load не чистит историю undo (Low).
-  
+  - **KI-284** — вставка compare в связь теряет операнды (Medium).
+  - **KI-285** — обрезка полей в карточках новых узлов (Low).
+  - **KI-286** — CDP-смоук: Ctrl+A вставляет символ; каталог требует
+    scrollIntoView (Low).
+  - **KI-287** — движок прерывает независимые уровни после первого
+    падения (Medium, противоречит RULES 4.16).
+      
 ## [0.7.2] — 2026-10-15
 
 **Patch-релиз после v0.7.1. Yandex env + LM Studio auto-discovery + LLM/media фиксы.**
