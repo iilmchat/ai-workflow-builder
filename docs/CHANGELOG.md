@@ -111,7 +111,16 @@
   - `nodeDataFromApi` — переносит новые поля (паттерн KI-129).
   - i18n: 10 ключей `node.llm.*` (ru/en 145/145).
   - Frontend tests: 29 → 33 (+4).
-
+- **Canvas UX part 1 (R6.4a):**
+  - `edges/InsertableEdge.tsx` — кнопки «+»/«×» на связи (BaseEdge +
+    interactionWidth + EdgeLabelRenderer).
+  - `hooks/use-hotkeys.ts` — Ctrl+D (расширится в R6.4b).
+  - `hooks/use-debounced-effect.ts` — auto-save 3000 мс.
+  - `lib/graph-hash.ts`, `lib/graph-edit.ts`, `lib/graph-guides.ts`.
+  - `snapToGrid + snapGrid=[8,8]` + направляющие в `<ViewportPortal>`.
+  - Индикатор «✓ Сохранено / ● Есть изменения» в TopBar.
+  - Frontend tests: 29 → 40 (+11).
+  
 ### Fixed
 - **KI-201** — Auth backend (R6.1a): users, JWT-guard, `/auth/*`,
   scrypt; остаток R6.1b.1/R6.1b.2 — refresh-token, logout, frontend
@@ -135,6 +144,12 @@
   + env-суффикс `:reasoning` → 4096 (`<hash-3.1>`).
 - **KI-192** — System prompt у LLM-узла (backend) (`<hash-3.1>`).
 - **KI-193** — Reasoning mode (backend) (`<hash-3.1>`).
+- **KI-185** — вставка узла в связь по паттерну React Flow
+  (`fcd2913`).
+- **KI-189** — направляющие (соседи из стора + ViewportPortal)
+  (`fcd2913`).
+- **KI-258** — каталог вставки: `w-72` + `placement="down"`
+  (`fcd2913`).
 
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
@@ -185,6 +200,10 @@
   - **KI-248..251** — frontend LLM-остаток v0.8.x: `reasoningEffort`
     не сбрасывается при смене модели, union в 3 местах,
     placeholder без пояснения, нет unit-теста на `nodeDataFromApi`.
+  - **KI-252..255, 259..261** — Canvas UX-остаток: узлы из Toolbar
+    вне сетки, хэш на каждом изменении, Ctrl+D фокус на копию,
+    structuredClone, addNodeOnEdge без входного порта (High),
+    позиция узла, молчание при отсутствующей связи.    
     
 ## [0.7.2] — 2026-10-15
 
