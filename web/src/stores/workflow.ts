@@ -22,7 +22,8 @@ import {
   type ApiWorkflow,
   type LlmModelInfo,
 } from '@/lib/api';
-import { subscribeToRunStream } from '@/lib/run-stream';
+import { subscribeToRunStream, RunStreamUnavailableError } from '@/lib/run-stream';
+import type { RunStreamHandlers } from '@/lib/run-stream';
 import { levelsToMap } from '@/lib/plan';
 import { pickDefaultMediaModel } from '@/lib/media';
 import { canInsertOnEdge, isNodeType, nodeLabelOf } from '@/lib/node-registry';
@@ -44,6 +45,11 @@ import {
   NODE_DEFAULT_WIDTH,
 } from '@/lib/graph-edit';
 import { computeGraphHash } from '@/lib/graph-hash';
+import {
+  clearRunIdFromUrl,
+  getRunIdFromUrl,
+  setRunIdInUrl,
+} from '@/lib/url-sync';
 import {
   toBackendEdges,
   toBackendNodes,
@@ -143,6 +149,68 @@ function closeStreamIfAny(): void {
  */
 function isFinalStatus(status: RunStatus | null): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+/** Запись частичного состояния стора — то, что нужно обработчикам потока. */
+type StoreSet = (partial: Partial<WorkflowState>) => void;
+
+/**
+ * Собирает колбэки подписки на SSE-поток запуска.
+ *
+ * Один и тот же набор нужен в двух местах: при старте запуска
+ * (`startRunAsync`) и при восстановлении подписки после F5
+ * (`loadWorkflowAsync`, KI-271) — поэтому он живёт отдельной функцией, а не
+ * дублируется на месте подписки.
+ *
+ * @param set - запись состояния стора
+ * @param get - чтение состояния стора
+ * @returns колбэки для `subscribeToRunStream`
+ */
+function buildRunStreamHandlers(
+  set: StoreSet,
+  get: () => WorkflowState,
+): RunStreamHandlers {
+  return {
+    onMessage: (message) => {
+      if (message.type === 'snapshot') {
+        get().applySnapshot(message);
+
+        return;
+      }
+
+      get().applyEvent(message);
+    },
+    onError: (error) => {
+      // KI-271: запуск из `?runId=` недоступен (404 — удалён или чужой; 401 —
+      // сессия не восстановлена). Повтор не поможет: убираем id из адресной
+      // строки и сбрасываем состояние запуска, иначе UI завис бы на «выполняется».
+      if (error instanceof RunStreamUnavailableError) {
+        console.warn('Поток запуска недоступен — состояние запуска сброшено', error);
+        clearRunIdFromUrl();
+        get().resetRunState();
+
+        return;
+      }
+
+      // KI-268: поток переподключается сам, пока ошибки идут подряд (до
+      // `MAX_CONSECUTIVE_ERRORS`); закрываем только завершённый запуск — иначе
+      // повторное подключение принесёт новый snapshot и состояние
+      // восстановится (KI-049).
+      if (isFinalStatus(get().runStatus)) {
+        closeStreamIfAny();
+      }
+    },
+    onClose: () => {
+      // Поток закрылся сам (сервер завершил ответ либо попытки исчерпаны):
+      // handle больше не нужен, повторный abort бессмыслен.
+      closeRunStream = null;
+    },
+    onFatalError: (attempts) => {
+      const text = i18n.t('toast.stream_stalled', { count: attempts });
+
+      set({ runError: text, notice: { kind: 'error', text } });
+    },
+  };
 }
 
 /**
@@ -1031,6 +1099,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   loadWorkflowAsync: async (id) => {
     set({ isLoading: true, error: null });
 
+    // KI-271: `?runId=` в адресной строке означает, что страницу перезагрузили
+    // (F5) посреди запуска — состояние запуска не сбрасываем, а подписываемся на
+    // поток заново: `snapshot` вернёт статусы узлов и run-уровня (KI-049).
+    const runIdFromUrl = getRunIdFromUrl();
+
     try {
       const workflow = await getWorkflowAsync(id);
       const { nodes, edges, warning } = fromApiWorkflow(workflow);
@@ -1052,8 +1125,21 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           ? { kind: 'error', text: warning }
           : { kind: 'success', text: i18n.t('toast.workflow_loaded', { name: workflow.name }) },
       });
-      // Загружен другой граф: состояние прошлого запуска сбрасываем.
-      get().resetRunState();
+
+      if (runIdFromUrl === null) {
+        // Загружен другой граф: состояние прошлого запуска сбрасываем.
+        get().resetRunState();
+      } else {
+        // Поток от прошлого монтирования (StrictMode вызывает эффект дважды)
+        // закрываем, состояние до прихода snapshot — «выполняется»: так Run
+        // недоступен, пока факт запуска не подтверждён снимком.
+        closeStreamIfAny();
+        set({ runId: runIdFromUrl, runStatus: 'pending' });
+        closeRunStream = subscribeToRunStream(
+          runIdFromUrl,
+          buildRunStreamHandlers(set, get),
+        );
+      }
     } catch (error) {
       const message = messageOf(error);
       set({ isLoading: false, error: message, notice: { kind: 'error', text: message } });
@@ -1121,6 +1207,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
       runId = run.id;
       set({ runId: run.id, runStatus: run.status });
+      // KI-271: id запуска — в адресную строку, чтобы F5 посреди запуска
+      // восстановил подписку на поток (см. `loadWorkflowAsync`).
+      setRunIdInUrl(run.id);
     } catch (error) {
       const message = messageOf(error);
 
@@ -1133,36 +1222,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       return;
     }
 
-    closeRunStream = subscribeToRunStream(runId, {
-      onMessage: (message) => {
-        if (message.type === 'snapshot') {
-          get().applySnapshot(message);
-
-          return;
-        }
-
-        get().applyEvent(message);
-      },
-      onError: () => {
-        // KI-268: поток поднимается на `fetch` и сам переподключается, пока
-        // ошибки идут подряд (до `MAX_CONSECUTIVE_ERRORS`); закрываем только
-        // завершённый запуск — иначе повторное подключение принесёт новый
-        // snapshot и состояние восстановится (KI-049).
-        if (isFinalStatus(get().runStatus)) {
-          closeStreamIfAny();
-        }
-      },
-      onClose: () => {
-        // Поток закрылся сам (сервер завершил ответ либо попытки исчерпаны):
-        // handle больше не нужен, повторный abort бессмыслен.
-        closeRunStream = null;
-      },
-      onFatalError: (attempts) => {
-        const text = i18n.t('toast.stream_stalled', { count: attempts });
-
-        set({ runError: text, notice: { kind: 'error', text } });
-      },
-    });
+    closeRunStream = subscribeToRunStream(runId, buildRunStreamHandlers(set, get));
   },
 
   applySnapshot: (snapshot) => {
@@ -1208,6 +1268,15 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       nodeLogs,
       nodeMetrics,
     });
+
+    // KI-271: снимок уже завершённого запуска (F5 после финала на backend, где
+    // `run_completed` больше не придёт) — `?runId=` в адресной строке устарел.
+    // Поток при этом не закрываем: признак «повторов не будет» (`final`) в
+    // снимок не попадает (KI-063), а обрыв подписки потерял бы события
+    // оставшейся попытки job'а (KI-070).
+    if (isFinalStatus(snapshot.run.status)) {
+      clearRunIdFromUrl();
+    }
   },
 
   applyEvent: (event) => {
@@ -1309,7 +1378,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         }));
 
         // KI-060: `final` — признак того, что retry не будет: поток закрываем.
+        // KI-271: и убираем `?runId=` — после F5 подписываться уже не на что.
+        // При промежуточном провале (`final: false`) URL НЕ трогаем: у job'а
+        // остались попытки (KI-070), и подписка должна пережить перезагрузку.
         if (event.final) {
+          clearRunIdFromUrl();
           closeStreamIfAny();
         }
 

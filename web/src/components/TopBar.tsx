@@ -12,6 +12,10 @@ import type { RunStatus } from '@/types/run-stream';
 import { LoadModal } from './LoadModal';
 import { ShareModal } from './ShareModal';
 import { computeGraphHash } from '@/lib/graph-hash';
+import {
+  clearWorkflowUrlParam,
+  syncWorkflowUrlParam,
+} from '@/lib/url-sync';
 
 /** Простой индикатор занятости для кнопок. */
 function Spinner() {
@@ -65,34 +69,6 @@ function runStatusText(
   }
 
   return base;
-}
-
-/**
- * Пишет id workflow в адресную строку.
- *
- * После перезагрузки страница вернётся к тому же workflow (App читает
- * `?workflowId=`).
- *
- * @param workflowId - id сохранённого workflow
- */
-function syncWorkflowUrlParam(workflowId: string): void {
-  const url = new URL(window.location.href);
-
-  url.searchParams.set('workflowId', workflowId);
-  window.history.replaceState(null, '', url);
-}
-
-/**
- * Убирает `?workflowId=` из адресной строки (A3).
- *
- * После «Новый» перезагрузка страницы не должна возвращать пользователя к
- * прежнему workflow.
- */
-function clearWorkflowUrlParam(): void {
-  const url = new URL(window.location.href);
-
-  url.searchParams.delete('workflowId');
-  window.history.replaceState(null, '', url);
 }
 
 /**

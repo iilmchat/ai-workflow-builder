@@ -12,6 +12,28 @@ const MAX_CONSECUTIVE_ERRORS = 3;
 /** Пауза перед повторным подключением после сетевой ошибки. */
 const RETRY_DELAY_MS = 1000;
 
+/**
+ * Ошибка «запуск недоступен»: подписка заведомо не восстановится.
+ *
+ * Бросается, когда повторная попытка не поможет: HTTP-статус, отличный от 200
+ * (например, 404 — запуск удалён или принадлежит другому пользователю), либо
+ * 401 после неудачного refresh. По этой ошибке повтор не выполняется, а
+ * подписчик (стор) очищает `?runId=` и состояние запуска (KI-271).
+ *
+ * Отдельный класс, а не текст в `Error`: подписчику нужно отличать «запуск не
+ * существует» от временного сетевого сбоя, по которому поток переподключается
+ * (KI-268).
+ */
+export class RunStreamUnavailableError extends Error {
+  /**
+   * @param status - HTTP-статус ответа (401, 404, …)
+   */
+  constructor(status: number) {
+    super(`Поток запуска недоступен: HTTP ${status}`);
+    this.name = 'RunStreamUnavailableError';
+  }
+}
+
 /** Колбэки подписки на поток запуска. */
 export interface RunStreamHandlers {
   /** Вызывается на каждое валидное сообщение потока. */
@@ -101,20 +123,6 @@ async function consumeAsync(
     try {
       const response = await openAsync(runId, signal);
 
-      if (response === null) {
-        if (signal.aborted) {
-          return;
-        }
-
-        // Refresh не помог: сессии нет, повтор запроса даст тот же 401.
-        handlers.onError?.(
-          new Error('Поток запуска недоступен: сессия не восстановлена (401)'),
-        );
-        finish();
-
-        return;
-      }
-
       if (response.body === null) {
         // Не должно случаться в поддерживаемых браузерах — но без тела читать нечего.
         handlers.onError?.(new Error('Поток запуска пришёл без тела ответа'));
@@ -143,8 +151,16 @@ async function consumeAsync(
         return;
       }
 
-      consecutiveErrors += 1;
       handlers.onError?.(error);
+
+      // 404/401: повтор заведомо не поможет — закрываем поток сразу.
+      if (error instanceof RunStreamUnavailableError) {
+        finish();
+
+        return;
+      }
+
+      consecutiveErrors += 1;
 
       if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
         handlers.onFatalError?.(consecutiveErrors);
@@ -163,13 +179,14 @@ async function consumeAsync(
  *
  * @param runId - uuid запуска
  * @param signal - сигнал закрытия
- * @returns ответ с потоком либо `null`, если сессию восстановить не удалось
- * @throws Error при HTTP-статусе, отличном от 200 и 401
+ * @returns ответ с потоком
+ * @throws RunStreamUnavailableError если сессию восстановить не удалось (401)
+ * @throws RunStreamUnavailableError при HTTP-статусе, отличном от 200 (404 и др.)
  */
 async function openAsync(
   runId: string,
   signal: AbortSignal,
-): Promise<Response | null> {
+): Promise<Response> {
   let response = await fetchStreamAsync(runId, getAccessToken(), signal);
 
   if (response.status !== 401) {
@@ -180,13 +197,13 @@ async function openAsync(
   const refreshed = await refreshSessionAsync();
 
   if (!refreshed) {
-    return null;
+    throw new RunStreamUnavailableError(401);
   }
 
   response = await fetchStreamAsync(runId, getAccessToken(), signal);
 
   if (response.status === 401) {
-    return null;
+    throw new RunStreamUnavailableError(401);
   }
 
   return ensureOkAsync(response);
@@ -197,14 +214,14 @@ async function openAsync(
  *
  * @param response - ответ fetch
  * @returns тот же ответ, если он успешный
- * @throws Error с HTTP-статусом иначе
+ * @throws RunStreamUnavailableError с HTTP-статусом иначе
  */
 async function ensureOkAsync(response: Response): Promise<Response> {
   if (response.ok) {
     return response;
   }
 
-  throw new Error(`Поток запуска недоступен: HTTP ${response.status}`);
+  throw new RunStreamUnavailableError(response.status);
 }
 
 /**
