@@ -11,6 +11,7 @@ import { useWorkflowStore } from '@/stores/workflow';
 import type { RunStatus } from '@/types/run-stream';
 import { LoadModal } from './LoadModal';
 import { ShareModal } from './ShareModal';
+import { computeGraphHash } from '@/lib/graph-hash';
 
 /** Простой индикатор занятости для кнопок. */
 function Spinner() {
@@ -112,6 +113,13 @@ export function TopBar() {
   const user = useAuthStore((state) => state.user);
   // R6.2.2: поделиться можно только сохранённым workflow.
   const currentWorkflowId = useWorkflowStore((state) => state.currentWorkflowId);
+  // KI-195: «грязный» граф — если хэш текущего состояния не совпадает с хэшем
+  // последнего сохранения/загрузки.
+  const isDirty = useWorkflowStore(
+    (state) =>
+      currentWorkflowId !== null &&
+      state.lastSavedHash !== computeGraphHash(state.nodes, state.edges),
+  );
 
   /**
    * Выходит из аккаунта: отзывает refresh-токен и чистит сессию.
@@ -372,6 +380,19 @@ export function TopBar() {
             {isSaving ? <Spinner /> : <span aria-hidden="true">💾</span>}
             {t('topbar.save')}
           </button>
+
+          {/* KI-195: индикатор несохранённых изменений. Значение вычисляется
+              селектором (хэш графа против хэша последнего сохранения), а не
+              хранится полем: так его нельзя «забыть» обновить. */}
+          {currentWorkflowId !== null && (
+            <span
+              data-dirty-indicator={isDirty ? 'dirty' : 'saved'}
+              title={isDirty ? t('topbar.dirty') : t('topbar.saved')}
+              className="rounded-full bg-muted px-2 py-1 text-[11px] font-medium text-muted-foreground"
+            >
+              {isDirty ? t('topbar.dirty') : t('topbar.saved')}
+            </span>
+          )}
 
           <button
             type="button"

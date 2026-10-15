@@ -10,6 +10,14 @@ interface NodeCatalogPopoverProps {
   readonly onClose: () => void;
   /** Добавить узел заданного типа. */
   readonly onAddNode: (type: NodeType) => void;
+  /**
+   * Направление раскрытия.
+   *
+   * `up` (по умолчанию) — вверх от якоря: так каталог открывается из тулбара
+   * внизу экрана. `down` — вниз: нужен для каталога вставки узла в связь
+   * (KI-185), якорь которого стоит у верхней кромки холста.
+   */
+  readonly placement?: 'up' | 'down';
 }
 
 /** Узел в каталоге: тип, иконка и переведённая подпись. */
@@ -40,11 +48,13 @@ interface CatalogSection {
  * @param props.open - открыт ли поповер
  * @param props.onClose - закрыть поповер
  * @param props.onAddNode - добавить узел выбранного типа
+ * @param props.placement - направление раскрытия (по умолчанию вверх)
  */
 export function NodeCatalogPopover({
   open,
   onClose,
   onAddNode,
+  placement = 'up',
 }: NodeCatalogPopoverProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
@@ -201,7 +211,9 @@ export function NodeCatalogPopover({
       role="dialog"
       aria-label={t('catalog.title')}
       onKeyDown={handleKeyDown}
-      className="absolute inset-x-0 bottom-full mb-2 rounded-xl border border-border bg-background p-2 shadow-node"
+      className={`absolute inset-x-0 ${
+        placement === 'down' ? 'top-full mt-2' : 'bottom-full mb-2'
+      } rounded-xl border border-border bg-background p-2 shadow-node`}
     >
       <input
         ref={searchRef}

@@ -36,6 +36,8 @@ import {
   type TextNodeData,
 } from '@/types/graph';
 import { validateMaxTokensOverride, validateReasoningEffort } from '@/lib/llm-node-fields';
+import { cloneNodesForDuplicate } from '@/lib/graph-edit';
+import { computeGraphHash } from '@/lib/graph-hash';
 import type {
   RunEventMessage,
   RunStatus,
@@ -222,6 +224,10 @@ export interface WorkflowState {
   loadMediaModelsAsync: () => Promise<void>;
 
   isSaving: boolean;
+  /** Хэш последнего сохранённого графа: база для индикатора «есть изменения». */
+  lastSavedHash: string | null;
+  /** Запомнить хэш сохранённого графа (KI-195). */
+  markSaved: (hash: string) => void;
   isLoading: boolean;
   error: string | null;
   notice: Notice | null;
@@ -247,6 +253,25 @@ export interface WorkflowState {
    * @param edgeId - id удаляемой связи
    */
   removeEdge: (edgeId: string) => void;
+  /** Вставить узел в связь: старая связь делится на две (KI-185). */
+  addNodeOnEdge: (edgeId: string, type: NodeType) => void;
+  /**
+   * Связь, для которой открыт каталог вставки узла (KI-185): `null` — закрыт.
+   *
+   * Кнопка «+» живёт в кастомном ребре (`InsertableEdge`), а поповер каталога —
+   * в `Canvas` (экранные координаты), поэтому связь между ними идёт через стор.
+   */
+  pendingEdgeId: string | null;
+  /**
+   * Открывает каталог узлов для вставки в указанную связь (KI-185).
+   *
+   * @param edgeId - id связи, в которую вставляем узел
+   */
+  requestInsertOnEdge: (edgeId: string) => void;
+  /** Закрывает каталог вставки узла (KI-185). */
+  clearPendingEdge: () => void;
+  /** Дублировать узлы со сдвигом; связи не копируются (KI-191). */
+  duplicateNodes: (ids: string[]) => void;
   /**
    * Сбрасывает редактор к пустому новому workflow (A3): чистит граф, историю
    * запуска и выбранный узел, возвращает имя по умолчанию.
@@ -572,9 +597,14 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   isSaving: false,
   isLoading: false,
   error: null,
+  lastSavedHash: null,
+
   notice: null,
 
   findCenter: null,
+
+  /** Каталог вставки узла в связь закрыт (KI-185). */
+  pendingEdgeId: null,
 
   addNode: (type, position) =>
     set((state) => {
@@ -682,6 +712,84 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     });
   },
 
+  addNodeOnEdge: (edgeId, type) =>
+    set((state) => {
+      const edge = state.edges.find((item) => item.id === edgeId);
+
+      if (!edge) {
+        return {};
+      }
+
+      const source = state.nodes.find((node) => node.id === edge.source);
+      const target = state.nodes.find((node) => node.id === edge.target);
+      // Центр связи: середина отрезка между узлами — вставлять узел «по линии»
+      // удобнее, чем в произвольную точку.
+      const position = {
+        x: ((source?.position.x ?? 0) + (target?.position.x ?? 0)) / 2,
+        y: ((source?.position.y ?? 0) + (target?.position.y ?? 0)) / 2,
+      };
+      const node = createNode(
+        type,
+        position,
+        state.nodes.length,
+        state.llmModels[0]?.id,
+        pickDefaultMediaModel(state.mediaModels),
+      );
+
+      return {
+        nodes: [
+          ...state.nodes.map((existing) => ({ ...existing, selected: false })),
+          { ...node, selected: true },
+        ],
+        // Старая связь заменяется двумя: source → новый узел → target.
+        edges: [
+          ...state.edges.filter((item) => item.id !== edgeId),
+          {
+            id: `edge-${crypto.randomUUID()}`,
+            source: edge.source,
+            sourceHandle: edge.sourceHandle ?? null,
+            target: node.id,
+            targetHandle: null,
+          },
+          {
+            id: `edge-${crypto.randomUUID()}`,
+            source: node.id,
+            sourceHandle: null,
+            target: edge.target,
+            targetHandle: edge.targetHandle ?? null,
+          },
+        ],
+        selectedNodeId: node.id,
+        executionLevels: {},
+      };
+    }),
+
+  requestInsertOnEdge: (edgeId) => set({ pendingEdgeId: edgeId }),
+
+  clearPendingEdge: () => set({ pendingEdgeId: null }),
+
+  duplicateNodes: (ids) =>
+    set((state) => {
+      const copies = cloneNodesForDuplicate(state.nodes, ids, () =>
+        crypto.randomUUID(),
+      );
+
+      if (copies.length === 0) {
+        return {};
+      }
+
+      return {
+        nodes: [
+          ...state.nodes.map((node) => ({ ...node, selected: false })),
+          ...copies,
+        ],
+        selectedNodeId: copies[0]?.id ?? state.selectedNodeId,
+        executionLevels: {},
+      };
+    }),
+
+  markSaved: (hash) => set({ lastSavedHash: hash }),
+
   setNodes: (nodes) => set({ nodes }),
   setEdges: (edges) => set({ edges }),
 
@@ -704,6 +812,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       set({
         currentWorkflowId: saved.id,
         currentWorkflowName: saved.name,
+        // KI-195: запомнили «чистое» состояние — индикатор в TopBar погаснет.
+        lastSavedHash: computeGraphHash(nodes, edges),
         isSaving: false,
         notice: {
           kind: 'success',
@@ -730,6 +840,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         edges,
         currentWorkflowId: workflow.id,
         currentWorkflowName: workflow.name,
+        // KI-195: только что загруженный граф — «чистый» (иначе после F5
+        // индикатор показывал бы «есть изменения»).
+        lastSavedHash: computeGraphHash(nodes, edges),
         isLoading: false,
         // Прежний план относился к другому графу.
         executionLevels: {},

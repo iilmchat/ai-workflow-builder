@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -6,11 +6,49 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
+  ViewportPortal,
   useReactFlow,
+  type DefaultEdgeOptions,
+  type Node,
 } from '@xyflow/react';
+import {
+  INSERTABLE_EDGE_TYPE,
+  InsertableEdge,
+} from '@/components/edges/InsertableEdge';
 import { nodeTypes } from '@/components/nodes';
+import { NodeCatalogPopover } from '@/components/NodeCatalogPopover';
+import { useDebouncedEffect } from '@/hooks/use-debounced-effect';
+import { useHotkeys } from '@/hooks/use-hotkeys';
+import { computeGraphHash } from '@/lib/graph-hash';
+import { findGuides, type HelperLines } from '@/lib/graph-guides';
 import { useWorkflowStore, type FindCenterHandler } from '@/stores/workflow';
 import { useTranslation } from 'react-i18next';
+
+/** Шаг сетки привязки узлов (KI-189). */
+const SNAP_GRID: [number, number] = [8, 8];
+
+/** Допуск совпадения центров для направляющих (KI-189), px. */
+const GUIDE_TOLERANCE = 4;
+
+/** Задержка автосохранения после правки графа (KI-195), мс. */
+const AUTO_SAVE_DELAY_MS = 3000;
+
+/**
+ * Реестр типов связей React Flow (KI-185).
+ *
+ * Константа уровня модуля: React Flow сверяет ссылку и предупреждает в консоли,
+ * если объект типов создаётся заново на каждом рендере.
+ */
+const edgeTypes = { [INSERTABLE_EDGE_TYPE]: InsertableEdge };
+
+/**
+ * Опции связей по умолчанию (KI-185).
+ *
+ * `type` отсюда React Flow подставляет связям, у которых своего `type` нет, —
+ * в том числе загруженным из backend. Благодаря этому «вставляемое» ребро
+ * получают все связи графа, а не только созданные в текущей сессии.
+ */
+const DEFAULT_EDGE_OPTIONS: DefaultEdgeOptions = { type: INSERTABLE_EDGE_TYPE };
 
 interface CanvasProps {
   /**
@@ -59,8 +97,23 @@ function CanvasInner({ onReady }: CanvasProps) {
   const onEdgesChange = useWorkflowStore((state) => state.onEdgesChange);
   const onConnect = useWorkflowStore((state) => state.onConnect);
   const removeNode = useWorkflowStore((state) => state.removeNode);
+  const addNodeOnEdge = useWorkflowStore((state) => state.addNodeOnEdge);
+  const duplicateNodes = useWorkflowStore((state) => state.duplicateNodes);
   const setSelectedNodeId = useWorkflowStore((state) => state.setSelectedNodeId);
+  const selectedNodeId = useWorkflowStore((state) => state.selectedNodeId);
+  const currentWorkflowId = useWorkflowStore((state) => state.currentWorkflowId);
+  const lastSavedHash = useWorkflowStore((state) => state.lastSavedHash);
+  const markSaved = useWorkflowStore((state) => state.markSaved);
+  const saveWorkflowAsync = useWorkflowStore((state) => state.saveWorkflowAsync);
   const isEmpty = nodes.length === 0;
+  // KI-189: направляющие выравнивания (ручная реализация — `useAligning`
+  // доступен только в @xyflow/pro).
+  const [helperLines, setHelperLines] = useState<HelperLines>({});
+  // KI-185 (fix4): связь, для которой открыт каталог вставки узла. Клик по «+»
+  // обрабатывает кастомное ребро (`InsertableEdge`), а поповер каталога живёт
+  // здесь — обмен между ними идёт через стор.
+  const pendingEdgeId = useWorkflowStore((state) => state.pendingEdgeId);
+  const clearPendingEdge = useWorkflowStore((state) => state.clearPendingEdge);
 
   const { getViewport } = useReactFlow();
 
@@ -94,11 +147,94 @@ function CanvasInner({ onReady }: CanvasProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * Считает направляющие по совпадению центров dragged-узла с соседями.
+   *
+   * KI-189-fix: React Flow отдаёт в `onNodeDrag` третьим аргументом только
+   * перетаскиваемые узлы (сам dragged-узел), поэтому список соседей берём из
+   * стора. С прежним `allNodes` в `findGuides` попадал один dragged-узел,
+   * который функция пропускает по id, — направляющих не было никогда.
+   *
+   * @param node - перетаскиваемый узел (позиция + измеренный размер)
+   */
+  const handleNodeDrag = useCallback((node: Node) => {
+    const others = useWorkflowStore
+      .getState()
+      .nodes.filter((item) => item.id !== node.id)
+      .map((item) => ({
+        id: item.id,
+        position: item.position,
+        width: item.measured?.width,
+        height: item.measured?.height,
+      }));
+
+    setHelperLines(
+      findGuides(
+        {
+          id: node.id,
+          position: node.position,
+          width: node.measured?.width,
+          height: node.measured?.height,
+        },
+        others,
+        GUIDE_TOLERANCE,
+      ),
+    );
+  }, []);
+
+  // KI-191: Ctrl+D дублирует выделенный узел (R6.4b расширит список клавиш).
+  useHotkeys(
+    {
+      'ctrl+d': (event) => {
+        if (selectedNodeId === null) {
+          return;
+        }
+
+        event.preventDefault();
+        duplicateNodes([selectedNodeId]);
+      },
+    },
+    [selectedNodeId, duplicateNodes],
+  );
+
+  // KI-195: автосохранение через 3 секунды после последней правки. Сохраняем
+  // только сохранённый workflow и только если граф реально отличается от
+  // последнего сохранённого состояния.
+  useDebouncedEffect(
+    () => {
+      if (currentWorkflowId === null) {
+        return;
+      }
+
+      const hash = computeGraphHash(nodes, edges);
+
+      if (hash === lastSavedHash) {
+        return;
+      }
+
+      void saveWorkflowAsync().then(() => markSaved(hash));
+    },
+    [nodes, edges, currentWorkflowId, lastSavedHash],
+    AUTO_SAVE_DELAY_MS,
+  );
+
   return (
     <ReactFlow
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
+      // KI-185: кастомное ребро с кнопками «+»/«×». `edgeTypes` — константа
+      // модуля, `DEFAULT_EDGE_OPTIONS` подставляет тип связям без своего `type`
+      // (в том числе загруженным из backend).
+      edgeTypes={edgeTypes}
+      defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
+      // KI-189: привязка к сетке 8×8, направляющие — поверх (см. ниже).
+      snapToGrid
+      snapGrid={SNAP_GRID}
+      // KI-189-fix: `onNodeDrag` третьим аргументом отдаёт только dragged-узлы,
+      // поэтому соседей для направляющих обработчик берёт из стора.
+      onNodeDrag={(_event, node) => handleNodeDrag(node)}
+      onNodeDragStop={() => setHelperLines({})}
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onConnect={onConnect}
@@ -130,6 +266,64 @@ function CanvasInner({ onReady }: CanvasProps) {
       <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
       <Controls />
       <MiniMap />
+
+      {/* KI-185 (fix4): кнопки «+»/«×» живут в самом ребре
+          (`InsertableEdge`) — Canvas их больше не рисует и не хранит hover. */}
+
+      {pendingEdgeId !== null && (
+        // Ширина задана явно: у обёртки нет содержимого собственного размера,
+        // и `inset-x-0` внутри поповера схлопывался в 0 (KI-258).
+        <div className="absolute left-1/2 top-4 z-30 w-72 -translate-x-1/2">
+          <NodeCatalogPopover
+            open
+            placement="down"
+            onClose={clearPendingEdge}
+            onAddNode={(type) => {
+              addNodeOnEdge(pendingEdgeId, type);
+              clearPendingEdge();
+            }}
+          />
+        </div>
+      )}
+
+      {/* KI-189: направляющие выравнивания. Слой рендерится через
+          `<ViewportPortal>` — он живёт внутри `.react-flow__viewport` и
+          трансформируется вместе с холстом, поэтому координаты линий — в
+          координатах потока (без пересчёта в экранные).
+          `overflow-visible` обязателен: без него svg обрезает линию по своему
+          боксу (размер вьюпорта), и при pan/zoom линия пропадает.
+          `pointer-events-none` — слой не должен перехватывать кнопки «+»/«×». */}
+      {(helperLines.vertical !== undefined ||
+        helperLines.horizontal !== undefined) && (
+        <ViewportPortal>
+          <svg className="pointer-events-none absolute inset-0 z-10 h-full w-full overflow-visible">
+            {helperLines.vertical !== undefined && (
+              <line
+                data-helper-line="vertical"
+                x1={helperLines.vertical}
+                x2={helperLines.vertical}
+                y1={-100000}
+                y2={100000}
+                stroke="var(--color-primary)"
+                strokeWidth={1}
+                strokeDasharray="4 4"
+              />
+            )}
+            {helperLines.horizontal !== undefined && (
+              <line
+                data-helper-line="horizontal"
+                x1={-100000}
+                x2={100000}
+                y1={helperLines.horizontal}
+                y2={helperLines.horizontal}
+                stroke="var(--color-primary)"
+                strokeWidth={1}
+                strokeDasharray="4 4"
+              />
+            )}
+          </svg>
+        </ViewportPortal>
+      )}
     </ReactFlow>
   );
 }
