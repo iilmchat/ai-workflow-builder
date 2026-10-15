@@ -4,7 +4,13 @@
  * `'off'` — не передавать провайдеру поле `reasoning_effort` вовсе (а не
  * `'none'`: часть прокси не знает такого значения).
  */
-export type ReasoningEffort = 'off' | 'medium' | 'high';
+export type ReasoningEffort =
+  | 'off'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh';
 
 /** Опции вызова LLM. */
 export interface LlmGenerateOptions {

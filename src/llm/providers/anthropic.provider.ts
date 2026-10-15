@@ -9,12 +9,12 @@ import {
   type LlmUsage,
   type ModelInfo,
 } from '../llm-provider.interface.js';
+/** Лимит токенов ответа по умолчанию. */
+import { DEFAULT_MAX_TOKENS } from '../llm-constants.js';
 import { toProviderException } from '../provider-errors.js';
 
 /** Таймаут вызова по умолчанию, если свой signal не передан (RULES 4.19). */
 const DEFAULT_TIMEOUT_MS = 60_000;
-/** Лимит токенов ответа по умолчанию. */
-const DEFAULT_MAX_TOKENS = 1024;
 
 /**
  * Извлекает метрики использования токенов из ответа Anthropic.

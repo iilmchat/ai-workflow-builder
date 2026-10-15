@@ -6,6 +6,7 @@ import {
   type ModelInfo,
   type ModelModality,
 } from './llm-provider.interface.js';
+import { REASONING_MAX_TOKENS } from './llm-constants.js';
 import { AnthropicProvider } from './providers/anthropic.provider.js';
 import { OpenAiCompatibleProvider } from './providers/openai-compatible.provider.js';
 
@@ -729,7 +730,7 @@ export class LlmProviderFactory {
         // провайдер возьмёт свой `DEFAULT_MAX_TOKENS` (1024) — так список
         // моделей для них остаётся прежним.
         ...(hasReasoning
-          ? { supportsReasoning: true, defaultMaxTokens: 4096 }
+          ? { supportsReasoning: true, defaultMaxTokens: REASONING_MAX_TOKENS }
           : {}),
       });
     }

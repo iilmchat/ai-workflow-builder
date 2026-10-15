@@ -269,10 +269,15 @@ export class ExecutionEngineService {
     const status = failed === null ? 'completed' : 'failed';
 
     await this.finishRunAsync(runId, status, outputs, failed?.error ?? null);
-
-    this.logger.log(
-      `Запуск ${runId} завершён: status=${status}, узлов=${executedNodes}` +
-        (failed ? `, ошибка: ${failed.error}` : ''),
+    
+    // KI-247: раньше было «узлов=${executedNodes}» — при падении первого
+    // узла счётчик = 0, и лог «узлов=0» путал (узел-то выполнялся).
+    // Движок прерывается на первом failed — `провалено` ∈ {0, 1}.
+     this.logger.log(
+      `Запуск ${runId} завершён: status=${status},`
+        + ` узлов выполнено=${executedNodes},`
+        + ` провалено=${failed ? 1 : 0}`
+        + (failed ? `, ошибка: ${failed.error}` : ''),
     );
 
     if (failed) {

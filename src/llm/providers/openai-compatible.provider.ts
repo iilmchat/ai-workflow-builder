@@ -7,13 +7,15 @@ import {
   type LlmGenerateResult,
   type LlmUsage,
   type ModelInfo,
+  type ReasoningEffort,
 } from '../llm-provider.interface.js';
+/** Лимит токенов ответа по умолчанию. */
+import { DEFAULT_MAX_TOKENS } from '../llm-constants.js';
 import { toProviderException } from '../provider-errors.js';
 
 /** Таймаут вызова по умолчанию, если свой signal не передан (RULES 4.19). */
 const DEFAULT_TIMEOUT_MS = 60_000;
-/** Лимит токенов ответа по умолчанию. */
-const DEFAULT_MAX_TOKENS = 1024;
+
 
 /**
  * Определяет значение `reasoning_effort` для запроса (R6.3.1, KI-193).
@@ -26,14 +28,14 @@ const DEFAULT_MAX_TOKENS = 1024;
  * @param providerName - имя провайдера (для сообщения)
  * @param options - опции вызова (модель и режим reasoning)
  * @param modelInfo - декларация модели, если она есть в списке провайдера
- * @returns `'medium'`/`'high'` для SDK либо `null` — «поле не передавать»
+ * @returns значение `reasoning_effort` для SDK либо `null` — «поле не передавать»
  */
 function resolveReasoningEffort(
   logger: Logger,
   providerName: string,
   options: LlmGenerateOptions,
   modelInfo: ModelInfo | undefined,
-): 'medium' | 'high' | null {
+): Exclude<ReasoningEffort, 'off'> | null {
   const effort = options.reasoningEffort;
 
   if (effort === undefined || effort === 'off') {
