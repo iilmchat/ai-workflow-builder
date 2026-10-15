@@ -3,6 +3,7 @@ import { Route, Routes, useSearchParams } from 'react-router-dom';
 import { Canvas } from '@/components/Canvas';
 import { LoginPage } from '@/components/auth/LoginPage';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
+import { ShareViewPage } from '@/components/ShareViewPage';
 import { RunResultPanel } from '@/components/RunResultPanel';
 import { useAuthStore } from '@/stores/auth';
 import { Toast } from '@/components/Toast';
@@ -105,7 +106,8 @@ export function App() {
           </ProtectedRoute>
         }
       />
-      {/* Задел R6.2 (Share): <Route path="/workflow/share/:token" element={<SharePage />} /> */}
+      {/* R6.2.2: публичный просмотр по share-ссылке — без ProtectedRoute. */}
+      <Route path="/workflow/share/:token" element={<ShareViewPage />} />
     </Routes>
   );
 }

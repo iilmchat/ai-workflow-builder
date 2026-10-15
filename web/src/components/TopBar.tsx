@@ -10,6 +10,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useWorkflowStore } from '@/stores/workflow';
 import type { RunStatus } from '@/types/run-stream';
 import { LoadModal } from './LoadModal';
+import { ShareModal } from './ShareModal';
 
 /** Простой индикатор занятости для кнопок. */
 function Spinner() {
@@ -103,11 +104,14 @@ function clearWorkflowUrlParam(): void {
 export function TopBar() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isShareOpen, setIsShareOpen] = useState(false);
   const { resolved, setTheme } = useTheme();
   const { t, i18n: i18nInstance } = useTranslation();
   const currentLang = i18nInstance.language as Language;
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
+  // R6.2.2: поделиться можно только сохранённым workflow.
+  const currentWorkflowId = useWorkflowStore((state) => state.currentWorkflowId);
 
   /**
    * Выходит из аккаунта: отзывает refresh-токен и чистит сессию.
@@ -381,6 +385,20 @@ export function TopBar() {
             {runLabel}
           </button>
 
+          {/* R6.2.2: share-ссылка доступна только для сохранённого workflow. */}
+          <button
+            type="button"
+            onClick={() => setIsShareOpen(true)}
+            disabled={currentWorkflowId === null}
+            aria-label={t('share.title')}
+            title={t('share.title')}
+            data-share-button=""
+            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span aria-hidden="true">🔗</span>
+            {t('share.title')}
+          </button>
+
           {user !== null && (
             <div className="relative">
               <button
@@ -416,6 +434,13 @@ export function TopBar() {
       </header>
 
       {isModalOpen && <LoadModal onClose={() => setIsModalOpen(false)} />}
+
+      {isShareOpen && currentWorkflowId !== null && (
+        <ShareModal
+          workflowId={currentWorkflowId}
+          onClose={() => setIsShareOpen(false)}
+        />
+      )}
     </>
   );
 }

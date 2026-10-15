@@ -21,7 +21,14 @@ export default defineConfig({
     proxy: {
       // R6.1b.2: /auth/* уходит на backend вместе с httpOnly refresh-cookie.
       '/auth': 'http://localhost:3000',
-      '/workflow': 'http://localhost:3000',
+      // R6.2.2: навигация браузера на /workflow/share/:token — это deep-link
+      // SPA-маршрута, а не вызов API. Прокси отдаёт index.html для HTML-запросов
+      // (fetch с JSON всё так же уходит на backend).
+      '/workflow': {
+        target: 'http://localhost:3000',
+        bypass: (request) =>
+          request.headers.accept?.includes('text/html') === true ? '/index.html' : undefined,
+      },
       '/engine': 'http://localhost:3000',
       // Модели для селекта LLM-узла (`GET /llm/models`, R4.1b): обычный JSON,
       // потоковость не нужна, поэтому короткая форма.
