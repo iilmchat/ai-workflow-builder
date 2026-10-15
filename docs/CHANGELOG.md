@@ -141,7 +141,20 @@
   - i18n: `node.comment.label` / `.placeholder` (ru/en 154 → 156).
   - Frontend tests: 61 → 66 (+5).
   - **Остаток:** KI-266 — комментарии не персистятся (F5 → исчезают).
-
+- **Engine — executors новых узлов (R6.5.1, KI-105):**
+  - `http` — AbortSignal.timeout (30s default, cap 120s), body только
+    для не-GET, ответ обрезается до 1 МБ по границе UTF-8, 4xx/5xx
+    не бросают (возвращают `{ status, body }`).
+  - `condition` — MVP-DSL (`>`, `<`, `>=`, `<=`, `===`, `includes`)
+    без `new Function`. Маршрутизация веток — v0.8.x.
+  - `output` — пропускает первое непустое входное значение под ключом
+    `data.name`.
+  - `compare` — `mode: 'diff'` (построчный diff, без библиотек).
+  - `NodeDataValidationException extends UnsupportedNodeTypeException`.
+  - `node-ports.ts`: контракты http/condition/output; compare намеренно
+    без контракта (KI-278).
+  - Tests: 438 → 479 (+41).
+  
 ### Fixed
 - **KI-201** — Auth backend (R6.1a): users, JWT-guard, `/auth/*`,
   scrypt; остаток R6.1b.1/R6.1b.2 — refresh-token, logout, frontend
