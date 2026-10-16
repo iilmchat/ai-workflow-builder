@@ -212,7 +212,7 @@
 
 ---
 
-## § 5. Текущее состояние (v0.8.0, 2026-10-16)
+## § 5. Текущее состояние (v0.8.3, 2026-10-16)
 
 ### Что работает
 
@@ -290,55 +290,30 @@
 
 ---
 
-## § 6. Открытые KI (актуально на v0.8.0)
+## § 6. Открытые KI (актуально на v0.8.3)
 
-**Всего: 294 блока.** Fixed 111 · Open 174 · Documented 7 ·
-Planned 1 · Won't Fix 1.
+**Полный реестр — `docs/KNOWN_ISSUES.md`. Правило (RULES 3.20): перед
+правкой § 6 пересчитать grep'ом, не по памяти.**
 
-**🟠 High / v0.8.1:**
-- **KI-299/072/120** — Vite-прокси перечисляется вручную (три раза
-  забывали: `/llm`, `/media`, `/templates`). Структурный фикс —
-  единый `/api`-префикс.
-- **KI-287** — фикс `break` после падения (закрыт в R6.5.2-fix, но
-  KI-288 остался: skip-статус для потомков упавших).
-- **KI-048** — нет предохранителя по стоимости повторов.
-- **KI-066** — нет heartbeat аренды в БД.
-- **KI-268** — закрыт; остаток KI-271 (F5 mid-Run) закрыт в R6.4b.2a-fix3.
+**🟠 High (v0.8.4):**
+- KI-348 — нет паритет-гейта backend DTO ↔ web SSE-зеркало.
+- KI-337 — подграфы sub_workflow без skip-семантики.
+- KI-347 — SSE-снимок не несёт `run.error`.
+- KI-336 — `RUN_STATUSES` не знает skipped.
 
-**🟡 Medium / v0.8.1:**
-- **KI-306** — `fitView` не умещает граф с большим разбросом (minZoom
-  clamp).
-- **KI-300** — `workflows.version` не инкрементится при PATCH.
-- **KI-301** — `handleIdToOutputPort` не type-aware.
-- **KI-304** — префиксные id узлов подграфа в `node_runs`/SSE/outputs.
-- **KI-298** — `drizzle-kit generate` не сверяет схему с БД (корень
-  KI-293/296).
-- **KI-292** — `nest-cli assets` для `templates/*.json`.
-- **KI-288** — нет статуса `skipped` для потомков упавших узлов.
-- **KI-289** — `http` не считает 4xx/5xx ошибкой.
-- **KI-290** — `workflow_runs.outputs` содержит fallback от потомков
-  упавших.
-- **KI-145** — каталог узлов: a11y (listbox).
-- **KI-155** — frontend-тесты без jsdom.
-- **KI-150** — `cost_usd = null` для моделей вне прайса.
-- **KI-061/063/077** — GET /runs, финальность в snapshot,
-  GET /runs/:id/nodes.
-- **KI-067** — concurrency глобальный, нет per-provider.
-- **KI-062** — APIConnectionError — неповторяемая.
+**🟡 Medium (v0.8.4/v0.9):**
+- KI-330/331 — share UX (selection, fit-сброс).
+- KI-332 — TTL workflow-list кэша.
+- KI-335 — формула KI-314 (документация).
+- KI-338 — condition не маршрутизирует.
+- KI-340 — http.failOnHttpError не ретраит 5xx/429.
+- KI-344 — test:parity не enforced.
+- KI-349 — TextNode без target-handle.
+- KI-061/062/063/077 — GET /runs, retryable, final, nodes.
+- KI-150 — cost_usd = null вне прайса.
 
-**🟢 Low / v0.8.x–v0.9:**
-- **KI-297** — устаревший комментарий в `findSharedAsync`.
-- **KI-302** — кэш workflow в sub_workflow селекте.
-- **KI-303** — `inputsMap` не применяется executor'ом.
-- **KI-305** — асимметрия пустого подграфа.
-- **KI-307** — `autoPanOnNodeDrag` усиливает координаты.
-- **KI-300..307** (остальные), + Low-уборки (KI-028, 043, 045, 057,
-  058, 073, 076, 090, 102, 118, 123, 128, 143, 144, 152, 153, 161,
-  170, 171, 173, 177, 178, 194, 196).
-
-**🟠 Closed в v0.8.0 (для контекста):** KI-106, 108, 109, 183, 185,
-186, 188, 190, 191, 192, 193, 195, 197, 200, 201..287 (см. CHANGELOG
-`[0.8.0]`).
+**🟢 Low / долг:** KI-330..351 + остатки v0.6.x/v0.7.x — см. полный
+список в KNOWN_ISSUES.md.
 
 ---
 
@@ -466,7 +441,10 @@ Planned 1 · Won't Fix 1.
 - R6.7 Sub-workflows (KI-200, KI-300..305).
 - R6.5.2-fix2 (fitView race + панель, KI-306, 307).
 
-**Метрики:** 514 backend / 159 frontend, CI 2 job ✓.
+**Метрики (v0.8.3):** backend 547+6 тестов, frontend 184 теста,
+bundle ~700.66 kB (chunkSizeWarningLimit 710), CI 2 job (Typecheck +
+Apply migrations). 340 KI в реестре: Fixed 130 · Open 201 ·
+Documented 7 · Planned 1 · Won't Fix 1.
 **Tag + Release:** v0.8.0 (Latest).
 
 ### v0.8.1 — фиксы (следующий этап, план)
@@ -633,7 +611,7 @@ RULES — скажи «это стоит добавить в RULES § X.Y».
 ## § 12. Итог
 
 **Проект в состоянии: v0.8.3 выпущен, CI зелёный,
-547/547 backend + 184/184 frontend, 337 KI.**
+547/547 backend + 184/184 frontend, 340 KI.**
 
 **Следующий этап — v0.8.1 (фиксы):** единый `/api` (KI-299/072/120),
 KI-306 (fitView minZoom), KI-298 (drizzle ↔ БД), KI-300 (version),
