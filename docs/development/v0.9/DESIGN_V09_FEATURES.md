@@ -1,7 +1,7 @@
 # DESIGN v0.9 — Медиа, состояние, агенты
 
 **Файл:** `docs/development/v0.9/DESIGN_V09_FEATURES.md`
-**Версия:** 0.1 (draft)
+**Версия:** 1.0 (approved)
 **Дата:** 2026-10-16
 **Статус:** Approved (2026-10-16)
 **Закрывает (Fixed):** KI-196 (частично), KI-128, KI-361,
@@ -201,7 +201,7 @@ remaining: $Y)'`. UI — прогресс-бар в TopBar (`data-run-budget`),
 
 **Backend:** `MediaNodeExecutor` расширяется на 3 новых `kind`.
 CreativeLab предоставляет VIDEO / AUDIO / MUSIC через тот же API.
-Дополнительные провайдеры: **ElevenLabs** (TTS, R7.2 —
+Дополнительные провайдеры (через CreativeLab): **ElevenLabs** (TTS, R7.2 —
 реализуется здесь), **Suno API** (music, R7.2, опционально).
 
 **Frontend:** 3 компонента. Video — `<video controls>` в узле (с
