@@ -3,7 +3,7 @@
 **Файл:** `docs/development/v0.9/DESIGN_V09_FEATURES.md`
 **Версия:** 0.1 (draft)
 **Дата:** 2026-10-16
-**Статус:** Draft (на ревью)
+**Статус:** Approved (2026-10-16)
 **Закрывает (Fixed):** KI-196 (частично), KI-128, KI-361,
 KI-362, KI-363, KI-364, KI-365, KI-048, KI-067, KI-055, KI-150,
 KI-197 (остаток — Share-участники по ID), KI-206, KI-234
@@ -374,7 +374,7 @@ timeline шагов (`data-agent-step`).
 
 **Env:**
 
-    PGVECTOR_ENABLED=true
+    PGVECTOR_ENABLED=false  # включить: true
     EMBEDDING_MODEL_DEFAULT=text-embedding-3-small
     AGENT_MAX_ITERATIONS_DEFAULT=5
     AGENT_MAX_TOKENS_PER_STEP_DEFAULT=2048
@@ -439,7 +439,7 @@ refuse to run (узел failed с `error='Sandbox unavailable'`), режим
 `constructor.constructor`, `eval`, `require`), интеграция с реальным
 condition-узлом в режиме sandbox.
 
-**Env:** `SANDBOX_ENABLED=true`, `SANDBOX_TIMEOUT_MS=100`,
+**Env:** `SANDBOX_ENABLED=false  # включить: true`, `SANDBOX_TIMEOUT_MS=100`,
 `SANDBOX_MEMORY_MB=16`.
 
 ---
@@ -448,7 +448,7 @@ condition-узлом в режиме sandbox.
 
 **Закрывает:** KI-197 (остаток). **~5 ч.**
 
-**Таблица `workflow_collaborators`:**
+**Таблица `workflow_collaborators` (миграция `0010_collaborators.sql`):**
 
     CREATE TABLE workflow_collaborators (
       workflow_id uuid NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
@@ -482,7 +482,7 @@ WHERE ...)`. Role-aware: `viewer` → только GET; `editor` → GET+POST+PA
 **Тесты:** 10+ юнит (roles, access), 2 integration (viewer GET, editor POST),
 CDP-смоук.
 
-**KI-232 (Welcome screen) — НЕ входит в R7.6,** в Section 6 (что не
+**KI-232 (Welcome screen) — НЕ входит в R7.6,** в § 6 (что не
 входит).
 
 ---
@@ -533,7 +533,7 @@ endpoint `GET /runs/:id/costs`.
     LLM_PROVIDER_MAX_CONCURRENCY_ANTHROPIC=10
     LLM_PROVIDER_MAX_CONCURRENCY_OPENAI=10
     LLM_PROVIDER_MAX_CONCURRENCY_GPTUNNEL=5
-    PROMPT_CACHE_ENABLED=true
+    PROMPT_CACHE_ENABLED=false  # включить: true
     PROMPT_CACHE_MIN_TOKENS=1024
 
 ---
@@ -592,3 +592,167 @@ endpoint `GET /runs/:id/costs`.
     S3_SECRET_ACCESS_KEY=
     S3_REGION=
     S3_TTL_DAYS=30
+
+---
+
+## 4. Совместимость и миграция
+
+**4.1 `NodeData`.** Все новые поля — optional. Существующие workflow
+работают без миграции. `nodeDataFromApi` расширяется (паттерн KI-129,
+KI-266) — новые ветки discriminated union.
+
+**4.2 Миграции БД:**
+- `0007_pgvector.sql` — extension + 2 таблицы (R7.4).
+- `0008_cache_tokens.sql` — 2 колонки в `node_runs` (R7.7.3).
+- `0009_media_storage.sql` — 2 колонки в `node_runs` (R7.8).
+- `0010_collaborators.sql` — `workflow_collaborators` (R7.6).
+
+Порядок применения в CI: шаг `Apply migrations` (RULES § 3.19) уже настроен.
+
+**4.3 Env — все фичи opt-in, кроме cost budget (opt-out).** Defaults:
+- Cost budget: **ON** (`WORKFLOW_RUN_MAX_COST_USD=5`,
+  `WORKFLOW_RUN_MAX_COST_RUB=500`).
+- Vector/Agent: **OFF** (`PGVECTOR_ENABLED=false`).
+- Sandbox: **OFF** (`SANDBOX_ENABLED=false`).
+- Media storage: **local** (без S3 — работает «из коробки»).
+- OTel: **OFF** (`OTEL_ENABLED=false`).
+- Rate limiting per-provider: **OFF** (backward compat).
+- Prompt cache: **OFF по умолчанию** (`PROMPT_CACHE_ENABLED=false`).
+
+**4.4 RULES — новые пункты (v1.9.0):**
+- **§ 1.18** — tools в Agent node: discriminated union с Zod input schema.
+- **§ 1.19** — sandbox-выражения только через WASM
+  (`evaluateSandboxedAsync`); не использовать `new Function`, `eval`, `vm`,
+  `vm2`, `isolated-vm` (Windows).
+- **§ 3.22** — budget check перед вызовом платного провайдера.
+- **§ 5.11** — capability-токены media-presigned URL не логировать.
+
+**4.5 API-контракты:**
+- `docs/development/api-contract.json` (KI-352) — расширяется новыми
+  DTO: `CollaboratorResponse`, `CostSummaryResponse`.
+- `docs/development/sse-contract.json` (KI-348) — расширяется новым
+  событием `agent_step` (опционально; UI timeline).
+
+**4.6 Frontend bundle.** +QuickJS-WASM (~200 КБ lazy) + новые узлы.
+`chunkSizeWarningLimit` может вырасти до 900; **лучше** — code-split
+(KI-008) в этом же релизе.
+
+---
+
+## 5. План работ
+
+| # | Тема | ~dsh | Риск | Зависимости |
+|---|---|---|---|---|
+| R7.1 | Media-инструменты + cost budget | 6 ч | 🟢 Low | — |
+| R7.2 | Video/Audio/Music узлы | 8 ч | 🟡 Medium | R7.1 (budget) |
+| R7.3 | Image providers (Replicate/FAL/OpenAI Images) | 4 ч | 🟢 Low | — |
+| R7.4 | Vector/Memory/Agent (pgvector) | 12 ч | 🟠 High | R7.5 (code_eval) |
+| R7.5 | WASM sandbox (condition + code_eval) | 4 ч | 🟡 Medium | — |
+| R7.6 | Share-участники по ID | 5 ч | 🟢 Low | — |
+| R7.7 | Observability + cache tokens | 8 ч | 🟡 Medium | R7.4 |
+| R7.8 | Media storage (S3 / TTL) | 3 ч | 🟢 Low | — |
+| **Итого** | | **~50 ч** | | |
+
+**Порядок:**
+1. **R7.1 + R7.3** (параллельно, 2 сессии dsh) — изолированы, Low-риск.
+2. **R7.2** (после R7.1 — budget переиспользуется) + **R7.5** (изолирован,
+   можно параллельно).
+3. **R7.4** (после R7.5 — использует `code_eval` tool) + **R7.6**
+   (параллельно с R7.4).
+4. **R7.8** (после R7.2 — использует media-urls).
+5. **R7.7** (последним — использует cost из R7.1, cache из R7.4-embeddings,
+   OTel-span'ы во всех остальных).
+
+**По сессиям dsh:** пул из 2-3 параллельных, правило Cache hit > 90% →
+новая сессия. После каждого подшага — CI + commit + (если нужно) docs.
+
+---
+
+## 6. Что НЕ входит в v0.9
+
+| KI / тема | Куда |
+|---|---|
+| **KI-232** Welcome screen (шаблоны при старте) | v0.10 |
+| **3D / Motion** (из KI-196) — 3D-сцена, motion-ролик | v0.10 |
+| **Multi-tenant изоляция** (organizations, members, billing) | v0.10 / v1.0 |
+| **MCP adapter** (Playwright/Puppeteer/filesystem) | v0.10 |
+| **Отдельный vector service** (Qdrant/Weaviate) — KI-360 | v0.10+ |
+| **Human-in-the-loop** (ручное подтверждение узла) | v0.10 |
+| **Video/Audio/Music direct providers** (Runway, ElevenLabs direct, Suno — в отличие от ElevenLabs/Suno через CreativeLab в R7.2) | v0.10 |
+| **Anthropic extended thinking** (reasoning > medium) | v0.10 |
+| **Realtime collaboration** (несколько пользователей в редакторе) | v1.0+ |
+| **Billing / подписки** | вне роадмапа |
+
+**Причина по multi-tenant:** single-tenant per user сейчас работает; для
+B2B нужны ~15-20 ч dsh + переработка модели данных (organizations,
+members, billing — v0.10/v1.0 при появлении B2B-спроса). Вернёмся, когда
+будет 2-3 B2B-клиента или переход на SaaS.
+
+---
+
+## 7. Риски и открытые вопросы
+
+**7.1 Стоимость media.** Video = $0.5-5 за генерацию. Cost budget — hard
+cap, default $5/run. Но media-модели из разных провайдеров → калибровка
+`estimatedCost` под каждый. **Открыто:** считать `estimatedCost` по прайсу
+модели (грубо) или спрашивать у провайдера `estimateAsync` (точно, но
+медленно)? **Рекомендация:** грубо + margin 20%; уточнять при появлении
+жалоб.
+
+**7.2 pgvector — масштабирование.** HNSW-индекс на 1M vectors работает;
+>10M — падение latency. **Решение:** KI-360 (отдельный сервис), если
+возникнет. Не блокер v0.9.
+
+**7.3 WASM sandbox — совместимость.** `quickjs-emscripten` — ESM, ~200 КБ.
+Проверено: работает в Node 22+ и в браузере. **Открыто:**
+WASM-инициализация ~30 мс при старте — lazy или при первом обращении?
+**Рекомендация:** lazy при первом использовании (первый condition/agent
+с code_eval не должен ждать 30 мс).
+
+**7.4 Agent loop — debugging.** Свой loop = полный контроль, но нужно
+**хорошо** отлаживать. **Решение:** `AgentStep[]` пишется в
+`node_runs.logs`, UI timeline показывает шаги. Логи не сокращать
+(RULES § 5.9 — только хэши промптов).
+
+**7.5 Prompt caching — Anthropic 5 min.** Короткий TTL. **Открыто:**
+включать по умолчанию при `systemPrompt > 1024` или только по флагу
+`data.promptCache=true`? **Решено:** только по флагу (иначе — скрытая
+плата за cache_creation при коротких пайплайнах).
+
+**7.6 Bundle size.** +200 КБ WASM + новые узлы → >900 КБ. **Решение:**
+code-split (KI-008) в этом же релизе. React.lazy для новых узлов +
+dynamic import для WASM.
+
+**7.7 Postgres один.** pgvector + workflow-таблицы на одной БД. При
+росте — реплики. **Не блокер v0.9.** KI-360 (перспектива) — вынос
+vector store.
+
+**7.8 Rate limiting per-provider — default OFF.** Чтобы не сломать
+существующих пользователей (backward compat — default OFF). Включается
+env'ом. **Открыто:** предупреждать ли в логе при превышении default?
+**Решение:** да, warn в первый раз на провайдера.
+
+**7.9 Media storage local — диск.** Файлы в `./data/media/`, без TTL
+cleanup. **Решение:** background job (BullMQ repeatable, раз в сутки)
+удаляет файлы старше `MEDIA_STORAGE_LOCAL_TTL_DAYS` (default 30).
+
+---
+
+## 8. Решения
+
+Утверждено 2026-10-16 (ревью пройдено).
+
+| # | Решение | Дата |
+|---|---------|------|
+| 1 | Cost budget — **hard cap**, default $5 / 500 ₽, вводится в R7.1 | 2026-10-16 |
+| 2 | pgvector в текущей PostgreSQL; KI-360 (отдельный сервис) — перспектива | 2026-10-16 |
+| 3 | Condition sandbox — **QuickJS-WASM** (не isolated-vm, не vm2) | 2026-10-16 |
+| 4 | Agent loop — **свой** (~300 строк) + базовые tools; MCP — v0.10 | 2026-10-16 |
+| 5 | Reasoning cache tokens — нормализация для всех OpenAI-совместимых + Anthropic; Yandex — «недоступно» | 2026-10-16 |
+| 6 | R7.5 — **общий WASM sandbox** для condition + code_eval (устранён конфликт номеров) | 2026-10-16 |
+| 7 | Multi-tenant, Welcome screen, 3D/motion, MCP adapter — **НЕ в v0.9** (см. § 6) | 2026-10-16 |
+| 8 | Prompt cache — по флагу `data.promptCache=true`, не по умолчанию | 2026-10-16 |
+
+---
+
+**Конец документа.**
