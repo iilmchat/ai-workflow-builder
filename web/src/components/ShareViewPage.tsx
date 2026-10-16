@@ -4,6 +4,7 @@ import { useParams } from 'react-router-dom';
 import { ReactFlow, ReactFlowProvider } from '@xyflow/react';
 import { nodeTypes } from '@/components/nodes';
 import { ApiError } from '@/lib/api';
+import { FIT_VIEW_OPTIONS } from '@/lib/fit-view-options';
 import { fetchSharedWorkflowAsync, type SharedWorkflow } from '@/lib/share-api';
 import { isValidShareToken } from '@/lib/share-url';
 import type { AppNode } from '@/types/graph';
@@ -114,6 +115,11 @@ export function ShareViewPage() {
           // карточек (textarea/select) не должны принимать ввод.
           <div className="pointer-events-none h-full w-full select-none">
             <ReactFlowProvider>
+              {/* KI-310: булев `fitView` использует `fitViewOptions` из
+                  store, которого у публичной страницы нет, — опции приходят
+                  из общего модуля (`minZoom: 0.02`), иначе граф с большим
+                  разбросом остаётся за кадром (store-дефолт 0.5).
+                  `<Controls>` здесь не рендерится: просмотр read-only. */}
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
@@ -121,6 +127,7 @@ export function ShareViewPage() {
                 nodesDraggable={false}
                 nodesConnectable={false}
                 elementsSelectable={false}
+                fitViewOptions={FIT_VIEW_OPTIONS}
                 fitView
               />
             </ReactFlowProvider>

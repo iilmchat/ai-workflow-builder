@@ -9,7 +9,6 @@ import {
   ViewportPortal,
   useReactFlow,
   type DefaultEdgeOptions,
-  type FitViewOptions,
   type Node,
 } from '@xyflow/react';
 import {
@@ -20,6 +19,7 @@ import { nodeTypes } from '@/components/nodes';
 import { NodeCatalogPopover } from '@/components/NodeCatalogPopover';
 import { useDebouncedEffect } from '@/hooks/use-debounced-effect';
 import { useHotkeys } from '@/hooks/use-hotkeys';
+import { FIT_VIEW_OPTIONS } from '@/lib/fit-view-options';
 import { computeGraphHash } from '@/lib/graph-hash';
 import { findGuides, type HelperLines } from '@/lib/graph-guides';
 import { canInsertOnEdge } from '@/lib/node-registry';
@@ -68,24 +68,6 @@ const edgeTypes = { [INSERTABLE_EDGE_TYPE]: InsertableEdge };
  * получают все связи графа, а не только созданные в текущей сессии.
  */
 const DEFAULT_EDGE_OPTIONS: DefaultEdgeOptions = { type: INSERTABLE_EDGE_TYPE };
-
-/**
- * Опции подгонки вида для всех fit-операций (KI-306).
- *
- * KI-306: minZoom в fitView-опциях (а не глобально) — Fit/хоткей F/авто-fit
- * умещают граф с большим разбросом (например, Y=−21888 после накопленного
- * autoPanOnNodeDrag, KI-307); пользовательский зум колесом остаётся ≥ store.minZoom.
- *
- * `getViewportForBounds` (@xyflow/system) читает `options.minZoom` **приоритетно**
- * перед store-значением (`minZoom` из `<ReactFlow>`/`ReactFlowProvider`), поэтому
- * расширение до `0.02` действует только на fit-операции, а не на зум колесом.
- * `maxZoom: 1` оставлен от R4.x: без него один-два узла растягиваются на весь экран.
- */
-const FIT_VIEW_OPTIONS: FitViewOptions = {
-  padding: 0.2,
-  maxZoom: 1,
-  minZoom: 0.02,
-};
 
 interface CanvasProps {
   /**
@@ -201,10 +183,11 @@ function CanvasInner({ onReady }: CanvasProps) {
     }
 
     fittedWorkflowId.current = currentWorkflowId;
-    // `padding`/`maxZoom` перенесены из пропа `fitViewOptions` (R4.x):
+    // `padding`/`maxZoom` пришли из пропа `fitViewOptions` (R4.x):
     // без `maxZoom` один-два узла растягиваются на весь экран.
     // KI-306: `minZoom` — в опциях вызова; без него расчётный zoom для графа с
     // разбросом ~22 000 px клампится store-значением 0.5, и узлы остаются за кадром.
+    // KI-311: набор опций — общий модуль, чтобы авто-fit совпадал с Fit и `F`.
     void fitView({ ...FIT_VIEW_OPTIONS, duration: 200 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentWorkflowId, fitView]);
@@ -348,8 +331,12 @@ function CanvasInner({ onReady }: CanvasProps) {
       // F — вписать все узлы в видимую область (KI-186).
       // KI-306: `minZoom` в опциях вызова — иначе хоткей клампил zoom по
       // store-значению 0.5 и не умещал граф с большим разбросом координат.
+      // KI-311: opts те же, что у кнопки Fit и авто-fit (общий модуль
+      // `@/lib/fit-view-options`); раньше хоткей шёл без `padding`/`maxZoom`,
+      // из-за чего «вписать» давало другой вид (1.53 против 1.0), — это
+      // осознанное изменение поведения KI-186.
       f: () => {
-        void fitView({ duration: 200, minZoom: FIT_VIEW_OPTIONS.minZoom });
+        void fitView({ ...FIT_VIEW_OPTIONS, duration: 200 });
       },
       // M — показать/скрыть миникарту (KI-190).
       m: () => setShowMinimap(!showMinimap),
@@ -428,6 +415,7 @@ function CanvasInner({ onReady }: CanvasProps) {
           // KI-306: дефолт для fit-операций. `minZoom` живёт здесь (в опциях
           // вызова), а не в `<ReactFlow minZoom>`: зум колесом по-прежнему
           // ограничен store-значением 0.5, а Fit/`F`/авто-fit — 0.02.
+          // KI-311: один источник опций на все три пути — `@/lib/fit-view-options`.
           fitViewOptions={FIT_VIEW_OPTIONS}
           // KI-188: в режиме «Рука» перетаскивание пустого места двигает холст,
           // в режиме «Курсор» — рисует рамку выделения (`selectionOnDrag`),
