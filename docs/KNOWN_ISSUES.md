@@ -5730,6 +5730,55 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-360 — Перспектива: вынос vector store в отдельный сервис
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/db/schema.ts`, `src/engine/execution-engine.service.ts`
+  (план), новый сервис (перспектива)
+- **Описание:** В v0.9 (R7.4) vector store реализуется через pgvector в
+  текущей PostgreSQL 17. При росте >10M vectors или >100 QPS
+  производительность HNSW-индекса падает, и вынос в специализированный
+  сервис (Qdrant / Weaviate / Pinecone) становится оправдан.
+- **Решение (перспектива):** отдельный микросервис `vector-store` с
+  gRPC/HTTP API; узлы `vector_upsert`/`vector_query` переключаются через
+  env `VECTOR_BACKEND=pgvector|qdrant`. Триггер: метрики QPS/latency из
+  R7.7 (OTel).
+- **Связанные:** KI-128, DESIGN v0.9 § 2.5.
+
+---
+
+### KI-361 — Video / Audio / Music узлы (media-generation)
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/media/media-node-executor.service.ts`,
+  `src/media/media-provider.interface.ts`, `web/src/components/nodes/*`,
+  `web/src/types/graph.ts`, `web/src/lib/node-registry.ts`
+- **Описание:** Продукт умеет только text-to-image (CreativeLab). Узлов
+  video_generation / audio_generation / music_generation нет. CreativeLab
+  API предоставляет VIDEO/AUDIO/MUSIC через тот же endpoint
+  `/api/v2/media`. Дополнительные провайдеры: ElevenLabs (TTS), Suno
+  (music).
+- **Решение:** 3 новых узла, реализация — DESIGN v0.9 § 3.2 (R7.2).
+- **Связанные:** KI-196, DESIGN v0.9 § 3.2.
+
+---
+
+### KI-362 — Хранение media-результатов: TTL 48h ссылок CreativeLab
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/media/media-node-executor.service.ts`, `src/db/schema.ts`
+  (опционально S3-колонка), `.env` (S3 credentials)
+- **Описание:** CreativeLab отдаёт `resultUrls`, живущие 48 часов. Файла у
+  нас нет; через 2 суток история запусков (node_runs.outputs) содержит
+  мёртвые ссылки. `workflow_runs.outputs` тоже. KI-105-fix (v0.8.0e) закрыл
+  это на уровне `http`/`condition`/`output`/`compare` executors, но **не**
+  media — real media-хранение не решено.
+- **Решение:** (1) скачивать результат к себе — S3 (AWS/MinIO) или
+  локальный диск с TTL; (2) поле `node_runs.stored_url` — своя ссылка,
+  `resultUrls` — fallback; (3) в UI метка «ссылка истекла» при
+  `stored_url=null` и TTL прошедшем. Реализация — DESIGN v0.9 (кандидат в
+  R7.7 или отдельный R7.8).
+- **Связанные:** KI-105, DESIGN v0.9 § 3.1-3.2.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
@@ -5739,9 +5788,9 @@ MediaModelInfo, engine-DTO
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 203 |
+| Open | 206 |
 | Won't Fix | 1 |
-| **Всего** | **348** |
+| **Всего** | **351** |
 
 ---
 
