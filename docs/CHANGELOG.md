@@ -190,6 +190,19 @@
   - i18n: +14 ключей (ru/en 185 → 199).
   - Vite proxy: `/templates` (KI-299).
   - Frontend tests: 132 → 144 (+12).
+- **Sub-workflows (R6.7, KI-200):**
+  - Backend: тип `sub_workflow`, `SubWorkflowNodeData` (workflowId,
+    version?, inputsMap?); executor `executeSubWorkflowNode` (рекурсия
+    branch-local `visitedWorkflows`, max depth 5, owner-check → 404);
+    `executeSubWorkflowGraphAsync` (префикс id `sub_<nodeId>__`,
+    собственный plan, тот же runId); результат — плоский `{ result }`
+    из терминалов подграфа.
+  - Frontend: NodeType += `'sub_workflow'`; категория `composition`;
+    `SubWorkflowNode` (селект своих workflow, «Открыть в редакторе»,
+    warning «новая версия»); i18n +10 (199 → 209).
+  - Tests: backend 498 → 514 (+16), frontend 144 → 159 (+15).
+  - Smoke: nested workflow (Save/F5/Load), Run с inner-узлами, рекурсия
+    C→C → failed, «Открыть в редакторе», индикатор версии.
 
 ### Fixed
 - **KI-201** — Auth backend (R6.1a): users, JWT-guard, `/auth/*`,
@@ -269,6 +282,7 @@
 - **KI-296** — `workflows.created_at/updated_at`: `SET NOT NULL` +
   `SET DEFAULT now()` в 0006 (`e5f489a`).
 - **KI-299** — Vite-прокси для `/templates` (`27cbc14`).
+- **KI-200** — Sub-workflows (backend + frontend, `699772f`).
 
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
@@ -367,7 +381,10 @@
   - **KI-297** — устаревший комментарий в `findSharedAsync` (Low).
   - **KI-298** — `drizzle-kit generate` не сверяет схему с БД
     (Medium, корень KI-293/296).
-
+  - **KI-300..305** — Sub-workflows-остаток: version не
+    инкрементится, type-aware резолвер портов, кэш workflow, inputsMap,
+    префиксные id в SSE/outputs, пустой подграф.
+    
 ## [0.7.2] — 2026-10-15
 
 **Patch-релиз после v0.7.1. Yandex env + LM Studio auto-discovery + LLM/media фиксы.**
