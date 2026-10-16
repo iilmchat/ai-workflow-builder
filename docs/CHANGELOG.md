@@ -17,6 +17,17 @@
 ---
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-16
+
+**v0.8.0 — фичи для продукта (DESIGN v0.8 § 1–13).**
+
+7 подшагов R6.1..R6.7: Auth, Share, LLM upgrade, Canvas UX,
+Node types, Export/Import/Templates, Sub-workflows.
+Закрывает 16 KI v0.8 (KI-106, 108, 109, 183, 185–195, 197) + KI-200.
+
+Всего с v0.7.2: 294 KI в реестре; Fixed 111; backend 514/514,
+frontend 159/159.
+
 ### Added
 - **Auth backend (R6.1a, KI-201):**
   - Миграция 0004: `users` (uuid), системный пользователь
@@ -203,7 +214,13 @@
   - Tests: backend 498 → 514 (+16), frontend 144 → 159 (+15).
   - Smoke: nested workflow (Save/F5/Load), Run с inner-узлами, рекурсия
     C→C → failed, «Открыть в редакторе», индикатор версии.
-
+- **fitView после загрузки workflow + панель над миникартой
+  (R6.5.2-fix2):**
+  - `fitView={isEmpty}` заменён на `useEffect` с ref-защитой
+    (устранена race condition при `true→false`).
+  - Панель режимов перенесена в `right-6` + адаптивный
+    `bottom-44`/`bottom-6`.
+    
 ### Fixed
 - **KI-201** — Auth backend (R6.1a): users, JWT-guard, `/auth/*`,
   scrypt; остаток R6.1b.1/R6.1b.2 — refresh-token, logout, frontend
@@ -283,6 +300,9 @@
   `SET DEFAULT now()` в 0006 (`e5f489a`).
 - **KI-299** — Vite-прокси для `/templates` (`27cbc14`).
 - **KI-200** — Sub-workflows (backend + frontend, `699772f`).
+- **KI-306** — `fitView` при большом разбросе координат
+  (minZoom) — заведён, v0.8.1.
+- **KI-307** — `autoPanOnNodeDrag` — заведён, v0.8.1.
 
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
@@ -384,7 +404,7 @@
   - **KI-300..305** — Sub-workflows-остаток: version не
     инкрементится, type-aware резолвер портов, кэш workflow, inputsMap,
     префиксные id в SSE/outputs, пустой подграф.
-    
+
 ## [0.7.2] — 2026-10-15
 
 **Patch-релиз после v0.7.1. Yandex env + LM Studio auto-discovery + LLM/media фиксы.**
