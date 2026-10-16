@@ -52,6 +52,13 @@ export default defineConfig({
       // KI-072: префиксы перечисляются вручную — /media забыли при
       // добавлении узла Image Generation.
       '/media': 'http://localhost:3000',
+      // R6.6.2: шаблоны workflow (`GET /templates`,
+      // `POST /templates/:id/instantiate`).
+      // KI-296: в R6.6.1 префикс забыли — Vite отдавал на `/templates`
+      // index.html SPA, и вкладка «Шаблоны» падала на Zod-разборе ответа.
+      // Та же ловушка, что KI-072 (`/llm`) и KI-120 (`/media`); структурный
+      // фикс — единый `/api`-префикс, он не сделан (PROMPT_V5 § 7.3).
+      '/templates': 'http://localhost:3000',
     },
   },
 });

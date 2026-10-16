@@ -1,10 +1,16 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState, type ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import i18n, { setLanguage, type Language } from '@/i18n';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import { useTheme } from '@/hooks/use-theme';
 import { logoutAsync } from '@/lib/auth-api';
+import { exportFileNameOf, triggerDownload } from '@/lib/download-blob';
+import {
+  exportWorkflowAsync,
+  importWorkflowAsync,
+  parseExportedWorkflowFile,
+} from '@/lib/export-import-api';
 import { nodeLabelOf } from '@/lib/node-registry';
 import { useAuthStore } from '@/stores/auth';
 import { useWorkflowStore } from '@/stores/workflow';
@@ -72,6 +78,19 @@ function runStatusText(
 }
 
 /**
+ * Достаёт текст ошибки из неизвестного значения.
+ *
+ * `catch` в strict-режиме даёт `unknown` (RULES 4.15), а в UI нужна строка:
+ * сообщение `Error` либо общая подпись «Неизвестная ошибка».
+ *
+ * @param caught - значение из `catch`
+ * @returns текст для уведомления
+ */
+function reasonOf(caught: unknown): string {
+  return caught instanceof Error ? caught.message : i18n.t('error.unknown');
+}
+
+/**
  * Верхняя панель редактора: имя workflow и действия Save / Load / Run.
  *
  * Run запускает реальный прогон (`POST /runs` + SSE, R4.2) и показывает статус:
@@ -82,6 +101,12 @@ export function TopBar() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
+  // R6.6.2: идёт файловая операция (экспорт/импорт) — кнопки блокируются,
+  // чтобы повторный клик не запустил вторую выгрузку или второй импорт.
+  const [isFileBusy, setIsFileBusy] = useState(false);
+  // R6.6.2: скрытый `<input type="file">`. Клик по кнопке «Импорт» открывает
+  // системный выбор файла, сам input в интерфейсе не виден.
+  const importInputRef = useRef<HTMLInputElement>(null);
   const { resolved, setTheme } = useTheme();
   const { t, i18n: i18nInstance } = useTranslation();
   const currentLang = i18nInstance.language as Language;
@@ -121,6 +146,7 @@ export function TopBar() {
   const isSaving = useWorkflowStore((state) => state.isSaving);
   const isLoading = useWorkflowStore((state) => state.isLoading);
   const saveWorkflowAsync = useWorkflowStore((state) => state.saveWorkflowAsync);
+  const loadWorkflowAsync = useWorkflowStore((state) => state.loadWorkflowAsync);
   const startRunAsync = useWorkflowStore((state) => state.startRunAsync);
   const setNotice = useWorkflowStore((state) => state.setNotice);
   const runStatus = useWorkflowStore((state) => state.runStatus);
@@ -195,6 +221,106 @@ export function TopBar() {
 
     if (!idBefore && idAfter) {
       syncWorkflowUrlParam(idAfter);
+    }
+  };
+
+  /**
+   * Скачивает текущий workflow в файл `<имя>.workflow.json` (R6.6.2).
+   *
+   * Backend отдаёт артефакт как JSON-ответ, а не как файл, поэтому имя и
+   * тип содержимого задаёт UI: `triggerDownload` создаёт blob и синтетический
+   * клик по ссылке `<a download>`. В артефакте нет `id`/`userId`/`shareToken`
+   * (R6.6.1), поэтому файл можно передавать другому пользователю.
+   */
+  const handleExport = async () => {
+    if (currentWorkflowId === null || isFileBusy) {
+      return;
+    }
+
+    setIsFileBusy(true);
+
+    try {
+      const artifact = await exportWorkflowAsync(currentWorkflowId);
+      const fileName = exportFileNameOf(artifact.name);
+
+      triggerDownload(
+        new Blob([JSON.stringify(artifact, null, 2)], {
+          type: 'application/json',
+        }),
+        fileName,
+      );
+
+      setNotice({
+        kind: 'success',
+        text: t('toast.export.success', { name: fileName }),
+      });
+    } catch (caught) {
+      setNotice({
+        kind: 'error',
+        text: t('toast.export.error', { reason: reasonOf(caught) }),
+      });
+    } finally {
+      setIsFileBusy(false);
+    }
+  };
+
+  /**
+   * Импортирует workflow из выбранного файла и открывает его (R6.6.2).
+   *
+   * Граф из файла backend сохраняет как **новый** workflow текущего
+   * пользователя, поэтому после успеха переходим на него. `navigate` здесь не
+   * нужен: `App` уже грузит workflow по `?workflowId=`, и навигация вместе с
+   * явной загрузкой дали бы два `GET /workflow/:id` и два уведомления. Вместо
+   * неё — `syncWorkflowUrlParam` (та же механика, что в `handleSave`).
+   *
+   * @param file - файл, выбранный в скрытом `<input type="file">`
+   */
+  const handleImportFile = async (file: File) => {
+    setIsFileBusy(true);
+
+    try {
+      // FileReader не нужен: `File` — это `Blob`, у него есть `text()`.
+      const artifact = parseExportedWorkflowFile(
+        await file.text(),
+        t('toast.import.invalid_file'),
+      );
+      const created = await importWorkflowAsync(artifact);
+
+      syncWorkflowUrlParam(created.id);
+      await loadWorkflowAsync(created.id);
+
+      // Уведомление об импорте ставим только по факту открытия: при сбое
+      // загрузки стор уже показал свою ошибку, и «импортирован» было бы ложью.
+      if (useWorkflowStore.getState().currentWorkflowId === created.id) {
+        setNotice({
+          kind: 'success',
+          text: t('toast.import.success', { name: created.name }),
+        });
+      }
+    } catch (caught) {
+      setNotice({
+        kind: 'error',
+        text: t('toast.import.error', { reason: reasonOf(caught) }),
+      });
+    } finally {
+      setIsFileBusy(false);
+    }
+  };
+
+  /**
+   * Обрабатывает выбор файла в скрытом input.
+   *
+   * @param event - событие `change` поля выбора файла
+   */
+  const handleImportChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+
+    // Значение сбрасываем сразу: иначе повторный выбор того же файла не
+    // вызовет `change` (браузер считает значение неизменным).
+    event.target.value = '';
+
+    if (file !== null) {
+      void handleImportFile(file);
     }
   };
 
@@ -374,6 +500,7 @@ export function TopBar() {
             type="button"
             onClick={() => setIsModalOpen(true)}
             disabled={isBusy}
+            data-topbar-load=""
             className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isLoading ? <Spinner /> : <span aria-hidden="true">📂</span>}
@@ -402,6 +529,45 @@ export function TopBar() {
               {isDirty ? t('topbar.dirty') : t('topbar.saved')}
             </span>
           )}
+
+          {/* R6.6.2: Export / Import (DESIGN v0.8 § 9). Стоят после Save и
+              индикатора «грязного» графа: это операции над файлом, а не над
+              холстом. Клик по «Импорт» открывает системный диалог — сам input
+              скрыт и служит только точкой для выбора файла. */}
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".json,.workflow.json,application/json"
+            data-topbar-import-input=""
+            className="hidden"
+            onChange={handleImportChange}
+          />
+
+          <button
+            type="button"
+            data-topbar-export=""
+            onClick={() => void handleExport()}
+            disabled={currentWorkflowId === null || isFileBusy}
+            aria-label={t('topbar.export')}
+            title={t('topbar.export')}
+            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isFileBusy ? <Spinner /> : <span aria-hidden="true">📥</span>}
+            {t('topbar.export')}
+          </button>
+
+          <button
+            type="button"
+            data-topbar-import=""
+            onClick={() => importInputRef.current?.click()}
+            disabled={isFileBusy}
+            aria-label={t('topbar.import')}
+            title={t('topbar.import')}
+            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isFileBusy ? <Spinner /> : <span aria-hidden="true">📤</span>}
+            {t('topbar.import')}
+          </button>
 
           <button
             type="button"
