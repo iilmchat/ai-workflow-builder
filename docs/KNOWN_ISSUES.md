@@ -5969,6 +5969,79 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-378 — data:-URI результатов OpenAI Images не рендерятся в UI
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `web/src/lib/media.ts`, `src/media/providers/openai-images.provider.ts`,
+  `src/runs/dto/run-stream-message.dto.ts`
+- **Описание:** `gpt-image-1` отдаёт результат как `data:image/png;base64,...`;
+  `isRenderableMediaUrl` (KI-006) разрешает только `http(s)` → узел
+  `image_generation` показывает «Некорректный URL результата». Плюс 1–3 МБ
+  base64 в `node_runs.outputs` (JSONB) раздувают строки/SSE.
+- **Решение:** (а) расширить `isRenderableMediaUrl` на
+  `data:image/(png|jpeg|webp|gif)` — безопасно (SVG остаётся запрещён);
+  (б) R7.8 (Media storage) — сохранение в S3 + https-ссылка.
+- **Связанные:** KI-006, KI-362, DESIGN v0.9 § 3.8.
+
+---
+
+### KI-379 — KI-370 не закрыт, дублирование маршрутизации
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/media/media-node-executor.service.ts`,
+  `src/media/media-registry.service.ts`
+- **Описание:** `MediaNodeExecutor.resolveToolTargetAsync` /
+  `findModelPriceRubAsync` сами перебирают `MEDIA_PROVIDERS`. Публичный
+  `resolveByModelAsync` в реестре готов (R7.3), но правка исполнителя
+  требует прогона R7.1-смоука.
+- **Решение:** переезд в R7.2 с прогоном CDP-смоука R7.1.
+- **Связанные:** KI-370, KI-371.
+
+---
+
+### KI-380 — OpenAI Images не поддерживает applyToolAsync
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/media/providers/openai-images.provider.ts`, DESIGN v0.9 § 3.1
+- **Описание:** `/v1/images/edits` требует `multipart/form-data` с файлом, а
+  `IMediaProvider.applyToolAsync` принимает URL. Passthrough через
+  `createTaskAsync` — не upscale, а «перерисуй по описанию».
+- **Решение:** скачивать вход в буфер + multipart в `/images/edits` (в R7.8
+  storage уже даст https-ссылку для скачивания).
+- **Связанные:** KI-371, KI-378, DESIGN v0.9 § 3.8.
+
+---
+
+### KI-381 — серверной идемпотентности нет у Replicate/FAL/OpenAI
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/media/providers/*.provider.ts`
+- **Описание:** у CreativeLab есть `code: 23` (`idempotency_key`), у прямых
+  провайдеров такого поля нет. Клиентская карта `idempotencyKey` → `taskId`
+  живёт в памяти: рестарт backend / второй инстанс дубль не поймают.
+- **Решение:** Redis-ключ рядом с `node_runs`.
+- **Связанные:** KI-106, KI-298.
+
+---
+
+### KI-382 — коллизия gpt-image-1/dall-e-3 с CreativeLab
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/media/media-provider-priority.ts`
+- **Описание:** id `gpt-image-1` объявлен и CreativeLab, и прямым OpenAI
+  Images. Дедупликация отдаёт CreativeLab (приоритет выше) → прямой
+  провайдер для этих id недоступен.
+- **Решение:** задокументировать; либо env-переопределение приоритета.
+- **Связанные:** KI-366.
+
+---
+
+### KI-383 — дублирование USD_RUB_RATE
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/runs/cost-budget.service.ts`, `src/config/env.schema.ts`
+- **Описание:** R7.1 ввёл `WORKFLOW_RUN_USD_RUB_RATE` (бюджет), R7.3 —
+  `MEDIA_USD_RUB_RATE` (каталог). Оба — про перевод USD↔RUB; два источника
+  курса → рассинхрон при ручной правке.
+- **Решение:** слить в единую env (например, `USD_RUB_RATE`) при следующей
+  правке env-схемы.
+- **Связанные:** KI-372.
+
+---
 ## Сводка по статусам
 
 | Статус | Кол-во |
@@ -5978,9 +6051,9 @@ MediaModelInfo, engine-DTO
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 220 |
+| Open | 226 |
 | Won't Fix | 1 |
-| **Всего** | **365** |
+| **Всего** | **371** |
 
 ---
 
