@@ -101,8 +101,8 @@ export const workflowRuns = pgTable('workflow_runs', {
   error: text('error'),
   snapshot: jsonb('snapshot').$type<GraphSnapshotDto>().notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  startedAt: timestamp('started_at').defaultNow(),
-  finishedAt: timestamp('finished_at'),
+  startedAt: timestamp('started_at', { withTimezone: true }).defaultNow(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
 });
 
 /**
@@ -133,8 +133,8 @@ export const nodeRuns = pgTable(
      */
     costRub: numeric('cost_rub', { precision: 10, scale: 6 }),
     durationMs: integer('duration_ms'),
-    startedAt: timestamp('started_at'),
-    finishedAt: timestamp('finished_at'),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
   },
   (table) => [
     // KI-031: ключ идемпотентности для UPSERT при повторном прогоне графа —
