@@ -17,6 +17,53 @@
 ---
 ## [Unreleased]
 
+## [0.8.2] — 2026-10-16
+
+**Patch после v0.8.1. CI-гейт схемы + инкремент version + единые fit-опции.**
+
+Три параллельных подшага после v0.8.1.
+
+### Added
+- **Общий модуль fit-опций (KI-306/314/315/316):**
+  - `web/src/lib/fit-view-options.ts` — `FIT_VIEW_OPTIONS`
+    (`padding: 0.2`, `maxZoom: 1`, `minZoom: 0.02`) — единый источник
+    для 5 точек вызова (авто-fit / кнопка Fit / хоткей F в Canvas +
+    `fitViewOptions` на публичной share-странице).
+- **CI-гейт паритета схемы (KI-298):**
+  - `src/db/schema-parity.spec.ts` (new) — сверка
+    `information_schema.columns` ↔ Drizzle-схема по всем `pgTable`;
+    человекочитаемый отчёт о дрейфе; `describe.skipIf` без `DATABASE_URL`.
+  - `.github/workflows/ci.yml` — шаг `Apply migrations` перед `pnpm test`.
+
+### Fixed
+- **KI-298** — CI-гейт паритета Drizzle-схемы и Postgres (`df2ea46`).
+- **KI-300** — инкремент `workflows.version` при изменении
+  `nodes`/`edges` (`8163b73`).
+- **KI-315** — публичная share-страница получает `fitViewOptions`:
+  CDP-замер zoom 0.154905, оба узла в кадре (`a32023f`).
+- **KI-316** — асимметрия fit-операций: хоткей F = кнопка Fit
+  (CDP 1.0 = 1.0; до фикса 1.82875) (`a32023f`).
+- **KI-314** — `minZoom: 0.02` умещает разброс только до 23 050 px
+  (Low, Open — фикс отложен, читаемость в KI-328).
+
+### Documented
+- **KI-317** — spec-файлы не проходят type-check ни на одном шаге
+  (26 ошибок на HEAD).
+- **KI-318** — Vitest не читает `.env` → гейт KI-298 локально silently
+  skipped.
+- **KI-319** — CI: шаг `Apply migrations` стал обязательным.
+- **KI-320** — паритет-гейт требует ручного маппинга типов колонок.
+- **KI-321** — гейт не сверяет length/order/constraints.
+- **KI-322** — подграф вне топ-50 `GET /workflow` → warning недостижим.
+- **KI-323** — TOCTOU: два конкурентных PATCH → `version +2`.
+- **KI-324** — frontend hash vs backend deep-equal (`type`).
+- **KI-325** — `updatedAt` меняется на идемпотентном PATCH.
+- **KI-326** — Vite dev слушает только `[::1]:5173`.
+- **KI-327** — `AUTH_DISABLED=true` не обходит `POST /auth/refresh`.
+- **KI-328** — fit по bbox даёт микроскопические узлы (4–6 px при
+  разбросе 21 888 px).
+- **KI-329** — share `pointer-events-none` блокирует zoom/pan.
+
 ## [0.8.1] — 2026-10-16
 
 **Patch-релиз после v0.8.0. Структурный фикс Vite-прокси.**

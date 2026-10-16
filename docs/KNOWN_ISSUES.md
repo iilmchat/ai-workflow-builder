@@ -4854,7 +4854,14 @@
 ---
 
 ### KI-298 — `drizzle-kit generate` не сверяет схему с БД (только со snapshot)
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.2 (коммит `df2ea46`)
+- **Fix:** `src/db/schema-parity.spec.ts` — CI-гейт сверки
+  `information_schema.columns` ↔ Drizzle-схема (data_type /
+  is_nullable / default / numeric_precision,scale); шаг
+  `Apply migrations` в `.github/workflows/ci.yml`.
+- **Остаток:** KI-317..321.
+- **Связанные:** KI-293, KI-296, KI-317..321.
 - **Файлы:** `drizzle.config.ts`, CI, `package.json` (`db:generate`)
 - **Описание:** `generate` не подключается к БД — сравнивает только
   `schema.ts` ↔ последний snapshot. Любой дрейф `snapshot ↔ фактическая
@@ -4888,7 +4895,13 @@
 ---
 
 ### KI-300 — `workflows.version` не инкрементируется при PATCH
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.2 (коммит `8163b73`)
+- **Fix:** `updateAsync` — инкремент только при изменении
+  `nodes`/`edges` (`isDeepStrictEqual`); метаданные (name/description)
+  version не меняют. `sql\`${workflows.version} + 1\`` атомарно. +6 тестов.
+- **Остаток:** KI-322..325.
+- **Связанные:** KI-200, KI-322..325.
 - **Файлы:** `src/workflow/workflow.service.ts` (`updateAsync`),
   `web/src/components/nodes/SubWorkflowNode.tsx`
 - **Описание:** `updateAsync` не трогает колонку `version`, поэтому
@@ -4966,8 +4979,8 @@
   `<ReactFlow fitViewOptions>` и `<Controls fitViewOptions>`
   (последнее — обязательно, иначе кнопка Fit игнорирует опции).
   `<ReactFlow minZoom>` не задан — store-дефолт 0.5 для зума колесом.
-- **Остаток:** KI-309 (порог 23 050 px), KI-310 (ShareViewPage),
-  KI-311 (асимметрия Fit / хоткей F).
+- **Остаток:** KI-314 (порог 23 050 px, читаемость — KI-328);
+  KI-315/KI-316 закрыты (`a32023f`).
 - **Связанные:** KI-307, KI-309..311.
 - **Описание:** `getViewportForBounds` (@xyflow/system) обрезает zoom
   по `minZoom` (store-дефолт 0.5). Для графа с разбросом ~22 000 px
@@ -5061,7 +5074,7 @@
 
 ---
 
-### KI-309 — `minZoom: 0.02` умещает разброс только до 23 050 px
+### KI-314 — `minZoom: 0.02` умещает разброс только до 23 050 px
 - **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
 - **Файлы:** `web/src/components/Canvas.tsx` (`FIT_VIEW_OPTIONS`)
 - **Описание:** Измерено CDP: холст 1368×461 → покрытие 68 400 ×
@@ -5073,8 +5086,12 @@
 
 ---
 
-### KI-310 — Публичная share-страница не получает `fitViewOptions`
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+### KI-315 — Публичная share-страница не получает `fitViewOptions`
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.2 (коммит `a32023f`)
+- **Fix:** `<ReactFlow fitViewOptions={FIT_VIEW_OPTIONS} fitView />`
+  (`web/src/lib/fit-view-options.ts`). CDP-замер (Text Y=−5000):
+  zoom 0.154905, оба узла в кадре; до фикса — 0.5, оба за кадром.
 - **Файлы:** `web/src/components/ShareViewPage.tsx`
 - **Описание:** Булев `fitView` идёт через store-fitViewOptions (у
   страницы их нет) → `minZoom = 0.5` (дефолт). Граф с большим
@@ -5085,8 +5102,12 @@
 
 ---
 
-### KI-311 — Асимметрия fit-операций: кнопка Fit и хоткей F
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+### KI-316 — Асимметрия fit-операций: кнопка Fit и хоткей F
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.2 (коммит `a32023f`)
+- **Fix:** `void fitView({ ...FIT_VIEW_OPTIONS, duration: 200 })`;
+  CDP: Fit = 1.0, хоткей F = 1.0 (до фикса 1.82875). Осознанно
+  меняет поведение KI-186 (добавлены padding/maxZoom).
 - **Файлы:** `web/src/components/Canvas.tsx` (хоткей F)
 - **Описание:** Измерено CDP на одном графе (Text + Output):
   Controls Fit = 1.0, хоткей F = 1.53091 — у хоткея нет padding /
@@ -5097,18 +5118,163 @@
 
 ---
 
+### KI-317 — Spec-файлы не проходят type-check ни на одном шаге
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `package.json`, `tsconfig.build.json`, `.github/workflows/ci.yml`
+- **Описание:** `tsconfig.build.json` исключает `**/*spec.ts`; vitest
+  не type-check'ает; `oxlint --type-aware` — не `tsc`. На HEAD —
+  26 ошибок типов в 11 spec-файлах, «зелёный CI» их не видит.
+- **Решение:** `"typecheck": "tsc -p tsconfig.spec.json --noEmit"` +
+  шаг в CI; разово починить 26 ошибок.
+- **Связанные:** KI-298, KI-298-reports.
+
+---
+
+### KI-318 — Vitest не читает `.env` → гейт KI-298 silently skipped
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `vitest.config.ts`, `package.json`
+- **Описание:** Vitest не переносит `.env` в `process.env` — локальный
+  `pnpm test` показывает «зелено», а паритет схемы не проверялся.
+- **Решение (проверено):** `"test:parity": "node --env-file=.env
+  node_modules/vitest/vitest.mjs run src/db/schema-parity.spec.ts"`.
+- **Связанные:** KI-298.
+
+---
+
+### KI-319 — CI: шаг `Apply migrations` стал обязательным
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `.github/workflows/ci.yml`
+- **Описание:** Job build годами шёл без `db:migrate`, БД сервиса
+  пустая; новый шаг — предпосылка для KI-298-гейта и всех будущих
+  DB-интеграционных спеков.
+- **Решение:** зафиксировать в RULES/PROMPT; при росте числа
+  DB-спеков — вынести в отдельный job.
+- **Связанные:** KI-298.
+
+---
+
+### KI-320 — Паритет-гейт требует ручного маппинга типов колонок
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/db/schema-parity.spec.ts`
+- **Описание:** `PG_DATA_TYPE_BY_COLUMN_TYPE` покрывает 6 типов +
+  `PgTimestamp`; новый тип (varchar, bigint, double precision, date,
+  массив, enum, `timestamp({mode:'string'})`) валит гейт сообщением
+  «тип Drizzle 'X' не сопоставлен».
+- **Решение:** расширять карту вместе с новым типом колонки.
+
+---
+
+### KI-321 — Гейт не сверяет length/order/constraints
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/db/schema-parity.spec.ts`
+- **Описание:** Сверяются data_type / is_nullable / default /
+  numeric_precision,scale. **Не сверяются:** varchar(n), timestamp(p),
+  ordinal_position, лишние таблицы в `public`, PK/FK/unique/индексы/CHECK.
+
+---
+
+### KI-322 — Подграф вне топ-50 `GET /workflow` → warning недостижим
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `web/src/components/nodes/SubWorkflowNode.tsx`,
+  `web/src/lib/api.ts`, `src/workflow/workflow.controller.ts`
+- **Описание:** `listWorkflowsAsync` без `limit` при default limit=50
+  и `createdAt DESC`; подграф вне топ-50 → `selected === undefined`,
+  warning «есть новая версия» в `sub_workflow` не появится.
+- **Связанные:** KI-200.
+
+---
+
+### KI-323 — TOCTOU: два конкурентных PATCH → `version +2`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/workflow/workflow.service.ts`
+- **Описание:** Решение об инкременте по SELECT до UPDATE; сам
+  инкремент атомарный (lost update невозможен), но два конкурентных
+  PATCH с одинаковым payload дадут +2.
+- **Решение:** транзакция либо `CASE WHEN nodes IS DISTINCT FROM …`.
+- **Связанные:** KI-300, RULES 4.22.
+
+---
+
+### KI-324 — Frontend hash vs backend deep-equal (type)
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `web/src/lib/graph-hash.ts`, `src/workflow/workflow.service.ts`
+- **Описание:** `computeGraphHash` игнорирует type узла, backend
+  deep-equal — нет; смена только type без data/position фронтом
+  не отправится. Практический риск ≈0.
+- **Связанные:** KI-300.
+
+---
+
+### KI-325 — `updatedAt` меняется на идемпотентном PATCH
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/workflow/workflow.service.ts`
+- **Описание:** `updatedAt: new Date()` в `set` на любом PATCH,
+  включая name/description и идентичные nodes/edges.
+  После KI-300 заметнее: Save без правок двигает `updatedAt`, но
+  не `version`. Pre-existing, но теперь выделяется.
+- **Связанные:** KI-300.
+
+---
+
+### KI-326 — Vite dev слушает только `[::1]:5173`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `web/vite.config.ts`
+- **Описание:** Netstat: `TCP [::1]:5173 LISTENING`. `fetch` по
+  `127.0.0.1:5173` → `ECONNREFUSED`; CDP-смоук по 127.0.0.1 даёт
+  `chrome-error://chromewebdata/`. Потрачен цикл диагностики.
+- **Решение:** в смоуке использовать `localhost`; либо
+  `server.host: '127.0.0.1'` в `web/vite.config.ts`.
+
+---
+
+### KI-327 — `AUTH_DISABLED=true` не обходит `POST /auth/refresh`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/auth/auth.controller.ts`,
+  `web/src/components/auth/AuthProvider.tsx`
+- **Описание:** Гард обходит защищённые ручки, но `/auth/refresh`
+  требует cookie → `AuthProvider` → 401 → `ProtectedRoute` → `/login`.
+  Смоук вынужден логиниться (`POST /auth/login` + cookie).
+- **Решение:** dev-only автологин при `AUTH_DISABLED=true` либо
+  явная запись в смоук-чек-лист.
+
+---
+
+### KI-328 — Fit по bbox даёт микроскопические узлы
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `web/src/lib/fit-view-options.ts`,
+  `web/src/components/Canvas.tsx`
+- **Описание:** CDP: при разбросе 21 888 px — узлы 6×3 и 4×2 px;
+  при 5 000 px — 37×19 и 23×13 px. «В кадре» ≠ «читаемо»; проблема
+  наступает уже при 5 000 px.
+- **Решение:** fit по кластеру/выделению, floor для fit-zoom
+  (например ≥0.1) с возможностью pan, либо «fit only selected».
+- **Связанные:** KI-306, KI-314, KI-315.
+
+---
+
+### KI-329 — Share pointer-events-none блокирует zoom/pan
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `web/src/components/ShareViewPage.tsx`
+- **Описание:** Обёртка `pointer-events-none` гасит и wheel-zoom, и
+  pan. В связке с KI-328 граф с разбросом невозможно рассмотреть.
+- **Решение:** разрешить zoom/pan без перетаскивания узлов, либо не
+  опускать fit ниже читаемого порога.
+- **Связанные:** KI-315, KI-328.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 115 |
+| Fixed | 119 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 179 |
+| Open | 190 |
 | Won't Fix | 1 |
-| **Всего** | **303** |
+| **Всего** | **315** |
 
 ---
 
