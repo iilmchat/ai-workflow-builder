@@ -5779,6 +5779,57 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-363 — Image providers напрямую (Replicate / FAL / OpenAI Images)
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/media/media-registry.service.ts`, `src/media/providers/*`,
+  `src/config/env.schema.ts`, `.env.example`, `web/src/components/nodes/ImageGenNode.tsx`
+- **Описание:** Сейчас media-провайдер один — CreativeLab (GPTunnel).
+  Replicate / FAL / OpenAI Images — крупнейшие вендоры image/video-моделей;
+  без них недоступны flux-pro-1.1-ultra, SDXL, Kling, gpt-image-1.
+- **Решение:** расширить `MediaRegistryService` — несколько `IMediaProvider`
+  подряд; `resolveByModelAsync` ищет по всем; приоритет через env
+  `MEDIA_PROVIDER_PRIORITY`. Env: `REPLICATE_API_TOKEN`, `FAL_KEY`,
+  `OPENAI_IMAGES_API_KEY`. Реализация — DESIGN v0.9 § 3.3 (R7.3).
+- **Связанные:** KI-196, DESIGN v0.9 § 3.3.
+
+---
+
+### KI-364 — Condition sandbox (QuickJS-WASM)
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/engine/node-executors.ts` (executeConditionNode),
+  `web/src/components/nodes/ConditionNode.tsx`,
+  `web/src/types/graph.ts` (ConditionNodeData.mode),
+  новый модуль `src/sandbox/quickjs-runner.service.ts`
+- **Описание:** Condition-узел поддерживает только MVP-DSL (`>`, `<`, `===`,
+  `includes`). Произвольные JS-выражения (`input.value > 100 &&
+  input.name.includes('foo')`) невозможны без изоляции. `new Function` —
+  RCE; `vm2` — deprecated (CVE-2023-29017); `isolated-vm` — native build
+  сложен на Windows + Docker; Node `vm` — небезопасен.
+- **Решение:** QuickJS-WASM (`quickjs-emscripten`), 4-пробельная модель
+  Figma/Cloudflare/Shopify. Timeout 100 мс, memory 16 МБ, allowlist глобалов.
+  Обратная совместимость с MVP-DSL через `ConditionNodeData.mode:
+  'dsl' | 'sandbox'` (default `'dsl'`). Реализация — DESIGN v0.9 § 3.5 (R7.5).
+- **Связанные:** KI-282, KI-283, KI-338, DESIGN v0.9 § 2.8, § 3.5.
+
+---
+
+### KI-365 — OpenTelemetry traces (observability)
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/main.ts`, новый модуль `src/observability/otel.service.ts`,
+  `package.json` (`@opentelemetry/sdk-node`,
+  `@opentelemetry/exporter-trace-otlp-http`), `.env.example`,
+  `docker-compose.otel.yml` (опционально Jaeger)
+- **Описание:** Нет телеметрии — невозможно диагностировать медленные
+  LLM/media-вызовы, узкие места в цепочке узлов. Production-ready продукт
+  требует traces.
+- **Решение:** OTel spans на уровнях `run.execute`, `node.execute`,
+  `llm.call`, `media.createTask`, `agent.step`. Env `OTEL_ENABLED=false`
+  (default), `OTEL_EXPORTER_OTLP_ENDPOINT`. Локально — Jaeger через
+  `docker-compose.otel.yml`. Реализация — DESIGN v0.9 § 3.7 (R7.7).
+- **Связанные:** KI-067 (concurrency), KI-206, KI-234, KI-107 (rate limit), KI-055 (reasoning cache), DESIGN v0.9 § 3.7.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
@@ -5788,9 +5839,9 @@ MediaModelInfo, engine-DTO
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 206 |
+| Open | 209 |
 | Won't Fix | 1 |
-| **Всего** | **351** |
+| **Всего** | **354** |
 
 ---
 
