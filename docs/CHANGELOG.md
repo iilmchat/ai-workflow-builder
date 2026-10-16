@@ -17,6 +17,24 @@
 ---
 ## [Unreleased]
 
+## [0.8.1] — 2026-10-16
+
+**Patch-релиз после v0.8.0. Структурный фикс Vite-прокси.**
+
+### Added
+- **Единый реестр API-префиксов (KI-299/072/120):**
+  - `web/src/lib/api-prefixes.ts` — `API_PREFIXES`
+    (workflow/engine/llm/media/auth/templates/runs/nodes; флаги
+    `sse` и `htmlFallback`).
+  - `web/vite.config.ts` — `server.proxy` генерируется из реестра.
+  - Frontend spec: все `fetch`-литералы ∈ реестр.
+  - Backend spec: все `@Controller` ⊆ реестр; `stripComments()`
+    против ложных срабатываний на комментариях.
+  - `web/tsconfig.node.json`: `allowImportingTsExtensions: true`
+    (Vite 8 configLoader: 'native').
+  - Tests: backend 514 → 520 (+6), frontend 159 → 166 (+7).
+  - Smoke: 22/22 PASS.
+
 ## [0.8.0] — 2026-10-16
 
 **v0.8.0 — фичи для продукта (DESIGN v0.8 § 1–13).**
