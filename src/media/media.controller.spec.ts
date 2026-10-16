@@ -16,6 +16,9 @@ const model: MediaModelInfo = {
   type: 'IMAGE',
   price: 0.6,
   priceUnit: 'per_generation',
+  // KI-317: тариф за вход не задан — модель берёт плату за генерацию.
+  priceInput: null,
+  priceInputUnit: null,
   moderation: 'auto',
   prompt: 'required',
   params: [

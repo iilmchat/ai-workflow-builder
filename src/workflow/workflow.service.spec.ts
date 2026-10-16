@@ -15,6 +15,8 @@ const baseWorkflow: Workflow = {
   description: null,
   nodes: [],
   edges: [],
+  // KI-317: share-токен в схеме nullable — у непубличного workflow его нет.
+  shareToken: null,
   version: 1,
   createdAt: new Date('2024-01-01T00:00:00.000Z'),
   updatedAt: new Date('2024-01-01T00:00:00.000Z'),

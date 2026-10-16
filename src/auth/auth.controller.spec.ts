@@ -25,10 +25,15 @@ const authResult: AuthResult = {
 
 describe('AuthController', () => {
   let app: INestApplication;
+  // KI-317: мок объявляет все методы сервиса, которые вызывает контроллер,
+  // включая refresh-методы R6.1b (иначе `tsc -p tsconfig.spec.json` падает).
   let service: {
     registerAsync: ReturnType<typeof vi.fn>;
     loginAsync: ReturnType<typeof vi.fn>;
     getMeAsync: ReturnType<typeof vi.fn>;
+    createRefreshTokenAsync: ReturnType<typeof vi.fn>;
+    rotateRefreshTokenAsync: ReturnType<typeof vi.fn>;
+    revokeRefreshTokenAsync: ReturnType<typeof vi.fn>;
   };
   let verifyAsync: ReturnType<typeof vi.fn>;
   let authDisabled: boolean;

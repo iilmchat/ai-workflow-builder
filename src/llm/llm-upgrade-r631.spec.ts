@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import type { NodeDto } from '../engine/dto/index.js';
+import type { ModelInfo } from './llm-provider.interface.js';
 import { LlmProviderFactory } from './llm-provider.factory.js';
 import { LlmRegistryService } from './llm-registry.service.js';
 import { LlmService } from './llm.service.js';
@@ -104,7 +105,15 @@ function openAiProvider(
     name: 'openai',
     apiKey: 'sk-test',
     baseURL: 'https://api.openai.com/v1',
-    models,
+    // KI-317: в фикстурах важны только id/label/reasoning, но ModelInfo
+    // требует модальности — дополняем их текстовым дефолтом.
+    models: models.map(
+      (model): ModelInfo => ({
+        ...model,
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      }),
+    ),
     envKey: 'OPENAI_API_KEY',
   });
 }

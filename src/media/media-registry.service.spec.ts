@@ -20,6 +20,9 @@ function model(id: string): MediaModelInfo {
     type: 'IMAGE',
     price: 0,
     priceUnit: 'per_generation',
+    // KI-317: тариф за вход не задан — модель берёт плату за генерацию.
+    priceInput: null,
+    priceInputUnit: null,
     moderation: 'auto',
     prompt: 'required',
     params: [],
@@ -44,6 +47,10 @@ function stubProvider(
     name,
     isConfigured,
     listModelsAsync: vi.fn((_type?: MediaType) => Promise.resolve(models)),
+    // KI-317: заглушке нужен только `listModelsAsync`, но IMediaProvider
+    // требует и методы задач — объявляем их моками без реализации.
+    createTaskAsync: vi.fn(),
+    getTaskAsync: vi.fn(),
   };
 }
 

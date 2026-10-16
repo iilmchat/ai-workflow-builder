@@ -26,6 +26,8 @@ const baseWorkflow: Workflow = {
   description: null,
   nodes: [{ id: 'n1', type: 'llm', data: {} }],
   edges: [{ id: 'e1', source: 'n1', target: 'n2' }],
+  // KI-317: поле схемы обязательно в типе — у непубличного workflow null.
+  shareToken: null,
   version: 1,
   createdAt: STARTED_AT,
   updatedAt: STARTED_AT,

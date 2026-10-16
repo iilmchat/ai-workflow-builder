@@ -44,6 +44,11 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # KI-317: tsconfig.build.json исключает **/*.spec.ts, а vitest типы не
+      # проверяет — спеки валидируются отдельным tsconfig.spec.json.
+      - name: Typecheck
+        run: pnpm typecheck
+
       # KI-298: гейт паритета схемы (src/db/schema-parity.spec.ts) читает
       # information_schema из services.postgres, поэтому схему нужно применить
       # до тестов — иначе БД пуста и гейт красный («таблица отсутствует в БД»).

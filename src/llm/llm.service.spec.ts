@@ -24,7 +24,15 @@ describe('LlmService', () => {
 
     const provider: ILlmProvider = {
       name: 'fake',
-      models: [{ id: 'fake-model', label: 'Fake' }],
+      // KI-317: модальности обязательны в ModelInfo — у заглушки текстовые.
+      models: [
+        {
+          id: 'fake-model',
+          label: 'Fake',
+          inputModalities: ['text'],
+          outputModalities: ['text'],
+        },
+      ],
       isConfigured: true,
       generateAsync,
     };
@@ -79,7 +87,15 @@ describe('LlmService', () => {
   it('KI-148: помечает результат isLocal для локального провайдера', async () => {
     const localProvider: ILlmProvider = {
       name: 'lmstudio',
-      models: [{ id: 'qwen2.5-7b-instruct', label: 'qwen2.5-7b-instruct (local)' }],
+      // KI-317: модальности обязательны в ModelInfo.
+      models: [
+        {
+          id: 'qwen2.5-7b-instruct',
+          label: 'qwen2.5-7b-instruct (local)',
+          inputModalities: ['text'],
+          outputModalities: ['text'],
+        },
+      ],
       isConfigured: true,
       isLocal: true,
       generateAsync: vi.fn(() =>

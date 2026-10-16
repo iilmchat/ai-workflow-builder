@@ -17,6 +17,8 @@ const createdWorkflow: Workflow = {
   description: null,
   nodes: [],
   edges: [],
+  // KI-317: поле схемы обязательно в типе — у непубличного workflow null.
+  shareToken: null,
   version: 1,
   createdAt: new Date('2024-01-01T00:00:00.000Z'),
   updatedAt: new Date('2024-01-01T00:00:00.000Z'),

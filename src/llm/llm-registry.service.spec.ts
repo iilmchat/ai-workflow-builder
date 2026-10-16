@@ -99,7 +99,13 @@ async function createRegistry(
 function stubProvider(name: string, modelIds: string[]): ILlmProvider {
   return {
     name,
-    models: modelIds.map((id) => ({ id, label: id })),
+    models: modelIds.map((id) => ({
+      id,
+      label: id,
+      // KI-317: модальности обязательны в ModelInfo — заглушке достаточно текста.
+      inputModalities: ['text'],
+      outputModalities: ['text'],
+    })),
     isConfigured: true,
     generateAsync: vi.fn(),
   };
@@ -139,7 +145,15 @@ describe('LlmRegistryService', () => {
       name: 'routerai',
       apiKey: 'sk-router',
       baseURL: 'https://routerai.ru/api/v1',
-      models: [{ id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4 (RouterAI)' }],
+      // KI-317: модальности обязательны в ModelInfo.
+      models: [
+        {
+          id: 'anthropic/claude-sonnet-4',
+          label: 'Claude Sonnet 4 (RouterAI)',
+          inputModalities: ['text'],
+          outputModalities: ['text'],
+        },
+      ],
       envKey: 'ROUTERAI_API_KEY',
     });
 

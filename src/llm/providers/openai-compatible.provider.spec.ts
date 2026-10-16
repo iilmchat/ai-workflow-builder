@@ -36,9 +36,20 @@ function providerConfig(
     name: 'openai',
     apiKey: 'sk-test',
     baseURL: 'https://api.openai.com/v1',
+    // KI-317: модальности обязательны в ModelInfo.
     models: [
-      { id: 'gpt-4o', label: 'GPT-4o' },
-      { id: 'gpt-4o-mini', label: 'GPT-4o mini' },
+      {
+        id: 'gpt-4o',
+        label: 'GPT-4o',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
+      {
+        id: 'gpt-4o-mini',
+        label: 'GPT-4o mini',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
     ],
     envKey: 'OPENAI_API_KEY',
     ...overrides,
@@ -113,14 +124,27 @@ describe('OpenAiCompatibleProvider', () => {
         name: 'routerai',
         apiKey: 'sk-router',
         baseURL: 'https://routerai.ru/api/v1',
-        models: [{ id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4' }],
+        // KI-317: модальности обязательны в ModelInfo.
+        models: [
+          {
+            id: 'anthropic/claude-sonnet-4',
+            label: 'Claude Sonnet 4',
+            inputModalities: ['text', 'vision'],
+            outputModalities: ['text'],
+          },
+        ],
         envKey: 'ROUTERAI_API_KEY',
       }),
     );
 
     expect(provider.name).toBe('routerai');
     expect(provider.models).toEqual([
-      { id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4' },
+      {
+        id: 'anthropic/claude-sonnet-4',
+        label: 'Claude Sonnet 4',
+        inputModalities: ['text', 'vision'],
+        outputModalities: ['text'],
+      },
     ]);
     expect(lastConstructorOptions()).toEqual({
       apiKey: 'sk-router',
@@ -134,7 +158,15 @@ describe('OpenAiCompatibleProvider', () => {
         name: 'lmstudio',
         apiKey: 'not-needed',
         baseURL: 'http://localhost:1234/v1',
-        models: [{ id: 'qwen2.5-7b-instruct', label: 'qwen2.5-7b-instruct (local)' }],
+        // KI-317: модальности обязательны в ModelInfo.
+        models: [
+          {
+            id: 'qwen2.5-7b-instruct',
+            label: 'qwen2.5-7b-instruct (local)',
+            inputModalities: ['text'],
+            outputModalities: ['text'],
+          },
+        ],
         envKey: undefined,
       }),
     );
@@ -170,7 +202,15 @@ describe('OpenAiCompatibleProvider', () => {
     const provider = new OpenAiCompatibleProvider(
       providerConfig({
         name: 'yandex',
-        models: [{ id: 'yandexgpt-lite', label: 'YandexGPT Lite' }],
+        // KI-317: модальности обязательны в ModelInfo.
+        models: [
+          {
+            id: 'yandexgpt-lite',
+            label: 'YandexGPT Lite',
+            inputModalities: ['text'],
+            outputModalities: ['text'],
+          },
+        ],
         envKey: 'YANDEX_API_KEY',
         resolveModel: (model) => `gpt://b1g-folder/${model}/latest`,
       }),
