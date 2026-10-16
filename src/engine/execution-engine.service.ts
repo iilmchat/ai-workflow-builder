@@ -7,7 +7,7 @@ import {
 import { and, eq } from 'drizzle-orm';
 import { isDeepStrictEqual } from 'node:util';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { nodeRuns, workflowRuns } from '../db/schema.js';
+import { nodeRuns, workflowRuns, workflows } from '../db/schema.js';
 import { RunEventsService } from '../runs/run-events.service.js';
 import { LlmNodeExecutor, type LlmNodeMetrics } from '../llm/llm-node-executor.service.js';
 import { LlmProviderException } from '../llm/llm-provider.interface.js';
@@ -15,6 +15,7 @@ import {
   MediaNodeExecutor,
   type MediaNodeMetrics,
 } from '../media/media-node-executor.service.js';
+import { WorkflowService } from '../workflow/workflow.service.js';
 import type { GraphDto, NodeDto } from './dto/index.js';
 import { EngineService, type ExecutionPlanDto } from './engine.service.js';
 import {
@@ -23,7 +24,10 @@ import {
   executeConditionNode,
   executeHttpNode,
   executeOutputNode,
+  executeSubWorkflowNode,
   executeTextNode,
+  prefixSubWorkflowGraph,
+  type SubWorkflowContext,
 } from './node-executors.js';
 
 /**
@@ -172,6 +176,9 @@ export class ExecutionEngineService {
     private readonly runEvents: RunEventsService,
     private readonly llmExecutor: LlmNodeExecutor,
     private readonly mediaExecutor: MediaNodeExecutor,
+    // R6.7 (KI-200): узел sub_workflow загружает подграф — нужен доступ к
+    // workflow того же владельца. WorkflowModule экспортирует сервис.
+    private readonly workflowService: WorkflowService,
   ) {}
 
   /**
@@ -250,9 +257,17 @@ export class ExecutionEngineService {
     const outputs: Record<string, Record<string, unknown>> = {};
     const failures: Array<{ nodeId: string; error: string; reason: unknown }> = [];
 
+    // R6.7 (KI-200): контекст для узлов sub_workflow. Владелец запуска нужен,
+    // чтобы подграф загружался только у своего workflow (чужой → 404), а
+    // `visitedWorkflows`/`depth` — для защиты от рекурсии. Запрос к БД
+    // выполняется, только если в графе есть узел sub_workflow.
+    const subContext = await this.createSubWorkflowContextAsync(runId, graph);
+
     for (const [levelIndex, level] of plan.levels.entries()) {
       const results = await Promise.allSettled(
-        level.map((nodeId) => this.executeNodeAsync(runId, nodeId, graph, plan)),
+        level.map((nodeId) =>
+          this.executeNodeAsync(runId, nodeId, graph, plan, subContext),
+        ),
       );
 
       // KI-287: падения фиксируются по каждому уровню отдельно — цикл по
@@ -399,6 +414,7 @@ export class ExecutionEngineService {
    * @param nodeId - `id` узла в графе
    * @param graph - граф запуска
    * @param plan - план выполнения графа
+   * @param subContext - контекст под-воркфлоу (R6.7): владелец, стек, глубина
    * @returns выходы узла (свежие либо переиспользованные)
    * @throws Error если узел отсутствует в графе, исчерпал попытки или не удалось записать статус
    */
@@ -407,6 +423,7 @@ export class ExecutionEngineService {
     nodeId: string,
     graph: GraphDto,
     plan: ExecutionPlanDto,
+    subContext: SubWorkflowContext,
   ): Promise<Record<string, unknown>> {
     const node = graph.nodes.find((candidate) => candidate.id === nodeId);
 
@@ -481,7 +498,7 @@ export class ExecutionEngineService {
 
       for (let attempt = 1; attempt <= NODE_MAX_ATTEMPTS; attempt += 1) {
         try {
-          const step = await this.runNodeAsync(node, inputs, runId);
+          const step = await this.runNodeAsync(node, inputs, runId, subContext);
           const durationMs = Date.now() - startedAt;
 
           await this.db
@@ -629,9 +646,13 @@ export class ExecutionEngineService {
    * @param node - узел графа
    * @param inputs - нормализованные входы узла (KI-034: ключ `prompt`/`text`)
    * @param runId - id запуска (нужен media-узлу для ключа идемпотентности)
+   * @param subContext - контекст под-воркфлоу (R6.7)
    * @returns выходы узла и метрики вызова (`null` для чистых преобразований)
    * @throws UnsupportedNodeTypeException если тип узла неизвестен
    * @throws NodeDataValidationException если `data` узла не прошли Zod-схему
+   * @throws SubWorkflowRecursionException при циклической ссылке на workflow
+   * @throws SubWorkflowDepthException при превышении глубины вложенности
+   * @throws NotFoundException если подграф не найден или чужой
    * @throws LlmProviderException если вызов LLM-провайдера упал
    * @throws MediaProviderException если генерация media упала
    */
@@ -639,10 +660,19 @@ export class ExecutionEngineService {
     node: NodeDto,
     inputs: Record<string, unknown>,
     runId: string,
+    subContext: SubWorkflowContext,
   ): Promise<NodeStepResult> {
     switch (node.type) {
       case 'text':
         return { kind: 'plain', outputs: executeTextNode(node), metrics: null };
+      case 'sub_workflow': {
+        // R6.7 (KI-200): узел не преобразует входы, а выполняет другой граф
+        // как часть текущего запуска. Метрик у него нет — стоимости валют
+        // живут на строках узлов подграфа (cost_usd/cost_rub).
+        const outputs = await this.executeSubWorkflowGraphAsync(node, runId, subContext);
+
+        return { kind: 'plain', outputs, metrics: null };
+      }
       case 'http': {
         const outputs = await executeHttpNode(node.data, inputs);
 
@@ -684,6 +714,181 @@ export class ExecutionEngineService {
       default:
         throw new UnsupportedNodeTypeException(node.type);
     }
+  }
+
+  /**
+   * Создаёт контекст под-воркфлоу для запуска (R6.7, KI-200).
+   *
+   * Владелец запуска читается из БД **только** если в графе есть узел
+   * `sub_workflow`: для обычных графов лишний запрос не нужен. Если владельца
+   * определить не удалось, контекст получает `rootUserId: null` — тогда любой
+   * подграф будет отвергнут как чужой (404), а сам запуск не упадёт из-за
+   * проблемы с правами на одном узле.
+   *
+   * @param runId - uuid запуска
+   * @param graph - граф запуска
+   * @returns контекст ветки: источник workflow, владелец, пустой стек, глубина 0
+   */
+  private async createSubWorkflowContextAsync(
+    runId: string,
+    graph: GraphDto,
+  ): Promise<SubWorkflowContext> {
+    const hasSubWorkflow = graph.nodes.some((node) => node.type === 'sub_workflow');
+
+    return {
+      lookup: this.workflowService,
+      rootUserId: hasSubWorkflow ? await this.findRootUserIdAsync(runId) : null,
+      visitedWorkflows: new Set<string>(),
+      depth: 0,
+    };
+  }
+
+  /**
+   * Определяет владельца workflow, к которому относится запуск.
+   *
+   * `workflow_runs` не хранит владельца, поэтому он берётся у корневого
+   * workflow одним join-запросом: подграф `sub_workflow` должен принадлежать
+   * тому же пользователю, что и родительский граф (DESIGN v0.8 § 5).
+   *
+   * Сбой чтения не роняет запуск: возвращается `null`, и узлы `sub_workflow`
+   * падают каждый сам (404) — остальной граф выполняется (RULES 4.16/4.18).
+   *
+   * @param runId - uuid запуска
+   * @returns uuid владельца либо `null`, если строки нет или чтение не удалось
+   */
+  private async findRootUserIdAsync(runId: string): Promise<string | null> {
+    try {
+      const [row] = await this.db
+        .select({ userId: workflows.userId })
+        .from(workflowRuns)
+        .innerJoin(workflows, eq(workflows.id, workflowRuns.workflowId))
+        .where(eq(workflowRuns.id, runId))
+        .limit(1);
+
+      return row?.userId ?? null;
+    } catch (error: unknown) {
+      this.logger.error(
+        `Не удалось определить владельца запуска ${runId}: ${toMessage(error)}`,
+      );
+
+      return null;
+    }
+  }
+
+  /**
+   * Выполняет подграф узла `sub_workflow` в рамках родительского запуска.
+   *
+   * Подграф не копируется в родительский план и не выполняется «плоско»: его
+   * узлы получают префикс id `sub_<nodeId>__` и проходят собственный план
+   * уровней через тот же {@link executeNodeAsync} — с тем же `runId`, но с
+   * контекстом ветки (`visitedWorkflows + workflowId`, `depth + 1`). Это даёт
+   * полную рекурсию (вложенный `sub_workflow` внутри подграфа работает),
+   * изоляцию строк `node_runs` и единый SSE-поток прогресса.
+   *
+   * Результат — плоский объект `outputs.result`, собранный из выходов
+   * терминальных узлов подграфа (у которых нет исходящих связей). Так
+   * зависимый узел родителя читает результат через порт `result` (см.
+   * `NODE_PORT_CONTRACT.sub_workflow`), не зная внутренних id.
+   *
+   * @param node - узел `sub_workflow` родительского графа
+   * @param runId - uuid запуска
+   * @param subContext - контекст ветки родителя
+   * @returns `{ result }` — выходы терминальных узлов подграфа
+   * @throws NodeDataValidationException если `data` узла не проходят схему
+   * @throws SubWorkflowRecursionException при циклической ссылке
+   * @throws SubWorkflowDepthException при превышении глубины вложенности
+   * @throws NotFoundException если подграф чужой или не найден
+   * @throws BadRequestException если подграф нельзя выполнить (цикл внутри, только аннотации)
+   * @throws Error если узел подграфа исчерпал попытки
+   */
+  private async executeSubWorkflowGraphAsync(
+    node: NodeDto,
+    runId: string,
+    subContext: SubWorkflowContext,
+  ): Promise<Record<string, unknown>> {
+    const target = await executeSubWorkflowNode(node.data, subContext);
+
+    // Пустой подграф — не ошибка: «выполнять нечего» так же легально, как
+    // пустой корневой граф (KI-037). План для него строить незачем.
+    if (target.subGraph.nodes.length === 0) {
+      this.logger.warn(
+        `Узел ${node.id}: подграф ${target.workflowId} пуст — результат пустой`,
+      );
+
+      return { result: {} };
+    }
+
+    // DESIGN § 5.5: расхождение со снимком версии — предупреждение, а не
+    // отказ: иначе правка дочернего workflow делала бы родительский запуск
+    // невозможным без ручной перенастройки ссылки.
+    if (typeof node.data.version === 'number' && node.data.version !== target.version) {
+      this.logger.warn(
+        `Узел ${node.id}: подграф ${target.workflowId} изменился ` +
+          `(снимок v${node.data.version}, в БД v${target.version}) — запуск продолжается`,
+      );
+    }
+
+    const prefixed = prefixSubWorkflowGraph(target.subGraph, node.id);
+    const subPlan = await this.engineService.buildExecutionPlanAsync(prefixed);
+
+    // Копия стека на ветку: две ссылки на один workflow в разных ветках — не
+    // цикл, а вот спуск внутрь уже посещённого — цикл.
+    const branchContext: SubWorkflowContext = {
+      ...subContext,
+      visitedWorkflows: new Set([...subContext.visitedWorkflows, target.workflowId]),
+      depth: subContext.depth + 1,
+    };
+
+    const outputs: Record<string, Record<string, unknown>> = {};
+
+    for (const level of subPlan.levels) {
+      const results = await Promise.allSettled(
+        level.map((subNodeId) =>
+          this.executeNodeAsync(runId, subNodeId, prefixed, subPlan, branchContext),
+        ),
+      );
+
+      let failure: unknown = null;
+
+      results.forEach((result, index) => {
+        const subNodeId = level[index];
+
+        if (result.status === 'fulfilled') {
+          outputs[subNodeId] = result.value;
+
+          return;
+        }
+
+        failure ??= result.reason;
+      });
+
+      // Падение узла подграфа останавливает подграф целиком: ошибка
+      // поднимается наверх как ошибка узла `sub_workflow` (DESIGN § 5.6).
+      // Узлы того же уровня уже отработали — `allSettled` (RULES 4.16).
+      if (failure !== null) {
+        throw failure instanceof Error
+          ? failure
+          : new Error(`Узел ${node.id}: подграф ${target.workflowId} упал`);
+      }
+    }
+
+    // Терминальные узлы (без исходящих связей) формируют результат узла.
+    const result: Record<string, unknown> = {};
+
+    for (const subNodeId of subPlan.order) {
+      const dependents = subPlan.executionMap[subNodeId]?.dependents ?? [];
+
+      if (dependents.length === 0) {
+        Object.assign(result, outputs[subNodeId] ?? {});
+      }
+    }
+
+    this.logger.log(
+      `Узел ${node.id} запуска ${runId}: подграф ${target.workflowId} ` +
+        `(${target.name}) выполнен, узлов=${Object.keys(outputs).length}`,
+    );
+
+    return { result };
   }
 
   /**

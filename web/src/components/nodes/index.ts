@@ -14,4 +14,5 @@ export { HttpNode } from './HttpNode';
 export { ImageGenNode } from './ImageGenNode';
 export { LLMNode } from './LLMNode';
 export { OutputNode } from './OutputNode';
+export { SubWorkflowNode } from './SubWorkflowNode';
 export { TextNode } from './TextNode';

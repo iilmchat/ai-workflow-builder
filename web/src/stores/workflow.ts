@@ -42,6 +42,7 @@ import {
   type NodeData,
   type NodeType,
   type OutputNodeData,
+  type SubWorkflowNodeData,
 } from '@/types/graph';
 import {
   DEFAULT_HTTP_METHOD,
@@ -50,6 +51,10 @@ import {
   validateTimeoutMs,
 } from '@/lib/http-node-fields';
 import { validateConditionOperator } from '@/lib/condition-node-fields';
+import {
+  validateInputsMap,
+  validateWorkflowVersion,
+} from '@/lib/sub-workflow-fields';
 import { validateMaxTokensOverride, validateReasoningEffort } from '@/lib/llm-node-fields';
 import {
   cloneNodesForDuplicate,
@@ -733,6 +738,14 @@ function createNode(
         // Режим в v0.8 один (DESIGN § 8.5): `llm-judge` — задача v0.8.x.
         data: { kind: 'compare', mode: 'diff' },
       };
+    // R6.7 (KI-200): ссылка на другой workflow. Пустая до выбора в селекте;
+    // снимок `version` появляется в момент выбора подграфа (DESIGN § 5.5).
+    case 'sub_workflow':
+      return {
+        ...shared,
+        type: 'sub_workflow',
+        data: { kind: 'sub_workflow', workflowId: '' },
+      };
     // Нет default: — новый NodeType поймает tsc (KI-129).
   }
 }
@@ -914,6 +927,31 @@ function nodeDataFromApi(type: NodeType, data: Record<string, unknown>): NodeDat
       // backend его отвергнет, поэтому чужое значение не переносим (иначе узел
       // стал бы незапускаемым).
       const result: CompareNodeData = { kind: 'compare', mode: 'diff' };
+
+      return result;
+    }
+    case 'sub_workflow': {
+      // R6.7 (KI-200): переносим ссылку на подграф, снимок версии и маппинг
+      // входов. Пустой `workflowId` не подменяем (KI-069): узел честно
+      // остаётся «не выбран», а Run падает валидацией на backend.
+      // KI-129: поля со значением `undefined` не присваиваем вовсе — иначе
+      // Load терял бы настройки автора, а следующий Save затирал их в БД.
+      const result: SubWorkflowNodeData = {
+        kind: 'sub_workflow',
+        workflowId: typeof data.workflowId === 'string' ? data.workflowId : '',
+      };
+
+      const version = validateWorkflowVersion(data.version);
+
+      if (version !== undefined) {
+        result.version = version;
+      }
+
+      const inputsMap = validateInputsMap(data.inputsMap);
+
+      if (inputsMap !== undefined) {
+        result.inputsMap = inputsMap;
+      }
 
       return result;
     }

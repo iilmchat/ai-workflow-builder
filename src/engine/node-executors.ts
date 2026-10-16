@@ -11,9 +11,15 @@
  * `Record<string, unknown>`). Так строгая схема конкретного типа узла не ломает
  * forward-compat: UI может добавлять свои поля (`selected`, `measured`, …),
  * не роняя запуск (RULES 1.17 / 4.15).
+ *
+ * Узел `sub_workflow` (R6.7, KI-200) — исключение по природе: он не
+ * преобразует входы, а **загружает другой граф**. Его исполнитель живёт здесь
+ * же, но возвращает описание подграфа, который выполняет
+ * `ExecutionEngineService` (см. `executeSubWorkflowNode`).
  */
+import { NotFoundException } from '@nestjs/common';
 import { z } from 'zod';
-import type { NodeDto } from './dto/index.js';
+import type { EdgeDto, GraphDto, NodeDto } from './dto/index.js';
 import { inferInputPortName } from './node-ports.js';
 
 /**
@@ -48,7 +54,9 @@ export function executeImageGenNodeStub(_node: NodeDto): Record<string, unknown>
  * переносятся между Save/Load — но игнорируются при Run.
  *
  * Новые типы R6.5.1 (`http`, `condition`, `output`, `compare`) сюда **не**
- * входят: это исполняемые узлы, а не заметки на холсте.
+ * входят: это исполняемые узлы, а не заметки на холсте. `sub_workflow` (R6.7)
+ * — тоже исполняемый узел: он загружает и выполняет другой граф, поэтому его
+ * здесь нет.
  */
 export const ANNOTATION_NODE_TYPES: ReadonlySet<string> = new Set(['comment']);
 
@@ -875,4 +883,233 @@ export function executeCompareNode(
   const equal = stringifyOperand(left) === stringifyOperand(right);
 
   return { diff: equal ? '' : buildDiffDescription(left, right), equal };
+}
+
+/* ─────────────────────────── Узел sub_workflow ─────────────────────────── */
+
+/**
+ * Предельная глубина вложенности под-воркфлоу (DESIGN v0.8 § 5.6, KI-200).
+ *
+ * Считается по числу **вложенных** уровней: узел верхнего графа выполняется на
+ * глубине 0, его подграф — на глубине 1, и так далее. Узел, который попытался
+ * бы загрузить шестой уровень, падает с ошибкой «Максимальная глубина
+ * вложенности». Ограничение защищает от бесконечной цепочки разных workflow
+ * (цикл ловится отдельно — по {@link SubWorkflowContext.visitedWorkflows}).
+ */
+export const SUB_WORKFLOW_MAX_DEPTH = 5;
+
+/**
+ * Данные узла `sub_workflow`: ссылка на другой workflow того же владельца.
+ *
+ * `version` — снимок версии графа на момент, когда автор выбрал подграф
+ * (DESIGN § 5.5): расхождение не блокирует запуск, а показывается в UI как
+ * «есть новая версия» — иначе правка дочернего workflow молча ломала бы
+ * родительский запуск.
+ *
+ * `inputsMap` — маппинг «имя входа родителя → ключ в `inputs` подграфа».
+ * В v0.8 поле хранится и переносится между Save/Load, но execитор его пока не
+ * применяет: у подграфа один вход (`prompt`), а сам маппинг имеет смысл только
+ * вместе с именованными портами входов (KI-278/KI-279).
+ */
+export interface SubWorkflowNodeData {
+  kind: 'sub_workflow';
+  /** uuid workflow-подграфа. */
+  workflowId: string;
+  /** Снимок версии графа (опционально). */
+  version?: number;
+  /** Маппинг: имя входа родителя → ключ в inputs подграфа. */
+  inputsMap?: Record<string, string>;
+}
+
+/**
+ * Zod-схема данных узла `sub_workflow`.
+ *
+ * `workflowId` — обязательный uuid: пустая строка (узел, который ещё не
+ * настроили) приводит к внятной ошибке валидации узла, а не к походу в БД с
+ * мусорным ключом. `version`/`inputsMap` необязательны.
+ */
+const SubWorkflowNodeDataSchema = z.object({
+  kind: z.literal('sub_workflow'),
+  workflowId: z.uuid(),
+  version: z.number().int().positive().optional(),
+  inputsMap: z.record(z.string(), z.string()).optional(),
+});
+
+/**
+ * Минимальная запись workflow, которой достаточно исполнителю под-воркфлоу.
+ *
+ * Структурно ей удовлетворяет `Workflow` из `src/db/schema.ts` (там есть и
+ * `userId`, и служебные даты) — поэтому `WorkflowService` подходит на роль
+ * {@link SubWorkflowLookup} без адаптеров и без импорта схемы БД в executor.
+ */
+export interface SubWorkflowRecord {
+  id: string;
+  name: string;
+  version: number;
+  nodes: NodeDto[];
+  edges: EdgeDto[];
+}
+
+/**
+ * Источник workflow для узла `sub_workflow`.
+ *
+ * Объявлен как интерфейс, а не как `WorkflowService`: executor остаётся
+ * свободным от Nest-DI и БД (его тестируют без `TestingModule`), а
+ * `ExecutionEngineService` передаёт в контекст настоящий сервис.
+ */
+export interface SubWorkflowLookup {
+  findOneAsync(id: string, userId?: string): Promise<SubWorkflowRecord | null>;
+}
+
+/**
+ * Контекст выполнения ветки графа для узла `sub_workflow`.
+ *
+ * Контекст неизменяем: при спуске в подграф создаётся новый объект с
+ * дополненным `visitedWorkflows` и увеличенной `depth` — так параллельные
+ * ветки одного уровня не видят чужих пометок (см.
+ * `ExecutionEngineService.executeSubWorkflowGraphAsync`).
+ */
+export interface SubWorkflowContext {
+  /** Источник workflow (в движке — `WorkflowService`). */
+  readonly lookup: SubWorkflowLookup;
+  /**
+   * Владелец корневого запуска.
+   *
+   * `null` — владельца определить не удалось; в этом случае любой подграф
+   * считается недоступным (404): молчаливая загрузка «без фильтра по
+   * владельцу» раскрыла бы чужой workflow.
+   */
+  readonly rootUserId: string | null;
+  /** Workflow, уже посещённые в текущей ветке (защита от рекурсии). */
+  readonly visitedWorkflows: ReadonlySet<string>;
+  /** Текущая глубина вложенности (0 — корневой граф). */
+  readonly depth: number;
+}
+
+/** Результат загрузки подграфа: сам граф плюс метаданные ссылки. */
+export interface SubWorkflowTarget {
+  /** Граф под-воркфлоу (id узлов — «как в БД», без префикса). */
+  subGraph: GraphDto;
+  /** uuid подграфа. */
+  workflowId: string;
+  /** Человекочитаемое имя подграфа (для логов). */
+  name: string;
+  /** Версия подграфа в БД (для сравнения со снимком `data.version`). */
+  version: number;
+}
+
+/** Ошибка: под-воркфлоу ссылается на workflow, уже выполняющийся в ветке. */
+export class SubWorkflowRecursionException extends Error {
+  /**
+   * @param workflowId - uuid workflow, на который пришла повторная ссылка
+   */
+  constructor(workflowId: string) {
+    super(`Циклическая ссылка на workflow: ${workflowId}`);
+    this.name = 'SubWorkflowRecursionException';
+  }
+}
+
+/** Ошибка: превышена предельная глубина вложенности под-воркфлоу. */
+export class SubWorkflowDepthException extends Error {
+  /** @param depth - глубина, на которой узел попытался загрузить подграф */
+  constructor(depth: number) {
+    super(
+      `Максимальная глубина вложенности ${SUB_WORKFLOW_MAX_DEPTH} ` +
+        `(попытка загрузить подграф на глубине ${depth})`,
+    );
+    this.name = 'SubWorkflowDepthException';
+  }
+}
+
+/**
+ * Загружает подграф узла `sub_workflow` (R6.7, KI-200, DESIGN v0.8 § 5.3).
+ *
+ * Сам граф **не выполняет**: executor возвращает описание подграфа, а
+ * рекурсивный обход уровней делает `ExecutionEngineService` — только у него
+ * есть доступ к `node_runs`, событиям и остальным исполнителям.
+ *
+ * Проверки по порядку:
+ * 1. `data` проходит Zod-схему (`parseNodeData`);
+ * 2. `workflowId` уже встречался в этой ветке → {@link SubWorkflowRecursionException};
+ * 3. глубина достигла {@link SUB_WORKFLOW_MAX_DEPTH} → {@link SubWorkflowDepthException};
+ * 4. владелец корневого запуска неизвестен или подграф ему не принадлежит →
+ *    `NotFoundException` (404): чужой workflow неотличим от несуществующего,
+ *    существование не раскрывается (как в `WorkflowService.findOneAsync`).
+ *
+ * @param data - сырые `data` узла из jsonb-графа
+ * @param context - контекст ветки: доступ к workflow, владелец, стек и глубина
+ * @returns подграф и его метаданные
+ * @throws NodeDataValidationException если `data` не соответствуют схеме
+ *   (в том числе пустой/не-uuid `workflowId`)
+ * @throws SubWorkflowRecursionException при циклической ссылке
+ * @throws SubWorkflowDepthException при превышении глубины вложенности
+ * @throws NotFoundException если workflow не найден или принадлежит другому владельцу
+ */
+export async function executeSubWorkflowNode(
+  data: unknown,
+  context: SubWorkflowContext,
+): Promise<SubWorkflowTarget> {
+  const parsed = parseNodeData('sub_workflow', SubWorkflowNodeDataSchema, data);
+
+  if (context.visitedWorkflows.has(parsed.workflowId)) {
+    throw new SubWorkflowRecursionException(parsed.workflowId);
+  }
+
+  if (context.depth >= SUB_WORKFLOW_MAX_DEPTH) {
+    throw new SubWorkflowDepthException(context.depth);
+  }
+
+  // Владельца нет — считаем подграф недоступным: `findOneAsync` без фильтра по
+  // владельцу вернул бы чужой workflow (RULES 5.1 — доступ только свои).
+  if (context.rootUserId === null) {
+    throw new NotFoundException(`Workflow ${parsed.workflowId} не найден`);
+  }
+
+  const workflow = await context.lookup.findOneAsync(
+    parsed.workflowId,
+    context.rootUserId,
+  );
+
+  // Чужой workflow неотличим от несуществующего: 404, а не 403 (DESIGN § 5,
+  // тот же приём, что в `WorkflowService.exportAsync`).
+  if (workflow === null) {
+    throw new NotFoundException(`Workflow ${parsed.workflowId} не найден`);
+  }
+
+  return {
+    subGraph: { nodes: workflow.nodes, edges: workflow.edges },
+    workflowId: workflow.id,
+    name: workflow.name,
+    version: workflow.version,
+  };
+}
+
+/**
+ * Добавляет к id узлов и связей подграфа префикс `sub_<nodeId>__` (DESIGN § 5.3).
+ *
+ * Префикс изолирует строки `node_runs` подграфа от строк родительского графа:
+ * `node_runs` уникален по (`run_id`, `node_id`), а id узлов внутри workflow
+ * произвольны и в родителе могут совпасть. Вложенный под-воркфлоу получает
+ * префикс дважды (`sub_A__sub_B__node`) — id остаётся уникальным на любой
+ * глубине.
+ *
+ * @param graph - граф под-воркфлоу с исходными id
+ * @param nodeId - id узла `sub_workflow` в родительском графе
+ * @returns копия графа с префиксованными id узлов и связей
+ */
+export function prefixSubWorkflowGraph(graph: GraphDto, nodeId: string): GraphDto {
+  const prefix = `sub_${nodeId}__`;
+
+  return {
+    nodes: graph.nodes.map((node) => ({ ...node, id: `${prefix}${node.id}` })),
+    edges: graph.edges.map((edge) => ({
+      ...edge,
+      // id связи тоже префиксуем: он участвует в fallback-ключе входа для
+      // узлов без контракта портов (KI-003), и дубли между подграфами
+      // склеили бы входы разных узлов.
+      id: `${prefix}${edge.id}`,
+      source: `${prefix}${edge.source}`,
+      target: `${prefix}${edge.target}`,
+    })),
+  };
 }

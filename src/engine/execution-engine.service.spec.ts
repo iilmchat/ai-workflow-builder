@@ -10,10 +10,17 @@ import { ExecutionEngineService } from './execution-engine.service.js';
 import { LlmNodeExecutor } from '../llm/llm-node-executor.service.js';
 import { MediaNodeExecutor } from '../media/media-node-executor.service.js';
 import { LlmProviderException } from '../llm/llm-provider.interface.js';
-import { UnsupportedNodeTypeException } from './node-executors.js';
+import { WorkflowService } from '../workflow/workflow.service.js';
+import { UnsupportedNodeTypeException, type SubWorkflowRecord } from './node-executors.js';
 
 /** Стабильный uuid запуска. */
 const RUN_ID = '22222222-2222-4222-8222-222222222222';
+
+/** Владелец запуска (R6.7): его отдаёт join-запрос в двойнике БД. */
+const RUN_OWNER_ID = '44444444-4444-4444-8444-444444444444';
+
+/** uuid подграфа в тестах R6.7. */
+const SUB_WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
 
 /** Строка `workflow_runs` в тестовом двойнике БД. */
 interface FakeRun {
@@ -273,6 +280,18 @@ function createFakeDb(runId: string) {
               : [];
           },
         }),
+        // R6.7 (KI-200): `ExecutionEngineService` читает владельца корневого
+        // workflow join-запросом (`workflow_runs` → `workflows`). Двойник
+        // отвечает владельцем, если запуск существует.
+        innerJoin: (_joined: unknown, _on: unknown) => ({
+          where: (condition: unknown) => ({
+            limit: async (): Promise<unknown[]> => {
+              const id = wherePairs(condition).get('id');
+
+              return id === run.id ? [{ userId: RUN_OWNER_ID }] : [];
+            },
+          }),
+        }),
       }),
     }),
   };
@@ -286,6 +305,7 @@ describe('ExecutionEngineService', () => {
   let publish: ReturnType<typeof vi.fn>;
   let llmExecute: ReturnType<typeof vi.fn>;
   let mediaExecute: ReturnType<typeof vi.fn>;
+  let findWorkflow: ReturnType<typeof vi.fn>;
   let fake: ReturnType<typeof createFakeDb>;
 
   /** Типы опубликованных событий в порядке публикации. */
@@ -358,6 +378,10 @@ describe('ExecutionEngineService', () => {
     mediaExecute = vi.fn((_node: NodeDto, _inputs: Record<string, unknown>, _runId: string) =>
       Promise.resolve(mediaNodeResult('https://cdn/img.png')),
     );
+    // R6.7: подграфы приходят из WorkflowService — в юнит-тесте он замокан.
+    findWorkflow = vi.fn((_id: string, _userId?: string) =>
+      Promise.resolve(null as SubWorkflowRecord | null),
+    );
     fake = createFakeDb(RUN_ID);
 
     const moduleRef = await Test.createTestingModule({
@@ -370,6 +394,8 @@ describe('ExecutionEngineService', () => {
         { provide: LlmNodeExecutor, useValue: { executeAsync: llmExecute } },
         // v0.6.0b.2.2: media-узел ходит в CreativeLab — тоже замокан.
         { provide: MediaNodeExecutor, useValue: { executeAsync: mediaExecute } },
+        // R6.7 (KI-200): источник подграфов для узла sub_workflow.
+        { provide: WorkflowService, useValue: { findOneAsync: findWorkflow } },
       ],
     }).compile();
 
@@ -1400,5 +1426,234 @@ describe('ExecutionEngineService', () => {
     // Ни run_started (планирование не дошло), ни run_completed (это процессор).
     expect(eventTypes()).toEqual([]);
     expect(lastEventOfType('run_completed')).toBeUndefined();
+  });
+
+  /* ──────────────────────── sub_workflow (R6.7, KI-200) ──────────────────── */
+
+  describe('узлы sub_workflow', () => {
+    /** Подграф из двух узлов: Text → LLM (терминальный — LLM). */
+    const subGraph: SubWorkflowRecord = {
+      id: SUB_WORKFLOW_ID,
+      name: 'Подграф A',
+      version: 2,
+      nodes: [
+        { id: 'S1', type: 'text', data: { value: 'под-' } },
+        { id: 'S2', type: 'llm', data: {} },
+      ],
+      edges: [edge('se1', 'S1', 'S2', 'text', 'prompt')],
+    };
+
+    /** Читает строку `node_runs` по id узла. */
+    const rowOf = (nodeId: string): FakeNodeRun | undefined =>
+      fake.rows.find((row) => row.nodeId === nodeId);
+
+    it('выполняет подграф как часть родительского запуска и кладёт результат в outputs.result', async () => {
+      findWorkflow.mockResolvedValue(subGraph);
+
+      const graph: GraphDto = {
+        nodes: [
+          node('sub-1', 'sub_workflow', {
+            kind: 'sub_workflow',
+            workflowId: SUB_WORKFLOW_ID,
+          }),
+          node('out-1', 'output', { name: 'answer' }),
+        ],
+        edges: [edge('e1', 'sub-1', 'out-1', 'result-output', 'text-input')],
+      };
+
+      const result = await service.executeAsync(RUN_ID, graph);
+
+      expect(result.status).toBe('completed');
+
+      // Узел sub_workflow: результат подграфа → outputs.result.
+      expect(result.outputs['sub-1']).toEqual({ result: { text: 'ответ модели' } });
+
+      // Результат подграфа доехал до зависимого узла родителя (контракт порта
+      // `result-output` → `result`).
+      expect(result.outputs['out-1']).toEqual({
+        answer: { text: 'ответ модели' },
+      });
+
+      // Строка node_runs самого узла sub_workflow — completed с result.
+      expect(rowOf('sub-1')).toMatchObject({
+        status: 'completed',
+        nodeType: 'sub_workflow',
+        outputs: { result: { text: 'ответ модели' } },
+      });
+
+      // Узлы подграфа изолированы префиксом `sub_<nodeId>__` (DESIGN § 5.3).
+      expect(rowOf('sub_sub-1__S1')).toMatchObject({
+        status: 'completed',
+        nodeType: 'text',
+      });
+      expect(rowOf('sub_sub-1__S2')).toMatchObject({
+        status: 'completed',
+        nodeType: 'llm',
+      });
+
+      // LLM подграфа получил вход от Text подграфа (сбор входов работает
+      // на префиксованных id).
+      expect(llmExecute).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'sub_sub-1__S2' }),
+        { prompt: 'под-' },
+      );
+
+      // Подграф загружен у владельца запуска: фильтр по rootUserId.
+      expect(findWorkflow).toHaveBeenCalledWith(SUB_WORKFLOW_ID, RUN_OWNER_ID);
+    });
+
+    it('несколько терминальных узлов подграфа сливаются в плоский result', async () => {
+      findWorkflow.mockResolvedValue({
+        ...subGraph,
+        nodes: [
+          { id: 'S1', type: 'text', data: { value: 'первый' } },
+          { id: 'S2', type: 'text', data: { value: 'второй' } },
+        ],
+        edges: [],
+      });
+
+      const graph: GraphDto = {
+        nodes: [
+          node('sub-1', 'sub_workflow', {
+            kind: 'sub_workflow',
+            workflowId: SUB_WORKFLOW_ID,
+          }),
+        ],
+        edges: [],
+      };
+
+      const result = await service.executeAsync(RUN_ID, graph);
+
+      // Оба узла терминальны (связей нет) — в result оба выхода; ключ `text`
+      // перезаписывается последним по порядку плана.
+      expect(result.outputs['sub-1']).toEqual({ result: { text: 'второй' } });
+    });
+
+    it('вложенный sub_workflow выполняется рекурсивно (глубина 2)', async () => {
+      const innerId = '66666666-6666-4666-8666-666666666666';
+      const innerGraph: SubWorkflowRecord = {
+        id: innerId,
+        name: 'Внутренний',
+        version: 1,
+        nodes: [{ id: 'I1', type: 'text', data: { value: 'внутри' } }],
+        edges: [],
+      };
+      const outerGraph: SubWorkflowRecord = {
+        id: SUB_WORKFLOW_ID,
+        name: 'Внешний',
+        version: 1,
+        nodes: [
+          {
+            id: 'O1',
+            type: 'sub_workflow',
+            data: { kind: 'sub_workflow', workflowId: innerId },
+          },
+        ],
+        edges: [],
+      };
+
+      findWorkflow.mockImplementation((id: string) =>
+        Promise.resolve(id === innerId ? innerGraph : outerGraph),
+      );
+
+      const graph: GraphDto = {
+        nodes: [
+          node('sub-1', 'sub_workflow', {
+            kind: 'sub_workflow',
+            workflowId: SUB_WORKFLOW_ID,
+          }),
+        ],
+        edges: [],
+      };
+
+      const result = await service.executeAsync(RUN_ID, graph);
+
+      expect(result.status).toBe('completed');
+      expect(result.outputs['sub-1']).toEqual({
+        result: { result: { text: 'внутри' } },
+      });
+
+      // Префикс накопился дважды: id узлов не пересекаются с родителем.
+      expect(rowOf('sub_sub-1__O1')).toMatchObject({ status: 'completed' });
+      expect(rowOf('sub_sub_sub-1__O1__I1')).toMatchObject({ status: 'completed' });
+    });
+
+    it('циклическая ссылка workflow на себя → узел падает «Циклическая ссылка»', async () => {
+      const selfId = '77777777-7777-4777-8777-777777777777';
+      const selfGraph: SubWorkflowRecord = {
+        id: selfId,
+        name: 'C',
+        version: 1,
+        nodes: [
+          {
+            id: 'self',
+            type: 'sub_workflow',
+            data: { kind: 'sub_workflow', workflowId: selfId },
+          },
+        ],
+        edges: [],
+      };
+
+      findWorkflow.mockResolvedValue(selfGraph);
+
+      const graph: GraphDto = {
+        nodes: [
+          node('sub-root', 'sub_workflow', {
+            kind: 'sub_workflow',
+            workflowId: selfId,
+          }),
+        ],
+        edges: [],
+      };
+
+      await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow(
+        'Циклическая ссылка на workflow',
+      );
+
+      expect(fake.run.status).toBe('failed');
+      expect(fake.run.error).toContain('Циклическая ссылка');
+      expect(rowOf('sub-root')?.status).toBe('failed');
+      // Вложенный узел тоже зафиксирован как failed — видно, где замкнулось.
+      expect(rowOf('sub_sub-root__self')?.status).toBe('failed');
+    });
+
+    it('чужой workflow → узел падает 404-ошибкой (существование не раскрывается)', async () => {
+      findWorkflow.mockResolvedValue(null);
+
+      const graph: GraphDto = {
+        nodes: [
+          node('sub-1', 'sub_workflow', {
+            kind: 'sub_workflow',
+            workflowId: SUB_WORKFLOW_ID,
+          }),
+        ],
+        edges: [],
+      };
+
+      await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow(
+        /Workflow .* не найден/,
+      );
+
+      expect(rowOf('sub-1')?.status).toBe('failed');
+      expect(rowOf('sub-1')?.error).toContain('не найден');
+      // Узлов подграфа в node_runs нет: граф даже не загрузился.
+      expect(fake.rows).toHaveLength(1);
+    });
+
+    it('пустой workflowId падает валидацией данных узла, не доходя до БД', async () => {
+      const graph: GraphDto = {
+        nodes: [
+          node('sub-1', 'sub_workflow', { kind: 'sub_workflow', workflowId: '' }),
+        ],
+        edges: [],
+      };
+
+      await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow(
+        'Некорректные данные узла sub_workflow',
+      );
+
+      expect(findWorkflow).not.toHaveBeenCalled();
+      expect(rowOf('sub-1')?.status).toBe('failed');
+    });
   });
 });

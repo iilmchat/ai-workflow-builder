@@ -7,6 +7,7 @@ import { HttpNode } from '@/components/nodes/HttpNode';
 import { ImageGenNode } from '@/components/nodes/ImageGenNode';
 import { LLMNode } from '@/components/nodes/LLMNode';
 import { OutputNode } from '@/components/nodes/OutputNode';
+import { SubWorkflowNode } from '@/components/nodes/SubWorkflowNode';
 import { TextNode } from '@/components/nodes/TextNode';
 import i18n from '@/i18n';
 import type {
@@ -20,6 +21,7 @@ import type {
   NodeCategory,
   NodeType,
   OutputFlowNode,
+  SubWorkflowFlowNode,
   TextFlowNode,
 } from '@/types/graph';
 
@@ -39,7 +41,8 @@ export type NodeComponent =
   | ComponentType<NodeProps<HttpFlowNode>>
   | ComponentType<NodeProps<ConditionFlowNode>>
   | ComponentType<NodeProps<OutputFlowNode>>
-  | ComponentType<NodeProps<CompareFlowNode>>;
+  | ComponentType<NodeProps<CompareFlowNode>>
+  | ComponentType<NodeProps<SubWorkflowFlowNode>>;
 
 /**
  * Описание узла в реестре: единый источник правды.
@@ -169,6 +172,20 @@ export const NODE_REGISTRY = {
     // Два входа `a`/`b` — оба target-хендлы, поэтому вставка в связь возможна.
     canBeInsertedOnEdge: true,
     capabilities: { externalState: false, userConfig: false },
+  },
+  // R6.7 (KI-200, DESIGN v0.8 § 5): узел-ссылка на другой workflow владельца.
+  // Категория `composition` — секция «Композиция» в каталоге (§ 5.4).
+  sub_workflow: {
+    labelKey: 'node.sub_workflow.label',
+    icon: '🧩',
+    category: 'composition',
+    component: SubWorkflowNode,
+    // Вход `text-input` (порт `prompt`) — узел можно вставить в связь.
+    canBeInsertedOnEdge: true,
+    // `userConfig`: до запуска нужно выбрать подграф в селекте. `externalState`
+    // — `false`: ссылка лежит в `data` самого графа, а не во внешнем хранилище,
+    // как у будущих узлов-сервисов (KI-128).
+    capabilities: { externalState: false, userConfig: true },
   },
 } as const satisfies Record<NodeType, NodeRegistryEntry>;
 

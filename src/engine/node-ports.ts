@@ -76,6 +76,19 @@ export const NODE_PORT_CONTRACT: Record<string, NodePortContract> = {
     targetHandleId: 'text-input',
     inputPortName: 'prompt',
   },
+  // R6.7 (KI-200). Входной хендл — `text-input` (порт `prompt`: то, что
+  // приходит в подграф как основной вход). Выходной — **`result-output`**, а не
+  // `text-output`: `handleIdToOutputPort` выбирает порт по id хендла и не знает
+  // тип узла-источника, а `text-output` уже занят `text`/`llm` и переводится в
+  // порт `text`. С `text-output` результат подграфа (`outputs.result`) не
+  // доехал бы до зависимого узла — он прочитал бы `outputs.text` и получил
+  // `null` (KI-301).
+  sub_workflow: {
+    sourceHandleId: 'result-output',
+    outputPortName: 'result',
+    targetHandleId: 'text-input',
+    inputPortName: 'prompt',
+  },
   // `compare` сознательно БЕЗ контракта: `NodePortContract` описывает один
   // вход, а узлу нужны два (`a` и `b`). С контрактом обе связи свернулись бы
   // в один ключ (KI-035) и второй операнд потерялся бы. Без контракта работает

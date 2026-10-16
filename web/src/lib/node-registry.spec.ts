@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import en from '@/i18n/en.json';
 import ru from '@/i18n/ru.json';
 import { canInsertOnEdge, isNodeType, NODE_REGISTRY, NODE_TYPES } from './node-registry';
-import type { NodeType } from '@/types/graph';
+import { NODE_CATEGORIES, type NodeType } from '@/types/graph';
 
 /**
  * Заглушка i18n: настоящий модуль на импорте пишет `document.documentElement.lang`
@@ -20,14 +20,25 @@ vi.mock('@/i18n', () => {
 /** Типы, добавленные в R6.5.2 (KI-105, DESIGN v0.8 § 8). */
 const NEW_TYPES = ['http', 'condition', 'output', 'compare'] as const;
 
+/** Тип, добавленный в R6.7 (KI-200, DESIGN v0.8 § 5). */
+const SUB_WORKFLOW_TYPE = 'sub_workflow' as const;
+
 /** Все типы реестра — для проверки labelKey в обоих i18n-файлах. */
 const ALL_TYPES: readonly NodeType[] = [...NODE_TYPES];
 
 describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
   it('все четыре типа зарегистрированы, реестр покрывает NodeType целиком', () => {
-    expect(ALL_TYPES).toHaveLength(8);
+    // R6.7: типов стало девять (+sub_workflow).
+    expect(ALL_TYPES).toHaveLength(9);
     expect(ALL_TYPES).toEqual(
-      expect.arrayContaining(['text', 'llm', 'image_generation', 'comment', ...NEW_TYPES]),
+      expect.arrayContaining([
+        'text',
+        'llm',
+        'image_generation',
+        'comment',
+        ...NEW_TYPES,
+        SUB_WORKFLOW_TYPE,
+      ]),
     );
   });
 
@@ -88,5 +99,31 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
         userConfig: false,
       });
     }
+  });
+
+  it('R6.7: sub_workflow — отдельная категория «Композиция» (DESIGN § 5.4)', () => {
+    expect(NODE_REGISTRY.sub_workflow.category).toBe('composition');
+    expect(NODE_CATEGORIES).toContain('composition');
+    expect(NODE_REGISTRY.sub_workflow.icon).toBe('🧩');
+    expect(typeof NODE_REGISTRY.sub_workflow.component).toBe('function');
+    // Вход `text-input` есть — узел вставляется в связь (KI-259).
+    expect(canInsertOnEdge(SUB_WORKFLOW_TYPE)).toBe(true);
+    // Подграф выбирают до запуска; внешнего состояния узел не держит.
+    expect(NODE_REGISTRY.sub_workflow.capabilities).toEqual({
+      externalState: false,
+      userConfig: true,
+    });
+  });
+
+  it('R6.7: isNodeType узнаёт sub_workflow, а label есть в обоих i18n', () => {
+    expect(isNodeType(SUB_WORKFLOW_TYPE)).toBe(true);
+
+    const key = NODE_REGISTRY.sub_workflow.labelKey;
+
+    expect(ru, `ru: ${key}`).toHaveProperty([key]);
+    expect(en, `en: ${key}`).toHaveProperty([key]);
+    // Ключ категории — иначе секция каталога показала бы сырой ключ.
+    expect(ru).toHaveProperty(['catalog.category.composition']);
+    expect(en).toHaveProperty(['catalog.category.composition']);
   });
 });

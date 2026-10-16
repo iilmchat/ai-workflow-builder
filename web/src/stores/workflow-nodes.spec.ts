@@ -333,3 +333,140 @@ describe('nodeDataFromApi — Load узлов R6.5.2', () => {
     expect(firstLoad).toHaveLength(4);
   });
 });
+
+describe('sub_workflow — createNode и Load (R6.7, KI-200)', () => {
+  /** uuid подграфа (как в БД). */
+  const SUB_WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
+
+  beforeEach(() => {
+    useWorkflowStore.setState({
+      nodes: [],
+      edges: [],
+      past: [],
+      future: [],
+      notice: null,
+      isLoading: false,
+    });
+    vi.mocked(getWorkflowAsync).mockReset();
+  });
+
+  it('createNode: пустая ссылка и никаких лишних ключей', () => {
+    const data = dataOfNewNode('sub_workflow');
+
+    expect(data).toEqual({ kind: 'sub_workflow', workflowId: '' });
+    // `version` появится только в момент выбора подграфа (DESIGN § 5.5).
+    expect(Object.keys(data).sort()).toEqual(['kind', 'workflowId']);
+  });
+
+  it('type узла в графе — sub_workflow (backend-контракт, KI-200)', () => {
+    state().addNode('sub_workflow', AT_ZERO);
+
+    expect(state().nodes[0]?.type).toBe('sub_workflow');
+  });
+
+  it('nodeDataFromApi: переносит workflowId, version и inputsMap', async () => {
+    vi.mocked(getWorkflowAsync).mockResolvedValue({
+      id: 'wf-sub',
+      userId: 'user-smoke',
+      name: 'Родитель',
+      version: 1,
+      edges: [],
+      nodes: [
+        {
+          id: 'sub-1',
+          type: 'sub_workflow',
+          position: AT_ZERO,
+          data: {
+            kind: 'sub_workflow',
+            workflowId: SUB_WORKFLOW_ID,
+            version: 4,
+            inputsMap: { prompt: 'text' },
+          },
+        },
+      ],
+    });
+
+    await state().loadWorkflowAsync('wf-sub');
+
+    expect(state().nodes[0]?.data).toEqual({
+      kind: 'sub_workflow',
+      workflowId: SUB_WORKFLOW_ID,
+      version: 4,
+      inputsMap: { prompt: 'text' },
+    });
+  });
+
+  it('nodeDataFromApi: мусор из jsonb отбрасывается, ссылка остаётся пустой', async () => {
+    vi.mocked(getWorkflowAsync).mockResolvedValue({
+      id: 'wf-sub-мусор',
+      userId: 'user-smoke',
+      name: 'мусор',
+      version: 1,
+      edges: [],
+      nodes: [
+        {
+          id: 'sub-2',
+          type: 'sub_workflow',
+          position: AT_ZERO,
+          data: {
+            kind: 'sub_workflow',
+            workflowId: 42,
+            version: '4',
+            inputsMap: { prompt: 1 },
+          },
+        },
+      ],
+    });
+
+    await state().loadWorkflowAsync('wf-sub-мусор');
+
+    // Пустое значение честно остаётся пустым (KI-069): подстановки «первого
+    // попавшегося» workflow нет, Run упадёт валидацией на backend.
+    expect(state().nodes[0]?.data).toEqual({ kind: 'sub_workflow', workflowId: '' });
+  });
+
+  it('round-trip Save → Load сохраняет ссылку и снимок версии', async () => {
+    const data = {
+      kind: 'sub_workflow',
+      workflowId: SUB_WORKFLOW_ID,
+      version: 4,
+      inputsMap: { prompt: 'text' },
+    };
+
+    vi.mocked(getWorkflowAsync).mockResolvedValue({
+      id: 'wf-sub-2',
+      userId: 'user-smoke',
+      name: 'round-trip',
+      version: 1,
+      edges: [],
+      nodes: [
+        { id: 'sub-3', type: 'sub_workflow', position: AT_ZERO, data },
+      ],
+    });
+
+    await state().loadWorkflowAsync('wf-sub-2');
+    const firstLoad = state().nodes[0]?.data;
+
+    // Второй Load — из того, что узел отдал бы на Save (`toApiNode`).
+    vi.mocked(getWorkflowAsync).mockResolvedValue({
+      id: 'wf-sub-2',
+      userId: 'user-smoke',
+      name: 'round-trip',
+      version: 1,
+      edges: [],
+      nodes: [
+        {
+          id: 'sub-3',
+          type: 'sub_workflow',
+          position: AT_ZERO,
+          data: firstLoad ?? {},
+        },
+      ],
+    });
+
+    useWorkflowStore.setState({ nodes: [] });
+    await state().loadWorkflowAsync('wf-sub-2');
+
+    expect(state().nodes[0]?.data).toEqual(firstLoad);
+  });
+});

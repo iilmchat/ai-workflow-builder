@@ -21,7 +21,8 @@ export type NodeData =
   | HttpNodeData
   | ConditionNodeData
   | OutputNodeData
-  | CompareNodeData;
+  | CompareNodeData
+  | SubWorkflowNodeData;
 
 /** Узел графа — совместим с backend-DTO `NodeDto`. */
 export type GraphNode = {
@@ -62,6 +63,10 @@ export type Graph = {
  * `http` (§ 8.1), `condition` (§ 8.2), `output` (§ 8.3) и `compare` (§ 8.5).
  * Узел `note` из DESIGN § 8.4 отдельным типом **не** заводится: он реализован
  * как `comment` ещё в R6.4b.2a (KI-187), дублировать его не нужно.
+ *
+ * R6.7 (KI-200, DESIGN v0.8 § 5): добавлен исполняемый узел `sub_workflow` —
+ * ссылка на другой workflow владельца. В `ANNOTATION_NODE_TYPES` (backend) его
+ * нет: узел выполняется, а не лежит заметкой на холсте.
  */
 export type NodeType =
   | 'text'
@@ -71,20 +76,24 @@ export type NodeType =
   | 'http'
   | 'condition'
   | 'output'
-  | 'compare';
+  | 'compare'
+  | 'sub_workflow';
 
 /**
  * Категории узлов для каталога (KI-127, § 5.2 DESIGN v0.7).
  *
  * Порядок = порядок секций в каталоге. Категория `media` — для текущего
- * `image_generation` и будущих video/audio-узлов. Сами иконки и привязка типов
- * к категориям живут в едином реестре `@/lib/node-registry`.
+ * `image_generation` и будущих video/audio-узлов. `composition` (R6.7) —
+ * секция «Композиция» (DESIGN v0.8 § 5.4) для узлов, которые собирают граф из
+ * других графов (`sub_workflow`). Сами иконки и привязка типов к категориям
+ * живут в едином реестре `@/lib/node-registry`.
  */
 export const NODE_CATEGORIES = [
   'input',
   'ai',
   'media',
   'tools',
+  'composition',
   'output',
 ] as const;
 
@@ -312,6 +321,43 @@ export interface CompareNodeData extends Record<string, unknown> {
   mode: 'diff';
 }
 
+/**
+ * Данные узла `sub_workflow` (R6.7, DESIGN v0.8 § 5.2).
+ *
+ * Узел — ссылка на другой workflow **того же владельца**. Executor backend
+ * загружает подграф, выполняет его как часть родительского запуска и кладёт
+ * выходы терминальных узлов подграфа в `outputs.result`.
+ *
+ * Порты (`src/engine/node-ports.ts`): вход `text-input` → порт `prompt`,
+ * выход `result-output` → порт `result`. Выходной хендл назван отдельно от
+ * `text-output`: тот уже занят `text`/`llm` и переводится в порт `text`
+ * (KI-301), из-за чего результат подграфа терялся бы.
+ */
+export interface SubWorkflowNodeData extends Record<string, unknown> {
+  kind: 'sub_workflow';
+  /**
+   * uuid выбранного workflow.
+   *
+   * Пустая строка — валидное состояние «ещё не выбран»: Run упадёт ошибкой
+   * валидации узла на backend, а UI молча ничего не подставляет (KI-069).
+   */
+  workflowId: string;
+  /**
+   * Снимок версии графа на момент выбора (DESIGN § 5.5).
+   *
+   * `undefined` — ссылка без снимка (например, граф сохранён до R6.7):
+   * сравнение версий не выполняется, warning не показывается.
+   */
+  version?: number;
+  /**
+   * Маппинг «имя входа родителя → ключ в `inputs` подграфа».
+   *
+   * В v0.8 хранится и переносится между Save/Load, но executor его пока не
+   * применяет (KI-303): у подграфа один вход, именованные входы — KI-278/279.
+   */
+  inputsMap?: Record<string, string>;
+}
+
 /** Узел Text в терминах React Flow. */
 export type TextFlowNode = Node<TextNodeData, 'text'>;
 /** Узел LLM в терминах React Flow. */
@@ -328,6 +374,8 @@ export type ConditionFlowNode = Node<ConditionNodeData, 'condition'>;
 export type OutputFlowNode = Node<OutputNodeData, 'output'>;
 /** Узел сравнения в терминах React Flow (R6.5.2). */
 export type CompareFlowNode = Node<CompareNodeData, 'compare'>;
+/** Узел под-workflow в терминах React Flow (R6.7, KI-200). */
+export type SubWorkflowFlowNode = Node<SubWorkflowNodeData, 'sub_workflow'>;
 
 /** Любой узел редактора. */
 export type AppNode =
@@ -338,5 +386,6 @@ export type AppNode =
   | HttpFlowNode
   | ConditionFlowNode
   | OutputFlowNode
-  | CompareFlowNode;
+  | CompareFlowNode
+  | SubWorkflowFlowNode;
 

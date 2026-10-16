@@ -50,4 +50,20 @@ describe('node-ports', () => {
       expect(inferInputPortName('')).toBe('input');
     });
   });
+
+  describe('sub_workflow (R6.7, KI-200)', () => {
+    it('выход — отдельный хендл result-output, а не общий text-output (KI-301)', () => {
+      // `text-output` переводится в порт `text`: с ним результат подграфа
+      // (`outputs.result`) не доехал бы до зависимого узла.
+      expect(handleIdToOutputPort('result-output')).toBe('result');
+      expect(NODE_PORT_CONTRACT.sub_workflow.sourceHandleId).toBe('result-output');
+      expect(NODE_PORT_CONTRACT.sub_workflow.outputPortName).toBe('result');
+    });
+
+    it('вход — контракт text-input → prompt, как у llm/http', () => {
+      expect(NODE_PORT_CONTRACT.sub_workflow.targetHandleId).toBe('text-input');
+      expect(inferInputPortName('sub_workflow')).toBe('prompt');
+      expect(inferDefaultOutputPort('sub_workflow')).toBe('result');
+    });
+  });
 });

@@ -10,12 +10,21 @@
  */
 import {
   NodeDataValidationException,
+  SUB_WORKFLOW_MAX_DEPTH,
+  SubWorkflowDepthException,
+  SubWorkflowRecursionException,
   executeCompareNode,
   executeConditionNode,
   executeHttpNode,
   executeOutputNode,
+  executeSubWorkflowNode,
   executeTextNode,
+  prefixSubWorkflowGraph,
+  type SubWorkflowContext,
+  type SubWorkflowRecord,
 } from './node-executors.js';
+import { NotFoundException } from '@nestjs/common';
+import type { GraphDto } from './dto/index.js';
 
 /** Предельный размер тела ответа, байт (совпадает с константой исполнителя). */
 const MAX_BODY_BYTES = 1_000_000;
@@ -404,6 +413,160 @@ describe('node-executors', () => {
       expect(executeCompareNode({ mode: 'diff' }, { left: 'x', right: 'y' }).equal).toBe(
         false,
       );
+    });
+  });
+
+  /* ─────────────────────────── sub_workflow (R6.7) ─────────────────────────── */
+
+  describe('executeSubWorkflowNode', () => {
+    /** uuid подграфа в тестах R6.7. */
+    const SUB_WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
+    /** uuid владельца корневого запуска. */
+    const ROOT_USER_ID = '33333333-3333-4333-8333-333333333333';
+
+    /** Запись подграфа: два узла, связанные связью. */
+    const SUB_WORKFLOW: SubWorkflowRecord = {
+      id: SUB_WORKFLOW_ID,
+      name: 'Подграф A',
+      version: 3,
+      nodes: [
+        { id: 'text-1', type: 'text', data: { value: 'вход' } },
+        { id: 'llm-1', type: 'llm', data: {} },
+      ],
+      edges: [{ id: 'e1', source: 'text-1', target: 'llm-1' }],
+    };
+
+    /**
+     * Собирает контекст под-воркфлоу с замоканным источником workflow.
+     *
+     * @param found - что вернёт `findOneAsync` (`null` — чужой/несуществующий)
+     * @param overrides - поля контекста, которые нужно переопределить
+     * @returns контекст и мок `findOneAsync` для проверки аргументов
+     */
+    function createSubContext(
+      found: SubWorkflowRecord | null = SUB_WORKFLOW,
+      overrides: Partial<SubWorkflowContext> = {},
+    ): { context: SubWorkflowContext; findOne: ReturnType<typeof vi.fn> } {
+      const findOne = vi.fn((_id: string, _userId?: string) => Promise.resolve(found));
+
+      return {
+        findOne,
+        context: {
+          lookup: { findOneAsync: findOne },
+          rootUserId: ROOT_USER_ID,
+          visitedWorkflows: new Set<string>(),
+          depth: 0,
+          ...overrides,
+        },
+      };
+    }
+
+    it('загружает подграф владельца и возвращает его узлы и связи', async () => {
+      const { context, findOne } = createSubContext();
+
+      const target = await executeSubWorkflowNode(
+        { kind: 'sub_workflow', workflowId: SUB_WORKFLOW_ID },
+        context,
+      );
+
+      expect(target.workflowId).toBe(SUB_WORKFLOW_ID);
+      expect(target.name).toBe('Подграф A');
+      expect(target.version).toBe(3);
+      expect(target.subGraph.nodes.map((node) => node.id)).toEqual(['text-1', 'llm-1']);
+      expect(target.subGraph.edges.map((edge) => edge.id)).toEqual(['e1']);
+      // Владелец корневого запуска уходит в фильтр выборки: без него вернулся
+      // бы и чужой workflow.
+      expect(findOne).toHaveBeenCalledWith(SUB_WORKFLOW_ID, ROOT_USER_ID);
+    });
+
+    it('чужой workflow неотличим от несуществующего: 404', async () => {
+      const { context } = createSubContext(null);
+
+      const error: unknown = await executeSubWorkflowNode(
+        { kind: 'sub_workflow', workflowId: SUB_WORKFLOW_ID },
+        context,
+      ).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(NotFoundException);
+      expect((error as NotFoundException).getStatus()).toBe(404);
+    });
+
+    it('пустой workflowId не проходит Zod-схему', async () => {
+      const { context, findOne } = createSubContext();
+
+      await expect(
+        executeSubWorkflowNode({ kind: 'sub_workflow', workflowId: '' }, context),
+      ).rejects.toThrow(NodeDataValidationException);
+      // До БД дело не дошло: схема отсекла мусор раньше (RULES 1.17).
+      expect(findOne).not.toHaveBeenCalled();
+    });
+
+    it('без известного владельца подграф не загружается', async () => {
+      const { context, findOne } = createSubContext(SUB_WORKFLOW, { rootUserId: null });
+
+      const error: unknown = await executeSubWorkflowNode(
+        { kind: 'sub_workflow', workflowId: SUB_WORKFLOW_ID },
+        context,
+      ).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(NotFoundException);
+      expect(findOne).not.toHaveBeenCalled();
+    });
+
+    it('повторная ссылка на workflow в ветке — циклическая (KI-200)', async () => {
+      const { context } = createSubContext(SUB_WORKFLOW, {
+        visitedWorkflows: new Set([SUB_WORKFLOW_ID]),
+      });
+
+      await expect(
+        executeSubWorkflowNode({ kind: 'sub_workflow', workflowId: SUB_WORKFLOW_ID }, context),
+      ).rejects.toThrow(SubWorkflowRecursionException);
+    });
+
+    it(`глубина ${SUB_WORKFLOW_MAX_DEPTH} — предельная`, async () => {
+      const { context } = createSubContext(SUB_WORKFLOW, {
+        depth: SUB_WORKFLOW_MAX_DEPTH,
+      });
+
+      await expect(
+        executeSubWorkflowNode({ kind: 'sub_workflow', workflowId: SUB_WORKFLOW_ID }, context),
+      ).rejects.toThrow(SubWorkflowDepthException);
+    });
+
+    it('глубина на единицу меньше предельной — загрузка разрешена', async () => {
+      const { context } = createSubContext(SUB_WORKFLOW, {
+        depth: SUB_WORKFLOW_MAX_DEPTH - 1,
+      });
+
+      await expect(
+        executeSubWorkflowNode({ kind: 'sub_workflow', workflowId: SUB_WORKFLOW_ID }, context),
+      ).resolves.toMatchObject({ workflowId: SUB_WORKFLOW_ID });
+    });
+  });
+
+  describe('prefixSubWorkflowGraph', () => {
+    it('префиксует id узлов и связей (изоляция node_runs)', () => {
+      const graph: GraphDto = {
+        nodes: [
+          { id: 'text-1', type: 'text', data: {} },
+          { id: 'llm-1', type: 'llm', data: {} },
+        ],
+        edges: [{ id: 'e1', source: 'text-1', target: 'llm-1' }],
+      };
+
+      const prefixed = prefixSubWorkflowGraph(graph, 'sub-7');
+
+      expect(prefixed.nodes.map((node) => node.id)).toEqual([
+        'sub_sub-7__text-1',
+        'sub_sub-7__llm-1',
+      ]);
+      expect(prefixed.edges[0]).toMatchObject({
+        id: 'sub_sub-7__e1',
+        source: 'sub_sub-7__text-1',
+        target: 'sub_sub-7__llm-1',
+      });
+      // Исходный граф не мутируется: он же лежит в snapshot запуска.
+      expect(graph.nodes.map((node) => node.id)).toEqual(['text-1', 'llm-1']);
     });
   });
 });
