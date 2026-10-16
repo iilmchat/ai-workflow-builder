@@ -1,28 +1,33 @@
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { RunStatus } from '@/types/run-stream';
+import type { NodeRunStatus } from '@/types/run-stream';
 
 /**
  * Цвета рамки узла по статусу выполнения.
  *
  * Классы заданы литералами (не склейкой строк): Tailwind v4 находит их при
  * сканировании исходников, поэтому динамическая сборка имён недопустима.
+ * Пропущенный узел (`skipped`, KI-288) отличается не только цветом, но и
+ * пунктиром: он визуально «выключен» — движок его не выполнял.
  */
-const STATUS_BORDER: Record<RunStatus, string> = {
+const STATUS_BORDER: Record<NodeRunStatus, string> = {
   pending: 'border-node-pending',
   running: 'border-blue-500',
   completed: 'border-green-500',
   failed: 'border-red-500',
   cancelled: 'border-slate-400',
+  skipped: 'border-dashed border-node-skipped',
 };
 
 /** Лёгкая подсветка фона по статусу — визуальный акцент без «крика». */
-const STATUS_BACKGROUND: Record<RunStatus, string> = {
+const STATUS_BACKGROUND: Record<NodeRunStatus, string> = {
   pending: 'bg-node-bg',
   running: 'bg-blue-50',
   completed: 'bg-green-50',
   failed: 'bg-red-50',
   cancelled: 'bg-node-bg',
+  // Полупрозрачный приглушённый фон: узел «погашен», но карточка читается.
+  skipped: 'bg-muted/30',
 };
 
 /** Бейдж-подпись в правом верхнем углу карточки (например, capability модели). */
@@ -41,7 +46,7 @@ interface BaseNodeProps {
   /** Номер уровня выполнения из `/engine/plan` (нумерация с 1). */
   executionLevel?: number;
   /** Статус выполнения узла из SSE (`undefined` — запуск не идёт). */
-  status?: RunStatus;
+  status?: NodeRunStatus;
   /** Дополнительные бейджи (capabilities модели, v0.6.0a). */
   badges?: NodeBadge[];
   /**
@@ -68,7 +73,8 @@ interface BaseNodeProps {
  * (например, `V` — понимает картинки на входе).
  *
  * Рамка и фон зависят от `status` (R4.2): серый — узел не выполнялся, синий —
- * выполняется, зелёный — успех, красный — ошибка.
+ * выполняется, зелёный — успех, красный — ошибка, серый пунктир — узел пропущен
+ * (движок не запускал его из-за упавшего предшественника, KI-288).
  */
 export function BaseNode({
   icon,

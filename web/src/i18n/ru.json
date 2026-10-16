@@ -118,6 +118,8 @@
   "node.output.label": "Вывод",
   "node.output.name": "Имя выхода",
   "node.output.name.placeholder": "result",
+  "node.skipped.reason": "Пропущен: упал предшественник",
+  "node.status.skipped": "Пропущен",
   "node.sub_workflow.label": "Под-workflow",
   "node.sub_workflow.placeholder": "Выберите workflow",
   "node.sub_workflow.select.none": "Нет доступных workflow",

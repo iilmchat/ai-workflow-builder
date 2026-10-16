@@ -3,18 +3,25 @@ import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { nodeLabelOf } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
-import type { RunStatus } from '@/types/run-stream';
+import type { NodeRunStatus } from '@/types/run-stream';
 
 /** Высота панели в свёрнутом и развёрнутом виде (Tailwind-классы). */
 const PANEL_HEIGHT = { collapsed: 'h-12', expanded: 'h-72' } as const;
 
-/** i18n-ключи подписей статусов узла и запуска для заголовка панели. */
-const STATUS_LABEL_KEYS: Record<RunStatus, string> = {
+/**
+ * i18n-ключи подписей статусов узла и запуска для заголовка панели.
+ *
+ * Ключи статусов запуска исторические (`run.status.node.*`): панель использует
+ * эту же карту и для узла, поэтому `skipped` (статус только узла, KI-288)
+ * берёт свой ключ `node.status.skipped`.
+ */
+const STATUS_LABEL_KEYS: Record<NodeRunStatus, string> = {
   pending: 'run.status.node.pending',
   running: 'run.status.node.running',
   completed: 'run.status.node.completed',
   failed: 'run.status.node.failed',
   cancelled: 'run.status.node.cancelled',
+  skipped: 'node.status.skipped',
 };
 
 /**
@@ -208,7 +215,20 @@ export function RunResultPanel() {
                 </Section>
               ) : null}
 
-              {error !== undefined ? (
+              {/* KI-288: узел пропущен — показываем причину и не дублируем её в
+                  секции ошибки (там для `skipped` лежит тот же текст). */}
+              {status === 'skipped' ? (
+                <Section title={t('runResultPanel.section.status')}>
+                  <p
+                    data-node-skipped-reason=""
+                    className="whitespace-pre-wrap text-xs text-muted-foreground"
+                  >
+                    {error ?? t('node.skipped.reason')}
+                  </p>
+                </Section>
+              ) : null}
+
+              {error !== undefined && status !== 'skipped' ? (
                 <Section title={t('runResultPanel.section.error')}>
                   <p className="whitespace-pre-wrap text-xs text-red-700">{error}</p>
                 </Section>

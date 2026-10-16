@@ -39,6 +39,12 @@
   --color-node-running: theme(colors.blue.400);
   --color-node-completed: theme(colors.green.400);
   --color-node-failed: theme(colors.red.400);
+  /*
+   * KI-288: узел, который движок не выполнял (упал предшественник). Отдельная
+   * переменная, а не color-mix() со ссылкой на тему Tailwind в правиле —
+   * RULES 4.32 (KI-134). Пунктир задаётся классом `border-dashed` в BaseNode.
+   */
+  --color-node-skipped: theme(colors.slate.400);
 
   /*
    * Узел-комментарий (KI-187): «бумажный» стикер, отличимый от карточек данных.
@@ -80,6 +86,8 @@
   --color-node-running: theme(colors.blue.500);
   --color-node-completed: theme(colors.green.500);
   --color-node-failed: theme(colors.red.500);
+  /* KI-288: в тёмной теме приглушённый серый читается на slate-900. */
+  --color-node-skipped: theme(colors.slate.500);
 
   /* KI-187: в тёмной теме стикер — приглушённый янтарный, текст светлый. */
   --color-comment-bg: theme(colors.amber.950);

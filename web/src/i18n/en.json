@@ -114,6 +114,8 @@
   "node.output.label": "Output",
   "node.output.name": "Output name",
   "node.output.name.placeholder": "result",
+  "node.skipped.reason": "Skipped: predecessor failed",
+  "node.status.skipped": "Skipped",
   "node.sub_workflow.label": "Sub-workflow",
   "node.sub_workflow.placeholder": "Select a workflow",
   "node.sub_workflow.select.none": "No workflows available",

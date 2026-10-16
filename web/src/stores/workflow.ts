@@ -72,7 +72,9 @@ import {
   toBackendEdges,
   toBackendNodes,
 } from '@/lib/graph-payload';
+import { invalidateWorkflowListCache } from '@/lib/workflow-list-cache';
 import type {
+  NodeRunStatus,
   RunEventMessage,
   RunStatus,
   SnapshotMessage,
@@ -236,13 +238,13 @@ function buildRunStreamHandlers(
  *
  * @param state - текущее состояние стора
  * @param nodeId - id узла графа
- * @param status - новый статус узла
+ * @param status - новый статус узла (включая `skipped`, KI-288)
  * @returns патч `nodeStatuses` для `set`
  */
 function withNodeStatus(
   state: WorkflowState,
   nodeId: string,
-  status: RunStatus,
+  status: NodeRunStatus,
 ): Pick<WorkflowState, 'nodeStatuses'> {
   return { nodeStatuses: { ...state.nodeStatuses, [nodeId]: status } };
 }
@@ -433,10 +435,15 @@ export interface WorkflowState extends HistorySlice {
   /** Текст последней ошибки запуска (для панели результата R4.3). */
   runError: string | null;
   /** id узла → статус выполнения (snapshot + события потока). */
-  nodeStatuses: Record<string, RunStatus>;
+  nodeStatuses: Record<string, NodeRunStatus>;
   /** id узла → последние выходы узла из `node_completed`. */
   nodeOutputs: Record<string, Record<string, unknown>>;
-  /** id узла → текст ошибки (из snapshot и `node_failed`). */
+  /**
+   * id узла → текст ошибки (из snapshot, `node_failed` и `node_skipped`).
+   *
+   * У пропущенного узла здесь причина пропуска (`reason` из `node_skipped`) —
+   * панель результата показывает её без дополнительных полей (KI-288).
+   */
   nodeErrors: Record<string, string>;
   /** id узла → записи ретраев (KI-036); приходят только в snapshot. */
   nodeLogs: Record<string, string[]>;
@@ -1499,6 +1506,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       });
       // Сохранён другой граф — прежнее состояние запуска к нему не относится.
       get().resetRunState();
+      // KI-302: Save меняет список workflow (первое сохранение создаёт его,
+      // повторное — двигает имя и `version`). Кэш селекта `sub_workflow` обязан
+      // это увидеть, иначе созданный workflow не появится там до F5.
+      invalidateWorkflowListCache();
     } catch (error) {
       const message = messageOf(error);
       set({ isSaving: false, error: message, notice: { kind: 'error', text: message } });
@@ -1635,7 +1646,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   },
 
   applySnapshot: (snapshot) => {
-    const nodeStatuses: Record<string, RunStatus> = {};
+    const nodeStatuses: Record<string, NodeRunStatus> = {};
     const nodeOutputs: Record<string, Record<string, unknown>> = {};
     const nodeErrors: Record<string, string> = {};
     const nodeLogs: Record<string, string[]> = {};
@@ -1749,6 +1760,18 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
             },
           },
           ...withNodeLogs(state, event.nodeId, event.logs),
+        }));
+
+        return;
+
+      case 'node_skipped':
+        // KI-288: движок не выполнял узел, потому что упал (или был пропущен)
+        // его предшественник. `runError` намеренно не трогаем: пропуск — не
+        // ошибка запуска, а следствие падения другого узла, и его текст уже
+        // лежит в `runError` (пришёл с `node_failed`).
+        set((state) => ({
+          ...withNodeStatus(state, event.nodeId, 'skipped'),
+          nodeErrors: { ...state.nodeErrors, [event.nodeId]: event.reason },
         }));
 
         return;

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkflowStore, type GraphSnapshot } from './workflow';
 import type { AppNode } from '@/types/graph';
 
@@ -317,5 +317,148 @@ describe('useWorkflowStore — история правок (R6.4b.2b)', () => {
 
     expect(state().runStatus).toBe('running');
     expect(state().nodeStatuses).toEqual({ 'node-1': 'completed' });
+  });
+});
+
+describe('useWorkflowStore — SSE-события статуса узла (KI-288)', () => {
+  /** ISO-время событий в тестах. */
+  const ISO_AT = '2026-10-16T10:00:00.000Z';
+  /** Причина пропуска, которую присылает backend (`node_runs.error`). */
+  const SKIP_REASON = 'Пропущен: упал предшественник';
+
+  beforeEach(() => {
+    useWorkflowStore.setState({
+      ...EMPTY_STATE,
+      runStatus: null,
+      runError: null,
+      nodeStatuses: {},
+      nodeErrors: {},
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('node_skipped переводит узел в skipped и сохраняет причину', () => {
+    state().applyEvent({
+      type: 'node_skipped',
+      runId: 'run-1',
+      nodeId: 'C',
+      nodeType: 'llm',
+      reason: SKIP_REASON,
+      skippedAt: ISO_AT,
+    });
+
+    expect(state().nodeStatuses.C).toBe('skipped');
+    // Причина лежит в `nodeErrors` — панель результата показывает её без
+    // отдельного поля `nodeSkipReasons`.
+    expect(state().nodeErrors.C).toBe(SKIP_REASON);
+  });
+
+  it('node_skipped не перетирает ошибку запуска от упавшего узла', () => {
+    state().applyEvent({
+      type: 'node_failed',
+      runId: 'run-1',
+      nodeId: 'B',
+      error: 'HTTP 404',
+      finishedAt: ISO_AT,
+    });
+    state().applyEvent({
+      type: 'node_skipped',
+      runId: 'run-1',
+      nodeId: 'C',
+      nodeType: 'llm',
+      reason: SKIP_REASON,
+      skippedAt: ISO_AT,
+    });
+
+    expect(state().nodeStatuses.B).toBe('failed');
+    expect(state().nodeStatuses.C).toBe('skipped');
+    // Пропуск — следствие падения, а не самостоятельная ошибка запуска:
+    // `runError` остаётся текстом реального падения.
+    expect(state().runError).toBe('HTTP 404');
+    expect(state().nodeErrors.B).toBe('HTTP 404');
+    expect(state().nodeErrors.C).toBe(SKIP_REASON);
+  });
+
+  it('снимок с skipped-узлом применяется целиком', () => {
+    // Снимок завершённого запуска трогает `?runId=` (`window`), а тесты идут в
+    // node-окружении (см. `vitest.config.ts`): подставляем минимальный window.
+    vi.stubGlobal('window', {
+      location: { href: 'http://127.0.0.1:5173/?workflowId=w1' },
+      history: { replaceState: () => undefined },
+    });
+
+    state().applySnapshot({
+      type: 'snapshot',
+      run: {
+        id: 'run-1',
+        workflowId: 'w1',
+        status: 'failed',
+        createdAt: ISO_AT,
+      },
+      nodes: [
+        {
+          nodeId: 'A',
+          nodeType: 'text',
+          status: 'completed',
+          inputs: {},
+          outputs: { text: 'a' },
+          error: null,
+          logs: null,
+          tokensIn: null,
+          tokensOut: null,
+          costUsd: null,
+          costRub: null,
+          durationMs: 1,
+          startedAt: ISO_AT,
+          finishedAt: ISO_AT,
+        },
+        {
+          nodeId: 'B',
+          nodeType: 'http',
+          status: 'failed',
+          inputs: {},
+          outputs: null,
+          error: 'HTTP 404',
+          logs: null,
+          tokensIn: null,
+          tokensOut: null,
+          costUsd: null,
+          costRub: null,
+          durationMs: 13,
+          startedAt: ISO_AT,
+          finishedAt: ISO_AT,
+        },
+        {
+          nodeId: 'C',
+          nodeType: 'text',
+          status: 'skipped',
+          inputs: {},
+          outputs: null,
+          error: SKIP_REASON,
+          logs: null,
+          tokensIn: null,
+          tokensOut: null,
+          costUsd: null,
+          costRub: null,
+          durationMs: 0,
+          startedAt: ISO_AT,
+          finishedAt: ISO_AT,
+        },
+      ],
+    });
+
+    // Снимок — источник истины: карта статусов заменяется целиком, `skipped`
+    // не теряется (до KI-288 Zod отбрасывал такое сообщение).
+    expect(state().nodeStatuses).toEqual({
+      A: 'completed',
+      B: 'failed',
+      C: 'skipped',
+    });
+    expect(state().nodeErrors.C).toBe(SKIP_REASON);
+    expect(state().runStatus).toBe('failed');
+    expect(state().nodeOutputs.A).toEqual({ text: 'a' });
   });
 });

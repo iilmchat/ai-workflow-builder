@@ -10,7 +10,7 @@ import { z } from 'zod';
  * следом (в R4.3+ общие типы стоит вынести в shared-пакет).
  */
 
-/** Статус запуска/узла (совпадает с `RUN_STATUSES` backend). */
+/** Статус запуска (совпадает с `RUN_STATUSES` backend). */
 export const RunStatusSchema = z.enum([
   'pending',
   'running',
@@ -19,8 +19,25 @@ export const RunStatusSchema = z.enum([
   'cancelled',
 ]);
 
-/** Статус запуска или узла. */
+/** Статус запуска. */
 export type RunStatus = z.infer<typeof RunStatusSchema>;
+
+/**
+ * Статусы строки `node_runs`: статусы запуска плюс `skipped` (KI-288).
+ *
+ * Пропуск — статус **узла**, а не запуска: узел не выполнялся, потому что упал
+ * (или был пропущен сам) его предшественник. Значения выведены из
+ * {@link RunStatusSchema}, чтобы список не разъехался с ним при добавлении
+ * нового статуса запуска. Зеркало backend `NODE_RUN_STATUSES`
+ * (`src/runs/dto/run-stream-message.dto.ts`).
+ */
+export const NODE_RUN_STATUSES = [...RunStatusSchema.options, 'skipped'] as const;
+
+/** Zod-схема статуса узла запуска (включая `skipped`, KI-288). */
+export const NodeRunStatusSchema = z.enum(NODE_RUN_STATUSES);
+
+/** Статус узла запуска. */
+export type NodeRunStatus = z.infer<typeof NodeRunStatusSchema>;
 
 /** Запуск внутри snapshot-сообщения. */
 export const RunSnapshotSchema = z.object({
@@ -34,7 +51,8 @@ export const RunSnapshotSchema = z.object({
 export const NodeRunSnapshotSchema = z.object({
   nodeId: z.string(),
   nodeType: z.string(),
-  status: RunStatusSchema,
+  // KI-288: узел может быть в статусе `skipped` — см. NodeRunStatusSchema.
+  status: NodeRunStatusSchema,
   inputs: z.record(z.string(), z.unknown()),
   outputs: z.record(z.string(), z.unknown()).nullable(),
   error: z.string().nullable(),
@@ -107,6 +125,24 @@ export const RunEventSchema = z.discriminatedUnion('type', [
     costUsd: z.string().nullable().optional(),
     logs: z.array(z.string()).nullable().optional(),
     finishedAt: z.string(),
+  }),
+  /**
+   * Узел пропущен: движок его не выполнял, потому что упал (или был пропущен
+   * сам) его предшественник — KI-288. Зеркало backend `node_skipped`
+   * (`src/runs/dto/run-event.dto.ts`).
+   *
+   * Отдельное событие, а не `node_failed`: узел не падал, и в UI это другое
+   * состояние («не запускался»). Выходов и метрик у такого узла нет.
+   */
+  z.object({
+    type: z.literal('node_skipped'),
+    runId: z.string(),
+    nodeId: z.string(),
+    nodeType: z.string(),
+    /** Причина пропуска — тот же текст, что записан в `node_runs.error`. */
+    reason: z.string(),
+    /** ISO-время пропуска на backend (поле `skippedAt`). */
+    skippedAt: z.string(),
   }),
   /** Запуск завершён — успешно или с ошибкой. */
   z.object({
