@@ -5805,7 +5805,7 @@ MediaModelInfo, engine-DTO
   input.name.includes('foo')`) невозможны без изоляции. `new Function` —
   RCE; `vm2` — deprecated (CVE-2023-29017); `isolated-vm` — native build
   сложен на Windows + Docker; Node `vm` — небезопасен.
-- **Решение:** QuickJS-WASM (`quickjs-emscripten`), 4-пробельная модель
+- **Решение:** QuickJS-WASM (`quickjs-emscripten`), проверенная модель
   Figma/Cloudflare/Shopify. Timeout 100 мс, memory 16 МБ, allowlist глобалов.
   Обратная совместимость с MVP-DSL через `ConditionNodeData.mode:
   'dsl' | 'sandbox'` (default `'dsl'`). Реализация — DESIGN v0.9 § 3.5 (R7.5).
