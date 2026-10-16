@@ -1,6 +1,9 @@
+import { NODE_RUN_STATUSES, WORKFLOW_RUN_STATUSES } from '../../db/schema.js';
 import {
   NodeRunSnapshotSchema,
+  NodeRunStatusSchema,
   RunSnapshotSchema,
+  RunStatusSchema,
   SnapshotMessageSchema,
 } from './run-stream-message.dto.js';
 
@@ -94,6 +97,16 @@ describe('RunStreamMessageSchema: статус узла skipped (KI-288)', () =>
       'failed',
       'skipped',
     ]);
+  });
+});
+
+describe('RunStreamMessageSchema: единый источник статусов (KI-353)', () => {
+  it('схемы статусов не дублируют списки из db/schema.ts', () => {
+    // Канон списков — `db/schema.ts`. Локальный вывод
+    // `[...WORKFLOW_RUN_STATUSES, 'skipped']` в DTO был третьим источником
+    // правды: расхождение с БД не ловилось ни одним тестом (KI-353).
+    expect(RunStatusSchema.options).toEqual([...WORKFLOW_RUN_STATUSES]);
+    expect(NodeRunStatusSchema.options).toEqual([...NODE_RUN_STATUSES]);
   });
 });
 

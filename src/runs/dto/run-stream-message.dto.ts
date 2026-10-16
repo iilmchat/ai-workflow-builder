@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { WORKFLOW_RUN_STATUSES } from '../../db/schema.js';
+import { NODE_RUN_STATUSES, WORKFLOW_RUN_STATUSES } from '../../db/schema.js';
 import { RunEventSchema } from './run-event.dto.js';
 
 /**
@@ -16,31 +16,28 @@ import { RunEventSchema } from './run-event.dto.js';
  */
 
 /**
- * Zod-схема статуса запуска/узла.
+ * Zod-схема статуса **запуска**.
  *
  * Значения берутся из `WORKFLOW_RUN_STATUSES` (`db/schema.ts`) — единственного
  * источника истины, чтобы список статусов не разошёлся с БД. KI-336 развёл
- * статусы запуска и узла, поэтому здесь именно список запуска.
+ * статусы запуска и узла, поэтому здесь именно список запуска (статус узла —
+ * {@link NodeRunStatusSchema}).
  */
 export const RunStatusSchema = z.enum(WORKFLOW_RUN_STATUSES);
 
 /**
- * Статусы строки `node_runs`, которые может отдать снимок (KI-288).
+ * Zod-схема статуса узла запуска, включая `skipped` (KI-288, KI-353).
+ *
+ * Канон списка — `NODE_RUN_STATUSES` (`db/schema.ts`): он **импортируется**, а не
+ * выводится здесь заново из `WORKFLOW_RUN_STATUSES`, поэтому новый статус
+ * запуска подхватывается автоматически (KI-353).
  *
  * Отличается от {@link RunStatusSchema} ровно на `skipped`: это статус **узла**,
- * у запуска такого значения нет. Список выведен из `WORKFLOW_RUN_STATUSES`
- * (а не продублирован), чтобы новые статусы запуска подхватывались
- * автоматически. Без `skipped` в этой схеме валидация снимка падала бы на
- * каждом запуске с пропущенным узлом, и SSE-поток закрывался бы ошибкой
- * (RULES 1.17).
+ * у запуска такого значения нет. Без `skipped` в этой схеме валидация снимка
+ * падала бы на каждом запуске с пропущенным узлом, и SSE-поток закрывался бы
+ * ошибкой (RULES 1.17).
  */
-export const NODE_RUN_STATUSES = [...WORKFLOW_RUN_STATUSES, 'skipped'] as const;
-
-/** Zod-схема статуса узла запуска (включая `skipped`, KI-288). */
 export const NodeRunStatusSchema = z.enum(NODE_RUN_STATUSES);
-
-/** Статус строки `node_runs` в снимке состояния. */
-export type NodeRunStatus = (typeof NODE_RUN_STATUSES)[number];
 
 /** Zod-схема запуска внутри снимка состояния. */
 export const RunSnapshotSchema = z.object({

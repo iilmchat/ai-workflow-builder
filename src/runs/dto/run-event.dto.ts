@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TERMINAL_WORKFLOW_RUN_STATUSES } from '../../db/schema.js';
 
 /**
  * Zod-схема события прогресса запуска workflow (Redis pub/sub, канал `run:<runId>`).
@@ -90,7 +91,14 @@ export const RunEventSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('run_completed'),
     runId: z.uuid(),
-    status: z.enum(['completed', 'failed']),
+    /**
+     * Финальный статус запуска (KI-353).
+     *
+     * Список — `TERMINAL_WORKFLOW_RUN_STATUSES` из `db/schema.ts`, а не
+     * локальный литерал: значения статусов объявлены в одном месте — рядом с
+     * колонками `workflow_runs` / `node_runs`.
+     */
+    status: z.enum(TERMINAL_WORKFLOW_RUN_STATUSES),
     /**
      * Сколько попыток уже сделал BullMQ (0 для первой доставки задания).
      *

@@ -31,6 +31,20 @@ export const WORKFLOW_RUN_STATUSES = [
 export type RunStatus = (typeof WORKFLOW_RUN_STATUSES)[number];
 
 /**
+ * Финальные статусы запуска — подмножество {@link WORKFLOW_RUN_STATUSES} (KI-353).
+ *
+ * С этими статусами публикуется событие `run_completed` (`RunEventSchema`):
+ * запуск закрывается либо успешно, либо с ошибкой. `satisfies readonly
+ * RunStatus[]` — компиляторная гарантия, что список не выйдет за пределы канона
+ * статусов запуска, а локальный литерал в `run-event.dto.ts` не заводится
+ * (RULES 4.15).
+ */
+export const TERMINAL_WORKFLOW_RUN_STATUSES = [
+  'completed',
+  'failed',
+] as const satisfies readonly RunStatus[];
+
+/**
  * Значения колонки `node_runs.status` (KI-288, KI-336).
  *
  * Статусы запуска плюс `skipped` — узел не запускался, потому что его
@@ -43,17 +57,6 @@ export const NODE_RUN_STATUSES = [...WORKFLOW_RUN_STATUSES, 'skipped'] as const;
 
 /** Статус строки `node_runs` (KI-336). */
 export type NodeRunStatus = (typeof NODE_RUN_STATUSES)[number];
-
-/**
- * Прежнее имя списка статусов запуска (KI-336).
- *
- * Оставлено для совместимости: `src/runs/dto/run-stream-message.dto.ts` выводит
- * из него схему статуса запуска и добавляет `skipped` только для узла. После
- * перевода этого DTO на {@link NODE_RUN_STATUSES} псевдоним можно удалить.
- *
- * @deprecated используйте {@link WORKFLOW_RUN_STATUSES}
- */
-export const RUN_STATUSES = WORKFLOW_RUN_STATUSES;
 
 /**
  * users — учётные записи (R6.1a, KI-106).

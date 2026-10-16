@@ -3,6 +3,7 @@ import { expectTypeOf } from 'vitest';
 import type { EdgeDto, GraphSnapshotDto, NodeDto } from '../engine/dto/index.js';
 import {
   NODE_RUN_STATUSES,
+  TERMINAL_WORKFLOW_RUN_STATUSES,
   WORKFLOW_RUN_STATUSES,
   nodeRuns,
   workflowRuns,
@@ -88,5 +89,18 @@ describe('Drizzle schema (KI-014, KI-015)', () => {
     expectTypeOf<WorkflowRun['status']>().toEqualTypeOf<RunStatus>();
     expectTypeOf<NodeRun['status']>().toEqualTypeOf<NodeRunStatus>();
     expectTypeOf<WorkflowRun['status']>().not.toEqualTypeOf<NodeRunStatus>();
+  });
+
+  it('KI-353: финальные статусы запуска — подмножество канона', () => {
+    // Единственный список статусов живёт здесь; DTO импортируют его, а не
+    // выводят заново. `satisfies readonly RunStatus[]` в схеме проверяет
+    // вложенность на компиляции, тест — то же множество на рантайме.
+    expect(TERMINAL_WORKFLOW_RUN_STATUSES).toEqual(['completed', 'failed']);
+    expect(WORKFLOW_RUN_STATUSES).toEqual(
+      expect.arrayContaining([...TERMINAL_WORKFLOW_RUN_STATUSES]),
+    );
+    expectTypeOf<(typeof TERMINAL_WORKFLOW_RUN_STATUSES)[number]>().toEqualTypeOf<
+      'completed' | 'failed'
+    >();
   });
 });
