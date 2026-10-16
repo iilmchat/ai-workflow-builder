@@ -16,7 +16,9 @@ import type { Edge } from '@xyflow/react';
  * Маршрут `/workflow/share/:token` **без** `ProtectedRoute` и без TopBar:
  * доступ даёт сам токен. Редактор не переиспользуется — правки и запуски в
  * read-only режиме запрещены, поэтому граф рендерится «сырым» React Flow с
- * отключёнными взаимодействиями, а поверх стоит баннер.
+ * отключёнными правками (узлы не двигаются и не соединяются), а поверх стоит
+ * баннер. Навигация по холсту (wheel-zoom, pan) при этом работает: без неё
+ * граф с большим разбросом невозможно рассмотреть (KI-329).
  *
  * @returns разметка страницы просмотра
  */
@@ -111,22 +113,33 @@ export function ShareViewPage() {
         )}
 
         {workflow !== null && (
-          // pointer-events-none: read-only — узлы нельзя двигать, а поля внутри
-          // карточек (textarea/select) не должны принимать ввод.
-          <div className="pointer-events-none h-full w-full select-none">
+          // KI-329: `pointer-events-none` на обёртке гасил **всё** — wheel-zoom
+          // и pan тонули вместе с перетаскиванием узлов, поэтому граф с большим
+          // разбросом нельзя было рассмотреть (в связке с KI-328).
+          // Read-only теперь выражают пропсы `<ReactFlow>` (узлы не тащатся и
+          // не соединяются), а ввод в поля карточек запрещён точечно: у
+          // `input`/`textarea`/`select` внутри узлов отключены pointer-events.
+          // Кнопки-переключатели (например «развернуть» у system-промпта)
+          // остаются рабочими: это просмотр, а не правка графа.
+          <div className="h-full w-full select-none [&_input]:pointer-events-none [&_select]:pointer-events-none [&_textarea]:pointer-events-none">
             <ReactFlowProvider>
               {/* KI-310: булев `fitView` использует `fitViewOptions` из
                   store, которого у публичной страницы нет, — опции приходят
-                  из общего модуля (`minZoom: 0.02`), иначе граф с большим
-                  разбросом остаётся за кадром (store-дефолт 0.5).
+                  из общего модуля (`minZoom: 0.005`, KI-314), иначе граф с
+                  большим разбросом остаётся за кадром (store-дефолт 0.5).
                   `<Controls>` здесь не рендерится: просмотр read-only. */}
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
                 nodeTypes={nodeTypes}
+                // KI-329: просмотр без правок, но с навигацией по холсту.
+                // `elementsSelectable` оставлен включённым: клик по узлу — способ
+                // осмотреть карточку, а не изменить граф.
                 nodesDraggable={false}
                 nodesConnectable={false}
-                elementsSelectable={false}
+                elementsSelectable
+                panOnDrag
+                zoomOnScroll
                 fitViewOptions={FIT_VIEW_OPTIONS}
                 fitView
               />

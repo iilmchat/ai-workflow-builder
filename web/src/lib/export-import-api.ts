@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { requestAsync } from './api';
+import { invalidateWorkflowListCache } from './workflow-list-cache';
 
 /**
  * Zod-схема экспортированного workflow (R6.6.2, DESIGN v0.8 § 9).
@@ -116,6 +117,9 @@ export async function exportWorkflowAsync(id: string): Promise<ExportWorkflow> {
  * Владелец берётся из access-токена: `userId` в артефакте отсутствует по
  * построению, поэтому подставить чужого владельца через файл невозможно.
  *
+ * KI-302: после успеха список workflow меняется — сбрасываем кэш, из которого
+ * селект узла `sub_workflow` берёт свои опции.
+ *
  * @param data - валидированный артефакт экспорта
  * @returns созданный workflow (`id` и `name`)
  * @throws ApiError при сетевой ошибке, не-2xx статусе (400 — невалидный
@@ -129,7 +133,11 @@ export async function importWorkflowAsync(
     body: JSON.stringify(data),
   });
 
-  return CreatedWorkflowSchema.parse(created);
+  const workflow = CreatedWorkflowSchema.parse(created);
+
+  invalidateWorkflowListCache();
+
+  return workflow;
 }
 
 /**
@@ -149,6 +157,10 @@ export async function fetchTemplatesAsync(): Promise<TemplateSummary[]> {
  *
  * Тело запроса не отправляется: имя, узлы и связи берутся из шаблона целиком.
  *
+ * KI-302: создание — это изменение списка workflow, поэтому кэш селекта
+ * `sub_workflow` сбрасывается (иначе созданный из шаблона workflow появился бы
+ * в нём только после F5).
+ *
  * @param id - слаг шаблона (`text-llm`, `text-llm-image`, `http-llm`)
  * @returns созданный workflow (`id` и `name`)
  * @throws ApiError при сетевой ошибке, не-2xx статусе (404 — нет такого
@@ -162,5 +174,9 @@ export async function instantiateTemplateAsync(
     { method: 'POST' },
   );
 
-  return CreatedWorkflowSchema.parse(created);
+  const workflow = CreatedWorkflowSchema.parse(created);
+
+  invalidateWorkflowListCache();
+
+  return workflow;
 }

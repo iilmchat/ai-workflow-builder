@@ -1,58 +1,23 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode } from '@/components/nodes/BaseNode';
 import { useNodeDataHistory } from '@/hooks/use-node-data-history';
-import { listWorkflowsAsync, type ApiWorkflow } from '@/lib/api';
+import type { ApiWorkflow } from '@/lib/api';
 import { NODE_REGISTRY } from '@/lib/node-registry';
 import {
   hasNewerWorkflowVersion,
   isValidWorkflowId,
   workflowEditorUrl,
 } from '@/lib/sub-workflow-fields';
+import {
+  getCachedWorkflowList,
+  getWorkflowListRevision,
+  loadWorkflowListAsync,
+  subscribeWorkflowList,
+} from '@/lib/workflow-list-cache';
 import { useWorkflowStore } from '@/stores/workflow';
 import { DATA_TYPE_COLORS, DATA_TYPE_LABELS, type SubWorkflowFlowNode } from '@/types/graph';
-
-/**
- * Кэш списка workflow на время жизни вкладки (R6.7).
- *
- * Список нужен каждому узлу `sub_workflow`, а workflow у пользователя может
- * быть сколько угодно — без кэша каждый новый узел слал бы свой `GET /workflow`
- * (RULES 4.17). Кэш живёт на уровне модуля, потому что listWorkflowsAsync —
- * не store-экшен: держать чужое состояние в Zustand значило бы расширять
- * стор ради одной компоненты.
- *
- * Ограничение (KI-302): кэш не инвалидируется — workflow, созданный в этой же
- * вкладке, появится в селекте только после перезагрузки страницы.
- */
-let workflowsCache: ApiWorkflow[] | null = null;
-
-/** Незавершённый запрос списка: параллельные узлы ждут его, а не шлют новый. */
-let workflowsRequest: Promise<ApiWorkflow[]> | null = null;
-
-/**
- * Загружает список своих workflow с кэшированием на сессию.
- *
- * @returns список workflow владельца (без учёта `currentWorkflowId`)
- * @throws Error если запрос к backend упал (компонент покажет подсказку)
- */
-function loadWorkflowsAsync(): Promise<ApiWorkflow[]> {
-  if (workflowsCache !== null) {
-    return Promise.resolve(workflowsCache);
-  }
-
-  workflowsRequest ??= listWorkflowsAsync()
-    .then((list) => {
-      workflowsCache = list;
-
-      return list;
-    })
-    .finally(() => {
-      workflowsRequest = null;
-    });
-
-  return workflowsRequest;
-}
 
 /**
  * Узел под-workflow (R6.7, KI-200, DESIGN v0.8 § 5.4).
@@ -68,6 +33,9 @@ function loadWorkflowsAsync(): Promise<ApiWorkflow[]> {
  *
  * Warning «есть новая версия» отражает расхождение снимка `data.version`
  * (момент выбора) и `workflow.version` из БД (DESIGN § 5.5).
+ *
+ * Список берётся из общего кэша (`@/lib/workflow-list-cache`, KI-302): узел не
+ * ходит в `GET /workflow` сам и перезапрашивает список после инвалидации кэша.
  */
 export function SubWorkflowNode({ id, data }: NodeProps<SubWorkflowFlowNode>) {
   // R6.4b.2b: правки поля проходят через историю графа.
@@ -82,17 +50,28 @@ export function SubWorkflowNode({ id, data }: NodeProps<SubWorkflowFlowNode>) {
   // «Циклическая ссылка» на запуске (backend-контекст её отвергнет).
   const currentWorkflowId = useWorkflowStore((state) => state.currentWorkflowId);
 
-  const [workflows, setWorkflows] = useState<ApiWorkflow[]>(workflowsCache ?? []);
+  // KI-302: ревизия кэша списка — общая для всех узлов `sub_workflow`. Рост
+  // ревизии (Save/импорт/шаблон/удаление) перезапускает эффект ниже, поэтому
+  // созданный в этой же вкладке workflow появляется в селекте без F5.
+  const listRevision = useSyncExternalStore(
+    subscribeWorkflowList,
+    getWorkflowListRevision,
+  );
+
+  const [workflows, setWorkflows] = useState<ApiWorkflow[]>(
+    () => getCachedWorkflowList() ?? [],
+  );
   const [loadFailed, setLoadFailed] = useState(false);
 
-  // Список грузится при появлении узла и кэшируется на сессию.
+  // Список грузится при появлении узла и на каждую инвалидацию кэша (KI-302).
   useEffect(() => {
     let cancelled = false;
 
-    void loadWorkflowsAsync()
+    void loadWorkflowListAsync()
       .then((list) => {
         if (!cancelled) {
           setWorkflows(list);
+          setLoadFailed(false);
         }
       })
       .catch(() => {
@@ -104,7 +83,7 @@ export function SubWorkflowNode({ id, data }: NodeProps<SubWorkflowFlowNode>) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [listRevision]);
 
   const options = useMemo(
     () => workflows.filter((workflow) => workflow.id !== currentWorkflowId),

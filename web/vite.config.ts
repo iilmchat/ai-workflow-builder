@@ -62,6 +62,14 @@ function buildProxy(): Record<string, string | ProxyOptions> {
  * Запросы к backend-API проксируются на NestJS по списку из `API_PREFIXES`
  * (см. `web/src/lib/api-prefixes.ts`), поэтому фронтенд обращается к
  * относительным путям и не упирается в CORS.
+ *
+ * `host: '127.0.0.1'` (KI-326): без явного host'а Vite слушал только
+ * `[::1]:5173`, и `fetch('http://127.0.0.1:5173/…')` (CDP-смоук, скрипты,
+ * любой инструмент с IPv4-адресом) падал с `ECONNREFUSED`, а Chrome по
+ * `127.0.0.1` показывал `chrome-error://chromewebdata/`. Смоук теперь ходит
+ * на `127.0.0.1` — ровно на тот адрес, который слушает сервер.
+ * Внимание: `localhost` на этой машине резолвится в `::1`, поэтому
+ * `http://localhost:5173` после этого изменения может не открыться.
  */
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -70,7 +78,16 @@ export default defineConfig({
       '@': path.resolve(import.meta.dirname, './src'),
     },
   },
+  build: {
+    // KI-008: бандл > 500 kB (Zod + react-i18next + @xyflow/react), и Vite
+    // роняет в лог «(!) Some chunks are larger than 500 kB». DESIGN v0.7 § 4.5
+    // выбрал вариант A — «живём с этим размером» и порог 700 kB; в конфиг он
+    // до сих пор не попал, поэтому `pnpm build` печатал warning (RULES 3.6
+    // требует «0 errors, 0 warnings»). Сборка v0.8.3-TaskB: 699.88 kB.
+    chunkSizeWarningLimit: 700,
+  },
   server: {
+    host: '127.0.0.1',
     port: 5173,
     proxy: buildProxy(),
   },

@@ -19,7 +19,7 @@ import { nodeTypes } from '@/components/nodes';
 import { NodeCatalogPopover } from '@/components/NodeCatalogPopover';
 import { useDebouncedEffect } from '@/hooks/use-debounced-effect';
 import { useHotkeys } from '@/hooks/use-hotkeys';
-import { FIT_VIEW_OPTIONS } from '@/lib/fit-view-options';
+import { FIT_SELECTION_OPTIONS, FIT_VIEW_OPTIONS } from '@/lib/fit-view-options';
 import { computeGraphHash } from '@/lib/graph-hash';
 import { findGuides, type HelperLines } from '@/lib/graph-guides';
 import { canInsertOnEdge } from '@/lib/node-registry';
@@ -209,6 +209,40 @@ function CanvasInner({ onReady }: CanvasProps) {
   }, [getViewport]);
 
   /**
+   * Вписывает в видимую область выделенные узлы, а если выделения нет — весь граф.
+   *
+   * KI-328: fit по всему bbox усредняет масштаб по крайним узлам, поэтому при
+   * разбросе в тысячи пикселей карточки превращаются в 4–6 px — «в кадре» ≠
+   * «читаемо». Fit по выделению идёт с другим набором опций
+   * ({@link FIT_SELECTION_OPTIONS}, `minZoom: 0.1`) и с явным списком узлов:
+   * `getFitViewNodes` (@xyflow/system) фильтрует внутренний `nodeLookup` по
+   * `options.nodes`, поэтому в кадр попадают только выбранные карточки.
+   *
+   * Передаём именно `{ id }`, а не целые узлы: React Flow читает из элементов
+   * только `id`, а тип `FitViewOptions.nodes` допускает обе формы.
+   *
+   * Выделение берём из стора (`node.selected`) — его обновляет React Flow через
+   * `onNodesChange`, поэтому отдельное состояние для мультивыбора не нужно.
+   * Селектором стора список не читаем: новый массив на каждый рендер дал бы
+   * бесконечный цикл подписки (zustand сравнивает снапшоты по ссылке).
+   */
+  const fitSelection = useCallback(() => {
+    const selectedIds = useWorkflowStore
+      .getState()
+      .nodes.filter((node) => node.selected === true)
+      .map((node) => ({ id: node.id }));
+
+    if (selectedIds.length === 0) {
+      // Выделения нет — `Shift+F` работает как обычный `F`: подгонка всего графа.
+      void fitView({ ...FIT_VIEW_OPTIONS, duration: 200 });
+
+      return;
+    }
+
+    void fitView({ ...FIT_SELECTION_OPTIONS, nodes: selectedIds, duration: 200 });
+  }, [fitView]);
+
+  /**
    * Позиция нового узла так, чтобы его **центр** совпал с центром холста
    * (KI-187, хоткей `C`).
    *
@@ -338,6 +372,10 @@ function CanvasInner({ onReady }: CanvasProps) {
       f: () => {
         void fitView({ ...FIT_VIEW_OPTIONS, duration: 200 });
       },
+      // Shift+F — вписать **выделенные** узлы (KI-328), а без выделения — весь
+      // граф. У `shift+*` приоритет выше одиночных, поэтому `Shift+F` не уходит
+      // в обработчик `f` (см. `bindingPriority` в `hotkeys-utils`).
+      'shift+f': () => fitSelection(),
       // M — показать/скрыть миникарту (KI-190).
       m: () => setShowMinimap(!showMinimap),
       // C — новый комментарий в центре холста (KI-187). Одиночный `c` не
@@ -361,6 +399,7 @@ function CanvasInner({ onReady }: CanvasProps) {
       duplicateNodes,
       setCanvasMode,
       fitView,
+      fitSelection,
       showMinimap,
       setShowMinimap,
       addNode,
@@ -414,7 +453,7 @@ function CanvasInner({ onReady }: CanvasProps) {
           defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
           // KI-306: дефолт для fit-операций. `minZoom` живёт здесь (в опциях
           // вызова), а не в `<ReactFlow minZoom>`: зум колесом по-прежнему
-          // ограничен store-значением 0.5, а Fit/`F`/авто-fit — 0.02.
+          // ограничен store-значением 0.5, а Fit/`F`/авто-fit — 0.005 (KI-314).
           // KI-311: один источник опций на все три пути — `@/lib/fit-view-options`.
           fitViewOptions={FIT_VIEW_OPTIONS}
           // KI-188: в режиме «Рука» перетаскивание пустого места двигает холст,
@@ -534,8 +573,8 @@ function CanvasInner({ onReady }: CanvasProps) {
       {/* KI-188/KI-190: панель режимов холста. Живёт вне `<ReactFlow>`, но внутри
           его провайдера; `pointer-events-none` на обёртке + `pointer-events-auto`
           на кнопках — так панель не перехватывает pan/zoom вокруг себя.
-          Показывается и на пустом холсте: режим и миникарта — настройки вида,
-          а не свойство графа.
+          Показывается и на пустом холсте: режим, миникарта и «вписать выделение» —
+          настройки вида, а не свойство графа.
           R6.5.2-fix2: угол `bottom-right` вместо `bottom-left` — в левом нижнем
           углу панель перекрывала встроенный `<Controls />` (zoom/fit/lock).
           Отступ по вертикали зависит от миникарты: при её показе правый нижний
@@ -586,6 +625,21 @@ function CanvasInner({ onReady }: CanvasProps) {
             }`}
           >
             <span aria-hidden="true">🗺</span> {t('canvas.minimap.toggle')}
+          </button>
+
+          {/* KI-328: «Вписать выделение» — то же действие, что `Shift+F`.
+              Без выделения ведёт себя как обычный Fit по всему графу; `disabled`
+              не ставим специально: нажатие обязано что-то делать, иначе кнопка
+              выглядит сломанной. */}
+          <button
+            type="button"
+            data-canvas-fit-selection=""
+            aria-label={t('canvas.fit.selection.label')}
+            title={t('canvas.fit.selection.label')}
+            onClick={fitSelection}
+            className="cursor-pointer rounded-lg px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+          >
+            <span aria-hidden="true">🔍</span> {t('canvas.fit.selection.label')}
           </button>
         </div>
       </div>

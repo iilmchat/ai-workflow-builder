@@ -36,6 +36,7 @@
   "canvas.controls.zoom_out": "Zoom Out",
   "canvas.minimap.title": "Mini Map",
   "canvas.minimap.toggle": "Minimap",
+  "canvas.fit.selection.label": "Fit selection",
   "canvas.mode.select": "Cursor",
   "canvas.mode.pan": "Hand",
   "error.unknown": "Unknown error",

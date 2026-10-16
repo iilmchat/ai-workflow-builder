@@ -36,6 +36,7 @@
   "canvas.controls.zoom_out": "Отдалить",
   "canvas.minimap.title": "Миникарта",
   "canvas.minimap.toggle": "Карта",
+  "canvas.fit.selection.label": "Вписать выделение",
   "canvas.mode.select": "Курсор",
   "canvas.mode.pan": "Рука",
   "canvas.edge.insert": "Вставить узел в связь",

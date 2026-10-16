@@ -12,6 +12,7 @@ import {
   type TemplateSummary,
 } from '@/lib/export-import-api';
 import { syncWorkflowUrlParam } from '@/lib/url-sync';
+import { invalidateWorkflowListCache } from '@/lib/workflow-list-cache';
 import { useWorkflowStore } from '@/stores/workflow';
 
 interface LoadModalProps {
@@ -206,6 +207,9 @@ export function LoadModal({ onClose }: LoadModalProps) {
   const handleDelete = async (id: string) => {
     try {
       await deleteWorkflowAsync(id);
+      // KI-302: удалённый workflow не должен остаться в селекте узла
+      // `sub_workflow` — сбрасываем общий кэш вместе с локальным списком.
+      invalidateWorkflowListCache();
       setNotice({ kind: 'success', text: t('loadModal.deleted') });
       await refreshAsync();
     } catch (caught) {
