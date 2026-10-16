@@ -1,0 +1,10 @@
+{
+  "$comment": "Контракт REST-ответов backend ↔ web/src/lib/api.ts. Любое изменение схемы на одной стороне требует синхронизации с этим файлом. Проверяется двумя spec'ами: src/runs/dto/api-contract.spec.ts (backend) и web/src/lib/api-contract.spec.ts (web). Ключи — имена backend-DTO (TS-интерфейсы ответов), значения — отсортированные списки имён полей. Поля, которых нет на одной из сторон, в контракт попадать не могут: оба spec'а требуют точного равенства со своей стороной. Механизм разбора: у SSE (docs/development/sse-contract.json, KI-348) обе стороны описаны Zod-схемами; у REST-ответов на backend Zod-схемой описан только ExportWorkflowDto, остальные (RunResponse, ShareTokenDto, SharedWorkflow) — TS-интерфейсы, поэтому backend-spec читает их поля из исходников компилятором TypeScript (появление Zod-схем ответов — KI-358).",
+  "version": 1,
+  "responses": {
+    "ExportWorkflowDto": ["edges", "exportedAt", "name", "nodes", "version"],
+    "RunResponse": ["createdAt", "id", "status", "workflowId"],
+    "ShareTokenDto": ["shareToken", "shareUrl"],
+    "SharedWorkflow": ["createdAt", "edges", "id", "name", "nodes"]
+  }
+}
