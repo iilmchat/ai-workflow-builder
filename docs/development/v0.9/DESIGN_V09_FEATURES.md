@@ -243,9 +243,15 @@ CDP-смоук каждого.
   etc.
 - **OpenAI Images** — `gpt-image-1`, `dall-e-3`. Уже знакомый SDK.
 
-**Реализация:** `MediaRegistryService` расширяется — несколько
-`IMediaProvider` подряд; `resolveByModelAsync` ищет по всем; конфликты — по
-приоритету (`CREATIVELAB > REPLICATE > FAL > OPENAI_IMAGES`, настраивается).
+**Каталог — в коде (KI-366):** у Replicate `/v1/models` даёт десятки тысяч
+моделей без схем параметров; у FAL каталога нет. Поэтому `REPLICATE_MODELS` /
+`FAL_MODELS` — константы в провайдерах.
+
+**Реализация (R7.3):** REST fetch (SDK не подключались — pnpm install
+запрещён; запросы идентичны SDK-вызовам). `MediaRegistryService` расширяется —
+несколько `IMediaProvider` подряд; `resolveByModelAsync` ищет по всем;
+конфликты — по приоритету
+(`CREATIVELAB > REPLICATE > FAL > OPENAI_IMAGES`, настраивается).
 
 **Env:**
 
@@ -254,6 +260,11 @@ CDP-смоук каждого.
     OPENAI_IMAGES_API_KEY=    # может совпадать с OPENAI_API_KEY
     OPENAI_IMAGES_BASE_URL=
     MEDIA_PROVIDER_PRIORITY=creativelab,replicate,fal,openai_images
+    MEDIA_USD_RUB_RATE=100  # пересчёт тарифов USD→RUB (KI-383: дублирует
+                            # WORKFLOW_RUN_USD_RUB_RATE, слить при следующей правке env)
+
+**OpenAI Images даёт `data:image/png;base64,...` (KI-378)** — UI не
+отображает; R7.8 (Media storage) конвертирует в https-ссылку.
 
 **UI:** в селекте модели ImageGenNode — группировка по провайдеру. Формат:
 `[Replicate] flux-pro-1.1-ultra`.
