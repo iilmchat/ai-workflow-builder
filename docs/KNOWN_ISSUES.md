@@ -6042,6 +6042,105 @@ MediaModelInfo, engine-DTO
 - **Связанные:** KI-372.
 
 ---
+
+### KI-384 — `pricing` каталога не читается: `price` ≠ фактическая стоимость media
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `src/media/dto/media-model.dto.ts`, `src/media/dto/media-model.mapper.ts`,
+  `src/runs/cost-budget.service.ts`, `src/media/media-node-executor.service.ts`
+- **Описание:** Каталожный `price` расходится со списанием: `glabs-veo-3` 480 vs
+  `pricing.cost` 960; `glabs-veo-3-1-fast` 49 vs 245; `kling-v3` 210 vs
+  `per_second` 33.6 ₽/с (5 с → 168 ₽); `sound-effect` `price_unit=per_second`;
+  `tts2` `price=0`, `price_unit` отсутствует, а фактически списано 2.04 ₽
+  (`pricing.per_character.ratePer1K=60`). Оценка бюджета (KI-048) для media
+  недооценивает стоимость, для `tts2` равна нулю — hard cap не срабатывает.
+- **Решение:** читать блок `pricing` (fixed / per_second / per_character /
+  matrix / expr) в DTO+маппер и считать оценку по параметрам вызова
+  (`duration`, `resolution`, длина текста), а не по `price`.
+- **Связанные:** KI-048, KI-112, KI-372, R7.2.
+
+---
+
+### KI-385 — CreativeLab не отдаёт `type=AUDIO`: TTS-модели лежат в MUSIC
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `src/media/media-generation.ts`, `web/src/lib/generation-node.ts`
+- **Описание:** `GET /media/models?type=AUDIO` → `{"code":0,"models":[]}`; TTS —
+  это `tts2` с `type=MUSIC` (параметр `voice`, тариф `per_character`). Узел
+  `audio_generation` работает только благодаря документированному фолбэку
+  «AUDIO ∪ MUSIC-модели с параметром `voice`/`voice_id`» — эвристике, которая
+  сломается, если upstream переименует параметр.
+- **Решение:** прямой TTS-провайдер (ElevenLabs, DESIGN § 3.2) либо флаг
+  `capabilities` в каталоге вместо угадывания по имени параметра.
+- **Связанные:** KI-361, KI-366, DESIGN v0.9 § 3.2.
+
+---
+
+### KI-386 — Метаданные результата музыки/аудио теряются на схеме задачи
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `src/media/dto/media-task.dto.ts`, `src/media/dto/media-task.mapper.ts`,
+  `web/src/types/media.ts`
+- **Описание:** `MediaTaskResponseSchema.result` объявлен как
+  `z.array(z.object({ url }))` без `passthrough`, поэтому реальные поля
+  `duration`, `title`, `cover_url`, `lyric`, `tags` (ответ `grom-zvuk`)
+  отбрасываются. UI не может показать обложку, длительность и текст песни.
+- **Решение:** `passthrough()` в схеме + новые поля `MediaTaskResult`
+  (`durationSec`, `coverUrl`, `title`) и их запись в `node_runs.outputs`.
+- **Связанные:** KI-361, KI-362, R7.2.
+
+---
+
+### KI-387 — Несколько инстансов backend делят очередь BullMQ: job узла выполняет чужой воркер
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `src/runs/runs.processor.ts`, `src/runs/runs.worker-options.ts`,
+  `src/redis/redis.module.ts`, `.env.example`
+- **Описание:** Обнаружено смоуком R7.2: UI-запуск, созданный backend-ом с
+  mock-upstream, был выполнен воркером параллельного backend-а с **боевым**
+  ключом CreativeLab — узлы ушли в настоящий upstream и списали 80.38 ₽
+  (`wan-2.5` 55 ₽, `suno` 24 ₽, `tts2` 1.38 ₽). Воркеры не привязаны к
+  инстансу: очередь одна на всех (`REDIS_URL`), поэтому «кто первый взял».
+- **Решение:** префикс/отдельная БД Redis на окружение (`REDIS_URL` c `/N`),
+  либо маркер инстанса в job'е и отказ чужим воркерам.
+- **Связанные:** KI-032, KI-046, R7.2.
+
+---
+
+### KI-388 — `durationSec`/`aspectRatio` в DESIGN § 3.2 не совпадают с каталогом; узел без модели не показывает поля
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `docs/development/v0.9/DESIGN_V09_FEATURES.md` (§ 3.2),
+  `src/media/media-node-executor.service.ts`, `web/src/components/nodes/*GenNode.tsx`
+- **Описание:** DESIGN обещает 3–10 с (video) и 15–120 с (music), каталог даёт
+  enum-и: `kling-v2-5` {5,10}, `kling-v4` до 30, `grom-zvuk` вернул `duration:240`.
+  Схемы узлов валидируют «разумное окно» (1–60 / 1–300), точный набор — каталог.
+  Плюс: узел, добавленный из каталога до загрузки моделей, остаётся с пустым
+  селектом и без полей параметров (backend дефолт подставляет); в TopBar нет
+  пред-чека модели для новых узлов (`kind:'image'`/`'llm'` только).
+- **Решение:** обновить DESIGN § 3.2 по факту каталога; автоподстановка дефолтной
+  модели после загрузки каталога; пред-чек моделей новых узлов в TopBar.
+- **Связанные:** KI-361, KI-367, KI-369.
+
+---
+
+### KI-389 — TTS: нет каталога голосов, `speed` не объявлен ни одной моделью
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `web/src/components/nodes/AudioGenNode.tsx`, `src/media/media-generation.ts`
+- **Описание:** `tts2.voice` — непрозрачный id (`69e7736797a24533bd8ffca6`),
+  каталога голосов у upstream нет, свой дефолт он подставляет сам; поле `voiceId`
+  в UI — свободный ввод. Параметр `speed` (DESIGN 0.5–2.0) не объявлен ни одной
+  моделью, поэтому поле никогда не появляется.
+- **Решение:** селект голосов (если upstream отдаст список) либо честная подпись
+  «id голоса, необязательно — иначе голос по умолчанию»; убрать `speed` из
+  DESIGN или завести TTS-провайдера с этим параметром.
+- **Связанные:** KI-385, DESIGN v0.9 § 3.2.
+
+---
+
+### KI-390 — Бандл web 734.19 kB → порог Vite 730 → 750 kB
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `web/vite.config.ts`
+- **Описание:** Три узла media-генерации и зеркала контрактов дали +23 kB
+  (711.08 → 734.19 kB). Системное решение — code-split (KI-008), в v0.9 не входит.
+- **Связанные:** KI-008, KI-373.
+
+---
 ## Сводка по статусам
 
 | Статус | Кол-во |
@@ -6051,9 +6150,9 @@ MediaModelInfo, engine-DTO
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 226 |
+| Open | 232 |
 | Won't Fix | 1 |
-| **Всего** | **371** |
+| **Всего** | **378** |
 
 ---
 
