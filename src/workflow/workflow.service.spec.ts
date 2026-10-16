@@ -327,6 +327,75 @@ describe('WorkflowService', () => {
       expect(whereSQL(updateChain.where)).toContain('"workflows"."user_id" = user-1');
     });
 
+    it('PATCH только с name не инкрементирует version (метаданные)', async () => {
+      await service.updateAsync(WORKFLOW_ID, { name: 'Переименовано' });
+
+      const setArg = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
+
+      expect(setArg).not.toHaveProperty('version');
+      // Чтение текущей строки не нужно: инкремента для метаданных нет.
+      expect(db.select).not.toHaveBeenCalled();
+    });
+
+    it('PATCH только с description не инкрементирует version (метаданные)', async () => {
+      await service.updateAsync(WORKFLOW_ID, { description: 'новое описание' });
+
+      const setArg = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
+
+      expect(setArg).not.toHaveProperty('version');
+      expect(db.select).not.toHaveBeenCalled();
+    });
+
+    it('PATCH с изменёнными nodes инкрементирует version в SQL (KI-300)', async () => {
+      const nodes = [{ id: 'n1', type: 'llm' }];
+
+      await service.updateAsync(WORKFLOW_ID, { nodes });
+
+      const setArg = updateChain.set.mock.calls[0][0] as { version?: unknown };
+
+      // version читается из текущей строки: [baseWorkflow] c nodes: [].
+      expect(db.select).toHaveBeenCalledTimes(1);
+      expect(setArg.version).toBeDefined();
+      expect(renderSQL(setArg.version)).toContain('"workflows"."version" + 1');
+      expect(setArg.version).not.toBe(2);
+    });
+
+    it('PATCH с изменёнными edges инкрементирует version в SQL (KI-300)', async () => {
+      const edges = [{ id: 'e1', source: 'n1', target: 'n2' }];
+
+      await service.updateAsync(WORKFLOW_ID, { edges });
+
+      const setArg = updateChain.set.mock.calls[0][0] as { version?: unknown };
+
+      expect(db.select).toHaveBeenCalledTimes(1);
+      expect(setArg.version).toBeDefined();
+      expect(renderSQL(setArg.version)).toContain('"workflows"."version" + 1');
+    });
+
+    it('PATCH с идентичными nodes не инкрементирует version (идемпотентный Save)', async () => {
+      // baseWorkflow.nodes === [], поэтому payload deep-equal текущей строке.
+      await service.updateAsync(WORKFLOW_ID, { nodes: [] });
+
+      const setArg = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
+
+      expect(db.select).toHaveBeenCalledTimes(1);
+      expect(setArg).not.toHaveProperty('version');
+    });
+
+    it('PATCH с nodes для несуществующего workflow возвращает null без инкремента', async () => {
+      // Строка не найдена: `findOneAsync` вернул null, инкремента быть не должно
+      // (и не должно быть падения на `current.nodes`).
+      selectChain.limit.mockImplementation(() => []);
+      updateChain.returning.mockImplementation(() => []);
+
+      const result = await service.updateAsync(WORKFLOW_ID, { nodes: [{ id: 'n1' }] });
+
+      const setArg = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
+
+      expect(result).toBeNull();
+      expect(setArg).not.toHaveProperty('version');
+    });
+
     it('возвращает null, если запись не найдена', async () => {
       updateChain.returning.mockImplementation(() => []);
 

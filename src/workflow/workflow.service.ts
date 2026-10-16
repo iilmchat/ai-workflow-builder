@@ -6,8 +6,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { and, desc, eq, sql } from 'drizzle-orm';
+import { isDeepStrictEqual } from 'node:util';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { workflows, type NewWorkflow, type Workflow } from '../db/schema.js';
+import { workflows, type Workflow } from '../db/schema.js';
 import type { EdgeDto, NodeDto } from '../engine/dto/index.js';
 import type {
   CreateWorkflowDto,
@@ -195,6 +196,22 @@ export class WorkflowService {
   /**
    * Обновляет workflow и помечает его свежим `updatedAt`.
    *
+   * KI-300: колонка `version` — ревизия **содержимого графа**, по ней ссылки
+   * `sub_workflow` определяют, что сохранённый снимок устарел (R6.7). Поэтому
+   * `version` инкрементируется только при реальном изменении `nodes`/`edges`
+   * (deep-equal с текущей строкой):
+   *
+   * - `name`/`description` — метаданные, они не влияют на исполнение, и их
+   *   правка иначе давала бы ложный warning «есть новая версия» у всех ссылок;
+   * - автосохранение без правок (payload идентичен) `version` не двигает —
+   *   Save идемпотентен;
+   * - пустой PATCH отсекается ниже (`BadRequestException`).
+   *
+   * Текущая строка читается **только** если в DTO есть `nodes`/`edges`: для
+   * PATCH одних метаданных лишний SELECT не нужен — инкремента там нет по
+   * определению. Сам инкремент выполняется в SQL (`version + 1`), поэтому
+   * конкурентные обновления графа не теряют версии (lost update).
+   *
    * @param id - uuid workflow
    * @param dto - валидированные поля для обновления (все необязательные)
    * @param userId - необязательный идентификатор владельца (проверка принадлежности)
@@ -206,24 +223,34 @@ export class WorkflowService {
     dto: UpdateWorkflowDto,
     userId?: string,
   ): Promise<Workflow | null> {
-    // KI-014: колонки типизированы через `$type<NodeDto[]>()` / `$type<EdgeDto[]>()`,
-    // а DTO обновления принимает `unknown[]`: узлы сохраняются «как есть»
-    // (включая UI-поля React Flow), поэтому приведение сужено до двух полей
-    // и не меняет поведение. Валидация формы графа — на входе в engine.
-    const values: Partial<NewWorkflow> = {
-      ...dto,
-      nodes: dto.nodes as NodeDto[] | undefined,
-      edges: dto.edges as EdgeDto[] | undefined,
-      updatedAt: new Date(),
-    };
-
     if (Object.keys(dto).length === 0) {
       throw new BadRequestException('Не передано ни одного поля для обновления');
     }
 
+    let isGraphChanged = false;
+
+    if (dto.nodes !== undefined || dto.edges !== undefined) {
+      const current = await this.findOneAsync(id, userId);
+
+      isGraphChanged =
+        current !== null &&
+        ((dto.nodes !== undefined && !isDeepStrictEqual(dto.nodes, current.nodes)) ||
+          (dto.edges !== undefined && !isDeepStrictEqual(dto.edges, current.edges)));
+    }
+
+    // KI-014: колонки типизированы через `$type<NodeDto[]>()` / `$type<EdgeDto[]>()`,
+    // а DTO обновления принимает `unknown[]`: узлы сохраняются «как есть»
+    // (включая UI-поля React Flow), поэтому приведение сужено до двух полей
+    // и не меняет поведение. Валидация формы графа — на входе в engine.
     const [updated] = await this.db
       .update(workflows)
-      .set(values)
+      .set({
+        ...dto,
+        nodes: dto.nodes as NodeDto[] | undefined,
+        edges: dto.edges as EdgeDto[] | undefined,
+        ...(isGraphChanged ? { version: sql<number>`${workflows.version} + 1` } : {}),
+        updatedAt: new Date(),
+      })
       .where(this.buildAccessFilter(id, userId))
       .returning();
 
