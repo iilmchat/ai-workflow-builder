@@ -7,9 +7,19 @@
  */
 
 import type { MediaTaskResult } from './dto/media-task.mapper.js';
+import type { ImageToolOperation, ImageToolParams } from './image-tool.js';
 
-/** Тип media-модели (совпадает с полем `type` у GPTunnel CreativeLab). */
-export type MediaType = 'IMAGE' | 'VIDEO' | 'AUDIO' | 'MUSIC' | '3D';
+/**
+ * Тип media-модели (совпадает с полем `type` у GPTunnel CreativeLab).
+ *
+ * `TOOL` (R7.1, DESIGN v0.9 § 2.4) — media-**инструмент**: модель, которая не
+ * создаёт файл «с нуля», а преобразует входной (upscale, удаление фона,
+ * липсинк). На момент R7.1 каталог CreativeLab такого типа не отдаёт (все
+ * инструменты приходят как `IMAGE`/`VIDEO` с обязательным входным слотом), но
+ * значение заведено: провайдеры R7.3 (Replicate/FAL/OpenAI) и будущие версии
+ * upstream могут помечать инструменты явно.
+ */
+export type MediaType = 'IMAGE' | 'VIDEO' | 'AUDIO' | 'MUSIC' | '3D' | 'TOOL';
 
 /**
  * Полный список типов для рантайм-валидации.
@@ -24,6 +34,7 @@ export const MEDIA_TYPES: readonly MediaType[] = [
   'AUDIO',
   'MUSIC',
   '3D',
+  'TOOL',
 ];
 
 /** Вариант значения для параметра типа `enum`. */
@@ -164,6 +175,15 @@ export interface CreateMediaTaskInput {
    * `done`/`failed`. Для длинных генераций (video) лучше `false` и опрос.
    */
   wait?: boolean;
+  /**
+   * Входные файлы по ролям: `{ role: [url, ...] }` (R7.1, KI-196).
+   *
+   * Нужны инструментам (image-to-image): без них upstream получает запрос без
+   * исходного изображения и отвечает `400`/`Invalid input`. Ссылки обязаны быть
+   * публично доступными (или `data:`-URL до 20 МБ) — upstream скачивает файл
+   * сам.
+   */
+  inputs?: Record<string, string[]>;
 }
 
 /**
@@ -209,6 +229,30 @@ export interface IMediaProvider {
    *   upstream ответил ошибкой
    */
   getTaskAsync(taskId: string): Promise<MediaTaskResult>;
+
+  /**
+   * Применяет media-инструмент к готовому файлу (R7.1, KI-196).
+   *
+   * Отличие от {@link IMediaProvider.createTaskAsync}: на вход идёт **ссылка на
+   * файл** (`input`), а не промпт, и результат обычно приходит быстро — метод
+   * не опрашивает задачу (никакого poll внутри). Если upstream не успел за
+   * окно `wait`, вернётся задача в статусе `queued`/`running`; опрос —
+   * ответственность вызывающего кода (исполнитель узла `image_tool`).
+   *
+   * @param input - публично доступный URL входного файла (`http`/`https`)
+   * @param tool - операция инструмента (`upscale`, `bg_removal`, ...)
+   * @param params - служебные ключи и параметры модели (см. `ImageToolParams`):
+   *   `model`, `prompt`, `idempotencyKey`, `inputs`, `audioUrl` плюс скалярные
+   *   параметры конкретной модели
+   * @returns задача инструмента; при быстром ответе — сразу `done` с URL-ами
+   * @throws MediaProviderException если ключ не задан, вход пуст/не URL,
+   *   модель не поддерживается, upstream недоступен или ответил ошибкой
+   */
+  applyToolAsync(
+    input: string,
+    tool: ImageToolOperation,
+    params?: ImageToolParams,
+  ): Promise<MediaTaskResult>;
 }
 
 /**

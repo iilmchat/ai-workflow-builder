@@ -1,9 +1,10 @@
 import { Test } from '@nestjs/testing';
 import type { NodeDto } from '../engine/dto/index.js';
+import { CostBudgetService } from '../runs/cost-budget.service.js';
 import { MediaProviderException } from './media-provider.interface.js';
 import type { MediaTaskResult } from './dto/media-task.mapper.js';
 import { MediaNodeExecutor } from './media-node-executor.service.js';
-import { MediaRegistryService } from './media-registry.service.js';
+import { MEDIA_PROVIDERS, MediaRegistryService } from './media-registry.service.js';
 
 /** Идентификатор запуска для ключа идемпотентности. */
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
@@ -52,6 +53,18 @@ describe('MediaNodeExecutor', () => {
     getTaskAsync: ReturnType<typeof vi.fn>;
     findParamsAsync: ReturnType<typeof vi.fn>;
   };
+  /**
+   * Провайдер-заглушка (R7.1): исполнитель читает из него каталог моделей —
+   * цену для оценки бюджета и модель-инструмент.
+   */
+  let provider: {
+    name: string;
+    isConfigured: boolean;
+    listModelsAsync: ReturnType<typeof vi.fn>;
+    createTaskAsync: ReturnType<typeof vi.fn>;
+    getTaskAsync: ReturnType<typeof vi.fn>;
+    applyToolAsync: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
     registry = {
@@ -64,10 +77,47 @@ describe('MediaNodeExecutor', () => {
       ),
     };
 
+    provider = {
+      name: 'creativelab',
+      isConfigured: true,
+      listModelsAsync: vi.fn(() =>
+        Promise.resolve([
+          {
+            id: 'flux-schnell',
+            code: 'flux-schnell',
+            type: 'IMAGE',
+            price: 4,
+            priceUnit: 'per_generation',
+            priceInput: null,
+            priceInputUnit: null,
+            moderation: 'auto',
+            prompt: 'required',
+            params: [],
+            inputs: [],
+          },
+        ]),
+      ),
+      createTaskAsync: vi.fn(() => Promise.resolve(task())),
+      getTaskAsync: vi.fn(() => Promise.resolve(task())),
+      applyToolAsync: vi.fn(() => Promise.resolve(task())),
+    };
+
     const moduleRef = await Test.createTestingModule({
       providers: [
         MediaNodeExecutor,
         { provide: MediaRegistryService, useValue: registry },
+        // R7.1 (KI-196): исполнителю нужны сами провайдеры (инструменты идут
+        // мимо реестра — `media-registry.service.ts` зарезервирован R7.3).
+        { provide: MEDIA_PROVIDERS, useValue: [provider] },
+        // R7.1 (KI-048): предохранитель по стоимости — в этих тестах не
+        // проверяется; собственные тесты — `cost-budget.service.spec.ts`.
+        {
+          provide: CostBudgetService,
+          useValue: {
+            assertWithinBudgetAsync: vi.fn(() => Promise.resolve()),
+            checkBudgetAsync: vi.fn(() => Promise.resolve()),
+          },
+        },
       ],
     }).compile();
 

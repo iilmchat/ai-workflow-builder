@@ -49,8 +49,11 @@ function stubProvider(
     listModelsAsync: vi.fn((_type?: MediaType) => Promise.resolve(models)),
     // KI-317: заглушке нужен только `listModelsAsync`, но IMediaProvider
     // требует и методы задач — объявляем их моками без реализации.
+    // R7.1: то же для инструмента (реестр его не вызывает — им пользуется
+    // `MediaNodeExecutor`).
     createTaskAsync: vi.fn(),
     getTaskAsync: vi.fn(),
+    applyToolAsync: vi.fn(),
   };
 }
 

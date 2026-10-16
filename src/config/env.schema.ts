@@ -73,6 +73,41 @@ export const WorkerEnvSchema = z.object({
 export type WorkerEnv = z.infer<typeof WorkerEnvSchema>;
 
 /**
+ * Zod-схема бюджета запуска (R7.1, KI-048).
+ *
+ * Лимиты вынесены отдельным объектом по той же причине, что и
+ * {@link WorkerEnvSchema}: значения нужны и `ConfigModule` (DI, fail-fast), и
+ * тестам/документации как единственный источник дефолтов.
+ */
+export const CostBudgetEnvSchema = z.object({
+  /**
+   * Максимальная стоимость запуска в USD (LLM-узлы). Дефолт 5 — совпадает с
+   * DESIGN v0.9 § 2.6.
+   */
+  WORKFLOW_RUN_MAX_COST_USD: z.coerce.number().positive().default(5),
+  /**
+   * Максимальная стоимость запуска в рублях (media-узлы: CreativeLab тарифицирует
+   * в рублях). Дефолт 500.
+   */
+  WORKFLOW_RUN_MAX_COST_RUB: z.coerce.number().positive().default(500),
+  /**
+   * Режим бюджета: `hard` — превышение блокирует вызов провайдера (узел
+   * `failed`), `soft` — только предупреждение в лог (DESIGN § 2.6).
+   */
+  WORKFLOW_RUN_BUDGET_MODE: z.enum(['hard', 'soft']).default('hard'),
+  /**
+   * Курс RUB→USD для нормализации лимитов в одну шкалу (сколько рублей в
+   * долларе). Нужен, потому что лимиты заданы в двух валютах, а UI и текст
+   * ошибки показывают одну цифру. Дефолт 100 — грубая оценка; в проде
+   * значение задаётся из окружения.
+   */
+  WORKFLOW_RUN_USD_RUB_RATE: z.coerce.number().positive().default(100),
+});
+
+/** Валидированные настройки бюджета запуска. */
+export type CostBudgetEnv = z.infer<typeof CostBudgetEnvSchema>;
+
+/**
  * Zod-схема переменных окружения, обязательных для запуска приложения.
  *
  * Проверяется ровно один раз при инициализации `ConfigModule` (fail-fast):
@@ -245,6 +280,8 @@ export const EnvSchema = z.object({
   ),
   // Настройки воркера очереди (KI-065) и lease-порог (KI-032).
   ...WorkerEnvSchema.shape,
+  // Бюджет запуска: лимиты стоимости и режим (R7.1, KI-048).
+  ...CostBudgetEnvSchema.shape,
 })
   /**
    * Fail-fast: отказ старта при `AUTH_DISABLED=true` в production.

@@ -359,7 +359,7 @@ describe('EngineService', () => {
       });
     });
 
-    it('выводит порт url для источника типа image_generation (KI-022)', async () => {
+    it('выводит порт mediaUrl для источника типа image_generation (KI-022; R7.1)', async () => {
       const graph: GraphDto = {
         nodes: [node('A', 'image_generation'), node('B', 'text')],
         edges: [{ id: 'e1', source: 'A', target: 'B', targetHandle: 'in' }],
@@ -369,7 +369,8 @@ describe('EngineService', () => {
 
       expect(plan.executionMap.B.inputs).toEqual({
         // KI-034: ключ — имя входного порта text-узла, а не targetHandle.
-        text: { fromNode: 'A', fromPort: 'url' },
+        // R7.1: порт — фактический ключ выходов `MediaNodeExecutor`.
+        text: { fromNode: 'A', fromPort: 'mediaUrl' },
       });
     });
 
@@ -435,7 +436,7 @@ describe('EngineService', () => {
       const plan = await service.buildExecutionPlanAsync(graph);
 
       expect(plan.executionMap.B.inputs).toEqual({
-        prompt: { fromNode: 'A', fromPort: 'url' },
+        prompt: { fromNode: 'A', fromPort: 'mediaUrl' },
       });
     });
 
@@ -463,7 +464,8 @@ describe('EngineService', () => {
     it('игнорирует чужой хендл и берёт порт по типу источника (KI-301)', async () => {
       // `image_generation` не отдаёт порт `text`/`text-output`: хендл чужой,
       // поэтому резолвер возвращает null, а порт берётся из типа источника —
-      // `url`. До KI-301 здесь был `fromPort='text'` и данные терялись.
+      // `mediaUrl` (R7.1: до этого контракт объявлял `url`, которого в выходах
+      // не было). До KI-301 здесь был `fromPort='text'` и данные терялись.
       const graph: GraphDto = {
         nodes: [node('A', 'image_generation'), node('B', 'llm')],
         edges: [
@@ -480,7 +482,7 @@ describe('EngineService', () => {
       const plan = await service.buildExecutionPlanAsync(graph);
 
       expect(plan.executionMap.B.inputs).toEqual({
-        prompt: { fromNode: 'A', fromPort: 'url' },
+        prompt: { fromNode: 'A', fromPort: 'mediaUrl' },
       });
     });
 

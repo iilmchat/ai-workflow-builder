@@ -17,6 +17,7 @@ export type NodeData =
   | TextNodeData
   | LlmNodeData
   | ImageGenNodeData
+  | ImageToolNodeData
   | CommentNodeData
   | HttpNodeData
   | ConditionNodeData
@@ -72,6 +73,7 @@ export type NodeType =
   | 'text'
   | 'llm'
   | 'image_generation'
+  | 'image_tool'
   | 'comment'
   | 'http'
   | 'condition'
@@ -83,15 +85,18 @@ export type NodeType =
  * Категории узлов для каталога (KI-127, § 5.2 DESIGN v0.7).
  *
  * Порядок = порядок секций в каталоге. Категория `media` — для текущего
- * `image_generation` и будущих video/audio-узлов. `composition` (R6.7) —
- * секция «Композиция» (DESIGN v0.8 § 5.4) для узлов, которые собирают граф из
- * других графов (`sub_workflow`). Сами иконки и привязка типов к категориям
- * живут в едином реестре `@/lib/node-registry`.
+ * `image_generation` и будущих video/audio-узлов. `media_tools` (R7.1, DESIGN
+ * v0.9 § 2.2) — секция media-**инструментов** (upscale, удаление фона, липсинк):
+ * они не создают файл «с нуля», а преобразуют входной, поэтому отделены от
+ * генерации. `composition` (R6.7) — секция «Композиция» (DESIGN v0.8 § 5.4) для
+ * узлов, которые собирают граф из других графов (`sub_workflow`). Сами иконки и
+ * привязка типов к категориям живут в едином реестре `@/lib/node-registry`.
  */
 export const NODE_CATEGORIES = [
   'input',
   'ai',
   'media',
+  'media_tools',
   'tools',
   'composition',
   'output',
@@ -203,8 +208,58 @@ export interface ImageGenNodeData extends Record<string, unknown> {
 }
 
 /**
- * Данные узла-комментария (KI-187).
+ * Операции media-инструмента (R7.1, DESIGN v0.9 § 3.1).
  *
+ * Зеркало backend `IMAGE_TOOL_OPERATIONS` (`src/media/image-tool.ts`): значения
+ * уходят в граф как есть и проверяются Zod-схемой узла на backend, поэтому UI
+ * не должен предлагать операцию, которую executor отвергнет.
+ */
+export const IMAGE_TOOL_OPERATIONS = [
+  'upscale',
+  'bg_removal',
+  'chromakey',
+  'trim',
+  'lipsync',
+] as const;
+
+/** Операция media-инструмента. */
+export type ImageToolOperation = (typeof IMAGE_TOOL_OPERATIONS)[number];
+
+/**
+ * Данные узла `image_tool` (R7.1, DESIGN v0.9 § 3.1).
+ *
+ * Узел применяет media-инструмент (upscale, удаление фона, хромакей, обрезка,
+ * липсинк) к **готовому файлу**: вход — ссылка на файл по связи
+ * (`inputs.url` от `image_generation` либо любого узла с портом `text`) или
+ * `inputUrl`, заданный прямо в узле (fallback, если связи нет).
+ *
+ * Порты (`src/engine/node-ports.ts`): вход `image-input` → порт `url`, выход
+ * `image-output` → порт `resultUrls` (массив ссылок, DESIGN § 3.1).
+ */
+export interface ImageToolNodeData extends Record<string, unknown> {
+  kind: 'image_tool';
+  /** Операция инструмента; `undefined` трактуется как «не выбрана». */
+  operation: ImageToolOperation;
+  /**
+   * id модели-инструмента из каталога media (`GET /media/models?type=TOOL`).
+   *
+   * `''` — «модель ещё не выбрана». У операций с известной моделью
+   * (`bg_removal`, `lipsync`) backend подставит дефолт, у остальных запуск
+   * упадёт понятной ошибкой — молчаливой подмены нет (KI-069).
+   */
+  model?: string;
+  /**
+   * Ссылка на входной файл — фолбэк, если узел не связан с источником.
+   *
+   * `undefined` не присваиваем (KI-129): пустых ключей в JSON быть не должно.
+   */
+  inputUrl?: string;
+  /** Параметры конкретной операции (промпт, audioUrl, поля модели). */
+  params?: Record<string, unknown>;
+}
+
+/**
+ * Данные узла-комментария (KI-187).
  * Стикер без портов: в потоке данных не участвует, в `executionLevels` не
  * попадает — backend исключает аннотации из плана выполнения (KI-266).
  */
@@ -364,6 +419,8 @@ export type TextFlowNode = Node<TextNodeData, 'text'>;
 export type LlmFlowNode = Node<LlmNodeData, 'llm'>;
 /** Узел генерации изображений в терминах React Flow. */
 export type ImageGenFlowNode = Node<ImageGenNodeData, 'image_generation'>;
+/** Узел media-инструмента в терминах React Flow (R7.1, KI-196). */
+export type ImageToolFlowNode = Node<ImageToolNodeData, 'image_tool'>;
 /** Узел-комментарий в терминах React Flow (KI-187). */
 export type CommentFlowNode = Node<CommentNodeData, 'comment'>;
 /** Узел HTTP-запроса в терминах React Flow (R6.5.2). */
@@ -382,6 +439,7 @@ export type AppNode =
   | TextFlowNode
   | LlmFlowNode
   | ImageGenFlowNode
+  | ImageToolFlowNode
   | CommentFlowNode
   | HttpFlowNode
   | ConditionFlowNode

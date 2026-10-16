@@ -12,6 +12,9 @@ import { WorkflowModule } from './workflow/workflow.module.js';
 import { EngineModule } from './engine/engine.module.js';
 import { NodesModule } from './nodes/nodes.module.js';
 import { RedisModule } from './redis/redis.module.js';
+// R7.1 (KI-048): бюджет запуска — @Global(), нужен исполнителям узлов
+// (LlmModule/MediaModule) и HTTP-ручке в RunsModule.
+import { CostBudgetModule } from './runs/cost-budget.module.js';
 import { RunsModule } from './runs/runs.module.js';
 import { TemplatesModule } from './templates/templates.module.js';
 
@@ -40,6 +43,7 @@ import { TemplatesModule } from './templates/templates.module.js';
     WorkflowModule,
     EngineModule,
     NodesModule,
+    CostBudgetModule,
     RunsModule,
     // R6.6.1: шаблоны (GET /templates, POST /templates/:id/instantiate).
     // Импортирует WorkflowModule ради WorkflowService.importAsync.

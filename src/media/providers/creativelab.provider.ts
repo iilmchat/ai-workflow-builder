@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createHash } from 'node:crypto';
 import { toMediaModelInfo } from '../dto/media-model.mapper.js';
 import {
   MediaModelsResponseSchema,
@@ -10,6 +11,13 @@ import {
   MediaTaskResponseSchema,
 } from '../dto/media-task.dto.js';
 import { toMediaTaskResult, type MediaTaskResult } from '../dto/media-task.mapper.js';
+import {
+  DEFAULT_IMAGE_TOOL_MODELS,
+  DEFAULT_IMAGE_TOOL_PROMPTS,
+  IMAGE_TOOL_RESERVED_PARAM_KEYS,
+  type ImageToolOperation,
+  type ImageToolParams,
+} from '../image-tool.js';
 import {
   MediaProviderException,
   type CreateMediaTaskInput,
@@ -198,6 +206,9 @@ export class CreativeLabProvider implements IMediaProvider {
       model: input.model,
       prompt: input.prompt,
       params: input.params,
+      // R7.1 (KI-196): входные файлы по ролям — без них инструменты
+      // (image-to-image) получают запрос без исходного изображения.
+      inputs: input.inputs,
       idempotency_key: input.idempotencyKey,
     });
 
@@ -268,6 +279,88 @@ export class CreativeLabProvider implements IMediaProvider {
     const parsed = await this.parseTaskAsync(response);
 
     return toMediaTaskResult(parsed);
+  }
+
+  /**
+   * Применяет media-инструмент к готовому файлу (R7.1, KI-196).
+   *
+   * Upstream-механика: инструмент — это обычная media-модель каталога с
+   * обязательным входным слотом, поэтому запрос собирается как
+   * {@link createTaskAsync} (`POST /media/tasks` с `wait: true`), но:
+   * - `inputs` заполняются по ролям из схемы модели (картинка — из `input`,
+   *   аудио для липсинка — из `params.audioUrl`);
+   * - промпт не отправляется моделям с `prompt: 'none'` (иначе upstream
+   *   отвергает запрос), а для остальных берётся `params.prompt` либо дефолт
+   *   операции;
+   * - опроса внутри нет: функция возвращает то, что успел отдать upstream.
+   *
+   * @param input - публично доступный URL входного файла (`http`/`https`)
+   * @param tool - операция инструмента (`upscale`, `bg_removal`, ...)
+   * @param params - служебные ключи (`model`, `prompt`, `idempotencyKey`,
+   *   `inputs`, `audioUrl`) и параметры модели (см. `ImageToolParams`)
+   * @returns задача инструмента: сразу `done` с URL-ами или `queued`/`running`
+   * @throws MediaProviderException если ключ не задан, ссылка на вход не
+   *   `http(s)`, модель не найдена в каталоге, не заполнен обязательный слот
+   *   либо upstream ответил ошибкой
+   */
+  async applyToolAsync(
+    input: string,
+    tool: ImageToolOperation,
+    params: ImageToolParams = {},
+  ): Promise<MediaTaskResult> {
+    if (!this.apiKey) {
+      throw new MediaProviderException(
+        this.name,
+        'GPTUNNEL_MEDIA_API_KEY не задан',
+      );
+    }
+
+    const inputUrl = readHttpUrl(input, tool);
+
+    const requestedModel =
+      typeof params.model === 'string' && params.model.length > 0
+        ? params.model
+        : DEFAULT_IMAGE_TOOL_MODELS[tool];
+
+    if (!requestedModel) {
+      throw new MediaProviderException(
+        this.name,
+        `для операции ${tool} не выбрана модель: укажите id модели из каталога (дефолта у операции нет)`,
+      );
+    }
+
+    // Каталог кэшируется (15 минут), поэтому поиск модели не бьёт в upstream.
+    const model = (await this.listModelsAsync()).find(
+      (candidate) => candidate.id === requestedModel,
+    );
+
+    if (!model) {
+      throw new MediaProviderException(
+        this.name,
+        `модель-инструмент не найдена в каталоге media: ${requestedModel}`,
+      );
+    }
+
+    const inputs = buildToolInputs(model, tool, inputUrl, params);
+    const prompt = readToolPrompt(model, tool, params.prompt);
+    const idempotencyKey =
+      typeof params.idempotencyKey === 'string' &&
+      params.idempotencyKey.length >= 8
+        ? params.idempotencyKey
+        : toolIdempotencyKey(tool, inputUrl);
+
+    this.logger.log(
+      `Инструмент ${tool}: model=${model.id}, inputLen=${inputUrl.length}, slots=${Object.keys(inputs).join(',')}, prompt=${prompt === undefined ? 'нет' : 'есть'}`,
+    );
+
+    return this.createTaskAsync({
+      model: model.id,
+      prompt,
+      params: collectToolModelParams(model, params),
+      inputs,
+      idempotencyKey,
+      wait: true,
+    });
   }
 
   /**
@@ -578,6 +671,173 @@ export class CreativeLabProvider implements IMediaProvider {
  */
 function isRetryableStatus(status: number): boolean {
   return status === 429 || status >= 500;
+}
+
+/**
+ * Проверяет, что ссылка на входной файл — `http(s)`.
+ *
+ * Upstream скачивает файл сам, поэтому `data:`-URL и локальные пути он не
+ * примет; проверка на нашей стороне даёт понятную ошибку до платного запроса
+ * (RULES 1.9).
+ *
+ * @param input - значение, пришедшее как входной файл
+ * @param tool - операция инструмента (для текста ошибки)
+ * @returns проверенную ссылку
+ * @throws MediaProviderException если ссылка пуста или не `http(s)`
+ */
+function readHttpUrl(input: string, tool: ImageToolOperation): string {
+  const value = input.trim();
+  const isHttp = value.startsWith('https://') || value.startsWith('http://');
+
+  if (!isHttp) {
+    throw new MediaProviderException(
+      'creativelab',
+      `операции ${tool} нужна публичная http(s)-ссылка на входной файл, получено: ${value.length > 0 ? `${value.slice(0, 120)}…` : 'пустое значение'}`,
+    );
+  }
+
+  return value;
+}
+
+/**
+ * Собирает `inputs` запроса инструмента по схеме модели.
+ *
+ * Слоты обязательных входов заполняются по типу файла: аудио — из
+ * `params.audioUrl` (липсинк), остальные — из основного `inputUrl`. Явно
+ * заданные `params.inputs` имеют приоритет: пользователь/исполнитель может
+ * знать раскладку ролей лучше каталога.
+ *
+ * @param model - модель-инструмент из каталога
+ * @param tool - операция инструмента (для текста ошибки)
+ * @param inputUrl - ссылка на основной входной файл
+ * @param params - параметры вызова (нужны `inputs` и `audioUrl`)
+ * @returns словарь «роль слота → список ссылок»
+ * @throws MediaProviderException если обязательный аудио-слот не заполнен
+ */
+function buildToolInputs(
+  model: MediaModelInfo,
+  tool: ImageToolOperation,
+  inputUrl: string,
+  params: ImageToolParams,
+): Record<string, string[]> {
+  if (params.inputs !== undefined) {
+    return params.inputs;
+  }
+
+  const inputs: Record<string, string[]> = {};
+  const required = model.inputs.filter((slot) => slot.required);
+
+  if (required.length === 0) {
+    // Модель не объявила обязательных слотов — кладём файл в первый слот
+    // (или в `image`, если слотов нет вовсе): иначе запрос уйдёт без входа.
+    const key = model.inputs[0]?.key ?? 'image';
+
+    return { [key]: [inputUrl] };
+  }
+
+  for (const slot of required) {
+    if (slot.kind === 'audio') {
+      const audioUrl =
+        typeof params.audioUrl === 'string' ? params.audioUrl.trim() : '';
+
+      if (!audioUrl.startsWith('https://') && !audioUrl.startsWith('http://')) {
+        throw new MediaProviderException(
+          'creativelab',
+          `операции ${tool} нужен аудио-файл (модель ${model.id} требует слот «${slot.key}»): передайте audioUrl`,
+        );
+      }
+
+      inputs[slot.key] = [audioUrl];
+      continue;
+    }
+
+    inputs[slot.key] = [inputUrl];
+  }
+
+  return inputs;
+}
+
+/**
+ * Выбирает промпт для запроса инструмента.
+ *
+ * Модели с `prompt: 'none'` (например `kling-lipsync`) промпт не принимают —
+ * поле не отправляем вовсе. Остальным нужен непустой промпт: берём
+ * пользовательский либо дефолт операции.
+ *
+ * @param model - модель-инструмент из каталога
+ * @param tool - операция инструмента
+ * @param requested - промпт, заданный вызывающим кодом
+ * @returns промпт либо `undefined` — «поле не передавать»
+ */
+function readToolPrompt(
+  model: MediaModelInfo,
+  tool: ImageToolOperation,
+  requested: unknown,
+): string | undefined {
+  if (model.prompt === 'none') {
+    return undefined;
+  }
+
+  if (typeof requested === 'string' && requested.trim().length > 0) {
+    return requested.trim();
+  }
+
+  return DEFAULT_IMAGE_TOOL_PROMPTS[tool];
+}
+
+/**
+ * Отбирает скалярные параметры модели из параметров вызова.
+ *
+ * Набор параметров у моделей разный, а unknown-ключи upstream перечисляет в
+ * `ignored_params`: отправляем только объявленные моделью ключи — так запрос
+ * остаётся предсказуемым (та же логика, что в `MediaNodeExecutor.readParamsAsync`,
+ * KI-181).
+ *
+ * @param model - модель-инструмент из каталога
+ * @param params - параметры вызова инструмента
+ * @returns параметры, объявленные моделью
+ */
+function collectToolModelParams(
+  model: MediaModelInfo,
+  params: ImageToolParams,
+): Record<string, string | number | boolean> {
+  const declared = new Set(model.params.map((param) => param.key));
+  const collected: Record<string, string | number | boolean> = {};
+
+  for (const [key, value] of Object.entries(params)) {
+    if (IMAGE_TOOL_RESERVED_PARAM_KEYS.has(key) || !declared.has(key)) {
+      continue;
+    }
+
+    if (
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean'
+    ) {
+      collected[key] = value;
+    }
+  }
+
+  return collected;
+}
+
+/**
+ * Строит ключ идемпотентности, когда исполнитель его не передал.
+ *
+ * Ключ детерминирован парой «операция + входной файл»: повторный вызов с тем
+ * же изображением не создаст вторую платную задачу (KI-040).
+ *
+ * @param tool - операция инструмента
+ * @param inputUrl - ссылка на входной файл
+ * @returns ключ вида `tool-bg_removal-<sha1:16>`
+ */
+function toolIdempotencyKey(
+  tool: ImageToolOperation,
+  inputUrl: string,
+): string {
+  const digest = createHash('sha1').update(inputUrl).digest('hex').slice(0, 16);
+
+  return `tool-${tool}-${digest}`;
 }
 
 /** Код upstream: идемпотентный конфликт (задача с этим ключом уже создана). */

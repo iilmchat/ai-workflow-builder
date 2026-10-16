@@ -14,6 +14,7 @@ import {
   createWorkflowAsync,
   fetchLlmModelsAsync,
   fetchMediaModelsAsync,
+  fetchRunBudgetAsync,
   getWorkflowAsync,
   planWorkflowAsync,
   updateWorkflowAsync,
@@ -25,19 +26,26 @@ import {
 import { subscribeToRunStream, RunStreamUnavailableError } from '@/lib/run-stream';
 import type { RunStreamHandlers } from '@/lib/run-stream';
 import { levelsToMap } from '@/lib/plan';
-import { pickDefaultMediaModel } from '@/lib/media';
+import {
+  pickDefaultMediaModel,
+  pickDefaultToolModel,
+  pickToolModels,
+} from '@/lib/media';
 import { canInsertOnEdge, isNodeType, nodeLabelOf } from '@/lib/node-registry';
 import type { MediaModelInfo } from '@/types/media';
 import {
   DEFAULT_CONDITION_OPERATOR,
   DEFAULT_LLM_MODEL_ID,
   DEFAULT_OUTPUT_NAME,
+  IMAGE_TOOL_OPERATIONS,
   type AppNode,
   type CommentNodeData,
   type CompareNodeData,
   type ConditionNodeData,
   type HttpNodeData,
   type ImageGenNodeData,
+  type ImageToolNodeData,
+  type ImageToolOperation,
   type LlmNodeData,
   type NodeData,
   type NodeType,
@@ -318,6 +326,28 @@ const EMPTY_METRICS: NodeRunMetrics = {
   costRub: null,
 };
 
+/**
+ * Бюджет текущего запуска (R7.1, KI-048).
+ *
+ * Приходит из отдельной ручки `GET /runs/:id/budget` (не из SSE-снимка:
+ * контракт потока в R7.1 не меняется) и обновляется при старте запуска и после
+ * каждого завершённого узла.
+ */
+export interface RunBudget {
+  /** Потрачено запуском, USD (рубли приведены к доллару на backend). */
+  accumulated: number;
+  /** Лимит запуска в USD — максимум шкалы прогресс-бара. */
+  max: number;
+  /** Лимит запуска в рублях (media-узлы тарифицируются в рублях). */
+  maxRub: number;
+  /** Остаток бюджета, USD (может быть отрицательным). */
+  remaining: number;
+  /** Укладывается ли следующий вызов в лимиты (факт, без учёта режима). */
+  ok: boolean;
+  /** Режим бюджета: `hard` блокирует вызов, `soft` предупреждает. */
+  mode: 'hard' | 'soft';
+}
+
 /** Функция поиска центра вьюпорта, которую отдаёт Canvas. */
 export type FindCenterHandler = () => Position;
 
@@ -455,6 +485,20 @@ export interface WorkflowState extends HistorySlice {
   /** id узла → метрики выполнения (длительность, токены, стоимость). */
   nodeMetrics: Record<string, NodeRunMetrics>;
   /**
+   * Бюджет текущего запуска (R7.1, KI-048); `null` — запуска нет.
+   *
+   * Числа те же, что проверяет предохранитель на backend: TopBar рисует по ним
+   * прогресс-бар (`data-run-budget`).
+   */
+  runBudget: RunBudget | null;
+  /**
+   * Обновляет бюджет запуска из `GET /runs/:id/budget` (R7.1).
+   *
+   * Вызывается при старте запуска и после каждого завершённого узла; ошибка не
+   * критична — прогресс-бар просто не обновится (в консоль).
+   */
+  loadRunBudgetAsync: () => Promise<void>;
+  /**
    * id выбранной ноды для панели результата снизу.
    *
    * `null` — панель показывает run-уровневую информацию.
@@ -488,6 +532,15 @@ export interface WorkflowState extends HistorySlice {
   mediaModelsLoaded: boolean;
   /** Ленивая загрузка media-моделей (кэшируется в сторе). */
   loadMediaModelsAsync: () => Promise<void>;
+  /**
+   * Модели-инструменты для узла `image_tool` (R7.1): `type=TOOL`, а при пустом
+   * ответе — модели с обязательным входным файлом (см. `pickToolModels`).
+   */
+  toolModels: MediaModelInfo[];
+  /** Загружен ли список моделей-инструментов в этой сессии. */
+  toolModelsLoaded: boolean;
+  /** Ленивая загрузка моделей-инструментов (кэшируется в сторе). */
+  loadToolModelsAsync: () => Promise<void>;
 
   isSaving: boolean;
   /** Хэш последнего сохранённого графа: база для индикатора «есть изменения». */
@@ -669,6 +722,34 @@ export interface WorkflowState extends HistorySlice {
 }
 
 /**
+ * Проверяет, что значение — обычный объект (не массив и не `null`).
+ *
+ * Данные узла приходят из jsonb без типов (RULES 1.17): `params` узла
+ * `image_tool` переносим дальше только если это словарь.
+ *
+ * @param value - значение из `data` узла
+ * @returns `true`, если это объект-словарь
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Приводит операцию узла `image_tool` к известному значению (R7.1).
+ *
+ * Неизвестное значение заменить нечем (в селекте пять операций DESIGN § 3.1),
+ * а валидный Save других значений не создаёт: backend-схема принимает ровно
+ * пять. Поэтому мусор трактуется как «операция не выбрана» — дефолт
+ * `bg_removal`, у которого есть модель в каталоге.
+ *
+ * @param value - значение `data.operation` из API
+ * @returns известную операцию
+ */
+function validateImageToolOperation(value: unknown): ImageToolOperation {
+  return IMAGE_TOOL_OPERATIONS.find((operation) => operation === value) ?? 'bg_removal';
+}
+
+/**
  * Создаёт узел нужного типа с дефолтными данными.
  *
  * @param type - тип узла из тулбара
@@ -676,6 +757,10 @@ export interface WorkflowState extends HistorySlice {
  * @param index - порядковый номер узла, нужен для уникального id
  * @param defaultModelId - id первой доступной модели (KI-074); если список ещё
  *   не загружен или пуст, используется {@link DEFAULT_LLM_MODEL_ID}
+ * @param defaultMediaModelId - id первой text-to-image модели (KI-154)
+ * @param defaultToolModelId - id модели-инструмента по умолчанию (R7.1); пусто —
+ *   модель выберет пользователь, а для `bg_removal`/`lipsync` сработает дефолт
+ *   операции на backend
  */
 function createNode(
   type: NodeType,
@@ -683,6 +768,7 @@ function createNode(
   index: number,
   defaultModelId?: string,
   defaultMediaModelId?: string,
+  defaultToolModelId?: string,
 ): AppNode {
   const shared = { id: `${type}-${index}-${crypto.randomUUID()}`, position };
 
@@ -715,6 +801,22 @@ function createNode(
           model: defaultMediaModelId ?? '',
         },
       };
+    // R7.1 (KI-196): media-инструмент. Операция по умолчанию — удаление фона:
+    // у неё в каталоге CreativeLab есть модель (`bgremover`), поэтому узел
+    // запускаем сразу после выбора входа. Модель не подставляем молча (KI-069):
+    // пустое значение означает дефолт операции на backend.
+    case 'image_tool':
+      return {
+        ...shared,
+        type: 'image_tool',
+        data: {
+          kind: 'image_tool',
+          operation: 'bg_removal',
+          ...(defaultToolModelId !== undefined && defaultToolModelId !== ''
+            ? { model: defaultToolModelId }
+            : {}),
+        },
+      };
     case 'comment':
       return {
         ...shared,
@@ -722,6 +824,7 @@ function createNode(
         // KI-187: стикер создаётся видимым; текст пользователь вводит сам.
         data: { kind: 'comment', text: '', visible: true },
       };
+
     // R6.5.2 (KI-105): четыре вычислительных узла DESIGN v0.8 § 8. Поля-ключи
     // `headers`/`body`/`timeoutMs` у `http` не создаём заранее: `undefined`-ключ
     // — это пустое поле в JSON и лишний ключ в `Object.keys(data)` (KI-129).
@@ -765,8 +868,7 @@ function createNode(
 }
 
 /** Приводит узел к формату backend. */
-function toApiNode(node: AppNode): ApiGraphNode {
-  return {
+function toApiNode(node: AppNode): ApiGraphNode {  return {
     id: node.id,
     type: node.type ?? 'text',
     position: node.position,
@@ -864,6 +966,30 @@ function nodeDataFromApi(type: NodeType, data: Record<string, unknown>): NodeDat
 
       if (typeof data.imageUrl === 'string') {
         result.imageUrl = data.imageUrl;
+      }
+
+      return result;
+    }
+    // R7.1 (KI-196): media-инструмент. Операция обязана быть одной из пяти:
+    // неизвестное значение не отрисовать в селекте (как у `condition`),
+    // а валидный Save других значений и не создаёт — Zod-схема backend
+    // принимает ровно пять операций DESIGN § 3.1.
+    case 'image_tool': {
+      const result: ImageToolNodeData = {
+        kind: 'image_tool',
+        operation: validateImageToolOperation(data.operation),
+      };
+
+      if (typeof data.model === 'string') {
+        result.model = data.model;
+      }
+
+      if (typeof data.inputUrl === 'string') {
+        result.inputUrl = data.inputUrl;
+      }
+
+      if (isPlainObject(data.params)) {
+        result.params = data.params;
       }
 
       return result;
@@ -1210,6 +1336,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   llmModelsLoaded: false,
   mediaModels: [],
   mediaModelsLoaded: false,
+  toolModels: [],
+  toolModelsLoaded: false,
+  runBudget: null,
 
   isSaving: false,
   isLoading: false,
@@ -1245,6 +1374,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         // KI-154: не mediaModels[0] (там bgremover — image-to-image),
         // а первая text-to-image модель каталога.
         pickDefaultMediaModel(state.mediaModels),
+        // R7.1: модель-инструмент по умолчанию (у операции `bg_removal`).
+        pickDefaultToolModel(state.toolModels, 'bg_removal'),
       );
 
       return {
@@ -1353,6 +1484,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       attemptsMade: 0,
       attempts: null,
       runHasMoreAttempts: false,
+      // R7.1 (KI-048): бюджет прошлого запуска к новому workflow не относится.
+      runBudget: null,
     });
     // Сброс истории обнуляет и окно склейки правок полей.
     lastFieldEditAt = 0;
@@ -1407,6 +1540,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       state.nodes.length,
       state.llmModels[0]?.id,
       pickDefaultMediaModel(state.mediaModels),
+      // R7.1: модель-инструмент по умолчанию для узла `image_tool`.
+      pickDefaultToolModel(state.toolModels, 'bg_removal'),
     );
 
     // R6.4b.2b: снимок — только после всех проверок выше: отказ вставки
@@ -1701,6 +1836,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       nodeMetrics,
     }));
 
+    // R7.1 (KI-048): после переподключения (F5 посреди запуска) прогресс-бар
+    // бюджета восстанавливается из ручки `GET /runs/:id/budget`.
+    void get().loadRunBudgetAsync();
+
     // KI-271: снимок уже завершённого запуска (F5 после финала на backend, где
     // `run_completed` больше не придёт) — `?runId=` в адресной строке устарел.
     // Поток при этом не закрываем: признак «повторов не будет» (`final`) в
@@ -1712,6 +1851,18 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   },
 
   applyEvent: (event) => {
+    // R7.1 (KI-048): стоимость запуска меняется на старте, при финале каждого
+    // узла и при финале запуска — в этих точках обновляем бюджет (прогресс-бар
+    // в TopBar). Запрос отдельный: контракт SSE в R7.1 не расширяется.
+    if (
+      event.type === 'run_started' ||
+      event.type === 'node_completed' ||
+      event.type === 'node_failed' ||
+      event.type === 'run_completed'
+    ) {
+      void get().loadRunBudgetAsync();
+    }
+
     switch (event.type) {
       case 'run_started':
         set((state) => ({
@@ -1849,6 +2000,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       attemptsMade: 0,
       attempts: null,
       runHasMoreAttempts: false,
+      // R7.1 (KI-048): бюджет относится к конкретному запуску — сбрасываем,
+      // иначе прогресс-бар показывал бы траты прошлого прогона.
+      runBudget: null,
     });
     // selectedNodeId намеренно НЕ сбрасывается: пользователь может выбрать ноду
     // и после запуска, чтобы посмотреть её результат.
@@ -1886,6 +2040,73 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       // Как и у LLM: селект покажет «нет доступных image-моделей», причина —
       // в консоли; повтор при следующем монтировании узла (флаг не выставлен).
       console.warn('Не удалось загрузить список media-моделей', error);
+    }
+  },
+
+  /**
+   * Загружает модели-инструменты для узла `image_tool` (R7.1, KI-196).
+   *
+   * Сначала запрашивается `type=TOOL` (как требует DESIGN v0.9 § 3.1). Реальный
+   * каталог CreativeLab такого типа не отдаёт — инструменты объявлены обычными
+   * моделями с обязательным входным файлом, поэтому фолбэк берёт IMAGE-модели
+   * с обязательными входами (удаление фона, замена лиц). Без фолбэка селект был
+   * бы пустым и узел нельзя было бы запустить.
+   */
+  loadToolModelsAsync: async () => {
+    if (get().toolModelsLoaded) {
+      return;
+    }
+
+    try {
+      const [toolModels, imageModels] = await Promise.all([
+        fetchMediaModelsAsync('TOOL'),
+        fetchMediaModelsAsync('IMAGE'),
+      ]);
+      const models = pickToolModels({ toolModels, fallbackModels: imageModels });
+
+      set({ toolModels: [...models], toolModelsLoaded: true });
+    } catch (error: unknown) {
+      // Не критично: селект покажет «нет доступных моделей-инструментов»,
+      // причина — в консоли; повтор при следующем монтировании узла.
+      console.warn('Не удалось загрузить список моделей-инструментов', error);
+    }
+  },
+
+  /**
+   * Обновляет бюджет текущего запуска (R7.1, KI-048).
+   *
+   * Бюджет приходит отдельной ручкой, а не в SSE-снимке: контракт потока в
+   * R7.1 не расширяется. Запуск без `runId` ничего не запрашивает.
+   */
+  loadRunBudgetAsync: async () => {
+    const runId = get().runId;
+
+    if (runId === null) {
+      return;
+    }
+
+    try {
+      const budget = await fetchRunBudgetAsync(runId);
+
+      // Запуск мог смениться, пока шёл запрос: тогда ответ уже неактуален.
+      if (get().runId !== runId) {
+        return;
+      }
+
+      set({
+        runBudget: {
+          accumulated: budget.accumulated,
+          max: budget.maxUsd,
+          maxRub: budget.maxRub,
+          remaining: budget.remaining,
+          ok: budget.ok,
+          mode: budget.mode,
+        },
+      });
+    } catch (error: unknown) {
+      // Прогресс-бар — индикатор, а не источник истины: сбой запроса не должен
+      // ломать запуск. Причина видна в консоли.
+      console.warn('Не удалось загрузить бюджет запуска', error);
     }
   },
 

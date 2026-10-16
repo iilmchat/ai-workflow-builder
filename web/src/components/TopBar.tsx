@@ -91,6 +91,19 @@ function reasonOf(caught: unknown): string {
 }
 
 /**
+ * Форматирует сумму в USD для тултипа прогресс-бара (R7.1).
+ *
+ * Четыре знака после запятой: стоимость одного LLM-вызова — доли цента, при
+ * двух знаках она выглядела бы нулём.
+ *
+ * @param value - сумма в USD
+ * @returns строка вида `$0.0123`
+ */
+function formatUsd(value: number): string {
+  return `$${value.toFixed(4)}`;
+}
+
+/**
  * Верхняя панель редактора: имя workflow и действия Save / Load / Run.
  *
  * Run запускает реальный прогон (`POST /runs` + SSE, R4.2) и показывает статус:
@@ -169,10 +182,42 @@ export function TopBar() {
   const attemptNumber = useWorkflowStore((state) => state.attemptNumber);
   const attempts = useWorkflowStore((state) => state.attempts);
   const runHasMoreAttempts = useWorkflowStore((state) => state.runHasMoreAttempts);
+  // R7.1 (KI-048): бюджет текущего запуска (прогресс-бар ниже).
+  const runBudget = useWorkflowStore((state) => state.runBudget);
+  const runId = useWorkflowStore((state) => state.runId);
 
   const isBusy = isSaving || isLoading;
   const isRunActive = runStatus !== null && ACTIVE_RUN_STATUSES.has(runStatus);
   const runLabel = runStatusText(runStatus, attemptNumber, attempts);
+
+  // Прогресс-бар показывается только при активном запуске (DESIGN v0.9 § 3.1):
+  // без запуска тратить нечего, а завершённый запуск виден по бейджу статуса.
+  const showBudget = isRunActive && runBudget !== null && runId !== null;
+  const budgetRatio =
+    runBudget !== null && runBudget.max > 0
+      ? Math.min(runBudget.accumulated / runBudget.max, 1)
+      : 0;
+  const budgetExceeded = runBudget !== null && !runBudget.ok;
+  const budgetTooltip =
+    runBudget === null
+      ? ''
+      : [
+          `${t('budget.label')}: ${formatUsd(runBudget.accumulated)} / ${formatUsd(runBudget.max)}`,
+          t('budget.remaining', {
+            remaining: formatUsd(runBudget.remaining),
+            max: formatUsd(runBudget.max),
+          }),
+          // Рублёвый лимит показываем отдельной строкой: media-узлы
+          // тарифицируются в рублях, и он расходуется независимо (R7.1).
+          `${runBudget.maxRub} ₽`,
+          budgetExceeded
+            ? runBudget.mode === 'hard'
+              ? t('budget.exceeded')
+              : t('budget.warning')
+            : '',
+        ]
+          .filter((line) => line.length > 0)
+          .join('\n');
 
   /**
    * Ищет LLM-узлы, модель которых недоступна (KI-074).
@@ -430,6 +475,34 @@ export function TopBar() {
         )}
 
         <div className="ml-auto flex items-center gap-2">
+          {/* R7.1 (KI-048): бюджет запуска. Показывается только при активном
+              запуске, цифры — те же, что проверяет предохранитель на backend
+              (`GET /runs/:id/budget`). `data-run-budget` — точка для смоука. */}
+          {showBudget && runBudget !== null && (
+            <div
+              data-run-budget={runBudget.accumulated.toFixed(4)}
+              data-run-budget-max={runBudget.max.toFixed(4)}
+              data-run-budget-mode={runBudget.mode}
+              data-run-budget-ok={runBudget.ok ? 'true' : 'false'}
+              title={budgetTooltip}
+              aria-label={budgetTooltip}
+              className="flex w-32 flex-col gap-1"
+            >
+              <span className="flex justify-between text-[10px] leading-none text-muted-foreground">
+                <span>{formatUsd(runBudget.accumulated)}</span>
+                <span>{formatUsd(runBudget.max)}</span>
+              </span>
+              <span className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <span
+                  className={`block h-full rounded-full ${
+                    budgetExceeded ? 'bg-red-500' : 'bg-primary'
+                  }`}
+                  style={{ width: `${Math.round(budgetRatio * 100)}%` }}
+                />
+              </span>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={() => setTheme(resolved === 'dark' ? 'light' : 'dark')}

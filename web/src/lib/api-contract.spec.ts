@@ -15,7 +15,8 @@
  * 3. правка одного JSON синхронизирует обе стороны — и гейт снова зелёный.
  *
  * Состав полей берётся из `ZodObject.shape` зеркал (`ApiRunSchema`,
- * `ShareTokenSchema`, `SharedWorkflowSchema`, `ExportWorkflowSchema`). На backend
+ * `ApiRunBudgetSchema`, `ShareTokenSchema`, `SharedWorkflowSchema`,
+ * `ExportWorkflowSchema`). На backend
  * Zod-схемой описан только `ExportWorkflowDto`; у остальных ответов там
  * TS-интерфейсы, поэтому backend-гейт читает их поля компилятором TypeScript —
  * состав контракта от этого не меняется, меняется только способ разбора.
@@ -31,7 +32,7 @@
  * нет (RULES 1.4).
  */
 import { describe, expect, it } from 'vitest';
-import { ApiRunSchema } from './api';
+import { ApiRunBudgetSchema, ApiRunSchema } from './api';
 import { ExportWorkflowSchema } from './export-import-api';
 import { ShareTokenSchema, SharedWorkflowSchema } from './share-api';
 
@@ -66,6 +67,8 @@ interface MirrorSchema {
 const MIRROR_SCHEMAS: Record<string, MirrorSchema> = {
   ExportWorkflowDto: ExportWorkflowSchema,
   RunResponse: ApiRunSchema,
+  // R7.1 (KI-048): бюджет запуска — новое зеркало REST-ответа.
+  RunBudgetResponse: ApiRunBudgetSchema,
   ShareTokenDto: ShareTokenSchema,
   SharedWorkflow: SharedWorkflowSchema,
 };

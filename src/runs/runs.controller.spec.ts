@@ -6,6 +6,7 @@ import { Test } from '@nestjs/testing';
 import { of } from 'rxjs';
 import request from 'supertest';
 import { DEMO_USER_EMAIL, DEMO_USER_ID } from '../auth/auth.constants.js';
+import { CostBudgetService } from './cost-budget.service.js';
 import { RunsController } from './runs.controller.js';
 import { RunsService, type RunResponse } from './runs.service.js';
 import { RunsStreamService } from './runs-stream.service.js';
@@ -35,6 +36,8 @@ describe('RunsController', () => {
     assertRunExistsAsync: ReturnType<typeof vi.fn>;
     streamAsync: ReturnType<typeof vi.fn>;
   };
+  /** R7.1 (KI-048): предохранитель по стоимости — источник `GET /runs/:id/budget`. */
+  let costBudget: { checkBudgetAsync: ReturnType<typeof vi.fn> };
   /** KI-202: переключается в тестах 401-путей (guard реальный). */
   let authDisabled: boolean;
 
@@ -43,6 +46,19 @@ describe('RunsController', () => {
     service = {
       createRunAsync: vi.fn(() => Promise.resolve(runResponse)),
       getRunAsync: vi.fn(() => Promise.resolve(runResponse)),
+    };
+    costBudget = {
+      checkBudgetAsync: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          accumulated: 0.6,
+          estimated: 0,
+          remaining: 4.4,
+          maxUsd: 5,
+          maxRub: 500,
+          mode: 'hard' as const,
+        }),
+      ),
     };
 
     const streamMessages: MessageEvent[] = [
@@ -73,6 +89,8 @@ describe('RunsController', () => {
       providers: [
         { provide: RunsService, useValue: service },
         { provide: RunsStreamService, useValue: stream },
+        // R7.1 (KI-048): ручка бюджета запуска.
+        { provide: CostBudgetService, useValue: costBudget },
         // JwtAuthGuard (R6.1a): AUTH_DISABLED=true — запросы идут от
         // системного пользователя, токен в тестах не нужен.
         { provide: JwtService, useValue: { verifyAsync: vi.fn() } },
@@ -163,6 +181,41 @@ describe('RunsController', () => {
 
       await request(app.getHttpServer()).get(`/runs/${RUN_ID}/stream`).expect(401);
       expect(stream.assertRunExistsAsync).not.toHaveBeenCalled();
+    });
+  });
+
+  // R7.1 (KI-048): бюджет запуска для прогресс-бара в TopBar.
+  describe('getBudget', () => {
+    it('GET /runs/:id/budget отвечает 200 и отдаёт лимиты с потраченным', async () => {
+      const response = await request(app.getHttpServer())
+        .get(`/runs/${RUN_ID}/budget`)
+        .expect(200);
+
+      expect(service.getRunAsync).toHaveBeenCalledWith(RUN_ID, USER.sub);
+      expect(costBudget.checkBudgetAsync).toHaveBeenCalledWith(RUN_ID);
+      expect(response.body).toEqual({
+        ok: true,
+        accumulated: 0.6,
+        estimated: 0,
+        remaining: 4.4,
+        maxUsd: 5,
+        maxRub: 500,
+        mode: 'hard',
+      });
+    });
+
+    it('GET /runs/:id/budget чужого/несуществующего запуска отвечает 404 и не считает бюджет', async () => {
+      service.getRunAsync.mockRejectedValue(new NotFoundException('Запуск не найден'));
+
+      await request(app.getHttpServer()).get(`/runs/${RUN_ID}/budget`).expect(404);
+
+      expect(costBudget.checkBudgetAsync).not.toHaveBeenCalled();
+    });
+
+    it('GET /runs/:id/budget отвечает 400 на невалидный uuid', async () => {
+      await request(app.getHttpServer()).get('/runs/not-a-uuid/budget').expect(400);
+
+      expect(service.getRunAsync).not.toHaveBeenCalled();
     });
   });
 

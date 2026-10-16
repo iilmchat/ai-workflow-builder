@@ -78,6 +78,26 @@ export const ApiRunSchema = z.object({
 export type ApiRun = z.infer<typeof ApiRunSchema>;
 
 /**
+ * Схема бюджета запуска (`GET /runs/:id/budget`, R7.1, KI-048).
+ *
+ * Поля совпадают с backend `RunBudgetResponse`
+ * (`src/runs/dto/run-budget.dto.ts`); паритет состава проверяет
+ * `api-contract.spec.ts` через `docs/development/api-contract.json`.
+ */
+export const ApiRunBudgetSchema = z.object({
+  ok: z.boolean(),
+  accumulated: z.number(),
+  estimated: z.number(),
+  remaining: z.number(),
+  maxUsd: z.number(),
+  maxRub: z.number(),
+  mode: z.enum(['hard', 'soft']),
+});
+
+/** Бюджет запуска в терминах API. */
+export type ApiRunBudget = z.infer<typeof ApiRunBudgetSchema>;
+
+/**
  * Модальность модели: что она принимает или отдаёт (v0.6.0a).
  *
  * Список совпадает с backend `ModelModality` — порядок и значения обязаны
@@ -418,6 +438,25 @@ export async function createRunAsync(workflowId: string): Promise<ApiRun> {
   });
 
   return ApiRunSchema.parse(data);
+}
+
+/**
+ * Возвращает бюджет запуска (R7.1, KI-048).
+ *
+ * Отдельная ручка, а не поле SSE-снимка: контракт потока в R7.1 не меняется
+ * (DESIGN v0.9 § 3.1). TopBar запрашивает бюджет при старте запуска и после
+ * каждого завершённого узла — цифры те же, что проверяет предохранитель.
+ *
+ * @param runId - id запуска
+ * @returns лимиты и потраченное (USD-нормализация + рублёвый лимит)
+ * @throws ApiError при сетевой ошибке, не-2xx статусе или неожиданном формате
+ */
+export async function fetchRunBudgetAsync(runId: string): Promise<ApiRunBudget> {
+  const data = await requestAsync<unknown>(
+    `/runs/${encodeURIComponent(runId)}/budget`,
+  );
+
+  return ApiRunBudgetSchema.parse(data);
 }
 
 /**

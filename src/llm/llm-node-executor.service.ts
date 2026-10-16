@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { NodeDto } from '../engine/dto/index.js';
+import { CostBudgetService } from '../runs/cost-budget.service.js';
 import { calculateCostUsdForProvider } from './model-pricing.js';
 import { LlmProviderException, type ReasoningEffort } from './llm-provider.interface.js';
 import { LlmService } from './llm.service.js';
@@ -103,19 +104,30 @@ export interface LlmNodeExecutionResult {
 export class LlmNodeExecutor {
   private readonly logger = new Logger(LlmNodeExecutor.name);
 
-  constructor(private readonly llm: LlmService) {}
+  /**
+   * @param llm - сервис выбора провайдера и вызова модели
+   * @param costBudget - предохранитель по стоимости запуска (R7.1, KI-048)
+   */
+  constructor(
+    private readonly llm: LlmService,
+    private readonly costBudget: CostBudgetService,
+  ) {}
 
   /**
    * Выполняет LLM-узел: собирает prompt из входов и вызывает модель.
    *
    * @param node - узел графа (`data.model`, `data.system`)
    * @param inputs - нормализованные входы узла (после KI-034 ключ — `prompt`)
+   * @param runId - uuid запуска: нужен предохранителю по стоимости (KI-048).
+   *   Необязателен — тесты и прямой вызов исполнителя работают без бюджета.
    * @returns выходы `{ text }` и метрики вызова (токены, стоимость, модель)
    * @throws LlmProviderException если prompt пуст, модель не найдена или вызов упал
+   * @throws BudgetExceededException если бюджет запуска исчерпан (KI-048)
    */
   async executeAsync(
     node: NodeDto,
     inputs: Record<string, unknown>,
+    runId?: string,
   ): Promise<LlmNodeExecutionResult> {
     // KI-180: prompt приходит по связи (`inputs.prompt`) либо вводится прямо
     // в узле (`data.prompt`). `data.value` — совместимость с workflow,
@@ -143,6 +155,13 @@ export class LlmNodeExecutor {
     this.logger.log(
       `LLM-узел ${node.id}: model=${model}, promptLen=${prompt.length}, systemLen=${system?.length ?? 0}, reasoning=${reasoningEffort ?? 'off'}, maxTokens=${maxTokensOverride ?? 'default'}`,
     );
+
+    // R7.1 (KI-048): бюджет запуска проверяется до платного вызова. Оценка не
+    // передаётся: до ответа провайдера стоимость LLM-вызова неизвестна (она
+    // зависит от числа токенов), но уже потраченное проверяется всегда.
+    if (runId !== undefined) {
+      await this.costBudget.assertWithinBudgetAsync(runId);
+    }
 
     const result = await this.llm.generateAsync(prompt, model, {
       ...(system === undefined ? {} : { system }),

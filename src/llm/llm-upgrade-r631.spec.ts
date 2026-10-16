@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import type { NodeDto } from '../engine/dto/index.js';
+import { CostBudgetService } from '../runs/cost-budget.service.js';
 import type { ModelInfo } from './llm-provider.interface.js';
 import { LlmProviderFactory } from './llm-provider.factory.js';
 import { LlmRegistryService } from './llm-registry.service.js';
@@ -323,6 +324,12 @@ describe('R6.3.1 — LlmNodeExecutor читает настройки из data',
       providers: [
         LlmNodeExecutor,
         { provide: LlmService, useValue: { generateAsync: generateMock } },
+        // R7.1 (KI-048): предохранитель по стоимости — в этих тестах `runId`
+        // не передаётся, поэтому заглушка не вызывается.
+        {
+          provide: CostBudgetService,
+          useValue: { assertWithinBudgetAsync: vi.fn(() => Promise.resolve()) },
+        },
       ],
     }).compile();
 

@@ -15,8 +15,10 @@
  *
  * **Два источника полей на backend.** Там, где DTO ответа описан Zod-схемой
  * (`ExportWorkflowDto`), поля читаются из `ZodObject.shape` — ровно как в
- * SSE-гейте. Остальные три ответа Zod-схем не имеют: `RunResponse` — TS-интерфейс
- * в `src/runs/runs.service.ts`, `ShareTokenDto` и `SharedWorkflow` — TS-интерфейсы
+ * SSE-гейте. Остальные четыре ответа Zod-схем не имеют: `RunResponse` — TS-интерфейс
+ * в `src/runs/runs.service.ts`, `RunBudgetResponse` — TS-интерфейс в
+ * `src/runs/dto/run-budget.dto.ts` (R7.1, KI-048), `ShareTokenDto` и
+ * `SharedWorkflow` — TS-интерфейсы
  * в `src/workflow/dto/share-workflow.dto.ts` (у интерфейса нет runtime-состава).
  * Для них имена полей читаются из исходника компилятором TypeScript (`ts`), а не
  * гадаются регуляркой; появление Zod-схем ответов — отдельная задача (KI-358).
@@ -62,6 +64,9 @@ const RUNS_SERVICE_PATH = join(SPEC_DIR, '..', 'runs.service.ts');
 /** Файл с `ShareTokenDto` и `SharedWorkflow` (`/workflow/:id/share`, `/workflow/share/:token`). */
 const SHARE_DTO_PATH = join(SPEC_DIR, '..', '..', 'workflow', 'dto', 'share-workflow.dto.ts');
 
+/** Файл с `RunBudgetResponse` (`GET /runs/:id/budget`, R7.1). */
+const RUN_BUDGET_DTO_PATH = join(SPEC_DIR, 'run-budget.dto.ts');
+
 /**
  * Где объявлен DTO ответа и как из него читать поля.
  *
@@ -85,12 +90,18 @@ type DtoSource =
  * не REST-ответы, KI-357), `TemplateSummary` (`src/templates/dto` — вне
  * read-scope KI-352, KI-357), `LlmModelInfo`/`MediaModelInfo` (зеркала живут в
  * `src/llm/**` и `src/media/**` — вне scope KI-352, KI-357).
- */
-const DTO_SOURCES: Record<string, DtoSource> = {
+ */const DTO_SOURCES: Record<string, DtoSource> = {
   RunResponse: {
     kind: 'interface',
     path: RUNS_SERVICE_PATH,
     label: 'src/runs/runs.service.ts',
+  },
+  // R7.1 (KI-048): бюджет запуска — отдельный REST-ответ, зеркало в web —
+  // `ApiRunBudgetSchema` (`web/src/lib/api.ts`).
+  RunBudgetResponse: {
+    kind: 'interface',
+    path: RUN_BUDGET_DTO_PATH,
+    label: 'src/runs/dto/run-budget.dto.ts',
   },
   ShareTokenDto: {
     kind: 'interface',

@@ -62,11 +62,28 @@ export const NODE_PORT_CONTRACT: Record<string, NodePortContract> = {
     targetHandleId: 'text-input',
     inputPortName: 'prompt',
   },
+  // R7.1: порт `url` не совпадал с реальным ключом выходов
+  // `image_generation` — исполнитель пишет `mediaUrl` (`MediaNodeExecutor`),
+  // а контракт объявлял `url`. Пока изображение никуда не шло, расхождение не
+  // проявлялось; узел `image_tool` вскрыл его: зависимый узел читал `null` и
+  // падал с «Не задан входной файл». Порт приведён к фактическому ключу, а
+  // `ImageGenNode` и `MediaNodeOutputsSchema` и так читают `mediaUrl`.
   image_generation: {
     sourceHandleId: 'image-output',
-    outputPortName: 'url',
+    outputPortName: 'mediaUrl',
     targetHandleId: 'text-input',
     inputPortName: 'prompt',
+  },
+  // R7.1 (KI-196): узел media-инструмента. Вход — **файл**, а не промпт,
+  // поэтому нормализованное имя входа `url` (источник — `image_generation`,
+  // который отдаёт порт `mediaUrl`). Выход — порт `resultUrls` (массив ссылок,
+  // DESIGN v0.9 § 3.1): имя совпадает с ключом в `outputs`, иначе зависимый
+  // узел прочитал бы `null` (та же ловушка, что в KI-301).
+  image_tool: {
+    sourceHandleId: 'image-output',
+    outputPortName: 'resultUrls',
+    targetHandleId: 'image-input',
+    inputPortName: 'url',
   },
   // R6.5.1 (KI-105). У `http` вход — фолбэк для URL, поэтому нормализованное имя
   // совпадает с тем, что читает исполнитель (`inputs.prompt`).

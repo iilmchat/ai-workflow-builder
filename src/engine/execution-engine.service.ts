@@ -822,10 +822,13 @@ export class ExecutionEngineService {
    * Выполняет узел в зависимости от его типа.
    *
    * Метод асинхронный (RULES 1.4): `llm`-узел ходит в провайдера через
-   * {@link LlmNodeExecutor} и возвращает метрики в USD, `image_generation` —
-   * через {@link MediaNodeExecutor} с метриками в рублях, `http` (R6.5.1) —
-   * сетевой запрос, остальные (`text`, `condition`, `output`, `compare`) —
-   * чистые преобразования без метрик.
+   * {@link LlmNodeExecutor} и возвращает метрики в USD, `image_generation` и
+   * `image_tool` (R7.1) — через {@link MediaNodeExecutor} с метриками в рублях,
+   * `http` (R6.5.1) — сетевой запрос, остальные (`text`, `condition`, `output`,
+   * `compare`) — чистые преобразования без метрик.
+   *
+   * `runId` передаётся и LLM-исполнителю: там он нужен предохранителю по
+   * стоимости (KI-048) — бюджет считается по запуску, а не по узлу.
    *
    * Ни один из новых типов R6.5.1 не помечается `retryable`: `http` может иметь
    * побочные эффекты (POST/PUT/DELETE), а `condition`/`output`/`compare`
@@ -833,7 +836,8 @@ export class ExecutionEngineService {
    *
    * @param node - узел графа
    * @param inputs - нормализованные входы узла (KI-034: ключ `prompt`/`text`)
-   * @param runId - id запуска (нужен media-узлу для ключа идемпотентности)
+   * @param runId - id запуска (нужен media-узлам для ключа идемпотентности и
+   *   всем платным узлам — для проверки бюджета, KI-048)
    * @param subContext - контекст под-воркфлоу (R6.7)
    * @returns выходы узла и метрики вызова (`null` для чистых преобразований)
    * @throws UnsupportedNodeTypeException если тип узла неизвестен
@@ -843,6 +847,7 @@ export class ExecutionEngineService {
    * @throws NotFoundException если подграф не найден или чужой
    * @throws LlmProviderException если вызов LLM-провайдера упал
    * @throws MediaProviderException если генерация media упала
+   * @throws BudgetExceededException если бюджет запуска исчерпан (KI-048)
    */
   private async runNodeAsync(
     node: NodeDto,
@@ -882,7 +887,7 @@ export class ExecutionEngineService {
         return { kind: 'plain', outputs, metrics: null };
       }
       case 'llm': {
-        const result = await this.llmExecutor.executeAsync(node, inputs);
+        const result = await this.llmExecutor.executeAsync(node, inputs, runId);
 
         return {
           kind: 'llm',
@@ -892,6 +897,17 @@ export class ExecutionEngineService {
       }
       case 'image_generation': {
         const result = await this.mediaExecutor.executeAsync(node, inputs, runId);
+
+        return {
+          kind: 'media',
+          outputs: result.outputs,
+          metrics: result.metrics,
+        };
+      }
+      // R7.1 (KI-196): media-инструмент (upscale, удаление фона, липсинк, ...).
+      // Метрики — в рублях, как у генерации: тот же провайдер CreativeLab.
+      case 'image_tool': {
+        const result = await this.mediaExecutor.executeToolAsync(node, inputs, runId);
 
         return {
           kind: 'media',

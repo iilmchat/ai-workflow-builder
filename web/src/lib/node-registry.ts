@@ -5,6 +5,7 @@ import { CompareNode } from '@/components/nodes/CompareNode';
 import { ConditionNode } from '@/components/nodes/ConditionNode';
 import { HttpNode } from '@/components/nodes/HttpNode';
 import { ImageGenNode } from '@/components/nodes/ImageGenNode';
+import { ImageToolNode } from '@/components/nodes/ImageToolNode';
 import { LLMNode } from '@/components/nodes/LLMNode';
 import { OutputNode } from '@/components/nodes/OutputNode';
 import { SubWorkflowNode } from '@/components/nodes/SubWorkflowNode';
@@ -17,6 +18,7 @@ import type {
   ConditionFlowNode,
   HttpFlowNode,
   ImageGenFlowNode,
+  ImageToolFlowNode,
   LlmFlowNode,
   NodeCategory,
   NodeType,
@@ -37,6 +39,7 @@ export type NodeComponent =
   | ComponentType<NodeProps<TextFlowNode>>
   | ComponentType<NodeProps<LlmFlowNode>>
   | ComponentType<NodeProps<ImageGenFlowNode>>
+  | ComponentType<NodeProps<ImageToolFlowNode>>
   | ComponentType<NodeProps<CommentFlowNode>>
   | ComponentType<NodeProps<HttpFlowNode>>
   | ComponentType<NodeProps<ConditionFlowNode>>
@@ -115,6 +118,20 @@ export const NODE_REGISTRY = {
     component: ImageGenNode,
     // Есть `text-input` (target) и `image-output` (source).
     canBeInsertedOnEdge: true,
+    capabilities: { externalState: false, userConfig: true },
+  },
+  // R7.1 (KI-196, DESIGN v0.9 § 2.2/3.1): media-инструмент (upscale, удаление
+  // фона, хромакей, обрезка, липсинк). Категория `media_tools` — отдельная
+  // секция каталога: узел не создаёт файл «с нуля», а преобразует входной.
+  image_tool: {
+    labelKey: 'node.image_tool.label',
+    icon: '🪄',
+    category: 'media_tools',
+    component: ImageToolNode,
+    // Вход `image-input` (target) — из него берётся ссылка на файл, поэтому
+    // узел можно вставить в существующую связь (KI-259).
+    canBeInsertedOnEdge: true,
+    // `userConfig`: до запуска выбираются операция и модель.
     capabilities: { externalState: false, userConfig: true },
   },
   comment: {

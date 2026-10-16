@@ -305,6 +305,7 @@ describe('ExecutionEngineService', () => {
   let publish: ReturnType<typeof vi.fn>;
   let llmExecute: ReturnType<typeof vi.fn>;
   let mediaExecute: ReturnType<typeof vi.fn>;
+  let mediaToolExecute: ReturnType<typeof vi.fn>;
   let findWorkflow: ReturnType<typeof vi.fn>;
   let fake: ReturnType<typeof createFakeDb>;
 
@@ -370,6 +371,22 @@ describe('ExecutionEngineService', () => {
     metrics: { costRub: 0.6, mediaType: 'IMAGE', taskId: 'task-1' },
   });
 
+  /**
+   * Собирает результат media-инструмента для мока исполнителя (R7.1).
+   *
+   * @param urls - URL-ы результата операции
+   * @returns результат с выходами `{ resultUrls, costRub }` и метриками в рублях
+   */
+  const mediaToolResult = (urls: string[]) => ({
+    outputs: {
+      resultUrls: urls,
+      costRub: 10,
+      mediaType: 'TOOL',
+      taskId: 'tool-1',
+    },
+    metrics: { costRub: 10, mediaType: 'TOOL', taskId: 'tool-1' },
+  });
+
   beforeEach(async () => {
     publish = vi.fn((_runId: string, _event: RunEventDto) => Promise.resolve());
     llmExecute = vi.fn((_node: NodeDto, _inputs: Record<string, unknown>) =>
@@ -377,6 +394,11 @@ describe('ExecutionEngineService', () => {
     );
     mediaExecute = vi.fn((_node: NodeDto, _inputs: Record<string, unknown>, _runId: string) =>
       Promise.resolve(mediaNodeResult('https://cdn/img.png')),
+    );
+    // R7.1 (KI-196): узел media-инструмента — отдельный метод исполнителя.
+    mediaToolExecute = vi.fn(
+      (_node: NodeDto, _inputs: Record<string, unknown>, _runId: string) =>
+        Promise.resolve(mediaToolResult(['https://cdn/tool.png'])),
     );
     // R6.7: подграфы приходят из WorkflowService — в юнит-тесте он замокан.
     findWorkflow = vi.fn((_id: string, _userId?: string) =>
@@ -393,7 +415,7 @@ describe('ExecutionEngineService', () => {
         // R3: llm-узел ходит в провайдера — в юнит-тесте он замокан.
         { provide: LlmNodeExecutor, useValue: { executeAsync: llmExecute } },
         // v0.6.0b.2.2: media-узел ходит в CreativeLab — тоже замокан.
-        { provide: MediaNodeExecutor, useValue: { executeAsync: mediaExecute } },
+        { provide: MediaNodeExecutor, useValue: { executeAsync: mediaExecute, executeToolAsync: mediaToolExecute } },
         // R6.7 (KI-200): источник подграфов для узла sub_workflow.
         { provide: WorkflowService, useValue: { findOneAsync: findWorkflow } },
       ],
@@ -435,9 +457,12 @@ describe('ExecutionEngineService', () => {
     });
 
     // R3: llm-узел получил нормализованный вход prompt и ушёл в LLM-исполнитель.
+    // R7.1 (KI-048): третьим аргументом идёт runId — он нужен предохранителю
+    // по стоимости, бюджет считается по запуску, а не по узлу.
     expect(llmExecute).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'B', type: 'llm' }),
       { prompt: 'привет' },
+      RUN_ID,
     );
 
     // Запуск переведён в running и закрыт completed.
@@ -880,7 +905,7 @@ describe('ExecutionEngineService', () => {
     expect(fake.run.status).toBe('failed');
   });
 
-  it('прокидывает null, когда выход предшественника пуст (prompt = null)', async () => {
+  it('передаёт выход предшественника-изображения по контракту порта (R7.1)', async () => {
     const graph: GraphDto = {
       nodes: [node('A', 'image_generation'), node('B', 'llm')],
       edges: [edge('e1', 'A', 'B', 'image-output', 'prompt')],
@@ -889,15 +914,53 @@ describe('ExecutionEngineService', () => {
     const result = await service.executeAsync(RUN_ID, graph);
 
     expect(result.status).toBe('completed');
-    // v0.6.0b.2.2: media-узел отдаёт mediaUrl (стаб отдавал `{ url: null }`).
+    // v0.6.0b.2.2: media-узел отдаёт mediaUrl.
     expect(fake.rows[0].outputs).toEqual({
       mediaUrl: 'https://cdn/img.png',
       mediaType: 'IMAGE',
       taskId: 'task-1',
     });
-    // Порт `image-output` не совпадает с реальным выходом узла, поэтому
-    // зависимый узел получает null — это и проверяем.
+    // R7.1: раньше этот тест фиксировал null — контракт объявлял порт
+    // `url`, а исполнитель писал `mediaUrl`, поэтому картинка до зависимого узла
+    // не доезжала. Теперь порт совпадает с фактическим ключом выходов.
+    expect(fake.rows[1].inputs).toEqual({ prompt: 'https://cdn/img.png' });
+  });
+
+  it('прокидывает null, когда выход предшественника пуст (prompt = null)', async () => {
+    // Узел отдал outputs без ключа порта (upstream не вернул файл): зависимый
+    // узел всё равно выполняется, а вход получает `null` — не падает.
+    mediaExecute.mockResolvedValue({
+      outputs: { mediaType: 'IMAGE', taskId: 'task-1' },
+      metrics: { costRub: null, mediaType: 'IMAGE', taskId: 'task-1' },
+    });
+
+    const graph: GraphDto = {
+      nodes: [node('A', 'image_generation', { model: 'flux-schnell' }), node('B', 'llm')],
+      edges: [edge('e1', 'A', 'B', 'image-output', 'prompt')],
+    };
+
+    const result = await service.executeAsync(RUN_ID, graph);
+
+    expect(result.status).toBe('completed');
     expect(fake.rows[1].inputs).toEqual({ prompt: null });
+  });
+
+  it('R7.1: пустой resultUrls инструмента доезжает до зависимого узла как []', async () => {
+    // Инструмент отработал, но файла не вернул: ключ порта есть, значение —
+    // пустой массив (не `null`) — зависимый узел видит «результатов нет».
+    mediaToolExecute.mockResolvedValue({
+      outputs: { resultUrls: [], costRub: null, mediaType: 'TOOL', taskId: 'tool-1' },
+      metrics: { costRub: null, mediaType: 'TOOL', taskId: 'tool-1' },
+    });
+
+    const graph: GraphDto = {
+      nodes: [node('A', 'image_tool', { operation: 'bg_removal' }), node('B', 'text')],
+      edges: [edge('e1', 'A', 'B', 'image-output', 'text')],
+    };
+
+    await service.executeAsync(RUN_ID, graph);
+
+    expect(fake.rows[1].inputs).toEqual({ text: [] });
   });
 
   it('падает с UnsupportedNodeTypeException на неизвестном типе узла', async () => {
@@ -1546,6 +1609,60 @@ describe('ExecutionEngineService', () => {
     );
   });
 
+  // R7.1 (KI-196): узел media-инструмента. Проверяем маршрутизацию в
+  // `executeToolAsync`, запись стоимости в cost_rub и состав выходов
+  // (`resultUrls`, DESIGN v0.9 § 3.1).
+  it('R7.1: узел image_tool идёт в executeToolAsync и пишет resultUrls + cost_rub', async () => {
+    await service.executeAsync(RUN_ID, {
+      nodes: [
+        node('A', 'image_tool', {
+          operation: 'upscale',
+          model: 'bgremover',
+          inputUrl: 'https://cdn/in.png',
+        }),
+      ],
+      edges: [],
+    });
+
+    expect(mediaToolExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'A', type: 'image_tool' }),
+      expect.any(Object),
+      RUN_ID,
+    );
+
+    const row = fake.rows.find((candidate) => candidate.nodeId === 'A');
+
+    expect(row?.status).toBe('completed');
+    expect(row?.costRub).toBe('10.000000');
+    expect(row?.costUsd).toBeNull();
+    expect(row?.outputs).toEqual({
+      resultUrls: ['https://cdn/tool.png'],
+      costRub: 10,
+      mediaType: 'TOOL',
+      taskId: 'tool-1',
+    });
+  });
+
+  it('R7.1: падение инструмента помечает узел failed и не трогает независимую ветку', async () => {
+    mediaToolExecute.mockImplementation(() =>
+      Promise.reject(new Error('задача инструмента упала')),
+    );
+
+    const result = await service
+      .executeAsync(RUN_ID, {
+        nodes: [node('A', 'image_tool', { operation: 'upscale' }), node('B', 'text')],
+        edges: [edge('e1', 'A', 'B', 'resultUrls', 'url')],
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(result).toBeInstanceOf(Error);
+
+    const row = fake.rows.find((candidate) => candidate.nodeId === 'A');
+
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toContain('задача инструмента упала');
+  });
+
   it('v0.6.0b.2.2: падение media-узла помечает его failed с текстом ошибки', async () => {
     // Свежий reject на каждый вызов: узел повторяется до NODE_MAX_ATTEMPTS раз,
     // и общий rejected-промис давал бы unhandled rejection между попытками.
@@ -1688,10 +1805,12 @@ describe('ExecutionEngineService', () => {
       });
 
       // LLM подграфа получил вход от Text подграфа (сбор входов работает
-      // на префиксованных id).
+      // на префиксованных id); третий аргумент — runId для проверки бюджета
+      // (R7.1, KI-048).
       expect(llmExecute).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'sub_sub-1__S2' }),
         { prompt: 'под-' },
+        RUN_ID,
       );
 
       // Подграф загружен у владельца запуска: фильтр по rootUserId.

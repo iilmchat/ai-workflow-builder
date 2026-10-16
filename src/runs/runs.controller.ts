@@ -17,7 +17,9 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.js';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
+import { CostBudgetService } from './cost-budget.service.js';
 import { CreateRunSchema, type CreateRunDto } from './dto/index.js';
+import type { RunBudgetResponse } from './dto/run-budget.dto.js';
 import { RunsService, type RunResponse } from './runs.service.js';
 import { RunsStreamService } from './runs-stream.service.js';
 
@@ -44,6 +46,7 @@ export class RunsController {
   constructor(
     private readonly runsService: RunsService,
     private readonly runsStreamService: RunsStreamService,
+    private readonly costBudget: CostBudgetService,
   ) {}
 
   /**
@@ -78,6 +81,40 @@ export class RunsController {
   ): Promise<RunResponse> {
     // KI-202: владелец обязателен — чужой запуск отдаёт 404.
     return this.runsService.getRunAsync(params.id, user.sub);
+  }
+
+  /**
+   * `GET /runs/:id/budget` — бюджет запуска для прогресс-бара в TopBar
+   * (R7.1, KI-048).
+   *
+   * Отдельная ручка вместо поля в SSE-снимке: контракт потока
+   * (`docs/development/sse-contract.json`, KI-348) в R7.1 не расширяется.
+   * Владелец проверяется через {@link RunsService.getRunAsync} — чужой запуск
+   * отдаёт 404, а не свои траты (KI-202).
+   *
+   * @param params - path-параметр `id` (uuid)
+   * @param user - владелец из access-токена
+   * @returns лимиты запуска и потраченное (нормализовано в USD)
+   * @throws NotFoundException если запуск не найден или чужой
+   */
+  @Get(':id/budget')
+  async getBudget(
+    @Param(ZodValidationPipe.create(RunIdParamSchema)) params: RunIdParamDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<RunBudgetResponse> {
+    await this.runsService.getRunAsync(params.id, user.sub);
+
+    const check = await this.costBudget.checkBudgetAsync(params.id);
+
+    return {
+      ok: check.ok,
+      accumulated: check.accumulated,
+      estimated: check.estimated,
+      remaining: check.remaining,
+      maxUsd: check.maxUsd,
+      maxRub: check.maxRub,
+      mode: check.mode,
+    };
   }
 
   /**

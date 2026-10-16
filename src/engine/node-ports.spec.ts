@@ -10,7 +10,8 @@ describe('node-ports', () => {
   describe('handleIdToOutputPort', () => {
     it('переводит id хендлов React Flow в имена портов (KI-030)', () => {
       expect(handleIdToOutputPort('text-output')).toBe('text');
-      expect(handleIdToOutputPort('image-output')).toBe('url');
+      // R7.1: `image_generation` пишет `mediaUrl` — порт исправлен.
+      expect(handleIdToOutputPort('image-output')).toBe('mediaUrl');
     });
 
     it('возвращает null для пустого или неизвестного хендла (KI-030)', () => {
@@ -25,7 +26,7 @@ describe('node-ports', () => {
       // `image_generation` в outputs только `url` — зависимый узел читал null.
       expect(handleIdToOutputPort('text-output', 'image_generation')).toBeNull();
       // Свой хендл того же типа по-прежнему разрешается.
-      expect(handleIdToOutputPort('image-output', 'image_generation')).toBe('url');
+      expect(handleIdToOutputPort('image-output', 'image_generation')).toBe('mediaUrl');
       // Симметричный случай: text-узел с чужим image-output.
       expect(handleIdToOutputPort('image-output', 'text')).toBeNull();
     });
@@ -56,7 +57,7 @@ describe('node-ports', () => {
     it('выводит порт из типа узла и падает на output для неизвестного типа (KI-022)', () => {
       expect(inferDefaultOutputPort('text')).toBe('text');
       expect(inferDefaultOutputPort('llm')).toBe('text');
-      expect(inferDefaultOutputPort('image_generation')).toBe('url');
+      expect(inferDefaultOutputPort('image_generation')).toBe('mediaUrl');
       expect(inferDefaultOutputPort('merge')).toBe('output');
     });
 

@@ -12,6 +12,7 @@ export { CompareNode } from './CompareNode';
 export { ConditionNode } from './ConditionNode';
 export { HttpNode } from './HttpNode';
 export { ImageGenNode } from './ImageGenNode';
+export { ImageToolNode } from './ImageToolNode';
 export { LLMNode } from './LLMNode';
 export { OutputNode } from './OutputNode';
 export { SubWorkflowNode } from './SubWorkflowNode';

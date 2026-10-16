@@ -23,21 +23,24 @@ const NEW_TYPES = ['http', 'condition', 'output', 'compare'] as const;
 /** Тип, добавленный в R6.7 (KI-200, DESIGN v0.8 § 5). */
 const SUB_WORKFLOW_TYPE = 'sub_workflow' as const;
 
+/** Тип, добавленный в R7.1 (KI-196, DESIGN v0.9 § 3.1). */
+const IMAGE_TOOL_TYPE = 'image_tool' as const;
+
 /** Все типы реестра — для проверки labelKey в обоих i18n-файлах. */
 const ALL_TYPES: readonly NodeType[] = [...NODE_TYPES];
 
 describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
   it('все четыре типа зарегистрированы, реестр покрывает NodeType целиком', () => {
-    // R6.7: типов стало девять (+sub_workflow).
-    expect(ALL_TYPES).toHaveLength(9);
+    // R6.7: типов стало девять (+sub_workflow); R7.1 — десять (+image_tool).
+    expect(ALL_TYPES).toHaveLength(10);
     expect(ALL_TYPES).toEqual(
       expect.arrayContaining([
         'text',
         'llm',
         'image_generation',
-        'comment',
         ...NEW_TYPES,
         SUB_WORKFLOW_TYPE,
+        IMAGE_TOOL_TYPE,
       ]),
     );
   });
@@ -125,5 +128,27 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
     // Ключ категории — иначе секция каталога показала бы сырой ключ.
     expect(ru).toHaveProperty(['catalog.category.composition']);
     expect(en).toHaveProperty(['catalog.category.composition']);
+  });
+
+  it('R7.1: image_tool — категория «Медиа-инструменты» и ключи в обоих i18n', () => {
+    expect(NODE_REGISTRY.image_tool.category).toBe('media_tools');
+    expect(NODE_CATEGORIES).toContain('media_tools');
+    expect(typeof NODE_REGISTRY.image_tool.component).toBe('function');
+    // Входной порт есть — узел вставляется в связь (KI-259).
+    expect(canInsertOnEdge(IMAGE_TOOL_TYPE)).toBe(true);
+    expect(isNodeType(IMAGE_TOOL_TYPE)).toBe(true);
+    // До запуска выбираются операция и модель.
+    expect(NODE_REGISTRY.image_tool.capabilities).toEqual({
+      externalState: false,
+      userConfig: true,
+    });
+
+    const key = NODE_REGISTRY.image_tool.labelKey;
+
+    expect(ru, `ru: ${key}`).toHaveProperty([key]);
+    expect(en, `en: ${key}`).toHaveProperty([key]);
+    // Ключ категории — иначе секция каталога показала бы сырой ключ.
+    expect(ru).toHaveProperty(['catalog.category.media_tools']);
+    expect(en).toHaveProperty(['catalog.category.media_tools']);
   });
 });

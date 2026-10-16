@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import type { NodeDto } from '../engine/dto/index.js';
+import { CostBudgetService } from '../runs/cost-budget.service.js';
 import { LlmProviderException } from './llm-provider.interface.js';
 import { DEFAULT_LLM_MODEL, LlmNodeExecutor } from './llm-node-executor.service.js';
 import { LlmService } from './llm.service.js';
@@ -29,7 +30,17 @@ describe('LlmNodeExecutor', () => {
     };
 
     const moduleRef = await Test.createTestingModule({
-      providers: [LlmNodeExecutor, { provide: LlmService, useValue: llm }],
+      providers: [
+        LlmNodeExecutor,
+        { provide: LlmService, useValue: llm },
+        // R7.1 (KI-048): предохранитель по стоимости. Здесь он не проверяется —
+        // вызовы идут без `runId`, поэтому заглушка просто не вызывается;
+        // собственные тесты бюджета — `src/runs/cost-budget.service.spec.ts`.
+        {
+          provide: CostBudgetService,
+          useValue: { assertWithinBudgetAsync: vi.fn(() => Promise.resolve()) },
+        },
+      ],
     }).compile();
 
     executor = moduleRef.get(LlmNodeExecutor);
