@@ -5,7 +5,8 @@
 **Дата:** 2026-10-16
 **Статус:** Draft (на ревью)
 **Закрывает (Fixed):** KI-196 (частично), KI-128, KI-361,
-KI-362, KI-048, KI-067, KI-197 (остаток), KI-055, KI-150
+KI-362, KI-363, KI-364, KI-365, KI-048, KI-067, KI-055, KI-150,
+KI-197 (остаток — Share-участники по ID), KI-206, KI-234
 **Связанные:** KI-352, KI-360 (перспектива), KI-008 (code-split)
 **RULES:** 2.5, 2.14
 
@@ -13,7 +14,7 @@ KI-362, KI-048, KI-067, KI-197 (остаток), KI-055, KI-150
 
 ## 1. Контекст
 
-**Точка старта.** v0.8.5 (2026-10-16). 351 KI: Fixed 136 · Open 206.
+**Точка старта.** v0.8.5 (2026-10-16). 354 KI: Fixed 136 · Open 209.
 Backend 570+6 тестов, frontend 197. CI 2 job зелёный.
 
 **Что умеет продукт сейчас:** визуальный редактор LLM-workflow
@@ -95,7 +96,7 @@ per-request warning + graceful degradation; **мы: hard cap** (безопасн
 вызов наших `ILlmProvider`. `AgentStep` discriminated union. `Tool`
 interface с `name` + `description` + Zod input schema. Базовый набор:
 `http_request`, `vector_query`, `vector_upsert`, `memory_read`,
-`memory_write`, `code_eval` (WASM из R7.5), `llm_call`. Обоснование —
+`memory_write`, `code_eval` (WASM из R7.5 — общий WASM-sandbox), `llm_call`. Обоснование —
 см. § 7.4. **Перспектива v0.10:** MCP adapter (Playwright/Puppeteer/
 filesystem) — открытый стандарт Anthropic, легче LangChain.
 
@@ -358,7 +359,7 @@ Anthropic — нет embeddings, fallback на OpenAI. Модели:
     }
 
 **Базовые tools:** `http_request`, `vector_query`, `vector_upsert`,
-`memory_read`, `memory_write`, `code_eval` (WASM из R7.5), `llm_call`.
+`memory_read`, `memory_write`, `code_eval` (WASM из R7.5 — общий WASM-sandbox), `llm_call`.
 **Перспектива v0.10 — MCP adapter** (Playwright, Puppeteer, filesystem):
 MCP — открытый стандарт Anthropic, лёгкий, не как LangChain.
 
@@ -379,3 +380,215 @@ timeline шагов (`data-agent-step`).
     AGENT_MAX_TOKENS_PER_STEP_DEFAULT=2048
     VECTOR_HNSW_M=16
     VECTOR_HNSW_EF_CONSTRUCTION=64
+
+---
+
+### 3.5 R7.5 — WASM sandbox (condition + code_eval)
+
+**Закрывает:** KI-364 (+ используется в agent-tool `code_eval` из § 3.4).
+**~4 ч.**
+
+**Общий модуль для двух потребителей:**
+1. **Condition-узел** — режим `mode: 'sandbox'` вместо MVP-DSL.
+2. **Agent-tool `code_eval`** — вычисление JS в цикле агента.
+
+**Не подходит:** `new Function` — RCE; `vm2` — deprecated (CVE-2023-29017);
+`isolated-vm` — native build сложен на Windows + Docker (пересборка под
+каждую платформу); Node `vm` — небезопасен (`this.constructor.constructor`).
+
+**QuickJS-WASM (`quickjs-emscripten`) — выбранная модель:** Figma плагины
+(2020), Cloudflare Workers, Shopify Functions. WASM — переносимый бинарник,
+работает одинаково на Windows dev и Linux prod. ~200 КБ lazy-loaded.
+
+**Модуль** `src/sandbox/quickjs-runner.service.ts`:
+
+    interface SandboxOptions {
+      timeoutMs?: number;      // default 100
+      memoryLimitMb?: number;  // default 16
+      allowlist?: string[];    // default: input, Math, JSON, Date, String,
+                               //          Number, Array, Object, Boolean
+    }
+
+    async function evaluateSandboxedAsync(
+      expression: string,
+      input: unknown,
+      options?: SandboxOptions,
+    ): Promise<{ result: unknown; error?: string }>;
+
+**Запрещены:** `Function`, `eval`, `require`, `process`, `globalThis`,
+`fetch`, `window`, `document`. Timeout 100 мс — kill VM. Memory limit
+16 МБ — kill VM.
+
+**Обратная совместимость (condition):** старый MVP-DSL парсится и
+конвертируется в JS: `input.value > 100` → `input.value > 100` (для простых сравнений — тождественно).
+
+    interface ConditionNodeData {
+      kind: 'condition';
+      mode: 'dsl' | 'sandbox';  // новый, default 'dsl' (backward compat)
+      expression: string;       // DSL или JS, в зависимости от mode
+    }
+
+**Fallback:** если WASM не загрузился — log warn, режим `sandbox`
+refuse to run (узел failed с `error='Sandbox unavailable'`), режим
+`dsl` работает всегда.
+
+**Frontend:** в ConditionNode — селект «DSL / JavaScript». При JS —
+предупреждение «Выражение исполняется в изолированной VM (QuickJS-WASM)».
+
+**Тесты:** 15+ юнит (timeout, memory, escape-попытки
+`constructor.constructor`, `eval`, `require`), интеграция с реальным
+condition-узлом в режиме sandbox.
+
+**Env:** `SANDBOX_ENABLED=true`, `SANDBOX_TIMEOUT_MS=100`,
+`SANDBOX_MEMORY_MB=16`.
+
+---
+
+### 3.6 R7.6 — Share-участники по ID (остаток KI-197)
+
+**Закрывает:** KI-197 (остаток). **~5 ч.**
+
+**Таблица `workflow_collaborators`:**
+
+    CREATE TABLE workflow_collaborators (
+      workflow_id uuid NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+      user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role text NOT NULL CHECK (role IN ('viewer', 'editor')),
+      invited_at timestamptz NOT NULL DEFAULT now(),
+      invited_by uuid NOT NULL REFERENCES users(id),
+      PRIMARY KEY (workflow_id, user_id)
+    );
+
+**Роли:**
+- **viewer** — read-only (аналог share-token, но по ID).
+- **editor** — правка графа, Save, Run; **не** может удалить workflow
+  или приглашать других.
+
+**Эндпоинты:**
+- `GET /workflow/:id/collaborators` — список (owner + participants).
+- `POST /workflow/:id/collaborators { userId, role }` — пригласить по uuid.
+- `PATCH /workflow/:id/collaborators/:userId { role }` — изменить роль.
+- `DELETE /workflow/:id/collaborators/:userId` — удалить.
+
+**Owner-check расширяется:** `buildAccessFilter` в `WorkflowService` —
+учитывает `OR user_id = $1 OR EXISTS(SELECT FROM workflow_collaborators
+WHERE ...)`. Role-aware: `viewer` → только GET; `editor` → GET+POST+PATCH,
+не DELETE.
+
+**UI:** в ShareModal — новая вкладка «Участники»: input для user uuid +
+селект роли + список. Инвайт **по uuid** (не по email — email-нотификации
+вне scope v0.9).
+
+**Тесты:** 10+ юнит (roles, access), 2 integration (viewer GET, editor POST),
+CDP-смоук.
+
+**KI-232 (Welcome screen) — НЕ входит в R7.6,** в Section 6 (что не
+входит).
+
+---
+
+### 3.7 R7.7 — Observability + production hardening
+
+**Закрывает:** KI-067, KI-055, KI-150, KI-365, KI-206, KI-234. **~8 ч.**
+
+**7.7.1 OpenTelemetry traces (KI-365).**
+- `@opentelemetry/sdk-node` + `@opentelemetry/exporter-trace-otlp-http`.
+- Spans: `run.execute`, `node.execute`, `llm.call`, `media.createTask`,
+  `agent.step`.
+- Env: `OTEL_ENABLED=false` (default), `OTEL_EXPORTER_OTLP_ENDPOINT`.
+- Локально — Jaeger через `docker-compose.otel.yml` (опционально).
+
+**7.7.2 Rate limiting per-provider (KI-067, KI-206, KI-234).**
+- Semaphore на каждый провайдер (`LLM_PROVIDER_MAX_CONCURRENCY_ANTHROPIC=5`
+  и т.д.).
+- Использует `p-limit` или самописный (200 строк).
+- Env: `LLM_PROVIDER_MAX_CONCURRENCY_<NAME>` (default: без ограничения —
+  backward compat).
+
+**7.7.3 Reasoning cache tokens (KI-055, KI-150).**
+- `LlmUsage` расширяется: `cacheReadTokens?: number`,
+  `cacheCreationTokens?: number`.
+- Нормализация: **Anthropic** — `cache_control: ephemeral` при
+  systemPrompt > 1024 (по флагу `data.promptCache=true`, не по умолчанию);
+  **OpenAI** — `usage.prompt_tokens_details.cached_tokens` (автоматически);
+  **DeepSeek** — `prompt_cache_hit_tokens` (автоматически);
+  **GPTunnel/RouterAI** — зависит от upstream; **Yandex** — нет (честно
+  писать «кэш недоступен»); **LM Studio** — не применимо.
+- `MODEL_PRICING` — `{ cacheRead: X, cacheCreation: Y }`.
+- Новые колонки `node_runs.cache_read_tokens`, `cache_creation_tokens`
+  (миграция `0008_cache_tokens.sql`).
+- UI: `RunResultPanel` — «Cache read: 12 500 tokens (экономия $0.34)».
+
+**7.7.4 Cost budget — уже в R7.1.** Здесь только аналитика: агрегат
+`workflow_runs.total_cost_usd/total_cost_rub` (денормализация, KI-054) +
+endpoint `GET /runs/:id/costs`.
+
+**Тесты:** 5+ OTel (span creation), 5+ semaphore, 10+ cache tokens
+(3 провайдера), CDP-смоук.
+
+**Env (сводно):**
+
+    OTEL_ENABLED=false
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+    LLM_PROVIDER_MAX_CONCURRENCY_ANTHROPIC=10
+    LLM_PROVIDER_MAX_CONCURRENCY_OPENAI=10
+    LLM_PROVIDER_MAX_CONCURRENCY_GPTUNNEL=5
+    PROMPT_CACHE_ENABLED=true
+    PROMPT_CACHE_MIN_TOKENS=1024
+
+---
+
+### 3.8 R7.8 — Media storage (S3 / TTL)
+
+**Закрывает:** KI-362. **~3 ч.**
+
+**Проблема:** CreativeLab отдаёт `resultUrls`, живущие 48 часов.
+Через 2 суток `node_runs.outputs` содержит мёртвые ссылки.
+
+**Решение — двухслойное:**
+
+**Слой 1: локальное хранилище (default).**
+- Env: `MEDIA_STORAGE_BACKEND=local | s3 | none`, default `local`.
+- `local` — файлы в `./data/media/{runId}/{nodeId}.{ext}`, URL
+  `/api/media/file/:id`, отдача через `@nestjs/serve-static`.
+- Скачивание происходит сразу после успешной media-задачи (`fetch` +
+  стрим в файл).
+
+**Слой 2: S3 (opt-in).**
+- Env: `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`,
+  `S3_SECRET_ACCESS_KEY`, `S3_REGION`, `S3_TTL_DAYS=30`.
+- Presigned URL на GET с TTL.
+- Провайдеры: AWS S3, MinIO, Cloudflare R2, Yandex Object Storage.
+
+**Миграция `0009_media_storage.sql`:**
+
+    ALTER TABLE node_runs
+      ADD COLUMN stored_url text,
+      ADD COLUMN stored_expires_at timestamptz;
+
+**Поведение:**
+- `node_runs.outputs` — всегда имеет `resultUrls` (для совместимости).
+- `node_runs.stored_url` — своя ссылка (stable, к нам).
+- UI `<img>`/`<video>` использует `stored_url ?? resultUrls[0].url`.
+- Если оба отсутствуют или `stored_expires_at < now()` — маркер
+  «ссылка истекла» (серый placeholder).
+
+**Frontend:**
+- `ImageGenNode` / `VideoGenNode` / `AudioGenNode` — `src` берётся из
+  `stored_url`, fallback на `resultUrls`.
+- Компонент `ExpiredMediaPlaceholder`.
+
+**Тесты:** 8+ юнит (local backend, S3-мок, TTL), 1 integration
+(реальный локальный storage), CDP-смоук.
+
+**Env:**
+
+    MEDIA_STORAGE_BACKEND=local
+    MEDIA_STORAGE_LOCAL_PATH=./data/media
+    MEDIA_STORAGE_LOCAL_TTL_DAYS=30
+    S3_ENDPOINT=
+    S3_BUCKET=
+    S3_ACCESS_KEY_ID=
+    S3_SECRET_ACCESS_KEY=
+    S3_REGION=
+    S3_TTL_DAYS=30
