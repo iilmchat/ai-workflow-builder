@@ -4736,8 +4736,8 @@
   `NodeRunSnapshotSchema` принимает skipped (условие работоспособности SSE).
   +12 тестов, смоук на реальных PostgreSQL+Redis (22 проверки).
   В v0.8.3 остаток KI-288 закрыт на фронте (`df4f3f0`).
-- **Остаток:** KI-336 (skipped в RUN_STATUSES), KI-337 (подграфы),
-  KI-338 (ветки condition), KI-339 (кто упал).
+- **Остаток:** KI-338 (ветки condition), KI-339 (кто упал), KI-353
+  (три источника правды по статусам).
 - **Связанные:** KI-287, KI-290, KI-301.
 
 ---
@@ -5412,20 +5412,42 @@
 ---
 
 ### KI-336 — `RUN_STATUSES` не знает skipped
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.4 (коммит `ac665b1`)
 - **Файлы:** `src/db/schema.ts`, `src/engine/execution-engine.service.ts`
 - **Описание:** Движок пишет `node_runs.status='skipped'` (text без CHECK), но тип колонки — `RunStatus`; локальный NodeRunStatus + приведение.
 - **Решение:** добавить `skipped` в `RUN_STATUSES` (миграция) или отдельный тип статуса узла.
 - **Связанные:** KI-288.
+- **Fix:** выбран вариант (b) — `WORKFLOW_RUN_STATUSES` (без skipped)
+  + `NODE_RUN_STATUSES = [...WORKFLOW_RUN_STATUSES, 'skipped']`;
+  типы `RunStatus` / `NodeRunStatus`; `node_runs.status` →
+  `$type<NodeRunStatus>()`. Удалены локальный `type NodeRunStatus`
+  и `toNodeRunColumnStatus(... as RunStatus)` в engine. `RUN_STATUSES`
+  оставлен `@deprecated`-псевдонимом (0 потребителей после `87455f2`
+  — удаление в v0.8.5). Миграция НЕ создаётся: колонка `text` без
+  CHECK (подтверждено `pnpm db:generate` + `pg_constraint`).
+- **Остаток:** KI-353.
+- **Связанные:** KI-288, KI-337, KI-347.
 
 ---
 
 ### KI-337 — Подграф sub_workflow без skip-семантики
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.4 (коммит `ac665b1`)
 - **Файлы:** `src/engine/execution-engine.service.ts`
 - **Описание:** `executeSubWorkflowGraphAsync` бросает на первом падении и не создаёт строк для непройденных узлов подграфа — асимметрия с корневым графом.
 - **Решение:** распространить `failedIds`/`skippedIds` на подграфы.
 - **Связанные:** KI-288, KI-304.
+- **Fix:** общий приватный хелпер `skipBlockedNodesAsync` — корневой
+  `executeAsync` и `executeSubWorkflowGraphAsync` используют один
+  механизм. Подграф после падения доигрывает независимые ветки
+  (симметрия с KI-287, RULES 4.16). `node_runs` и `node_skipped` —
+  с префиксом `sub_<nodeId>__` (DESIGN § 5.3). Контракт родителя не
+  менялся (`sub_workflow` → failed, потомки родителя → skipped,
+  DESIGN § 5.6). Смоук: sub→sub→fail→skipped, 6 строк `node_runs`
+  (2 skipped), 2 `node_skipped`.
+- **Остаток:** KI-354, KI-355.
+- **Связанные:** KI-288, KI-287, KI-336, KI-200.
 
 ---
 
@@ -5511,20 +5533,40 @@
 ---
 
 ### KI-347 — SSE-снимок не несёт `run.error`
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.4 (коммит `87455f2`)
 - **Файлы:** `src/runs/runs-stream.service.ts`, `web/src/stores/workflow.ts`
 - **Описание:** После F5 панель показывает «Ошибка запуска: причина недоступна», хотя в `workflow_runs.error` текст есть.
 - **Решение:** включить `error` в snapshot-событие потока.
 - **Связанные:** KI-288.
+- **Fix:** `RunSnapshotSchema.error = z.string().nullable()`; снимок
+  читается через новый `runs.service.getRunRowAsync` (owner-check
+  переиспользован, публичный REST-ответ не расширялся); зеркало web
+  обновлено, `applySnapshot` пишет `runError = snapshot.run.error ??
+  state.runError` (не перетирает null'ом). CDP-смоук: реальный
+  прогон (http 404 + failOnHttpError) → F5 → панель «Ошибка запуска:
+  HTTP 404».
+- **Остаток:** KI-352, KI-077.
+- **Связанные:** KI-271, KI-288.
 
 ---
 
 ### KI-348 — Нет паритет-гейта backend DTO ↔ web SSE-зеркало
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.4 (коммит `87455f2`)
 - **Файлы:** `src/engine/run-events.ts` (RunEventSchema), `web/src/types/run-stream.ts`
 - **Описание:** Ручное зеркало в `web/src/types/run-stream.ts`; расхождение (KI-NEW-B) валило реальный поток, но не unit-тесты.
 - **Решение:** spec-паритет значений/ключей RunEventSchema ↔ зеркало (по образцу api-prefixes).
 - **Связанные:** KI-299, KI-350.
+- **Fix:** `docs/development/sse-contract.json` — source of truth
+  контракта (события + `snapshot.run` + `snapshot.node`). Два
+  паритет-спека: `src/runs/dto/sse-contract.spec.ts` (backend) и
+  `web/src/types/run-stream-contract.spec.ts` (web). Падение — с
+  подсказкой «обнови JSON». Двойные негативные тесты: убрать `error`
+  из JSON → падают оба spec'а; добавить `ghost` → падают оба.
+- **Остаток:** KI-350, KI-352.
+- **Связанные:** KI-299 (тот же паттерн «один список + два
+  паритет-спека»), KI-072, KI-120.
 
 ---
 
@@ -5555,18 +5597,69 @@
 
 ---
 
+### KI-352 — нет паритет-гейта для REST-зеркала `web/src/lib/api.ts`
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `web/src/lib/api.ts`, `src/runs/runs.controller.ts`,
+  `src/runs/dto/*.dto.ts`
+- **Описание:** `ApiRunSchema` вручную повторяет backend `RunResponse`
+  (в JSDoc это прямо записано); ни один spec не сверяет их состав. Тот
+  же класс дефекта, что KI-348, но для REST.
+- **Решение:** распространить паттерн `docs/development/sse-contract.json`
+  (или общий `api-contract.json`) на REST-DTO.
+- **Связанные:** KI-348, KI-077, KI-350.
+
+---
+
+### KI-353 — три источника правды по статусам узла
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/db/schema.ts`, `src/runs/dto/run-stream-message.dto.ts`,
+  `web/src/types/run-stream.ts`
+- **Описание:** `NODE_RUN_STATUSES` — канон в `schema.ts`, но DTO выводит
+  свой список из `WORKFLOW_RUN_STATUSES`, а web-зеркало дублирует
+  литералами. Совпадение ничем не гейтится.
+- **Решение:** DTO берёт `NODE_RUN_STATUSES` из схемы; web — под гейт
+  паритета (KI-348/KI-352).
+- **Связанные:** KI-336, KI-348, KI-352.
+
+---
+
+### KI-354 — дублирование обхода уровней в engine
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/engine/execution-engine.service.ts`
+- **Описание:** Общим сделан только skip-хелпер (`skipBlockedNodesAsync`);
+  обработка падений, логирование и сбор outputs в `executeAsync` и
+  `executeSubWorkflowGraphAsync` — две копии.
+- **Решение:** вынести общий обход уровней в один приватный метод с режимом
+  (корень/подграф).
+- **Связанные:** KI-337, KI-288.
+
+---
+
+### KI-355 — обречённый подграф доигрывает независимые ветки
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/engine/execution-engine.service.ts`
+- **Описание:** после KI-337 подграф с падением доигрывает независимые ветки
+  (симметрия с KI-287/RULES 4.16); возможны платные LLM/media-вызовы,
+  результаты которых никуда не попадут. Продуктовое решение:
+  консистентность важнее экономии.
+- **Решение:** зафиксировать выбор или ввести early-abort отдельным подшагом
+  (связано с KI-067 — cost budget/concurrency).
+- **Связанные:** KI-337, KI-287, KI-067.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 130 |
+| Fixed | 134 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
 | Open | 201 |
 | Won't Fix | 1 |
-| **Всего** | **340** |
+| **Всего** | **344** |
 
 ---
 

@@ -17,6 +17,51 @@
 ---
 ## [Unreleased]
 
+## [0.8.4] — 2026-10-16
+
+**Patch после v0.8.3. Skip-статус в схеме, skip-семантика подграфов,
+`run.error` в SSE-снимке, паритет-гейт backend ↔ web.**
+
+Два подшага после v0.8.3.
+
+### Added
+
+- **Backend — skip в схеме (KI-336):** `WORKFLOW_RUN_STATUSES` (без
+  skipped) + `NODE_RUN_STATUSES = [...WORKFLOW_RUN_STATUSES, 'skipped']`;
+  типы `RunStatus` / `NodeRunStatus`; `node_runs.status` →
+  `$type<NodeRunStatus>()`. Миграция не нужна (колонка text без CHECK).
+  `RUN_STATUSES` — `@deprecated`-псевдоним (0 потребителей, удаление
+  в v0.8.5).
+- **Backend — skip-семантика подграфов (KI-337):** общий хелпер
+  `skipBlockedNodesAsync` используется и корневым `executeAsync`, и
+  `executeSubWorkflowGraphAsync`; подграф доигрывает независимые ветки
+  (симметрия с KI-287/RULES 4.16); `node_runs` и `node_skipped` — с
+  префиксом `sub_<nodeId>__`.
+- **Backend + web — `run.error` в SSE-снимке (KI-347):**
+  `RunSnapshotSchema.error: z.string().nullable()`;
+  `runs.service.getRunRowAsync` (owner-check переиспользован);
+  `applySnapshot` пишет `runError`.
+- **Паритет-гейт backend ↔ web SSE (KI-348):**
+  `docs/development/sse-contract.json` — source of truth;
+  `src/runs/dto/sse-contract.spec.ts` + `web/src/types/run-stream-contract.spec.ts`
+  падают при расхождении. Двойные негативные тесты прошли.
+
+### Fixed
+
+- **KI-336** — `skipped` в схеме, тип колонки `NodeRunStatus` (`ac665b1`).
+- **KI-337** — skip-семантика подграфов (`ac665b1`).
+- **KI-347** — `run.error` в SSE-снимке (`87455f2`).
+- **KI-348** — паритет-гейт backend DTO ↔ web SSE-зеркало (`87455f2`).
+
+### Documented
+
+- **KI-352** — нет паритет-гейта для REST-зеркала `web/src/lib/api.ts`
+  (Medium).
+- **KI-353** — три источника правды по статусам узла (Medium).
+- **KI-354** — дублирование обхода уровней в engine (Low).
+- **KI-355** — обречённый подграф доигрывает независимые ветки (Low,
+  продуктовое решение).
+
 ## [0.8.3] — 2026-10-16
 
 **Patch-серия после v0.8.2. Три параллельных подшага + SSE-зеркало + chunk-fix.**
