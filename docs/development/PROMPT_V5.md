@@ -2,8 +2,8 @@
 
 **Версия промпта:** v6.0
 **Дата:** 2026-10-16
-**Актуальный релиз:** v0.8.0 (Auth, Share, LLM upgrade, Canvas UX, Node types, Export/Templates, Sub-workflows)
-**Текущий этап:** v0.8.1 — фиксы (единый /api, KI-306, KI-298, KI-301)
+**Актуальный релиз:** v0.8.3 (skip-статус потомков упавших, `http.failOnHttpError`, type-aware порты, fit readability, кэш sub_workflow, SSE-зеркало node_skipped, type-check spec'ов, test:parity)
+**Текущий этап:** v0.9 — DESIGN
 **Репозиторий:** https://github.com/iilmchat/ai-workflow-builder
 **Рабочий путь:** локальный клон репозитория — **зависит от машины**
 (`C:\Projects\AI\ai-workflow-builder`, `D:\Projects\AI\workflow-builder`
@@ -280,11 +280,11 @@
 - `workflow_runs`, `node_runs` — timestamptz везде.
 - `users`, `refresh_tokens` — auth (R6.1).
 
-**Метрики (v0.8.0):**
-- 514 backend-тестов, 159 frontend-тестов.
-- Bundle: ~698 kB JS (chunk warning — pre-existing).
-- CI: 2 job, зелёный.
-- 294 KI в реестре: Fixed 111, Open 174, Documented 7, Planned 1,
+**Метрики (v0.8.3):**
+- 547 + 6 backend-тестов, 184 frontend-теста.
+- Bundle: ~700.66 kB JS (лимит предупреждения 710).
+- CI: 2 job, зелёный (шаги Typecheck и Apply migrations).
+- 340 KI в реестре: Fixed 130, Open 201, Documented 7, Planned 1,
   Won't Fix 1.
 - Husky pre-commit + GitHub Push Protection.
 
@@ -632,9 +632,8 @@ RULES — скажи «это стоит добавить в RULES § X.Y».
 
 ## § 12. Итог
 
-**Проект в состоянии: v0.8.0 выпущен + release на GitHub (Latest),
-CI зелёный, 514/514 backend + 159/159 frontend. DESIGN v0.8 закрыт.
-294 KI в реестре.**
+**Проект в состоянии: v0.8.3 выпущен, CI зелёный,
+547/547 backend + 184/184 frontend, 337 KI.**
 
 **Следующий этап — v0.8.1 (фиксы):** единый `/api` (KI-299/072/120),
 KI-306 (fitView minZoom), KI-298 (drizzle ↔ БД), KI-300 (version),

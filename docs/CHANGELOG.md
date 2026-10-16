@@ -17,6 +17,66 @@
 ---
 ## [Unreleased]
 
+## [0.8.3] — 2026-10-16
+
+**Patch-серия после v0.8.2. Три параллельных подшага + SSE-зеркало + chunk-fix.**
+
+### Added
+
+- **Frontend — fit readability (KI-314, 328):**
+  `FIT_VIEW_OPTIONS.minZoom` 0.02 → 0.005 + новый
+  `FIT_SELECTION_OPTIONS = { padding 0.3, maxZoom 1, minZoom 0.1 }`;
+  `Shift+F` и кнопка «Вписать выделение».
+- **Frontend — кэш списка workflow (KI-302):**
+  `web/src/lib/workflow-list-cache.ts` (TTL 5 с + revision + inflightSeq);
+  инвалидация в save/import/template/delete; подписка через
+  `useSyncExternalStore`.
+- **Frontend — SSE-зеркало node_skipped (KI-NEW-B / остаток KI-288):**
+  `NODE_RUN_STATUSES = [...RunStatusSchema.options, 'skipped']`;
+  `NodeRunStatusSchema` (узел) ≠ `RunStatusSchema` (запуск); вариант
+  `node_skipped { runId, nodeId, nodeType, reason, skippedAt }`;
+  статус skipped в BaseNode (серый пунктир) и RunResultPanel.
+- **Backend — skip-статус для потомков упавших (KI-288, 290):**
+  `failedIds`/`skippedIds`, `markNodeSkippedAsync`, `node_skipped` в
+  RunEventSchema; предшественники из `executionMap.dependents`.
+- **Backend — `http.failOnHttpError` (KI-289):**
+  `HttpNodeData.failOnHttpError?: boolean`; при true и status ≥ 400 — failed.
+- **Backend — type-aware `handleIdToOutputPort` (KI-301):**
+  вторым аргументом `sourceNodeType?`.
+- **Infra — type-check spec'ов (KI-317):**
+  `tsconfig.spec.json`, `"typecheck": "tsc -p tsconfig.spec.json --noEmit"`,
+  шаг `Typecheck` в CI (23 ошибки починены — только в `*.spec.ts`).
+- **Infra — `test:parity` (KI-318):**
+  `node --env-file=.env node_modules/vitest/vitest.mjs run
+  src/db/schema-parity.spec.ts`.
+
+### Fixed
+
+- **KI-288** — skip-статус для потомков упавших (`aacae26`).
+- **KI-289** — `http.failOnHttpError` (`aacae26`).
+- **KI-290** — fallback-выходы потомков упавших не в outputs (`aacae26`).
+- **KI-301** — type-aware `handleIdToOutputPort` (`aacae26`).
+- **KI-302** — инвалидация кэша workflow в save (`c6edf91` + `df4f3f0`).
+- **KI-314** — `minZoom: 0.005` (`c6edf91`).
+- **KI-317** — `typecheck` в CI (`ca21f30`).
+- **KI-318** — `test:parity` (`ca21f30`).
+- **KI-319** — RULES § 3.19 (`ca21f30`).
+- **KI-326** — Vite host `127.0.0.1` (`c6edf91`).
+- **KI-328** — fit выделения (`c6edf91`).
+- **KI-329** — share wheel/pan (`c6edf91`).
+- **KI-334** — `chunkSizeWarningLimit: 710` (`952d8b6`).
+- **KI-NEW-B** — фронт-SSE-зеркало `node_skipped` (`df4f3f0`).
+
+### Documented
+
+- **KI-330..351** — 22 новых: share UX (330/331), TTL (332), web lint
+  (333), формула (335), RUN_STATUSES/skipped (336), подграфы/condition
+  (337/338), retryable http (340), null vs {} (341), thenable-двойник
+  (342), e2e-спек (343), test:parity enforcement (344), env-file (345),
+  drizzle typecheck (346), run.error в снимке (347), паритет-гейт
+  SSE-зеркало (348), TextNode target (349), мягкое зеркало (350),
+  401-шум (351).
+
 ## [0.8.2] — 2026-10-16
 
 **Patch после v0.8.1. CI-гейт схемы + инкремент version + единые fit-опции.**

@@ -4720,19 +4720,31 @@
 ---
 
 ### KI-288 — Потомки упавшего узла не пропускаются (нет статуса skipped)
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.3 (коммит `aacae26`)
 - **Файлы:** `src/engine/execution-engine.service.ts`, `src/db/schema.ts`
 - **Описание:** После KI-287 (вариант A) зависимые узлы выполняются
   с `null`-входами и падают сами. У пользователя узел-потомок выглядит
   как самостоятельно сломанный, хотя запускать его не следовало.
 - **Решение:** добавить `skipped` в `RUN_STATUSES` (миграция) +
   транзитивное замыкание от упавших в `executeAsync`.
-- **Связанные:** KI-287, KI-029, KI-025.
+- **Fix:** `executeAsync` собирает `failedIds`/`skippedIds`; перед каждым
+  уровнем узлы с упавшим/пропущенным предшественником (обратный граф из
+  `executionMap.dependents`) не выполняются, а UPSERT'ятся в `node_runs` со
+  `status='skipped'` и `error='Пропущен: упал предшественник'` (KI-031),
+  публикуется `node_skipped` (RunEventSchema). Пропуск транзитивен.
+  `NodeRunSnapshotSchema` принимает skipped (условие работоспособности SSE).
+  +12 тестов, смоук на реальных PostgreSQL+Redis (22 проверки).
+  В v0.8.3 остаток KI-288 закрыт на фронте (`df4f3f0`).
+- **Остаток:** KI-336 (skipped в RUN_STATUSES), KI-337 (подграфы),
+  KI-338 (ветки condition), KI-339 (кто упал).
+- **Связанные:** KI-287, KI-290, KI-301.
 
 ---
 
 ### KI-289 — http-узел не считает 4xx/5xx ошибкой
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.3 (коммит `aacae26`)
 - **Файлы:** `src/engine/node-executors.ts` (`executeHttpNode`)
 - **Описание:** HTTP 4xx/5xx возвращаются как `{ status, body }` —
   узел завершается `completed`, а не `failed`. Для невалидного URL,
@@ -4740,19 +4752,29 @@
   R6.5.2-fix: пришлось использовать закрытый порт для падения).
 - **Решение:** конфигурируемый `failOnHttpError` (или предикат по
   статусу) + `retryable` для 5xx/429.
-- **Связанные:** KI-280, KI-036, KI-287.
+- **Fix:** `HttpNodeData.failOnHttpError?: boolean` (Zod в исполнителе,
+  дефолт false — backward compat); при true и status >= 400 — `throw
+  new Error('HTTP <код>')` (тело/заголовки не попадают в node_runs.error,
+  RULES 5.9). +5 unit + интеграционный (http fails → потомок skipped).
+- **Остаток:** KI-340 (5xx/429 не ретраятся — обычный Error, не
+  LlmProviderException.retryable).
+- **Связанные:** KI-036, KI-041, KI-288.
 
 ---
 
 ### KI-290 — `workflow_runs.outputs` содержит fallback-выходы от потомков упавших
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.3 (коммит `aacae26`)
 - **Файлы:** `src/engine/execution-engine.service.ts`
 - **Описание:** text-потомок упавшего узла завершается completed с
   `null`-входом (executeTextNode игнорирует входы, берёт `data.value`),
   и его fallback-значение попадает в `workflow_runs.outputs` как
   полноценный результат ветки — потребитель не отличит от настоящего.
 - **Решение:** пометка «fallback» в outputs или переход к KI-288 (skip).
-- **Связанные:** KI-287, KI-288.
+- **Fix:** закрыт автоматически с KI-288 — пропущенный узел не выполняет
+  свой код и в `workflow_runs.outputs` не пишет (fallback-выходы
+  потомков упавших не попадают). Проверено смоуком и интеграционным тестом.
+- **Связанные:** KI-288.
 
 ---
 
@@ -4915,23 +4937,42 @@
 ---
 
 ### KI-301 — `handleIdToOutputPort` не различает тип узла-источника
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.3 (коммит `aacae26`)
 - **Файлы:** `src/engine/node-ports.ts`
 - **Описание:** Функция выбирает порт по id хэндла, **не сверяя тип
   узла-источника**. Если два типа имеют одинаковый `sourceHandleId`
   с разными `outputPortName` — данные молча теряются. В R6.7
   обойдено отдельным хэндлом `result-output`.
 - **Решение:** type-aware резолвер портов (сверить с `sourceNode.type`).
-- **Связанные:** KI-030, KI-022, KI-200, KI-033.
+- **Fix:** `handleIdToOutputPort(handleId, sourceNodeType?)` —
+  при известном типе хендл сверяется с контрактом этого типа; чужой хендл
+  → null → `inferDefaultOutputPort(type)`. Для типов без контракта (compare/
+  merge/неизвестный) сохранён fallback по всем контрактам (иначе регресс
+  KI-030). `buildExecutionPlanAsync` передаёт `sourceNode?.type`.
+  +5 тестов, смоук (image_generation + чужой `text-output` → fromPort='url').
+- **Остаток:** KI-033 (для типов без контракта fallback по-прежнему
+  подменяет чужой хендл тип-дефолтом).
+- **Связанные:** KI-022, KI-030, KI-033, KI-034.
 
 ---
 
 ### KI-302 — Кэш списка workflow в узле `sub_workflow` не инвалидируется
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.3 (коммит `c6edf91` + `df4f3f0`)
 - **Файлы:** `web/src/components/nodes/SubWorkflowNode.tsx`
 - **Описание:** Модульный кэш на вкладку — workflow, созданный в этой
   же вкладке, появляется в селекте только после F5.
 - **Решение:** инвалидация по событию/эффекту.
+- **Fix:** `web/src/lib/workflow-list-cache.ts` (TTL 5 с + revision +
+  `inflightSeq` против гонки); инвалидация в `saveWorkflowAsync` (create +
+  update, коммит `df4f3f0`), `importWorkflowAsync`,
+  `instantiateTemplateAsync`, `deleteWorkflowAsync`; подписка через
+  `useSyncExternalStore` обновляет смонтированные селекты sub_workflow
+  без F5. CDP: создание в этой вкладке видно без reload (E-1); 4 узла на
+  Save → 1 запрос (E-3, дедупликация); удаление → select сохраняется, DOM
+  не remount (E-2).
+- **Связанные:** KI-200, KI-332.
 
 ---
 
@@ -5075,14 +5116,22 @@
 ---
 
 ### KI-314 — `minZoom: 0.02` умещает разброс только до 23 050 px
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.3 (коммит `c6edf91`)
 - **Файлы:** `web/src/components/Canvas.tsx` (`FIT_VIEW_OPTIONS`)
 - **Описание:** Измерено CDP: холст 1368×461 → покрытие 68 400 ×
   23 050 px, последний умещающийся разброс 23 000 px, при 24 000 px —
   оба узла за кадром. Для разброса 50 000 px нужен zoom ≈0.0092.
 - **Решение:** `minZoom: 0.005` либо fit по кластеру / выделению,
   либо `fitView({ nodes })`.
-- **Связанные:** KI-306, KI-307.
+- **Fix:** `FIT_VIEW_OPTIONS.minZoom` 0.02 → 0.005 + отдельный
+  `FIT_SELECTION_OPTIONS = { padding: 0.3, maxZoom: 1, minZoom: 0.1 }`.
+  CDP (разброс 60 000 px): zoom 0.0104, узлы в кадре; при 0.02 zoom
+  клампился (1200 px против доступных 625).
+- **Уточнение формулы:** `parsePadding` из @xyflow/system даёт
+  `height/(1+padding)/minZoom` (не `height/minZoom`) → 19 208 px при 0.02
+  и 76 833 px при 0.005, а не 23 050/92 200 (см. KI-335).
+- **Связанные:** KI-306, KI-307, KI-328, KI-335.
 
 ---
 
@@ -5119,37 +5168,57 @@
 ---
 
 ### KI-317 — Spec-файлы не проходят type-check ни на одном шаге
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.3 (коммит `ca21f30`)
 - **Файлы:** `package.json`, `tsconfig.build.json`, `.github/workflows/ci.yml`
 - **Описание:** `tsconfig.build.json` исключает `**/*spec.ts`; vitest
   не type-check'ает; `oxlint --type-aware` — не `tsc`. На HEAD —
   26 ошибок типов в 11 spec-файлах, «зелёный CI» их не видит.
 - **Решение:** `"typecheck": "tsc -p tsconfig.spec.json --noEmit"` +
   шаг в CI; разово починить 26 ошибок.
-- **Связанные:** KI-298, KI-298-reports.
+- **Fix:** `tsconfig.spec.json` (`extends tsconfig.json`, `noEmit`,
+  `types: [node, vitest/globals]`, `include: src/**/*.spec.ts`,
+  `test/**/*.spec.ts`); `"typecheck": "tsc -p tsconfig.spec.json --noEmit"`;
+  шаг Typecheck в CI (job build, до Apply migrations). Починены 23 ошибки
+  типов в 11 spec-файлах (дополнены фикстуры: inputModalities/
+  outputModalities, shareToken, priceInput/priceInputUnit; типизированы
+  моки). Продовый src/** не тронут — только *.spec.ts.
+- **Остаток:** KI-343 (e2e не покрыт), KI-346 (drizzle/** вне typecheck).
+- **Связанные:** KI-298, KI-318.
 
 ---
 
 ### KI-318 — Vitest не читает `.env` → гейт KI-298 silently skipped
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.3 (коммит `ca21f30`)
 - **Файлы:** `vitest.config.ts`, `package.json`
 - **Описание:** Vitest не переносит `.env` в `process.env` — локальный
   `pnpm test` показывает «зелено», а паритет схемы не проверялся.
 - **Решение (проверено):** `"test:parity": "node --env-file=.env
   node_modules/vitest/vitest.mjs run src/db/schema-parity.spec.ts"`.
+- **Fix:** `"test:parity": "node --env-file=.env node_modules/vitest/
+  vitest.mjs run src/db/schema-parity.spec.ts"` — явный запуск
+  паритет-гейта с .env. `vitest.config.ts` не менялся (иначе корневой
+  pnpm test начал бы зависеть от живой БД). Проверено: `pnpm test:parity`
+  → 6/6.
+- **Остаток:** KI-344 (обычный `pnpm test` без DATABASE_URL молча
+  скипает гейт).
 - **Связанные:** KI-298.
 
 ---
 
 ### KI-319 — CI: шаг `Apply migrations` стал обязательным
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.3 (коммит `ca21f30`)
 - **Файлы:** `.github/workflows/ci.yml`
 - **Описание:** Job build годами шёл без `db:migrate`, БД сервиса
   пустая; новый шаг — предпосылка для KI-298-гейта и всех будущих
   DB-интеграционных спеков.
 - **Решение:** зафиксировать в RULES/PROMPT; при росте числа
   DB-спеков — вынести в отдельный job.
-- **Связанные:** KI-298.
+- **Fix:** RULES § 3.19 — «новый DB-интеграционный spec опирается на шаг
+  Apply migrations в CI»; § 8 — v1.8.0.
+- **Связанные:** KI-298, KI-317.
 
 ---
 
@@ -5217,13 +5286,18 @@
 ---
 
 ### KI-326 — Vite dev слушает только `[::1]:5173`
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.3 (коммит `c6edf91`)
 - **Файлы:** `web/vite.config.ts`
 - **Описание:** Netstat: `TCP [::1]:5173 LISTENING`. `fetch` по
   `127.0.0.1:5173` → `ECONNREFUSED`; CDP-смоук по 127.0.0.1 даёт
   `chrome-error://chromewebdata/`. Потрачен цикл диагностики.
 - **Решение:** в смоуке использовать `localhost`; либо
   `server.host: '127.0.0.1'` в `web/vite.config.ts`.
+- **Fix:** `web/vite.config.ts` `server.host: '127.0.0.1'` — Vite слушает
+  IPv4, не только `[::1]`. Netstat: `127.0.0.1:5173 LISTENING`,
+  `[::1]` отсутствует; HTTP-пробы 200 по 127.0.0.1 и localhost.
+- **Связанные:** KI-072, KI-120, KI-299.
 
 ---
 
@@ -5240,7 +5314,8 @@
 ---
 
 ### KI-328 — Fit по bbox даёт микроскопические узлы
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.3 (коммит `c6edf91`)
 - **Файлы:** `web/src/lib/fit-view-options.ts`,
   `web/src/components/Canvas.tsx`
 - **Описание:** CDP: при разбросе 21 888 px — узлы 6×3 и 4×2 px;
@@ -5248,18 +5323,235 @@
   наступает уже при 5 000 px.
 - **Решение:** fit по кластеру/выделению, floor для fit-zoom
   (например ≥0.1) с возможностью pan, либо «fit only selected».
-- **Связанные:** KI-306, KI-314, KI-315.
+- **Fix:** `FIT_SELECTION_OPTIONS.minZoom 0.1`; `Shift+F` и кнопка
+  «Вписать выделение» вписывают только выделенные узлы (без выделения —
+  работает как обычный Fit). CDP: близкое выделение → zoom 1 (240×123 px
+  узлы, читаемо); разнесённое → 0.1 (пол, ratio 15.62 к полному fit);
+  кнопка == хоткей.
+- **Остаток:** Shift+F по разнесённому выделению визуально теряет часть
+  кластера — компромисс.
+- **Связанные:** KI-306, KI-314, KI-330.
 
 ---
 
 ### KI-329 — Share pointer-events-none блокирует zoom/pan
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.3 (коммит `c6edf91`)
 - **Файлы:** `web/src/components/ShareViewPage.tsx`
 - **Описание:** Обёртка `pointer-events-none` гасит и wheel-zoom, и
   pan. В связке с KI-328 граф с разбросом невозможно рассмотреть.
 - **Решение:** разрешить zoom/pan без перетаскивания узлов, либо не
   опускать fit ниже читаемого порога.
-- **Связанные:** KI-315, KI-328.
+- **Fix:** снят `pointer-events-none` с обёртки <ReactFlow> на
+  ShareViewPage; явные `nodesDraggable={false}`,
+  `nodesConnectable={false}`, `elementsSelectable={true}`,
+  `panOnDrag={true}`, `zoomOnScroll={true}`; поля карточек инертны
+  точечно. CDP SH-5 (wheel 0.0104 → 0.5 → 0.87), SH-6 (pan Δx=260,
+  Δy=160), SH-8 (4 контрола с `pointer-events: none`), SH-10 — причинная
+  проверка (снять override → воспроизвести → вернуть → снять).
+- **Связанные:** KI-197, KI-330, KI-331.
+
+---
+
+### KI-330 — `elementsSelectable` на share-странице не работает
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `web/src/components/ShareViewPage.tsx`
+- **Описание:** `nodes` controlled без `onNodesChange`; клик по узлу не даёт выделения.
+- **Решение:** прокинуть `onNodesChange` (хотя бы для selection) либо сделать `nodes` uncontrolled на публичной странице.
+- **Связанные:** KI-329, KI-331.
+
+---
+
+### KI-331 — Нельзя вернуть fit-вид на share после wheel-zoom
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `web/src/components/ShareViewPage.tsx`
+- **Описание:** `<Controls>` не рендерится; колесо зажато store-minZoom 0.5; fit даёт 0.0104.
+- **Решение:** добавить `<Controls>` (или хоткей fit) с общими `fitViewOptions`.
+- **Связанные:** KI-315, KI-329, KI-330.
+
+---
+
+### KI-332 — TTL кэша workflow-list не видит изменений из другой вкладки
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `web/src/lib/workflow-list-cache.ts`
+- **Описание:** TTL проверяется только в момент запроса; без refetch по focus/visibilitychange.
+- **Решение:** инвалидация по `focus`/`visibilitychange` либо `BroadcastChannel`.
+- **Связанные:** KI-302.
+
+---
+
+### KI-333 — web/ без lint-скрипта и без oxlint в package.json
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `web/package.json`
+- **Описание:** `cd web && pnpm exec oxlint --type-aware src/` падает; фронт вне линт-гейта.
+- **Решение:** добавить `lint`-скрипт и oxlint в devDependencies `web/`, включить в CI.
+- **Связанные:** KI-317.
+
+---
+
+### KI-334 — `chunkSizeWarningLimit` исчерпан
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.3 (коммит `952d8b6`)
+- **Файлы:** `web/vite.config.ts`
+- **Описание:** b2 добавил +0.78 kB Zod-схемы (700.66 при лимите 700) — RULES 3.6 «0 warnings» был нарушен.
+- **Решение:** поднять лимит (сделано) либо code-split.
+- **Fix:** `build.chunkSizeWarningLimit` 700 → 710 — b2 добавил +0.78 kB
+  Zod-схемы (700.66 при лимите 700), RULES 3.6 «0 warnings» был нарушен.
+  Долгосрочно — code-split (KI-008/DESIGN v0.7 § 4.5).
+- **Связанные:** KI-008.
+
+---
+
+### KI-335 — Формула покрытия в KI-314 неточна
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `docs/KNOWN_ISSUES.md` (KI-314), `web/src/components/Canvas.tsx`
+- **Описание:** `parsePadding` из @xyflow/system даёт `height/(1+padding)/minZoom`, не `height/minZoom`: реальные 19 208 px при 0.02 и 76 833 px при 0.005 (холст 461 px).
+- **Решение:** формула уточнена в KI-314; при следующем пересчёте использовать `parsePadding`.
+- **Связанные:** KI-306, KI-314.
+
+---
+
+### KI-336 — `RUN_STATUSES` не знает skipped
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/db/schema.ts`, `src/engine/execution-engine.service.ts`
+- **Описание:** Движок пишет `node_runs.status='skipped'` (text без CHECK), но тип колонки — `RunStatus`; локальный NodeRunStatus + приведение.
+- **Решение:** добавить `skipped` в `RUN_STATUSES` (миграция) или отдельный тип статуса узла.
+- **Связанные:** KI-288.
+
+---
+
+### KI-337 — Подграф sub_workflow без skip-семантики
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/engine/execution-engine.service.ts`
+- **Описание:** `executeSubWorkflowGraphAsync` бросает на первом падении и не создаёт строк для непройденных узлов подграфа — асимметрия с корневым графом.
+- **Решение:** распространить `failedIds`/`skippedIds` на подграфы.
+- **Связанные:** KI-288, KI-304.
+
+---
+
+### KI-338 — `condition`: непройденная ветка не помечается skipped
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/engine/node-executors.ts`, `src/engine/execution-engine.service.ts`
+- **Описание:** Маршрутизация true/false не реализована; обе ветки выполняются.
+- **Решение:** после KI-288 пометить непройденную ветку skipped вместо выполнения.
+- **Связанные:** KI-288.
+
+---
+
+### KI-339 — `node_runs.error` skipped не называет упавшего предшественника
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/engine/execution-engine.service.ts`
+- **Описание:** Текст ровно «Пропущен: упал предшественник»; id упавшего только в логе движка.
+- **Решение:** подставлять id упавшего узла в текст ошибки.
+- **Связанные:** KI-288.
+
+---
+
+### KI-340 — `http.failOnHttpError` не ретраит 5xx/429
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/engine/node-executors.ts`
+- **Описание:** Бросок — обычный Error; node-level retry (KI-036) только для `LlmProviderException.retryable`.
+- **Решение:** отдельный retryable-класс ошибки для 5xx/429.
+- **Связанные:** KI-036, KI-041, KI-289.
+
+---
+
+### KI-341 — «нет выходов» у узла: `null` у skipped vs `{}` у failed
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/engine/execution-engine.service.ts`
+- **Описание:** `markNodeFailedAsync` не сбрасывает outputs; skipped пишет null.
+- **Решение:** привести представление «нет выходов» к единому виду.
+- **Связанные:** KI-288.
+
+---
+
+### KI-342 — Двойник Drizzle в тестах не thenable
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/engine/*.spec.ts`, тестовые двойники `db`
+- **Описание:** `db.insert().values().onConflictDoUpdate(...)` без `.returning()` в двойнике молча не выполняет запрос — тест «проходит» на несуществующем пути.
+- **Решение:** сделать двойник thenable и падать на неожидаемых цепочках.
+- **Связанные:** KI-317.
+
+---
+
+### KI-343 — `tsconfig.spec.json` не покрывает `app.e2e-spec.ts`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `tsconfig.spec.json`, `test/app.e2e-spec.ts`
+- **Описание:** `test/**/*.spec.ts` не матчит `-spec.ts`; `pnpm test:e2e` не вызывается в CI.
+- **Решение:** добавить `test/**/*-spec.ts` в include и шаг e2e в CI.
+- **Связанные:** KI-317.
+
+---
+
+### KI-344 — KI-318 закрыт наполовину
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `package.json`, `vitest.config.ts`
+- **Описание:** Обычный `pnpm test` без DATABASE_URL молча скипает паритет-гейт (6 skipped); `test:parity` явный, но опционален.
+- **Решение:** `failIfNoDatabase`-режим в CI либо обязательный шаг `test:parity`.
+- **Связанные:** KI-318.
+
+---
+
+### KI-345 — `--env-file=.env` на Node 24/Windows даёт `.env: not found`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `package.json` (`test:parity`)
+- **Описание:** Не «ENOENT .env» как ожидалось; вывод зависит от версии Node.
+- **Решение:** уточнить в PROMPT/RULES фактический текст ошибки.
+- **Связанные:** KI-318.
+
+---
+
+### KI-346 — `typecheck` не покрывает drizzle/** и корневые скрипты
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `tsconfig.spec.json`, `tsconfig.build.json`, `drizzle/**`
+- **Описание:** `migrate.ts`, `drizzle.config.ts` вне tsconfig.build.json и tsconfig.spec.json.
+- **Решение:** отдельный tsconfig для скриптов и drizzle.
+- **Связанные:** KI-317.
+
+---
+
+### KI-347 — SSE-снимок не несёт `run.error`
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/runs/runs-stream.service.ts`, `web/src/stores/workflow.ts`
+- **Описание:** После F5 панель показывает «Ошибка запуска: причина недоступна», хотя в `workflow_runs.error` текст есть.
+- **Решение:** включить `error` в snapshot-событие потока.
+- **Связанные:** KI-288.
+
+---
+
+### KI-348 — Нет паритет-гейта backend DTO ↔ web SSE-зеркало
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/engine/run-events.ts` (RunEventSchema), `web/src/types/run-stream.ts`
+- **Описание:** Ручное зеркало в `web/src/types/run-stream.ts`; расхождение (KI-NEW-B) валило реальный поток, но не unit-тесты.
+- **Решение:** spec-паритет значений/ключей RunEventSchema ↔ зеркало (по образцу api-prefixes).
+- **Связанные:** KI-299, KI-350.
+
+---
+
+### KI-349 — `TextNode` без target-handle при контракте `text-input`
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `web/src/components/nodes/TextNode.tsx`, `src/engine/node-ports.ts`
+- **Описание:** Связь «в text-узел» рисуется висячей (36 warning React Flow в смоуке B2), хотя планировщик вход видит.
+- **Решение:** добавить target-handle `text-input` (или убрать из контракта).
+- **Связанные:** KI-030, KI-301.
+
+---
+
+### KI-350 — Фронт-SSE-зеркало мягче бэкенда
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `web/src/types/run-stream.ts`
+- **Описание:** `z.string()` вместо `z.uuid()`/`z.iso.datetime()`, `durationMs` без `.nonnegative()` — маскирует битые события.
+- **Решение:** ужесточить зеркало вместе с паритет-гейтом (KI-348).
+- **Связанные:** KI-348.
+
+---
+
+### KI-351 — 401-шум в консоли при заходе гостем
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `web/src/components/auth/AuthProvider.tsx`
+- **Описание:** Проба `/auth/me` до логина даёт error в консоль; косметика.
+- **Решение:** глушить 401 без сессии (или логировать debug).
+- **Связанные:** KI-327.
 
 ---
 
@@ -5267,14 +5559,14 @@
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 119 |
+| Fixed | 130 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 190 |
+| Open | 201 |
 | Won't Fix | 1 |
-| **Всего** | **315** |
+| **Всего** | **340** |
 
 ---
 
