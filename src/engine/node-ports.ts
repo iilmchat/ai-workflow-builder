@@ -85,6 +85,33 @@ export const NODE_PORT_CONTRACT: Record<string, NodePortContract> = {
     targetHandleId: 'image-input',
     inputPortName: 'url',
   },
+  // R7.2 (KI-361): media-генерация video/audio/music. Выход — тот же
+  // `mediaUrl`, что у `image_generation` (исполнитель пишет именно его), иначе
+  // зависимый узел читал бы `null` — ровно та ловушка, что закрыта KI-368.
+  // Вход — текстовый (`prompt`): промпт приходит от Text/LLM, а картинка для
+  // image-to-video задаётся полем узла `data.imageUrl` (у узла один входной
+  // хендл: с двумя React Flow свернул бы обе связи в один ключ, KI-035).
+  // Выходные хендлы названы по типу (`video-output`/`audio-output`/
+  // `music-output`): контракт разрешается type-aware (KI-301), а читаемость
+  // сохранена — в графе видно, какой поток несёт файл.
+  video_generation: {
+    sourceHandleId: 'video-output',
+    outputPortName: 'mediaUrl',
+    targetHandleId: 'text-input',
+    inputPortName: 'prompt',
+  },
+  audio_generation: {
+    sourceHandleId: 'audio-output',
+    outputPortName: 'mediaUrl',
+    targetHandleId: 'text-input',
+    inputPortName: 'prompt',
+  },
+  music_generation: {
+    sourceHandleId: 'music-output',
+    outputPortName: 'mediaUrl',
+    targetHandleId: 'text-input',
+    inputPortName: 'prompt',
+  },
   // R6.5.1 (KI-105). У `http` вход — фолбэк для URL, поэтому нормализованное имя
   // совпадает с тем, что читает исполнитель (`inputs.prompt`).
   http: {

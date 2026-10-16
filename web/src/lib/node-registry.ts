@@ -4,15 +4,19 @@ import { CommentNode } from '@/components/nodes/CommentNode';
 import { CompareNode } from '@/components/nodes/CompareNode';
 import { ConditionNode } from '@/components/nodes/ConditionNode';
 import { HttpNode } from '@/components/nodes/HttpNode';
+import { AudioGenNode } from '@/components/nodes/AudioGenNode';
 import { ImageGenNode } from '@/components/nodes/ImageGenNode';
 import { ImageToolNode } from '@/components/nodes/ImageToolNode';
 import { LLMNode } from '@/components/nodes/LLMNode';
+import { MusicGenNode } from '@/components/nodes/MusicGenNode';
 import { OutputNode } from '@/components/nodes/OutputNode';
 import { SubWorkflowNode } from '@/components/nodes/SubWorkflowNode';
 import { TextNode } from '@/components/nodes/TextNode';
+import { VideoGenNode } from '@/components/nodes/VideoGenNode';
 import i18n from '@/i18n';
 import type {
   AppNode,
+  AudioGenFlowNode,
   CommentFlowNode,
   CompareFlowNode,
   ConditionFlowNode,
@@ -20,11 +24,13 @@ import type {
   ImageGenFlowNode,
   ImageToolFlowNode,
   LlmFlowNode,
+  MusicGenFlowNode,
   NodeCategory,
   NodeType,
   OutputFlowNode,
   SubWorkflowFlowNode,
   TextFlowNode,
+  VideoGenFlowNode,
 } from '@/types/graph';
 
 /**
@@ -40,6 +46,9 @@ export type NodeComponent =
   | ComponentType<NodeProps<LlmFlowNode>>
   | ComponentType<NodeProps<ImageGenFlowNode>>
   | ComponentType<NodeProps<ImageToolFlowNode>>
+  | ComponentType<NodeProps<VideoGenFlowNode>>
+  | ComponentType<NodeProps<AudioGenFlowNode>>
+  | ComponentType<NodeProps<MusicGenFlowNode>>
   | ComponentType<NodeProps<CommentFlowNode>>
   | ComponentType<NodeProps<HttpFlowNode>>
   | ComponentType<NodeProps<ConditionFlowNode>>
@@ -132,6 +141,36 @@ export const NODE_REGISTRY = {
     // узел можно вставить в существующую связь (KI-259).
     canBeInsertedOnEdge: true,
     // `userConfig`: до запуска выбираются операция и модель.
+    capabilities: { externalState: false, userConfig: true },
+  },
+  // R7.2 (KI-361, DESIGN v0.9 § 2.2/3.2): три узла media-генерации.
+  // Категория `media_generation` — отдельная секция каталога: узлы создают
+  // файл «с нуля» (как Image Generation), но работают с другим типом
+  // media-модели (VIDEO/AUDIO/MUSIC) и потому отделены от `media_tools`.
+  // `canBeInsertedOnEdge: true` — у каждого есть вход `text-input` (промпт);
+  // `userConfig: true` — до запуска выбираются модель и её параметры.
+  video_generation: {
+    labelKey: 'node.video_generation.label',
+    icon: '🎬',
+    category: 'media_generation',
+    component: VideoGenNode,
+    canBeInsertedOnEdge: true,
+    capabilities: { externalState: false, userConfig: true },
+  },
+  audio_generation: {
+    labelKey: 'node.audio_generation.label',
+    icon: '🎙',
+    category: 'media_generation',
+    component: AudioGenNode,
+    canBeInsertedOnEdge: true,
+    capabilities: { externalState: false, userConfig: true },
+  },
+  music_generation: {
+    labelKey: 'node.music_generation.label',
+    icon: '🎵',
+    category: 'media_generation',
+    component: MusicGenNode,
+    canBeInsertedOnEdge: true,
     capabilities: { externalState: false, userConfig: true },
   },
   comment: {

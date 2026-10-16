@@ -87,7 +87,11 @@ export default defineConfig({
     // R7.1 (KI-196): узел `image_tool` и его зеркала схем дали 711.08 kB,
     // поэтому порог поднят до 730 kB. Системное решение (code-split) —
     // отдельная задача KI-008, в v0.9 не входит.
-    chunkSizeWarningLimit: 730,
+    // R7.2 (KI-361): три узла media-генерации (`video_generation`,
+    // `audio_generation`, `music_generation`), их компоненты и зеркало
+    // контрактов дали 734.19 kB → порог 750 kB. Рост +23 kB на три узла —
+    // аргумент за code-split (KI-008) до v0.10.
+    chunkSizeWarningLimit: 750,
   },
   server: {
     host: '127.0.0.1',

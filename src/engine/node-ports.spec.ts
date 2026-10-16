@@ -83,8 +83,34 @@ describe('node-ports', () => {
     });
   });
 
-  describe('sub_workflow (R6.7, KI-200)', () => {
-    it('выход — отдельный хендл result-output, а не общий text-output (KI-301)', () => {
+  describe('media-генерация R7.2 (KI-361)', () => {
+    it('выход — `mediaUrl`, как в outputs исполнителя (урок KI-368)', () => {
+      // Исполнитель пишет `outputs.mediaUrl`; контракт обязан называть тот же
+      // ключ, иначе зависимый узел прочитал бы `null`.
+      for (const type of ['video_generation', 'audio_generation', 'music_generation']) {
+        expect(NODE_PORT_CONTRACT[type].outputPortName, type).toBe('mediaUrl');
+        expect(inferDefaultOutputPort(type), type).toBe('mediaUrl');
+      }
+    });
+
+    it('вход — текстовый (`prompt`): промпт/текст приходит по связи', () => {
+      for (const type of ['video_generation', 'audio_generation', 'music_generation']) {
+        expect(NODE_PORT_CONTRACT[type].targetHandleId, type).toBe('text-input');
+        expect(inferInputPortName(type), type).toBe('prompt');
+      }
+    });
+
+    it('выходные хендлы названы по типу узла и разрешаются type-aware (KI-301)', () => {
+      expect(handleIdToOutputPort('video-output', 'video_generation')).toBe('mediaUrl');
+      expect(handleIdToOutputPort('audio-output', 'audio_generation')).toBe('mediaUrl');
+      expect(handleIdToOutputPort('music-output', 'music_generation')).toBe('mediaUrl');
+      // Чужой хендл не подставляет порт другого типа.
+      expect(handleIdToOutputPort('video-output', 'audio_generation')).toBeNull();
+      expect(handleIdToOutputPort('image-output', 'video_generation')).toBeNull();
+    });
+  });
+
+  describe('sub_workflow (R6.7, KI-200)', () => {    it('выход — отдельный хендл result-output, а не общий text-output (KI-301)', () => {
       // `text-output` переводится в порт `text`: с ним результат подграфа
       // (`outputs.result`) не доехал бы до зависимого узла.
       expect(handleIdToOutputPort('result-output')).toBe('result');

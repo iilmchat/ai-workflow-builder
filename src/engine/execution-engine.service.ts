@@ -822,10 +822,11 @@ export class ExecutionEngineService {
    * Выполняет узел в зависимости от его типа.
    *
    * Метод асинхронный (RULES 1.4): `llm`-узел ходит в провайдера через
-   * {@link LlmNodeExecutor} и возвращает метрики в USD, `image_generation` и
-   * `image_tool` (R7.1) — через {@link MediaNodeExecutor} с метриками в рублях,
-   * `http` (R6.5.1) — сетевой запрос, остальные (`text`, `condition`, `output`,
-   * `compare`) — чистые преобразования без метрик.
+   * {@link LlmNodeExecutor} и возвращает метрики в USD, `image_generation`,
+   * `image_tool` (R7.1) и media-генерация R7.2 (`video_generation`,
+   * `audio_generation`, `music_generation`) — через {@link MediaNodeExecutor} с
+   * метриками в рублях, `http` (R6.5.1) — сетевой запрос, остальные (`text`,
+   * `condition`, `output`, `compare`) — чистые преобразования без метрик.
    *
    * `runId` передаётся и LLM-исполнителю: там он нужен предохранителю по
    * стоимости (KI-048) — бюджет считается по запуску, а не по узлу.
@@ -908,6 +909,37 @@ export class ExecutionEngineService {
       // Метрики — в рублях, как у генерации: тот же провайдер CreativeLab.
       case 'image_tool': {
         const result = await this.mediaExecutor.executeToolAsync(node, inputs, runId);
+
+        return {
+          kind: 'media',
+          outputs: result.outputs,
+          metrics: result.metrics,
+        };
+      }
+      // R7.2 (KI-361, DESIGN v0.9 § 3.2): media-генерация video/audio/music.
+      // Отдельные методы исполнителя (а не один с типом-параметром) — потому
+      // что у каждого узла своя Zod-схема `data` и своё текстовое поле.
+      // Выходы те же, что у `image_generation`: `{ mediaUrl, mediaType, taskId }`.
+      case 'video_generation': {
+        const result = await this.mediaExecutor.executeVideoAsync(node, inputs, runId);
+
+        return {
+          kind: 'media',
+          outputs: result.outputs,
+          metrics: result.metrics,
+        };
+      }
+      case 'audio_generation': {
+        const result = await this.mediaExecutor.executeAudioAsync(node, inputs, runId);
+
+        return {
+          kind: 'media',
+          outputs: result.outputs,
+          metrics: result.metrics,
+        };
+      }
+      case 'music_generation': {
+        const result = await this.mediaExecutor.executeMusicAsync(node, inputs, runId);
 
         return {
           kind: 'media',

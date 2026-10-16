@@ -250,6 +250,18 @@ export const EnvSchema = z.object({
   GPTUNNEL_MEDIA_CACHE_TTL_MS: z
     .preprocess(emptyToUndefined, z.coerce.number().int().min(10_000).optional())
     .default(900_000),
+  /**
+   * Лимит ожидания media-задачи генерации (мс), R7.2 (DESIGN v0.9 § 3.2).
+   *
+   * Видео генерируется минутами, поэтому дефолт — 10 минут: прежние 5 минут
+   * (`POLL_TIMEOUT_MS` в `MediaNodeExecutor`) обрывали задачу, которая на
+   * стороне upstream продолжала выполняться и списывать деньги. Значение
+   * должен быть больше `WORKFLOW_RUNS_LOCK_DURATION_MS`, иначе BullMQ
+   * переотдаст job, пока узел ещё ждёт задачу (KI-023).
+   */
+  CREATIVELAB_MEDIA_TIMEOUT_MS: z
+    .preprocess(emptyToUndefined, z.coerce.number().int().min(10_000).optional())
+    .default(600_000),
 
   // === DeepSeek (OpenAI-совместимый) ===
   /** Ключ DeepSeek. Без него провайдер не регистрируется. */

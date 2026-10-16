@@ -31,6 +31,12 @@ import {
   pickDefaultToolModel,
   pickToolModels,
 } from '@/lib/media';
+import {
+  GENERATION_MEDIA_TYPE_BY_NODE,
+  pickDefaultGenerationModel,
+  pickGenerationModels,
+  type GenerationMediaType,
+} from '@/lib/generation-node';
 import { canInsertOnEdge, isNodeType, nodeLabelOf } from '@/lib/node-registry';
 import type { MediaModelInfo } from '@/types/media';
 import {
@@ -39,6 +45,7 @@ import {
   DEFAULT_OUTPUT_NAME,
   IMAGE_TOOL_OPERATIONS,
   type AppNode,
+  type AudioGenNodeData,
   type CommentNodeData,
   type CompareNodeData,
   type ConditionNodeData,
@@ -47,10 +54,12 @@ import {
   type ImageToolNodeData,
   type ImageToolOperation,
   type LlmNodeData,
+  type MusicGenNodeData,
   type NodeData,
   type NodeType,
   type OutputNodeData,
   type SubWorkflowNodeData,
+  type VideoGenNodeData,
 } from '@/types/graph';
 import {
   DEFAULT_HTTP_METHOD,
@@ -541,6 +550,17 @@ export interface WorkflowState extends HistorySlice {
   toolModelsLoaded: boolean;
   /** Ленивая загрузка моделей-инструментов (кэшируется в сторе). */
   loadToolModelsAsync: () => Promise<void>;
+  /**
+   * Каталоги моделей media-генерации R7.2 по типу (KI-361).
+   *
+   * Для `AUDIO` сюда попадают и TTS-модели из `MUSIC`: реальный каталог
+   * CreativeLab не отдаёт `type=AUDIO` (см. `lib/generation-node`).
+   */
+  generationModels: Record<GenerationMediaType, MediaModelInfo[]>;
+  /** Загружен ли каталог каждого типа в этой сессии. */
+  generationModelsLoaded: Record<GenerationMediaType, boolean>;
+  /** Ленивая загрузка каталога media-генерации (кэшируется в сторе). */
+  loadGenerationModelsAsync: (type: GenerationMediaType) => Promise<void>;
 
   isSaving: boolean;
   /** Хэш последнего сохранённого графа: база для индикатора «есть изменения». */
@@ -750,6 +770,59 @@ function validateImageToolOperation(value: unknown): ImageToolOperation {
 }
 
 /**
+ * Проверяет и нормализует длительность media-узла (R7.2).
+ *
+ * Значения приходят из jsonb: строка, отрицательное число или мусор сделали бы
+ * запуск падающим на Zod-схеме backend, поэтому нечисловой ввод отбрасывается
+ * (поле просто не создаётся — KI-129), а дробное значение округляется к целому:
+ * у моделей `duration` — enum целых секунд.
+ *
+ * @param value - значение `data.durationSec` из API
+ * @returns целые секунды (1–300) либо `undefined`
+ */
+function validateSec(value: unknown): number | undefined {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim().length > 0
+        ? Number(value)
+        : Number.NaN;
+
+  if (!Number.isFinite(parsed)) {
+    return undefined;
+  }
+
+  const rounded = Math.round(parsed);
+
+  // Границы шире DESIGN § 3.2 (video 3–10, music 15–120): реальный каталог
+  // допускает, например, 30 секунд у `kling-v4`, а точный набор значений
+  // задаёт enum модели (`duration` в каталоге).
+  return rounded >= 1 && rounded <= 300 ? rounded : undefined;
+}
+
+/**
+ * Проверяет скорость речи узла озвучки (R7.2).
+ *
+ * Диапазон — 0.5–2.0 (DESIGN v0.9 § 3.2): значение вне него backend-схема
+ * отвергнет, поэтому оно не переносится из jsonb.
+ *
+ * @param value - значение `data.speed` из API
+ * @returns скорость 0.5–2 либо `undefined`
+ */
+function validateSpeechSpeed(value: unknown): number | undefined {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim().length > 0
+        ? Number(value)
+        : Number.NaN;
+
+  return Number.isFinite(parsed) && parsed >= 0.5 && parsed <= 2
+    ? parsed
+    : undefined;
+}
+
+/**
  * Создаёт узел нужного типа с дефолтными данными.
  *
  * @param type - тип узла из тулбара
@@ -761,6 +834,9 @@ function validateImageToolOperation(value: unknown): ImageToolOperation {
  * @param defaultToolModelId - id модели-инструмента по умолчанию (R7.1); пусто —
  *   модель выберет пользователь, а для `bg_removal`/`lipsync` сработает дефолт
  *   операции на backend
+ * @param defaultGenerationModelId - id модели media-генерации по умолчанию
+ *   (R7.2, KI-361): VIDEO/AUDIO/MUSIC-модель из каталога; пусто — модель
+ *   подберёт backend (`MediaNodeExecutor`), а узел останется запускаемым
  */
 function createNode(
   type: NodeType,
@@ -769,6 +845,7 @@ function createNode(
   defaultModelId?: string,
   defaultMediaModelId?: string,
   defaultToolModelId?: string,
+  defaultGenerationModelId?: string,
 ): AppNode {
   const shared = { id: `${type}-${index}-${crypto.randomUUID()}`, position };
 
@@ -825,6 +902,47 @@ function createNode(
         data: { kind: 'comment', text: '', visible: true },
       };
 
+    // R7.2 (KI-361, DESIGN v0.9 § 3.2): три узла media-генерации. Модель
+    // подставляется, если каталог уже загружен (иначе `''` — её выберет
+    // backend по типу модели, чтобы узел не остался без модели вовсе).
+    // Пустых ключей не создаём (KI-129): поля без значения не присваиваются.
+    case 'video_generation':
+      return {
+        ...shared,
+        type: 'video_generation',
+        data: {
+          kind: 'video_generation',
+          ...(defaultGenerationModelId !== undefined &&
+          defaultGenerationModelId !== ''
+            ? { model: defaultGenerationModelId }
+            : {}),
+        },
+      };
+    case 'audio_generation':
+      return {
+        ...shared,
+        type: 'audio_generation',
+        data: {
+          kind: 'audio_generation',
+          ...(defaultGenerationModelId !== undefined &&
+          defaultGenerationModelId !== ''
+            ? { model: defaultGenerationModelId }
+            : {}),
+        },
+      };
+    case 'music_generation':
+      return {
+        ...shared,
+        type: 'music_generation',
+        data: {
+          kind: 'music_generation',
+          ...(defaultGenerationModelId !== undefined &&
+          defaultGenerationModelId !== ''
+            ? { model: defaultGenerationModelId }
+            : {}),
+        },
+      };
+
     // R6.5.2 (KI-105): четыре вычислительных узла DESIGN v0.8 § 8. Поля-ключи
     // `headers`/`body`/`timeoutMs` у `http` не создаём заранее: `undefined`-ключ
     // — это пустое поле в JSON и лишний ключ в `Object.keys(data)` (KI-129).
@@ -865,6 +983,18 @@ function createNode(
       };
     // Нет default: — новый NodeType поймает tsc (KI-129).
   }
+}
+
+/**
+ * Возвращает тип media-модели для узла media-генерации (R7.2).
+ *
+ * @param type - тип узла из тулбара
+ * @returns `VIDEO`/`AUDIO`/`MUSIC` либо `null` — узел не про media-генерацию
+ */
+function generationTypeOf(type: NodeType): GenerationMediaType | null {
+  return type in GENERATION_MEDIA_TYPE_BY_NODE
+    ? GENERATION_MEDIA_TYPE_BY_NODE[type]
+    : null;
 }
 
 /** Приводит узел к формату backend. */
@@ -994,8 +1124,7 @@ function nodeDataFromApi(type: NodeType, data: Record<string, unknown>): NodeDat
 
       return result;
     }
-    case 'comment': {
-      // KI-266: комментарий — полноправный узел графа: backend хранит его в
+    case 'comment': {      // KI-266: комментарий — полноправный узел графа: backend хранит его в
       // `workflows.nodes` наравне с остальными и возвращает при Load.
       // KI-129: `visible` по умолчанию `true` (как в `createNode`), чтобы
       // отсутствие поля не скрывало стикер.
@@ -1007,10 +1136,108 @@ function nodeDataFromApi(type: NodeType, data: Record<string, unknown>): NodeDat
 
       return result;
     }
-    // R6.5.2 (KI-105): четыре вычислительных узла. Все значения приходят из
+    // R7.2 (KI-361): media-генерация video/audio/music. Все значения приходят
+    // из `jsonb` без типов, поэтому проверяются на границе (RULES 1.17), а поля
+    // без значения не присваиваются вовсе — KI-129: иначе Load терял бы
+    // настройки автора, а следующий Save затирал их в БД.
+    case 'video_generation': {
+      const result: VideoGenNodeData = { kind: 'video_generation' };
+
+      if (typeof data.model === 'string') {
+        result.model = data.model;
+      }
+
+      if (typeof data.prompt === 'string') {
+        result.prompt = data.prompt;
+      }
+
+      if (typeof data.imageUrl === 'string') {
+        result.imageUrl = data.imageUrl;
+      }
+
+      const durationSec = validateSec(data.durationSec);
+
+      if (durationSec !== undefined) {
+        result.durationSec = durationSec;
+      }
+
+      if (typeof data.aspectRatio === 'string') {
+        result.aspectRatio = data.aspectRatio;
+      }
+
+      if (isPlainObject(data.params)) {
+        result.params = data.params;
+      }
+
+      return result;
+    }
+    case 'audio_generation': {
+      const result: AudioGenNodeData = { kind: 'audio_generation' };
+
+      if (typeof data.model === 'string') {
+        result.model = data.model;
+      }
+
+      // Старые workflow могли хранить текст синтеза в `prompt` — переносим,
+      // чтобы текст не потерялся при Load (тот же приём, что у KI-166).
+      const text =
+        typeof data.text === 'string'
+          ? data.text
+          : typeof data.prompt === 'string'
+            ? data.prompt
+            : undefined;
+
+      if (text !== undefined) {
+        result.text = text;
+      }
+
+      if (typeof data.voiceId === 'string') {
+        result.voiceId = data.voiceId;
+      }
+
+      const speed = validateSpeechSpeed(data.speed);
+
+      if (speed !== undefined) {
+        result.speed = speed;
+      }
+
+      if (isPlainObject(data.params)) {
+        result.params = data.params;
+      }
+
+      return result;
+    }
+    case 'music_generation': {
+      const result: MusicGenNodeData = { kind: 'music_generation' };
+
+      if (typeof data.model === 'string') {
+        result.model = data.model;
+      }
+
+      if (typeof data.prompt === 'string') {
+        result.prompt = data.prompt;
+      }
+
+      const durationSec = validateSec(data.durationSec);
+
+      if (durationSec !== undefined) {
+        result.durationSec = durationSec;
+      }
+
+      if (typeof data.genre === 'string') {
+        result.genre = data.genre;
+      }
+
+      if (isPlainObject(data.params)) {
+        result.params = data.params;
+      }
+
+      return result;
+    }
     // `jsonb` без типов, поэтому каждое проверяется (typeof / lib-валидатор), а
     // поля со значением `undefined` не присваиваются вовсе (KI-129) — иначе
     // Load терял бы настройки автора, а следующий Save затирал их в БД.
+    // R6.5.2 (KI-105): четыре вычислительных узла.
     case 'http': {
       const result: HttpNodeData = {
         kind: 'http',
@@ -1338,6 +1565,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   mediaModelsLoaded: false,
   toolModels: [],
   toolModelsLoaded: false,
+  generationModels: { VIDEO: [], AUDIO: [], MUSIC: [] },
+  generationModelsLoaded: { VIDEO: false, AUDIO: false, MUSIC: false },
   runBudget: null,
 
   isSaving: false,
@@ -1366,6 +1595,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       // Модель нового LLM-узла берём из загруженного списка (KI-074), чтобы
       // узел сразу был запускаемым; fallback — дефолтный id из types/graph.
       // Для image-узла — первая media-модель (v0.6.0b.2.3).
+      const generationType = generationTypeOf(type);
       const node = createNode(
         type,
         position,
@@ -1376,6 +1606,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         pickDefaultMediaModel(state.mediaModels),
         // R7.1: модель-инструмент по умолчанию (у операции `bg_removal`).
         pickDefaultToolModel(state.toolModels, 'bg_removal'),
+        // R7.2: модель media-генерации по умолчанию (VIDEO/AUDIO/MUSIC).
+        generationType === null
+          ? undefined
+          : pickDefaultGenerationModel(
+              state.generationModels[generationType],
+              generationType,
+            ),
       );
 
       return {
@@ -1534,6 +1771,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       size,
     );
 
+    const generationType = generationTypeOf(type);
     const node = createNode(
       type,
       position,
@@ -1542,6 +1780,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       pickDefaultMediaModel(state.mediaModels),
       // R7.1: модель-инструмент по умолчанию для узла `image_tool`.
       pickDefaultToolModel(state.toolModels, 'bg_removal'),
+      // R7.2: модель media-генерации по умолчанию.
+      generationType === null
+        ? undefined
+        : pickDefaultGenerationModel(
+            state.generationModels[generationType],
+            generationType,
+          ),
     );
 
     // R6.4b.2b: снимок — только после всех проверок выше: отказ вставки
@@ -2069,6 +2314,41 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       // Не критично: селект покажет «нет доступных моделей-инструментов»,
       // причина — в консоли; повтор при следующем монтировании узла.
       console.warn('Не удалось загрузить список моделей-инструментов', error);
+    }
+  },
+
+  /**
+   * Загружает каталог моделей media-генерации по типу (R7.2, KI-361).
+   *
+   * Для `AUDIO` запрашиваются и `AUDIO`, и `MUSIC`: реальный каталог CreativeLab
+   * не отдаёт `type=AUDIO` (TTS-модель `tts2` объявлена как `MUSIC`), поэтому
+   * без фолбэка селект озвучки был бы пустым. Остальные типы — один запрос.
+   *
+   * @param type - тип модели узла (`VIDEO`/`AUDIO`/`MUSIC`)
+   */
+  loadGenerationModelsAsync: async (type) => {
+    if (get().generationModelsLoaded[type]) {
+      return;
+    }
+
+    try {
+      const catalog =
+        type === 'AUDIO'
+          ? await Promise.all([
+              fetchMediaModelsAsync('AUDIO'),
+              fetchMediaModelsAsync('MUSIC'),
+            ]).then(([audio, music]) => [...audio, ...music])
+          : await fetchMediaModelsAsync(type);
+      const models = pickGenerationModels(catalog, type);
+
+      set((state) => ({
+        generationModels: { ...state.generationModels, [type]: [...models] },
+        generationModelsLoaded: { ...state.generationModelsLoaded, [type]: true },
+      }));
+    } catch (error: unknown) {
+      // Не критично: селект покажет «нет доступных моделей», причина — в
+      // консоли; повтор при следующем монтировании узла (флаг не выставлен).
+      console.warn('Не удалось загрузить каталог media-генерации', type, error);
     }
   },
 

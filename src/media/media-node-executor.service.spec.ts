@@ -308,12 +308,14 @@ describe('MediaNodeExecutor', () => {
     // Ловим отказ заранее, иначе необработанный reject уронит тест.
     const guarded = pending.catch((caught: unknown) => caught);
 
-    await vi.advanceTimersByTimeAsync(6 * 60 * 1000);
+    // R7.2: дефолтный лимит ожидания media-задачи вырос с 5 до 10 минут
+    // (`CREATIVELAB_MEDIA_TIMEOUT_MS`) — видео генерируется минутами.
+    await vi.advanceTimersByTimeAsync(11 * 60 * 1000);
 
     const error = await guarded;
 
     expect(error).toBeInstanceOf(MediaProviderException);
-    expect((error as MediaProviderException).message).toContain('не завершилась за 300 с');
+    expect((error as MediaProviderException).message).toContain('не завершилась за 600 с');
   });
 
   it('пробрасывает ошибку провайдера без подмены', async () => {

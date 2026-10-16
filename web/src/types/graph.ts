@@ -18,6 +18,9 @@ export type NodeData =
   | LlmNodeData
   | ImageGenNodeData
   | ImageToolNodeData
+  | VideoGenNodeData
+  | AudioGenNodeData
+  | MusicGenNodeData
   | CommentNodeData
   | HttpNodeData
   | ConditionNodeData
@@ -74,6 +77,9 @@ export type NodeType =
   | 'llm'
   | 'image_generation'
   | 'image_tool'
+  | 'video_generation'
+  | 'audio_generation'
+  | 'music_generation'
   | 'comment'
   | 'http'
   | 'condition'
@@ -88,14 +94,20 @@ export type NodeType =
  * `image_generation` и будущих video/audio-узлов. `media_tools` (R7.1, DESIGN
  * v0.9 § 2.2) — секция media-**инструментов** (upscale, удаление фона, липсинк):
  * они не создают файл «с нуля», а преобразуют входной, поэтому отделены от
- * генерации. `composition` (R6.7) — секция «Композиция» (DESIGN v0.8 § 5.4) для
- * узлов, которые собирают граф из других графов (`sub_workflow`). Сами иконки и
- * привязка типов к категориям живут в едином реестре `@/lib/node-registry`.
+ * генерации. `media_generation` (R7.2, DESIGN v0.9 § 3.2) — секция
+ * media-**генерации** (`video_generation`, `audio_generation`,
+ * `music_generation`): узлы создают новый файл по промпту, как
+ * `image_generation`, но помечены отдельной секцией, потому что работают с
+ * другим типом media-модели (VIDEO/AUDIO/MUSIC). `composition` (R6.7) — секция
+ * «Композиция» (DESIGN v0.8 § 5.4) для узлов, которые собирают граф из других
+ * графов (`sub_workflow`). Сами иконки и привязка типов к категориям живут в
+ * едином реестре `@/lib/node-registry`.
  */
 export const NODE_CATEGORIES = [
   'input',
   'ai',
   'media',
+  'media_generation',
   'media_tools',
   'tools',
   'composition',
@@ -255,6 +267,79 @@ export interface ImageToolNodeData extends Record<string, unknown> {
    */
   inputUrl?: string;
   /** Параметры конкретной операции (промпт, audioUrl, поля модели). */
+  params?: Record<string, unknown>;
+}
+
+/**
+ * Данные узла `video_generation` (R7.2, KI-361, DESIGN v0.9 § 3.2).
+ *
+ * Узел генерирует видео по промпту, опционально — из картинки
+ * (image-to-video). Порты (`src/engine/node-ports.ts`): вход `text-input` →
+ * порт `prompt`, выход `video-output` → порт `mediaUrl` (тот же ключ, что у
+ * `image_generation`, — урок KI-368).
+ *
+ * Картинка для image-to-video задаётся полем `imageUrl`, а не вторым входом:
+ * у узла один входной хендл, иначе React Flow свернул бы обе связи в один
+ * ключ (KI-035).
+ */
+export interface VideoGenNodeData extends Record<string, unknown> {
+  kind: 'video_generation';
+  /** id VIDEO-модели из каталога media; `''` — не выбрана (дефолт backend). */
+  model?: string;
+  /** Промпт; если пуст, берётся вход `prompt` от Text/LLM-узла. */
+  prompt?: string;
+  /** Ссылка на изображение для image-to-video (слот выберет backend). */
+  imageUrl?: string;
+  /**
+   * Длительность в секундах (DESIGN § 3.2 — 3–10, каталог допускает до 30).
+   *
+   * Значение уходит параметром `duration` только у моделей, которые его
+   * объявили; UI предлагает значения из схемы модели.
+   */
+  durationSec?: number;
+  /** Соотношение сторон (`aspect_ratio`), если модель его объявляет. */
+  aspectRatio?: string;
+  /** Прочие параметры модели (уходят только объявленные каталогом). */
+  params?: Record<string, unknown>;
+}
+
+/**
+ * Данные узла `audio_generation` (R7.2, KI-361, DESIGN v0.9 § 3.2).
+ *
+ * Синтез речи (TTS): текст — из входа `prompt` либо `data.text`, голос и
+ * скорость — параметры модели. Порты: вход `text-input` → `prompt`, выход
+ * `audio-output` → `mediaUrl`.
+ */
+export interface AudioGenNodeData extends Record<string, unknown> {
+  kind: 'audio_generation';
+  /** id модели озвучки; `''` — не выбрана (backend берёт TTS из каталога). */
+  model?: string;
+  /** Текст для синтеза; вход `prompt` приоритетнее. */
+  text?: string;
+  /** id голоса → параметр `voice`/`voice_id` (ключ выбирается по каталогу). */
+  voiceId?: string;
+  /** Скорость речи 0.5–2.0 (DESIGN § 3.2), если модель её объявляет. */
+  speed?: number;
+  /** Прочие параметры модели (уходят только объявленные каталогом). */
+  params?: Record<string, unknown>;
+}
+
+/**
+ * Данные узла `music_generation` (R7.2, KI-361, DESIGN v0.9 § 3.2).
+ *
+ * Порты: вход `text-input` → `prompt`, выход `music-output` → `mediaUrl`.
+ */
+export interface MusicGenNodeData extends Record<string, unknown> {
+  kind: 'music_generation';
+  /** id MUSIC-модели из каталога media; `''` — не выбрана (дефолт backend). */
+  model?: string;
+  /** Промпт; если пуст, берётся вход `prompt`. */
+  prompt?: string;
+  /** Длительность в секундах → параметр `duration` (если объявлен моделью). */
+  durationSec?: number;
+  /** Жанр → параметр `genre`/`tags` (если объявлен моделью). */
+  genre?: string;
+  /** Прочие параметры модели (уходят только объявленные каталогом). */
   params?: Record<string, unknown>;
 }
 
@@ -421,6 +506,12 @@ export type LlmFlowNode = Node<LlmNodeData, 'llm'>;
 export type ImageGenFlowNode = Node<ImageGenNodeData, 'image_generation'>;
 /** Узел media-инструмента в терминах React Flow (R7.1, KI-196). */
 export type ImageToolFlowNode = Node<ImageToolNodeData, 'image_tool'>;
+/** Узел генерации видео в терминах React Flow (R7.2, KI-361). */
+export type VideoGenFlowNode = Node<VideoGenNodeData, 'video_generation'>;
+/** Узел синтеза речи в терминах React Flow (R7.2, KI-361). */
+export type AudioGenFlowNode = Node<AudioGenNodeData, 'audio_generation'>;
+/** Узел генерации музыки в терминах React Flow (R7.2, KI-361). */
+export type MusicGenFlowNode = Node<MusicGenNodeData, 'music_generation'>;
 /** Узел-комментарий в терминах React Flow (KI-187). */
 export type CommentFlowNode = Node<CommentNodeData, 'comment'>;
 /** Узел HTTP-запроса в терминах React Flow (R6.5.2). */
@@ -440,6 +531,9 @@ export type AppNode =
   | LlmFlowNode
   | ImageGenFlowNode
   | ImageToolFlowNode
+  | VideoGenFlowNode
+  | AudioGenFlowNode
+  | MusicGenFlowNode
   | CommentFlowNode
   | HttpFlowNode
   | ConditionFlowNode

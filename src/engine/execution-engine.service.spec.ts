@@ -306,6 +306,10 @@ describe('ExecutionEngineService', () => {
   let llmExecute: ReturnType<typeof vi.fn>;
   let mediaExecute: ReturnType<typeof vi.fn>;
   let mediaToolExecute: ReturnType<typeof vi.fn>;
+  /** R7.2 (KI-361): методы media-генерации video/audio/music. */
+  let mediaVideoExecute: ReturnType<typeof vi.fn>;
+  let mediaAudioExecute: ReturnType<typeof vi.fn>;
+  let mediaMusicExecute: ReturnType<typeof vi.fn>;
   let findWorkflow: ReturnType<typeof vi.fn>;
   let fake: ReturnType<typeof createFakeDb>;
 
@@ -364,11 +368,12 @@ describe('ExecutionEngineService', () => {
    * Собирает результат media-узла для мока исполнителя (v0.6.0b.2.2).
    *
    * @param url - URL сгенерированного файла
+   * @param mediaType - тип media-модели (`IMAGE` — дефолт v0.6.0b.2.2)
    * @returns результат с выходом `{ mediaUrl }` и метриками в рублях
    */
-  const mediaNodeResult = (url: string) => ({
-    outputs: { mediaUrl: url, mediaType: 'IMAGE', taskId: 'task-1' },
-    metrics: { costRub: 0.6, mediaType: 'IMAGE', taskId: 'task-1' },
+  const mediaNodeResult = (url: string, mediaType = 'IMAGE') => ({
+    outputs: { mediaUrl: url, mediaType, taskId: 'task-1' },
+    metrics: { costRub: 0.6, mediaType, taskId: 'task-1' },
   });
 
   /**
@@ -400,6 +405,19 @@ describe('ExecutionEngineService', () => {
       (_node: NodeDto, _inputs: Record<string, unknown>, _runId: string) =>
         Promise.resolve(mediaToolResult(['https://cdn/tool.png'])),
     );
+    // R7.2 (KI-361): media-генерация video/audio/music — три метода.
+    mediaVideoExecute = vi.fn(
+      (_node: NodeDto, _inputs: Record<string, unknown>, _runId: string) =>
+        Promise.resolve(mediaNodeResult('https://cdn/video.mp4', 'VIDEO')),
+    );
+    mediaAudioExecute = vi.fn(
+      (_node: NodeDto, _inputs: Record<string, unknown>, _runId: string) =>
+        Promise.resolve(mediaNodeResult('https://cdn/audio.mp3', 'AUDIO')),
+    );
+    mediaMusicExecute = vi.fn(
+      (_node: NodeDto, _inputs: Record<string, unknown>, _runId: string) =>
+        Promise.resolve(mediaNodeResult('https://cdn/music.mp3', 'MUSIC')),
+    );
     // R6.7: подграфы приходят из WorkflowService — в юнит-тесте он замокан.
     findWorkflow = vi.fn((_id: string, _userId?: string) =>
       Promise.resolve(null as SubWorkflowRecord | null),
@@ -415,7 +433,16 @@ describe('ExecutionEngineService', () => {
         // R3: llm-узел ходит в провайдера — в юнит-тесте он замокан.
         { provide: LlmNodeExecutor, useValue: { executeAsync: llmExecute } },
         // v0.6.0b.2.2: media-узел ходит в CreativeLab — тоже замокан.
-        { provide: MediaNodeExecutor, useValue: { executeAsync: mediaExecute, executeToolAsync: mediaToolExecute } },
+        {
+          provide: MediaNodeExecutor,
+          useValue: {
+            executeAsync: mediaExecute,
+            executeToolAsync: mediaToolExecute,
+            executeVideoAsync: mediaVideoExecute,
+            executeAudioAsync: mediaAudioExecute,
+            executeMusicAsync: mediaMusicExecute,
+          },
+        },
         // R6.7 (KI-200): источник подграфов для узла sub_workflow.
         { provide: WorkflowService, useValue: { findOneAsync: findWorkflow } },
       ],
@@ -1641,6 +1668,69 @@ describe('ExecutionEngineService', () => {
       mediaType: 'TOOL',
       taskId: 'tool-1',
     });
+  });
+
+  // R7.2 (KI-361, DESIGN v0.9 § 3.2): три узла media-генерации идут в свои
+  // методы исполнителя, а выход `mediaUrl` доезжает до зависимого узла —
+  // контракт портов совпадает с ключом в `outputs` (урок KI-368).
+  it.each([
+    ['video_generation', 'VIDEO', () => mediaVideoExecute],
+    ['audio_generation', 'AUDIO', () => mediaAudioExecute],
+    ['music_generation', 'MUSIC', () => mediaMusicExecute],
+  ] as const)(
+    'R7.2: узел %s идёт в свой метод исполнителя и пишет cost_rub',
+    async (nodeType, mediaType, execute) => {
+      await service.executeAsync(RUN_ID, {
+        nodes: [
+          node('A', nodeType, { prompt: 'промпт', model: 'model-1' }),
+          node('B', 'text'),
+        ],
+        // Хендл источника — по контракту узла (video-output/audio-output/
+        // music-output), порт назначения — `prompt` у text-узла.
+        edges: [edge('e1', 'A', 'B', `${mediaType.toLowerCase()}-output`, 'text')],
+      });
+
+      expect(execute()).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'A', type: nodeType }),
+        expect.any(Object),
+        RUN_ID,
+      );
+
+      const row = fake.rows.find((candidate) => candidate.nodeId === 'A');
+
+      expect(row?.status).toBe('completed');
+      expect(row?.costRub).toBe('0.600000');
+      expect(row?.outputs).toEqual({
+        mediaUrl: expect.stringContaining('cdn/'),
+        mediaType,
+        taskId: 'task-1',
+      });
+
+      // Зависимый узел получил именно `mediaUrl`, а не null (KI-368).
+      const dependent = fake.rows.find((candidate) => candidate.nodeId === 'B');
+
+      expect(dependent?.inputs).toEqual({ text: expect.stringContaining('cdn/') });
+    },
+  );
+
+  it('R7.2: падение video-узла помечает его failed с текстом ошибки', async () => {
+    mediaVideoExecute.mockImplementation(() =>
+      Promise.reject(new Error('задача генерации видео упала')),
+    );
+
+    const result = await service
+      .executeAsync(RUN_ID, {
+        nodes: [node('A', 'video_generation', { prompt: 'кот' }), node('B', 'text')],
+        edges: [edge('e1', 'A', 'B', 'video-output', 'text')],
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(result).toBeInstanceOf(Error);
+
+    const row = fake.rows.find((candidate) => candidate.nodeId === 'A');
+
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toContain('задача генерации видео упала');
   });
 
   it('R7.1: падение инструмента помечает узел failed и не трогает независимую ветку', async () => {

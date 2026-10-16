@@ -26,13 +26,21 @@ const SUB_WORKFLOW_TYPE = 'sub_workflow' as const;
 /** Тип, добавленный в R7.1 (KI-196, DESIGN v0.9 § 3.1). */
 const IMAGE_TOOL_TYPE = 'image_tool' as const;
 
+/** Типы, добавленные в R7.2 (KI-361, DESIGN v0.9 § 3.2). */
+const GENERATION_TYPES = [
+  'video_generation',
+  'audio_generation',
+  'music_generation',
+] as const;
+
 /** Все типы реестра — для проверки labelKey в обоих i18n-файлах. */
 const ALL_TYPES: readonly NodeType[] = [...NODE_TYPES];
 
 describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
   it('все четыре типа зарегистрированы, реестр покрывает NodeType целиком', () => {
-    // R6.7: типов стало девять (+sub_workflow); R7.1 — десять (+image_tool).
-    expect(ALL_TYPES).toHaveLength(10);
+    // R6.7: типов стало девять (+sub_workflow); R7.1 — десять (+image_tool);
+    // R7.2 — тринадцать (+video/audio/music_generation).
+    expect(ALL_TYPES).toHaveLength(13);
     expect(ALL_TYPES).toEqual(
       expect.arrayContaining([
         'text',
@@ -41,6 +49,7 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
         ...NEW_TYPES,
         SUB_WORKFLOW_TYPE,
         IMAGE_TOOL_TYPE,
+        ...GENERATION_TYPES,
       ]),
     );
   });
@@ -150,5 +159,31 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
     // Ключ категории — иначе секция каталога показала бы сырой ключ.
     expect(ru).toHaveProperty(['catalog.category.media_tools']);
     expect(en).toHaveProperty(['catalog.category.media_tools']);
+  });
+
+  it('R7.2: три узла media-генерации — категория, ключи и capabilities', () => {
+    expect(NODE_CATEGORIES).toContain('media_generation');
+    // Ключ категории — иначе секция каталога показала бы сырой ключ.
+    expect(ru).toHaveProperty(['catalog.category.media_generation']);
+    expect(en).toHaveProperty(['catalog.category.media_generation']);
+
+    for (const type of GENERATION_TYPES) {
+      const entry = NODE_REGISTRY[type];
+
+      expect(entry.category, type).toBe('media_generation');
+      expect(entry.icon, `иконка ${type}`).not.toBe('');
+      expect(typeof entry.component, `компонент ${type}`).toBe('function');
+      // Вход `text-input` (промпт) есть — узел вставляется в связь (KI-259).
+      expect(canInsertOnEdge(type), type).toBe(true);
+      expect(isNodeType(type), type).toBe(true);
+      // До запуска выбираются модель и её параметры.
+      expect(entry.capabilities, type).toEqual({
+        externalState: false,
+        userConfig: true,
+      });
+
+      expect(ru, `ru: ${entry.labelKey}`).toHaveProperty([entry.labelKey]);
+      expect(en, `en: ${entry.labelKey}`).toHaveProperty([entry.labelKey]);
+    }
   });
 });
