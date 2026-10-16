@@ -35,6 +35,18 @@
   - Tests: backend 514 → 520 (+6), frontend 159 → 166 (+7).
   - Smoke: 22/22 PASS.
 
+### Fixed
+- **KI-306** — `fitView` для графов с большим разбросом координат:
+  `FIT_VIEW_OPTIONS.minZoom: 0.02` в `useEffect`, хоткее F,
+  `<ReactFlow fitViewOptions>`, `<Controls fitViewOptions>`
+  (`5fc4f34`).
+- **KI-307** — `autoPanOnNodeDrag` — остаётся by design (Low).
+
+### Documented
+- **KI-309** — `minZoom: 0.02` умещает разброс только до 23 050 px.
+- **KI-310** — публичная share-страница без fitViewOptions.
+- **KI-311** — асимметрия Fit (1.0) vs хоткей F (1.53).
+
 ## [0.8.0] — 2026-10-16
 
 **v0.8.0 — фичи для продукта (DESIGN v0.8 § 1–13).**
