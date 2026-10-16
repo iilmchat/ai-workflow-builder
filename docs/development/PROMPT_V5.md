@@ -1,9 +1,9 @@
 # PROMPT_V5.md — Стартовый промпт для нового чата
 
-**Версия промпта:** v5.0
-**Дата:** 2026-10-15
-**Актуальный релиз:** v0.7.2 (Yandex env + LM Studio auto-discovery + LLM/media fixes)
-**Текущий этап:** v0.8 — R6.1 (Auth) — первый код-подшаг по DESIGN v0.8
+**Версия промпта:** v6.0
+**Дата:** 2026-10-16
+**Актуальный релиз:** v0.8.0 (Auth, Share, LLM upgrade, Canvas UX, Node types, Export/Templates, Sub-workflows)
+**Текущий этап:** v0.8.1 — фиксы (единый /api, KI-306, KI-298, KI-301)
 **Репозиторий:** https://github.com/iilmchat/ai-workflow-builder
 **Рабочий путь:** локальный клон репозитория — **зависит от машины**
 (`C:\Projects\AI\ai-workflow-builder`, `D:\Projects\AI\workflow-builder`
@@ -84,7 +84,7 @@
 - **BullMQ 6** + **ioredis** — очередь `workflow-runs`.
 - **Zod 4** — валидация на границах.
 - **Pino** — логи.
-- **Vitest 4** — тесты (**358** на v0.7.2).
+- **Vitest 4** — тесты (**514** на v0.8.0).
 - **@anthropic-ai/sdk** 0.133, **openai** 7.32.
 
 ### Frontend (`web/`)
@@ -93,8 +93,8 @@
 - **@xyflow/react** v12 (React Flow) — canvas.
 - **Zustand 5** — state.
 - **Tailwind CSS v4** (плагин `@tailwindcss/vite`, без JS-конфига).
-- **react-i18next** + **i18next** — i18n RU/EN (106 ключей).
-- **Vitest 4** (15 тестов на чистые функции).
+- **react-i18next** + **i18next** — i18n RU/EN (209 ключей).
+- **Vitest 4** (159 тестов).
 - **Zod** — валидация API-ответов (в `web/dependencies`).
 
 ### Инструменты
@@ -107,7 +107,7 @@
 
 ### Открытые репозитории
 
-- Теги: `v0.4.0`, `v0.6.0`, `v0.6.1`, `v0.7.0`, `v0.7.1`, `v0.7.2`.
+- Теги: `v0.4.0`, `v0.6.0`, `v0.6.1`, `v0.7.0`, `v0.7.1`, `v0.7.2`, `v0.8.0`.
 - **`v0.5.0` НЕ существует** — 6 LLM-провайдеров + GPTunnel chat
   вошли в v0.6.0.
 
@@ -170,13 +170,12 @@
 2. **`docs/CHANGELOG.md`** — история. Не трогать без нужды, при релизе —
    `[Unreleased]` → `[X.Y.Z] — YYYY-MM-DD`, сверху пустая `[Unreleased]`.
 3. **`docs/KNOWN_ISSUES.md`** — реестр KI. Нумерация с KI-001, **не
-   пропускать**. При закрытии — статус `Fixed` + «Исправлено в: vX.Y.Z».
-   **191 блок на v0.7.2** (KI-200 добавлен в DESIGN v0.8).
+   пропускать** (RULES § 3.18). **294 блока на v0.8.0** (последний KI-307).
+   При закрытии — статус `Fixed` + «Исправлено в: vX.Y.Z».
 4. **`docs/development/PROMPT_V5.md`** (этот файл).
 5. **`docs/development/v0.8/DESIGN_V08_FEATURES.md`** — DESIGN v0.8
-   (Approved 2026-10-15): Auth, Share, Sub-workflows, LLM upgrade,
-   Canvas UX, Node types, Export/Import/Templates. 16 KI + KI-200.
-6. **`docs/development/RULES.md`** — v1.7.0.
+   (Approved 2026-10-15, **закрыт v0.8.0**).
+6. **`docs/development/RULES.md`** — v1.8.0 (§ 3.18 — проверка max KI).
 
 ---
 
@@ -213,111 +212,135 @@
 
 ---
 
-## § 5. Текущее состояние (v0.7.2, 2026-10-15)
+## § 5. Текущее состояние (v0.8.0, 2026-10-16)
 
 ### Что работает
 
 **Backend:**
-- CRUD workflow, Engine (Kahn's algorithm + DFS cycle detection).
-- 6 LLM-провайдеров: Anthropic, OpenAI, RouterAI, GPTunnel, DeepSeek,
-  **Yandex AI Studio** (OpenAI-совместимый endpoint
-  `https://llm.api.cloud.yandex.net/v1`, env `YANDEX_MODELS` +
-  `YANDEX_FOLDER_ID`, URI `gpt://<folder>/<model>/<version>`,
-  vision через суффикс `:text+vision` для qwen3.6-35b-a3b),
-  LM Studio (`isLocal: true` → cost_usd = 0, **auto-discovery
-  через `GET /v1/models`** при старте, env `LMSTUDIO_MODELS` —
-  приоритет для модальностей).
-- Media-провайдер **CreativeLab** (GPTunnel `/api/v2/media`), 57 IMAGE-моделей.
+- CRUD workflow, Engine (Kahn + DFS cycle detection).
+- 6 LLM-провайдеров (Anthropic, OpenAI, RouterAI, GPTunnel, DeepSeek,
+  Yandex AI Studio, LM Studio). System prompt + ReasoningEffort
+  (off/minimal/low/medium/high/xhigh) + maxTokens per-model.
+- Media-провайдер CreativeLab (57 IMAGE-моделей).
 - BullMQ worker (`workflow-runs`, concurrency 5, lease 5 мин, retry).
-- SSE-поток `GET /runs/:id/stream` — snapshot + events, keep-alive 15s.
-- Executor: обход уровней `Promise.allSettled`, node_runs persistence,
-  reuse completed nodes, cost tracking (`cost_usd` + `cost_rub`).
-- Метрики в `node_completed`/`node_failed`: costRub, tokensIn/Out,
-  costUsd, logs (KI-075 + KI-149).
-- `POST /runs`, `GET /runs/:id`, `GET /runs/:id/stream`, `GET /llm/models`,
-  `GET /media/models`, CRUD `/workflow`.
+- SSE-поток `GET /runs/:id/stream` — **авторизуется через fetch + Bearer**
+  (KI-268), не EventSource.
+- Executor: `Promise.allSettled` уровней, **независимые уровни
+  продолжаются после падения** (KI-287), reuse completed (KI-046),
+  cost tracking.
+- **Аннотации** (`comment`): исключены из плана (`ANNOTATION_NODE_TYPES`),
+  персистятся на backend (KI-266).
+- **Новые типы узлов**: `http`, `condition` (MVP-DSL без new Function),
+  `output`, `compare` (mode='diff'), `sub_workflow` (рекурсия,
+  branch-local `visitedWorkflows`, max depth 5, префикс id
+  `sub_<nodeId>__`, owner-check).
+- **Export/Import/Templates**: `GET /workflow/:id/export` (JSON,
+  version 1, без userId/shareToken), `POST /workflow/import`,
+  `GET /templates`, `POST /templates/:id/instantiate`. 3 шаблона в
+  `src/templates/*.json`.
+- **Auth**: `POST /auth/register|login|refresh|logout`, `GET /auth/me`.
+  JWT access (24h) + refresh (opaque, httpOnly cookie, sameSite=strict,
+  path=/auth). Guards на всех защищённых путях, `AUTH_DISABLED=true`
+  (dev/CI) → системный пользователь.
+- **Share**: `share_token` (uuid), публичный `GET /workflow/share/:token`
+  (без auth), owner → POST/DELETE `/workflow/:id/share`.
+- **timestamptz-миграция 0006** (KI-293): все колонки времени
+  приведены к `timestamptz`; API отдаёт UTC-корректные даты.
+- Env: `JWT_SECRET`, `JWT_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN`,
+  `COOKIE_SECURE`, `AUTH_DISABLED`, `WORKFLOW_RUNS_*`.
 
 **Frontend:**
 - Canvas (React Flow + Zustand + Tailwind v4).
-- Узлы: **Text** (textarea auto-resize), **LLM** (селект моделей
-  + группировка «Текст» / «Текст + Vision» + textarea prompt +
-  auto-resize), **ImageGen** (селект + aspect_ratio + textarea prompt
-  + картинка).
-- **Тёмная/светлая тема** (CSS-переменные через `@theme`, `.dark`,
-  useTheme + system).
-- **i18n RU/EN** (react-i18next, 106 ключей, паритет-тест).
-- **SSE-подписка**, подсветка нод по статусу.
-- **Панель результата** (outputs, метрики cost_usd/cost_rub, logs,
-  word-wrap).
-- **Каталог узлов** (поповер с секциями, поиск, клавиатура).
-- Удаление edges/nodes (Delete/Backspace + кнопка «×»), кнопка «Новый
-  workflow», авто-Save перед Run.
-- Сохранение курсора в контролируемых полях (usePreserveCursor).
+- Узлы: Text, LLM, ImageGen, **Comment** (стикер), **Http**,
+  **Condition** (2 выхода T/F), **Output**, **Compare** (2 входа
+  a/b), **SubWorkflow** (селект своих workflow, «Открыть в редакторе»).
+- **Тёмная/светлая тема**, **i18n RU/EN** (209 ключей, паритет-тест).
+- **SSE-подписка** (fetch + ReadableStream, Bearer), подсветка узлов.
+- **Панель результата** (outputs, метрики, logs, word-wrap).
+- **Каталог узлов** — поповер с секциями (input / ai / media / tools /
+  composition / output).
+- **Canvas UX** (R6.4):
+  - Вставка узла в связь (InsertableEdge + EdgeLabelRenderer).
+  - Snap 8×8 + направляющие (`<ViewportPortal>`).
+  - Комментарии (стикер, хоткей C, Shift+C toggle).
+  - Полный набор hotkeys: Ctrl+D, S/H (cursor/hand), F (fitView),
+    M (minimap), Tab (каталог), C/Shift+C, Ctrl+Z/Ctrl+Shift+Z.
+  - Undo/Redo (history slice, max 50, `structuredClone`,
+    `useNodeDataHistory` для textarea-полей с debounce 1000 мс).
+  - Auto-save (3000 мс debounce).
+- **Export/Import/Templates** (TopBar 📥/📤 + LoadModal → таб «Шаблоны»).
+- **Auth frontend**: LoginPage, AuthProvider, ProtectedRoute,
+  401-интерцептор (single-flight refresh), `usePreserveCursor`.
+- **fitView после F5** — `useEffect` с ref-защитой (R6.5.2-fix2).
+- **Панель режимов** — right-6, адаптивная (bottom-44 при миникарте).
 
-**Database (3 таблицы):**
-- `workflows` — nodes/edges jsonb, version.
-- `workflow_runs` — status, snapshot, outputs, error, attempts.
-- `node_runs` — status, inputs/outputs, tokens, `cost_usd`, `cost_rub`,
-  duration_ms, logs (unique по `run_id, node_id`).
+**Database (5 таблиц):**
+- `workflows` — nodes/edges jsonb, version, user_id (uuid NOT NULL),
+  share_token.
+- `workflow_runs`, `node_runs` — timestamptz везде.
+- `users`, `refresh_tokens` — auth (R6.1).
 
-**Метрики:**
-- 358 backend-тестов, 15 frontend-тестов.
-- Bundle frontend: ~600 kB JS.
-- CI: 2 job (backend + web), оба зелёные.
-- Husky pre-commit — блокирует ключи.
-- GitHub Push Protection — включён.
+**Метрики (v0.8.0):**
+- 514 backend-тестов, 159 frontend-тестов.
+- Bundle: ~698 kB JS (chunk warning — pre-existing).
+- CI: 2 job, зелёный.
+- 294 KI в реестре: Fixed 111, Open 174, Documented 7, Planned 1,
+  Won't Fix 1.
+- Husky pre-commit + GitHub Push Protection.
 
 ---
 
-## § 6. Открытые KI (актуально на v0.7.2)
+## § 6. Открытые KI (актуально на v0.8.0)
 
-**Всего: 191 блок.** Fixed 71 · Documented 7 · Open 111 ·
+**Всего: 294 блока.** Fixed 111 · Open 174 · Documented 7 ·
 Planned 1 · Won't Fix 1.
 
-**🟠 High / v0.8:**
-- **KI-200** — Sub-workflows (композиция, ссылка на workflow,
-  рекурсия protection).
-- **KI-192** — System prompt у LLM-узла.
-- **KI-193** — Режим размышления (Reasoning: Off/Medium/High)
-  для reasoning-моделей.
-- **KI-106** — Auth (JWT + Passport).
-- **KI-197** — Share (read-only ссылка).
-
-**🟡 Medium / v0.8:**
-- **KI-183** — maxTokens не учитывает reasoning-модели.
-- **KI-184** — Media-ошибка upstream не различает «наш запрос» /
-  «сбой провайдера» / «refunded».
-- **KI-185** — вставка узла в связь (hover на edge).
-- **KI-186** — расширенный список хоткеев (Tab/S/H/F/C/Ctrl+A/C/V/D/Z).
-- **KI-189** — направляющие + snap при перетаскивании.
-- **KI-191** — дублировать узел (Ctrl+D).
-- **KI-195** — auto-save в фоне (debounced).
-- **KI-197** — публичная read-only ссылка (Share).
-- **KI-066** — нет heartbeat аренды в БД (параллельный replay).
-- **KI-067** — concurrency глобальный, нет per-provider лимитов.
+**🟠 High / v0.8.1:**
+- **KI-299/072/120** — Vite-прокси перечисляется вручную (три раза
+  забывали: `/llm`, `/media`, `/templates`). Структурный фикс —
+  единый `/api`-префикс.
+- **KI-287** — фикс `break` после падения (закрыт в R6.5.2-fix, но
+  KI-288 остался: skip-статус для потомков упавших).
 - **KI-048** — нет предохранителя по стоимости повторов.
-- **KI-062** — APIConnectionError классифицируется как неповторяемая.
-- **KI-145** — каталог узлов: a11y (listbox/aria-activedescendant).
-- **KI-155** — frontend не умеет тестировать компоненты (нет jsdom).
-- **KI-150** — cost_usd = null для моделей вне прайса.
-- **KI-061** — GET /runs (список запусков).
-- **KI-063** — финальность не в snapshot.
-- **KI-077** — GET /runs/:id/nodes.
+- **KI-066** — нет heartbeat аренды в БД.
+- **KI-268** — закрыт; остаток KI-271 (F5 mid-Run) закрыт в R6.4b.2a-fix3.
 
-**🟢 Low / v0.8 или v0.9:**
-- **KI-187** — комментарии/аннотации на холсте.
-- **KI-188** — режимы Курсор / Рука (S/H).
-- **KI-190** — миникарта: toggle + hotkey.
-- **KI-194** — Note / Compare узлы.
-- **KI-196** — медиа-инструменты (upscale, bg-removal, lipsync,
-  3D, motion) — v0.9.
-- **KI-177** — LM Studio auto-discovery только на старте (нет
-  фонового обновления).
-- **KI-178** — формат *_MODELS не валидируется Zod.
-- **KI-152, 153, 161, 170, 171, 173** — Low-уборки.
-- ~13 старых Low из реестра (KI-028, 043, 045, 057, 058, 073, 076,
-  090, 102, 118, 123, 128, 143, 144). KI-105 (node types)
-  и KI-128 (сервисные узлы) — в v0.8 roadmap, не Low.
+**🟡 Medium / v0.8.1:**
+- **KI-306** — `fitView` не умещает граф с большим разбросом (minZoom
+  clamp).
+- **KI-300** — `workflows.version` не инкрементится при PATCH.
+- **KI-301** — `handleIdToOutputPort` не type-aware.
+- **KI-304** — префиксные id узлов подграфа в `node_runs`/SSE/outputs.
+- **KI-298** — `drizzle-kit generate` не сверяет схему с БД (корень
+  KI-293/296).
+- **KI-292** — `nest-cli assets` для `templates/*.json`.
+- **KI-288** — нет статуса `skipped` для потомков упавших узлов.
+- **KI-289** — `http` не считает 4xx/5xx ошибкой.
+- **KI-290** — `workflow_runs.outputs` содержит fallback от потомков
+  упавших.
+- **KI-145** — каталог узлов: a11y (listbox).
+- **KI-155** — frontend-тесты без jsdom.
+- **KI-150** — `cost_usd = null` для моделей вне прайса.
+- **KI-061/063/077** — GET /runs, финальность в snapshot,
+  GET /runs/:id/nodes.
+- **KI-067** — concurrency глобальный, нет per-provider.
+- **KI-062** — APIConnectionError — неповторяемая.
+
+**🟢 Low / v0.8.x–v0.9:**
+- **KI-297** — устаревший комментарий в `findSharedAsync`.
+- **KI-302** — кэш workflow в sub_workflow селекте.
+- **KI-303** — `inputsMap` не применяется executor'ом.
+- **KI-305** — асимметрия пустого подграфа.
+- **KI-307** — `autoPanOnNodeDrag` усиливает координаты.
+- **KI-300..307** (остальные), + Low-уборки (KI-028, 043, 045, 057,
+  058, 073, 076, 090, 102, 118, 123, 128, 143, 144, 152, 153, 161,
+  170, 171, 173, 177, 178, 194, 196).
+
+**🟠 Closed в v0.8.0 (для контекста):** KI-106, 108, 109, 183, 185,
+186, 188, 190, 191, 192, 193, 195, 197, 200, 201..287 (см. CHANGELOG
+`[0.8.0]`).
+
+---
 
 ## § 7. Известные грабли (Windows + Docker + WSL2 + Yandex + CI)
 
@@ -390,67 +413,96 @@ Planned 1 · Won't Fix 1.
     `<textarea>` с внешним store (Zustand) — иначе курсор прыгает
     в конец (KI-157).
 
+19. **`timestamptz`-дрейф.** Drizzle-схема объявляет
+    `timestamp(..., { withTimezone: true })`, а в БД может быть
+    `timestamp WITHOUT time zone` — `pg` парсит naive как локальное,
+    API отдаёт дату на N часов раньше. Миграция 0006 (KI-293) —
+    `ALTER COLUMN ... TYPE timestamptz USING col AT TIME ZONE 'UTC'`.
+    `drizzle-kit generate` **не сверяет схему с БД** — только со
+    snapshot (KI-298).
+
+20. **CDP-смоук: hidden-страница молча отбрасывает OS-ввод.** В
+    видимом Chrome `document.hidden === true` — `Input.dispatchKeyEvent`
+    / `dispatchMouseEvent` не доходят. Решение — `--headless=new` +
+    проверка `document.visibilityState` перед вводом (KI-264/275).
+
+21. **CDP-смоук: узкий Fetch-перехват.** `url.includes('/workflow')`
+    перехватывает модули Vite → `application/json` вместо JS.
+    Пропускать: `/src/`, `/node_modules/`, `/@vite/`, `/@fs/`,
+    `?import`, `?t=` (KI-264).
+
+22. **CDP-смоук: печатные клавиши — `type: 'keyDown'` + поле `text`.**
+    `rawKeyDown` в части прогонов не доходит. `Page.captureScreenshot`
+    снимает фокус — `Page.bringToFront` перед нажатиями (KI-264).
+
+23. **CDP-смоук: 6-я ловушка — хуки для F5.** `Page.addScriptToEvaluateOnNewDocument`
+    (иначе восстановленная подписка стартует раньше инъекции).
+
+24. **Junction-снимок + pnpm — нельзя.** `git archive` + junction
+    на реальные `node_modules` → `pnpm` внутри перепривязывает
+    junction'ы → ссылки «висят» после удаления снимка. Безопасно:
+    отдельный `git clone` / `git worktree`.
+
+25. **Sandbox-permission: запись в `web/**` — только file tools.** В
+    изоляции `pnpm --dir web build` падает EPERM на
+    `web/node_modules/.tmp/*.tsbuildinfo`. Решение — `danger-full-access`
+    или разделение: команды через `pnpm` в корне.
+
+---
 
 ## § 8. Roadmap
 
-### v0.7.2 — Yandex env + LM Studio + LLM/media fixes (2026-10-15) ✅ ВЫПУЩЕН
+### v0.7.2 — Yandex env + LM Studio + LLM/media fixes ✅ ВЫПУЩЕН
 
-- KI-174/175/176 — Yandex env-формат каталога, vision, цены.
-- KI-088 — LM Studio auto-discovery.
-- KI-179 — LLM: пустой content (fallback reasoning).
-- KI-180 — textarea для prompt в LLM-узле.
-- KI-181 — media: схема принимает объектную форму ошибки.
+### v0.8.0 — фичи для продукта (2026-10-16) ✅ ВЫПУЩЕН
 
-### v0.8 — фичи для продукта (по DESIGN_V08_FEATURES.md)
+**DESIGN v0.8 закрыт.** 7 подшагов R6.1..R6.7:
+- R6.1 Auth (KI-106, KI-201..212).
+- R6.2 Share (KI-197, KI-233..243).
+- R6.3 LLM upgrade (KI-183, 192, 193, KI-244..247).
+- R6.4 Canvas UX (KI-185, 186, 188, 190, 191, 195, KI-248..261).
+- R6.5 Node types (KI-105, KI-278..290).
+- R6.6 Export/Import/Templates (KI-108, 109, KI-291..299).
+- R6.7 Sub-workflows (KI-200, KI-300..305).
+- R6.5.2-fix2 (fitView race + панель, KI-306, 307).
 
-**DESIGN v0.8 — Approved (2026-10-15).** 16 KI + KI-200. 7 подшагов:
+**Метрики:** 514 backend / 159 frontend, CI 2 job ✓.
+**Tag + Release:** v0.8.0 (Latest).
 
-- **R6.1 (Auth, KI-106)** — users table, JWT + Passport, guards,
-  LoginPage, AuthProvider, AUTH_DISABLED для dev/CI. ~4 ч.
-- **R6.2 (Share, KI-197)** — share_token, read-only ссылка,
-  копирование. ~3 ч.
-- **R6.3 (LLM upgrade, KI-192/193/183)** — System prompt,
-  Reasoning mode, maxTokens per-model. ~3 ч.
-- **R6.4a (Canvas UX часть 1)** — вставка узла в связь (KI-185),
-  snap/направляющие (KI-189), дублирование (KI-191), auto-save
-  (KI-195). ~3 ч.
-- **R6.4b (Canvas UX часть 2)** — хоткеи (KI-186), комментарии
-  (KI-187), курсор/рука (KI-188), миникарта toggle (KI-190). ~3 ч.
-- **R6.5 (Node types, KI-105/194)** — http, condition, output,
-  note, compare. ~5 ч.
-- **R6.6 (Export/Import/Templates, KI-108/109)** — JSON, шаблоны
-  в репо. ~3 ч.
-- **R6.7 (Sub-workflows, KI-200)** — executor, UI, версии. ~4 ч.
+### v0.8.1 — фиксы (следующий этап, план)
 
-**Итого: ~28 ч dsh + ревью.**
+**Приоритеты (от старшего к младшему):**
 
-**Плюс в v0.8.x (по мере):**
-- KI-067 (per-provider семафоры), KI-048 (бюджет), KI-062
-  (retryable APIConnectionError), KI-077 (GET /runs/:id/nodes),
-  KI-061 (GET /runs), KI-063 (final в snapshot), KI-150 (cost_usd
-  null в UI), KI-155 (frontend-тесты), KI-066 (heartbeat),
-  KI-177/178 (LM Studio refresh, Zod валидация *_MODELS).
+- **KI-299/072/120** — единый `/api`-префикс (Vite proxy + backend
+  `setGlobalPrefix`). Три раза одна ошибка — структурный фикс.
+- **KI-306** — `fitView({ minZoom })` при большом разбросе координат
+  (или `<ReactFlow minZoom>` снизить).
+- **KI-293-follow-up**: KI-298 — CI-гейт на сверку `information_schema`
+  ↔ drizzle schema.
+- **KI-300** — инкремент `workflows.version` при PATCH.
+- **KI-301** — type-aware `handleIdToOutputPort`.
+- **KI-304** — префиксные id подграфа в SSE/outputs.
+- **KI-292** — `nest-cli assets` для `templates/*.json`.
+- **KI-288** — skip-статус для потомков упавших узлов.
+- **KI-289** — `failOnHttpError` в `http`-executor.
+- **KI-067/048/066/062** — concurrency, cost budget, heartbeat, retryable.
 
-**Решения (Approved):**
-- Auth: httpOnly cookie + sameSite=strict.
-- Sub-workflows: ссылка на workflow + warning при изменении.
-- Canvas UX: 2 подшага (R6.4a/b).
-- Condition: MVP DSL (`>`, `<`, `===`, `includes`), sandbox — v0.9.
-- Templates: JSON-файлы в `src/templates/*.json`.
+**Скоуп ~1-2 дня dsh.**
 
-### v0.9+ — медиа + агенты + observability
+### v0.9 — медиа + агенты + observability
 
 - **Медиа-инструменты:** upscale, bg-removal, lipsync, 3D, motion
   (KI-196).
 - **Vector DB / Memory / Agent** (KI-128).
-- **Video / Audio / Music** узлы (отдельные KI, см. KI-105).
+- **Video / Audio / Music** узлы (KI-105 remaining).
 - **Image providers** напрямую: Replicate / FAL.
 - **Condition sandbox** (isolated-vm).
 - **Share — участники по ID** (роли Просмотр/Редактирование).
-- OpenTelemetry traces.
-- Rate limiting per provider.
-- Human-in-the-loop (approval node).
-- Workflow versioning.
+- **Node types remaining** (KI-194 Note/Compare — закрыт в v0.8).
+- **Reasoning cache tokens** (Anthropic).
+- OpenTelemetry traces, rate limiting per provider, human-in-the-loop.
+
+---
 
 ## § 9. Формат ответа ассистента
 
@@ -554,6 +606,25 @@ Planned 1 · Won't Fix 1.
   зависимость.
 - **Condition MVP DSL** — без `new Function`, только простые
   операции (`>`, `<`, `===`, `includes`); sandbox — v0.9.
+- **Branch-local `visitedWorkflows`** — не Set по ссылке, а
+  `new Set([...parent, id])` при спуске в подграф. Иначе параллельные
+  ссылки на один workflow дали бы ложный «цикл» (R6.7).
+- **`useEffect` + ref-защита для `fitView`** — вместо пропа
+  `fitView={isEmpty}` (гонка `true→false` отменяет очередь fitView).
+  Ref `fittedWorkflowId` исключает повторный fit при том же workflow
+  (R6.5.2-fix2).
+- **Префиксация id подграфа** `sub_<nodeId>__<original>` — изоляция
+  коллизий + видимость в `node_runs` (цена — «сиротские» id в SSE,
+  KI-304).
+- **`parseNodeData(nodeType, schema, data)`** в исполнителях —
+  единая Zod-точка (`NodeDataValidationException extends
+  UnsupportedNodeTypeException`, разные классы отказа).
+- **timestamptz-миграция через `USING col AT TIME ZONE 'UTC'`** —
+  не `current_setting('TimeZone')`, чтобы не зависеть от окружения
+  клиента.
+- **CDP-script: `--headless=new`** + узкий Fetch + `keyDown` с
+  `text` + `Page.bringToFront` + `visibilityState` + хуки через
+  `addScriptToEvaluateOnNewDocument` (KI-264/275).  
 **Не стесняйся предлагать новое.** Если видишь паттерн, которого нет в
 RULES — скажи «это стоит добавить в RULES § X.Y».
 
@@ -561,40 +632,31 @@ RULES — скажи «это стоит добавить в RULES § X.Y».
 
 ## § 12. Итог
 
-**Проект в состоянии: v0.7.2 выпущен, CI зелёный, 358/358 backend +
-15/15 frontend. DESIGN v0.8 — Approved.**
+**Проект в состоянии: v0.8.0 выпущен + release на GitHub (Latest),
+CI зелёный, 514/514 backend + 159/159 frontend. DESIGN v0.8 закрыт.
+294 KI в реестре.**
 
-**Следующий код-подшаг — R6.1 (Auth): users table, JWT+Passport,
-guards, LoginPage, AuthProvider.**
+**Следующий этап — v0.8.1 (фиксы):** единый `/api` (KI-299/072/120),
+KI-306 (fitView minZoom), KI-298 (drizzle ↔ БД), KI-300 (version),
+KI-301 (type-aware портов), KI-304 (prefix в SSE), KI-292 (nest assets),
+KI-288/289.
 
-**Продолжаем по плану R6.1 → R6.7 (DESIGN_V08_FEATURES.md).**
+**Долгосрочно:** v0.9 — медиа-инструменты, Vector DB / Agent, Video /
+Audio / Music узлы, sandbox для condition.
 
 ---
 
-## § 13. DESIGN v0.8 — Approved (2026-10-15)
+## § 13. DESIGN v0.8 — Approved + Закрыт (2026-10-16)
 
 **Файл:** `docs/development/v0.8/DESIGN_V08_FEATURES.md`.
 
-**Закрывает 16 KI + KI-200:**
-- **Auth** (KI-106) — users, JWT+Passport, httpOnly cookie.
-- **Share** (KI-197) — share_token, read-only, копирование.
-- **Sub-workflows** (KI-200) — новый узел, executor, recursion guard.
-- **LLM upgrade** (KI-192, 193, 183) — System prompt, Reasoning
-  mode, maxTokens per-model.
-- **Canvas UX** (KI-185..191, 195) — вставка в связь, хоткеи,
-  комментарии, курсор/рука, snap, миникарта, дублирование, auto-save.
-- **Node types** (KI-105, 194) — http, condition, output, note,
-  compare.
-- **Export/Import/Templates** (KI-108, 109).
+**Статус:** Approved 2026-10-15, **закрыт v0.8.0** (2026-10-16).
+**Закрыл 16 KI v0.8 + KI-200** (Sub-workflows).
 
-**7 подшагов R6.1..R6.7** (~28 ч dsh; 8 сессий — R6.4
-разбит на a/b).
-
-**Решения Approved (5/5):**
-1. Auth: httpOnly cookie + sameSite=strict.
-2. Sub-workflows: ссылка + warning.
-3. Canvas UX: 2 подшага (R6.4a/b).
-4. Condition: MVP DSL, sandbox — v0.9.
-5. Templates: JSON в `src/templates/*.json`.
-
-**Следующее:** R6.1 (Auth) — промпт dsh на реализацию.
+**Следующий DESIGN** — `docs/development/v0.9/DESIGN_V09_FEATURES.md`
+(создать перед v0.9). Приоритеты:
+- Медиа-инструменты (upscale, bg-removal, lipsync, 3D, motion).
+- Vector DB / Memory / Agent nodes.
+- Condition sandbox.
+- Share participants by ID.
+- Reasoning cache tokens.
