@@ -5598,7 +5598,8 @@
 ---
 
 ### KI-352 — нет паритет-гейта для REST-зеркала `web/src/lib/api.ts`
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.5 (коммит `a889991`)
 - **Файлы:** `web/src/lib/api.ts`, `src/runs/runs.controller.ts`,
   `src/runs/dto/*.dto.ts`
 - **Описание:** `ApiRunSchema` вручную повторяет backend `RunResponse`
@@ -5606,12 +5607,22 @@
   же класс дефекта, что KI-348, но для REST.
 - **Решение:** распространить паттерн `docs/development/sse-contract.json`
   (или общий `api-contract.json`) на REST-DTO.
-- **Связанные:** KI-348, KI-077, KI-350.
+- **Fix:** `docs/development/api-contract.json` — source of truth для
+  4 REST-ответов (RunResponse, ShareTokenDto, SharedWorkflow,
+  ExportWorkflowDto); два паритет-спека:
+  `src/runs/dto/api-contract.spec.ts` (backend, `ts.createSourceFile`
+  для TS-интерфейсов + `ZodObject.shape` для ExportWorkflowDto) и
+  `web/src/lib/api-contract.spec.ts` (`import.meta.glob '?raw'`).
+  Двойные негативные тесты (M1/M2/M3) подтвердили симметрию.
+  Production-код не тронут.
+- **Остаток:** KI-356, KI-357, KI-358.
+- **Связанные:** KI-348, KI-299, KI-072, KI-120.
 
 ---
 
 ### KI-353 — три источника правды по статусам узла
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.5 (коммит `0e5d027`)
 - **Файлы:** `src/db/schema.ts`, `src/runs/dto/run-stream-message.dto.ts`,
   `web/src/types/run-stream.ts`
 - **Описание:** `NODE_RUN_STATUSES` — канон в `schema.ts`, но DTO выводит
@@ -5619,7 +5630,17 @@
   литералами. Совпадение ничем не гейтится.
 - **Решение:** DTO берёт `NODE_RUN_STATUSES` из схемы; web — под гейт
   паритета (KI-348/KI-352).
-- **Связанные:** KI-336, KI-348, KI-352.
+- **Fix:** `run-stream-message.dto.ts` импортирует `NODE_RUN_STATUSES` /
+  `WORKFLOW_RUN_STATUSES` из `db/schema.ts`; удалены локальный вывод
+  `[...WORKFLOW_RUN_STATUSES, 'skipped']` и дублирующий
+  `type NodeRunStatus`; `@deprecated RUN_STATUSES` удалён (0 потребителей).
+  `run_completed.status` — `TERMINAL_WORKFLOW_RUN_STATUSES`
+  (`['completed','failed'] as const satisfies readonly RunStatus[]`);
+  inline-union `'completed' | 'failed'` в `run-event.dto.ts` заменён на
+  него. +2 паритет-теста.
+- **Остаток:** KI-359 (inline-union `'completed' | 'failed'` в engine
+  :164/:1208/:370 и `runs.processor.ts` :220).
+- **Связанные:** KI-336, KI-353, KI-359.
 
 ---
 
@@ -5648,18 +5669,79 @@
 
 ---
 
+### KI-356 — REST-ответ workflow без DTO: web-зеркало расходится на shareToken
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/workflow/workflow.controller.ts`, `src/db/schema.ts`,
+  `web/src/lib/api.ts`
+- **Описание:** `GET/POST/PATCH /workflow` отдают строку Drizzle `workflows`
+  (10 колонок) как есть; web-зеркало `ApiWorkflowSchema` объявляет 9 полей —
+  без `shareToken`. Zod отбрасывает лишнее, дефект не проявляется, но
+  контракта ответа нет — в `api-contract.json` пара не попадает.
+- **Решение:** ввести backend-DTO `WorkflowResponse` (без `shareToken`),
+  внести пару в `api-contract.json` — гейт KI-352 подхватит автоматически.
+- **Связанные:** KI-352, KI-348.
+
+---
+
+### KI-357 — REST-зеркала вне паритет-гейта: TemplateSummary, LlmModelInfo,
+MediaModelInfo, engine-DTO
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `web/src/lib/api.ts`, `web/src/lib/export-import-api.ts`,
+  `web/src/types/media.ts`, `src/templates/dto/template.dto.ts`,
+  `src/llm/llm-registry.service.ts`, `src/media/dto/media-model.mapper.ts`,
+  `src/engine/dto/graph.dto.ts`
+- **Описание:** гейт KI-352 покрывает 4 ответа. Вне его — `TemplateSummary`
+  (Zod↔Zod 4/4, backend в `src/templates/dto`), `LlmModelInfo` (7/7,
+  backend TS-interface), `MediaModelInfo` (ручная синхронизация),
+  `ApiNodeSchema` (+`order`; `position` optional↔обязателен),
+  `ApiEdgeSchema` (`.optional` ↔ `.nullish`), `ModelModality`
+  (значения дублируются).
+- **Решение:** добавить `TemplateSummary` в текущий `api-contract.json`;
+  LLM/media/engine — после снятия ограничений на чтение их папок.
+- **Связанные:** KI-352, KI-348, KI-350.
+
+---
+
+### KI-358 — у REST-ответов backend нет Zod: гейт разбирает TS-интерфейсы
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/runs/runs.service.ts`,
+  `src/workflow/dto/share-workflow.dto.ts`, `src/runs/dto/api-contract.spec.ts`
+- **Описание:** SSE-гейт читает поля из `ZodObject.shape`; REST-ответы,
+  кроме `ExportWorkflowDto`, — TS-интерфейсы (`RunResponse`, `ShareTokenDto`,
+  `SharedWorkflow`), поэтому backend-гейт KI-352 читает их через
+  `ts.createSourceFile`. Хрупче Zod.
+- **Решение:** завести Zod-схемы ответов (`RunResponseSchema` и т.д.),
+  вывести типы через `z.infer`, заменить AST на `ZodObject.shape`.
+- **Связанные:** KI-352, KI-348.
+
+---
+
+### KI-359 — inline-union'ы финальных статусов запуска вне канона
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/engine/execution-engine.service.ts` (:164, :370, :1208),
+  `src/runs/runs.processor.ts` (:220)
+- **Описание:** канон после v0.8.5 — `db/schema.ts`; но сигнатуры
+  `finishRunAsync`, обработчик события и процессор повторяют
+  `'completed' | 'failed'` литералами. Переименование статуса не
+  подсветится компилятором.
+- **Решение:** `export type TerminalRunStatus = (typeof
+  TERMINAL_WORKFLOW_RUN_STATUSES)[number]` и заменить inline-union'ы.
+- **Связанные:** KI-353, KI-336.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 134 |
+| Fixed | 136 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 201 |
+| Open | 203 |
 | Won't Fix | 1 |
-| **Всего** | **344** |
+| **Всего** | **348** |
 
 ---
 

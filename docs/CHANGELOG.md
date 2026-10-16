@@ -17,6 +17,42 @@
 ---
 ## [Unreleased]
 
+## [0.8.5] — 2026-10-16
+
+**Patch после v0.8.4. Единый источник статусов + паритет-гейт REST-контракта.**
+
+Два подшага.
+
+### Changed
+
+- **Backend — единый источник статусов (KI-353):**
+  `run-stream-message.dto.ts` импортирует `NODE_RUN_STATUSES` /
+  `WORKFLOW_RUN_STATUSES` из `db/schema.ts`; удалены `@deprecated`-псевдоним
+  `RUN_STATUSES` (0 потребителей), локальный вывод списка и дублирующий
+  `type NodeRunStatus`. Добавлен `TERMINAL_WORKFLOW_RUN_STATUSES`
+  (`['completed','failed'] as const satisfies readonly RunStatus[]`) —
+  используется в `run-event.dto.ts`. Миграция не нужна
+  (`pnpm db:generate` → No schema changes).
+
+### Added
+
+- **API-паритет-гейт REST-контракта (KI-352):**
+  `docs/development/api-contract.json` — source of truth для 4 REST-ответов
+  (RunResponse, ShareTokenDto, SharedWorkflow, ExportWorkflowDto); два
+  паритет-спека (backend + web); паттерн — из KI-348 (`sse-contract.json`).
+
+### Fixed
+
+- **KI-352** — паритет-гейт REST-контракта (`a889991`).
+- **KI-353** — единый источник статусов, удаление `RUN_STATUSES` (`0e5d027`).
+
+### Documented
+
+- **KI-356** — workflow без backend-DTO (Medium).
+- **KI-357** — REST-зеркала вне гейта (Medium).
+- **KI-358** — REST-ответы без Zod (Low).
+- **KI-359** — inline-union'ы финальных статусов (Low).
+
 ## [0.8.4] — 2026-10-16
 
 **Patch после v0.8.3. Skip-статус в схеме, skip-семантика подграфов,

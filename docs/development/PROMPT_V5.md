@@ -170,7 +170,7 @@
 2. **`docs/CHANGELOG.md`** — история. Не трогать без нужды, при релизе —
    `[Unreleased]` → `[X.Y.Z] — YYYY-MM-DD`, сверху пустая `[Unreleased]`.
 3. **`docs/KNOWN_ISSUES.md`** — реестр KI. Нумерация с KI-001, **не
-   пропускать** (RULES § 3.18). **344 KI на v0.8.4** (последний KI-355).
+   пропускать** (RULES § 3.18). **348 KI на v0.8.5** (последний KI-359).
    При закрытии — статус `Fixed` + «Исправлено в: vX.Y.Z».
 4. **`docs/development/PROMPT_V5.md`** (этот файл).
 5. **`docs/development/v0.8/DESIGN_V08_FEATURES.md`** — DESIGN v0.8
@@ -212,7 +212,7 @@
 
 ---
 
-## § 5. Текущее состояние (v0.8.4, 2026-10-16)
+## § 5. Текущее состояние (v0.8.5, 2026-10-16)
 
 ### Что работает
 
@@ -280,25 +280,25 @@
 - `workflow_runs`, `node_runs` — timestamptz везде.
 - `users`, `refresh_tokens` — auth (R6.1).
 
-**Метрики (v0.8.4):**
-- 563 + 6 backend-тестов, 192 frontend-теста.
+**Метрики (v0.8.5):**
+- 570 + 6 backend-тестов, 197 frontend-тестов.
 - Bundle: ~700.72 kB JS (лимит предупреждения 710).
 - CI: 2 job, зелёный (шаги Typecheck и Apply migrations).
-- 344 KI в реестре: Fixed 134, Open 201, Documented 7, Planned 1,
+- 348 KI в реестре: Fixed 136, Open 203, Documented 7, Planned 1,
   Won't Fix 1.
 - Husky pre-commit + GitHub Push Protection.
 
 ---
 
-## § 6. Открытые KI (актуально на v0.8.4)
+## § 6. Открытые KI (актуально на v0.8.5)
 
 **Полный реестр — `docs/KNOWN_ISSUES.md`. Правило (RULES 3.20): перед
 правкой § 6 пересчитать grep'ом, не по памяти.**
 
-**🟠 High (v0.8.4):** — нет открытых (KI-336/337/347/348 закрыты
+**🟠 High (v0.8.5):** — нет открытых (KI-336/337/347/348 закрыты
 в v0.8.4).
 
-**🟡 Medium (v0.8.4/v0.9):**
+**🟡 Medium (v0.8.5/v0.9):**
 - KI-330/331 — share UX (selection, fit-сброс).
 - KI-332 — TTL workflow-list кэша.
 - KI-335 — формула KI-314 (документация).
@@ -308,11 +308,11 @@
 - KI-349 — TextNode без target-handle.
 - KI-061/062/063/077 — GET /runs, retryable, final, nodes.
 - KI-150 — cost_usd = null вне прайса.
-- KI-352 — нет паритет-гейта для REST-зеркала `web/src/lib/api.ts`.
-- KI-353 — три источника правды по статусам узла.
+- KI-356 — workflow без backend-DTO (`shareToken`).
+- KI-357 — REST-зеркала вне паритет-гейта.
 
-**🟢 Low / долг:** KI-330..351, KI-354, KI-355 + остатки v0.6.x/v0.7.x
-— см. полный список в KNOWN_ISSUES.md.
+**🟢 Low / долг:** KI-330..351, KI-354, KI-355, KI-358, KI-359 + остатки
+v0.6.x/v0.7.x — см. полный список в KNOWN_ISSUES.md.
 
 ---
 
@@ -440,11 +440,11 @@
 - R6.7 Sub-workflows (KI-200, KI-300..305).
 - R6.5.2-fix2 (fitView race + панель, KI-306, 307).
 
-**Метрики (v0.8.4):** backend 563+6 тестов, frontend 192 теста,
+**Метрики (v0.8.5):** backend 570+6 тестов, frontend 197 тестов,
 bundle ~700.72 kB (chunkSizeWarningLimit 710), CI 2 job (Typecheck +
-Apply migrations). 344 KI в реестре: Fixed 134 · Open 201 ·
+Apply migrations). 348 KI в реестре: Fixed 136 · Open 203 ·
 Documented 7 · Planned 1 · Won't Fix 1.
-**Tag + Release:** v0.8.4 (Latest).
+**Tag + Release:** v0.8.5 (Latest).
 
 ### v0.8.1 — фиксы (следующий этап, план)
 
@@ -609,8 +609,8 @@ RULES — скажи «это стоит добавить в RULES § X.Y».
 
 ## § 12. Итог
 
-**Проект в состоянии: v0.8.4 выпущен, CI зелёный,
-563/563 backend + 192/192 frontend, 344 KI.**
+**Проект в состоянии: v0.8.5 выпущен, CI зелёный,
+570/570 backend + 197/197 frontend, 348 KI.**
 
 **Следующий этап — v0.8.1 (фиксы):** единый `/api` (KI-299/072/120),
 KI-306 (fitView minZoom), KI-298 (drizzle ↔ БД), KI-300 (version),
