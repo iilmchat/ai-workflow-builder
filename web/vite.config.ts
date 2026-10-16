@@ -1,13 +1,67 @@
+import type { IncomingMessage } from 'node:http';
 import path from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, type ProxyOptions } from 'vite';
+import { API_PREFIXES } from './src/lib/api-prefixes.ts';
+
+/** Адрес backend'а (NestJS), на который уходят API-запросы dev-сервера. */
+const TARGET = 'http://localhost:3000';
+
+/**
+ * Генерирует `server.proxy` из единого реестра `API_PREFIXES`.
+ *
+ * Раньше префиксы перечислялись здесь руками, и трижды список расходился с
+ * backend'ом: `/llm` (KI-072), `/media` (KI-120), `/templates` (KI-299).
+ * Забытый префикс не ломал сборку и unit-тесты — запрос уходил в SPA-fallback
+ * Vite, возвращал `200 text/html`, и ошибка всплывала только на CDP-смоуке
+ * (Zod не мог разобрать HTML). Теперь источник правды один
+ * (`web/src/lib/api-prefixes.ts`), а паритет с backend-контроллерами проверяют
+ * spec'и на обеих сторонах.
+ *
+ * Поведение каждого префикса сохраняется:
+ * - `sse: true` — поток не обрывается таймаутом (`timeout`/`proxyTimeout`: 0);
+ * - `htmlFallback: true` — HTML-запросы (deep-link) получают `/index.html`,
+ *   а `fetch` с JSON всё так же уходит на backend (R6.2.2);
+ * - остальные — короткая форма (строка с target).
+ *
+ * @returns карта прокси: ключ — `/префикс`, значение — target или настройки
+ */
+function buildProxy(): Record<string, string | ProxyOptions> {
+  const proxy: Record<string, string | ProxyOptions> = {};
+
+  for (const entry of API_PREFIXES) {
+    const key = `/${entry.prefix}`;
+
+    if (entry.sse) {
+      proxy[key] = {
+        target: TARGET,
+        changeOrigin: true,
+        timeout: 0,
+        proxyTimeout: 0,
+      };
+    } else if (entry.htmlFallback) {
+      proxy[key] = {
+        target: TARGET,
+        bypass: (request: IncomingMessage) =>
+          request.headers.accept?.includes('text/html') === true
+            ? '/index.html'
+            : undefined,
+      };
+    } else {
+      proxy[key] = TARGET;
+    }
+  }
+
+  return proxy;
+}
 
 /**
  * Конфиг dev-сервера визуального редактора.
  *
- * Запросы к backend-API (`/workflow`, `/engine`, `/runs`) проксируются на NestJS,
- * поэтому фронтенд обращается к относительным путям и не упирается в CORS.
+ * Запросы к backend-API проксируются на NestJS по списку из `API_PREFIXES`
+ * (см. `web/src/lib/api-prefixes.ts`), поэтому фронтенд обращается к
+ * относительным путям и не упирается в CORS.
  */
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -18,47 +72,6 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    proxy: {
-      // R6.1b.2: /auth/* уходит на backend вместе с httpOnly refresh-cookie.
-      '/auth': 'http://localhost:3000',
-      // R6.2.2: навигация браузера на /workflow/share/:token — это deep-link
-      // SPA-маршрута, а не вызов API. Прокси отдаёт index.html для HTML-запросов
-      // (fetch с JSON всё так же уходит на backend).
-      '/workflow': {
-        target: 'http://localhost:3000',
-        bypass: (request) =>
-          request.headers.accept?.includes('text/html') === true ? '/index.html' : undefined,
-      },
-      '/engine': 'http://localhost:3000',
-      // Модели для селекта LLM-узла (`GET /llm/models`, R4.1b): обычный JSON,
-      // потоковость не нужна, поэтому короткая форма.
-      '/llm': 'http://localhost:3000',
-      /**
-       * SSE-поток прогресса запуска (R4.1).
-       *
-       * `http-proxy` (внутри Vite) отдаёт ответ потоково, без буферизации, но по
-       * умолчанию ограничивает время соединения — долгий запуск (LLM-узлы и
-       * ретраи job'а, KI-040) легко переживёт такой таймаут, и поток оборвётся
-       * до `run_completed`. Поэтому таймауты сняты: `timeout`/`proxyTimeout: 0`
-       * отключают ограничения, `changeOrigin` нужен для корректного Host.
-       */
-      '/runs': {
-        target: 'http://localhost:3000',
-        changeOrigin: true,
-        timeout: 0,
-        proxyTimeout: 0,
-      },
-      // v0.6.0b.2.3: каталог media-моделей (`GET /media/models?type=IMAGE`).
-      // KI-072: префиксы перечисляются вручную — /media забыли при
-      // добавлении узла Image Generation.
-      '/media': 'http://localhost:3000',
-      // R6.6.2: шаблоны workflow (`GET /templates`,
-      // `POST /templates/:id/instantiate`).
-      // KI-296: в R6.6.1 префикс забыли — Vite отдавал на `/templates`
-      // index.html SPA, и вкладка «Шаблоны» падала на Zod-разборе ответа.
-      // Та же ловушка, что KI-072 (`/llm`) и KI-120 (`/media`); структурный
-      // фикс — единый `/api`-префикс, он не сделан (PROMPT_V5 § 7.3).
-      '/templates': 'http://localhost:3000',
-    },
+    proxy: buildProxy(),
   },
 });
