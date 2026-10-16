@@ -71,7 +71,9 @@ media-узлов возможны исключения.
 требованию).
 
 **2.4 `IMediaProvider` — расширяем.** Добавить `kind: 'IMAGE' | 'VIDEO'
-| 'AUDIO' | 'MUSIC' | '3D' | 'TOOL'`. Для `TOOL` — метод
+| 'AUDIO' | 'MUSIC' | '3D' | 'TOOL'` (TOOL — семантический маркер;
+upstream CreativeLab его не отдаёт, инструменты резолвятся model-first
+через IMAGE/VIDEO с обязательным входным слотом — KI-366). Для `TOOL` — метод
 `applyToolAsync(input, tool, params)` возвращает результат без poll.
 CreativeLab API поддерживает. Новые провайдеры: Replicate (R7.3), FAL
 (R7.3), OpenAI Images (R7.3), ElevenLabs (R7.2).
@@ -133,12 +135,20 @@ $X». Yandex — «кэш недоступен» (честно). Обоснов�
       params?: Record<string, unknown>; // параметры конкретной операции
     }
 
+**Реальность upstream (KI-366/367):** `GET /media/models?type=TOOL` даёт
+пустой список — CreativeLab не маркирует инструменты отдельным типом.
+Инструменты резолвятся model-first: `toolModels = TOOL ∪ модели с
+обязательным входом`. Дефолтные модели есть только у bg_removal
+(bgremover) и lipsync (kling-lipsync); для upscale/chromakey/trim
+модель выбирается вручную (KI-367). Реализовано в R7.1.
+
 **Backend:** `MediaNodeExecutor` расширяется — `kind='image_tool'`
 использует `IMediaProvider.applyToolAsync(input, tool, params)` (новый
 метод). CreativeLab поддерживает операции через тот же `/api/v2/media`.
 Ответ — `{ resultUrls: [{ url }], costRub, tokensIn? }`.
 
 **Frontend:** компонент `ImageToolNode` — селект операции (5 значений),
+поле `audioUrl` при operation='lipsync' (KI-369, R7.2),
 селект модели (фильтр `output: 'image'`), preview входа (thumbnail из
 связи). Плейсхолдер выхода — `<img>`.
 
@@ -150,7 +160,8 @@ $X». Yandex — «кэш недоступен» (честно). Обоснов�
 Проверка **перед** вызовом провайдера: `estimatedCost + accumulated >
 budget` → узел `failed` с `error='Budget exceeded (estimated: $X,
 remaining: $Y)'`. UI — прогресс-бар в TopBar (`data-run-budget`),
-тултип с цифрами.
+тултип с цифрами;
+бар виден только при активном run, итог — через GET /runs/:id/budget (KI-375).
 
 **i18n:** 5 ключей операции + 4 бюджет-сообщения (`budget.exceeded`,
 `budget.warning`, `budget.remaining`, `budget.label`).
