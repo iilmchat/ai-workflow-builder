@@ -2,7 +2,7 @@
 
 **Версия промпта:** v6.0
 **Дата:** 2026-10-16
-**Актуальный релиз:** v0.8.5 (skip-статус потомков упавших, `http.failOnHttpError`, type-aware порты, fit readability, кэш sub_workflow, SSE-зеркало node_skipped, type-check spec'ов, test:parity)
+**Актуальный релиз:** v0.8.5 (единый источник статусов, паритет-гейт REST-контракта backend ↔ web)
 **Текущий этап:** v0.9 — DESIGN
 **Репозиторий:** https://github.com/iilmchat/ai-workflow-builder
 **Рабочий путь:** локальный клон репозитория — **зависит от машины**
@@ -93,7 +93,7 @@
 - **@xyflow/react** v12 (React Flow) — canvas.
 - **Zustand 5** — state.
 - **Tailwind CSS v4** (плагин `@tailwindcss/vite`, без JS-конфига).
-- **react-i18next** + **i18next** — i18n RU/EN (209 ключей).
+- **react-i18next** + **i18next** — i18n RU/EN (212 ключей).
 - **Vitest 4** (197 frontend-тестов).
 - **Zod** — валидация API-ответов (в `web/dependencies`).
 
@@ -177,7 +177,7 @@
 5. **`docs/development/v0.8/DESIGN_V08_FEATURES.md`** — DESIGN v0.8
    (Approved 2026-10-15, **закрыт v0.8.0**).
 6. **`docs/development/RULES.md`** — v1.8.2 (§ 3.18 — проверка max KI;
-   § 3.19 — Apply migrations; § 3.20 — сводка KI по grep).
+   § 3.19 — Apply migrations; § 3.20 — сводка KI по grep; § 3.21 — пересчёт цифр от факта на HEAD).
 
 ---
 
@@ -256,7 +256,7 @@
 - Узлы: Text, LLM, ImageGen, **Comment** (стикер), **Http**,
   **Condition** (2 выхода T/F), **Output**, **Compare** (2 входа
   a/b), **SubWorkflow** (селект своих workflow, «Открыть в редакторе»).
-- **Тёмная/светлая тема**, **i18n RU/EN** (209 ключей, паритет-тест).
+- **Тёмная/светлая тема**, **i18n RU/EN** (212 ключей, паритет-тест).
 - **SSE-подписка** (fetch + ReadableStream, Bearer), подсветка узлов.
 - **Панель результата** (outputs, метрики, logs, word-wrap).
 - **Каталог узлов** — поповер с секциями (input / ai / media / tools /
