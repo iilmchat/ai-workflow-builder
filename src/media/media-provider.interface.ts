@@ -131,6 +131,15 @@ export interface MediaModelInfo {
   code: string;
   /** Тип модели. */
   type: MediaType;
+  /**
+   * Имя провайдера, объявившего модель (R7.3, DESIGN v0.9 § 3.3).
+   *
+   * Нужно UI: в селекте модели узла `image_generation` модели группируются по
+   * провайдеру (`[Replicate] flux-pro-1.1-ultra`). Опционально, потому что
+   * каталог CreativeLab это поле не отдаёт — его проставляет провайдер при
+   * построении `MediaModelInfo`.
+   */
+  provider?: string;
   /** Цена за генерацию (рубли). Может быть `0` — см. `priceUnit`. */
   price: number;
 

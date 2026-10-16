@@ -89,6 +89,15 @@ export const MediaModelInfoSchema = z
     id: z.string(),
     code: z.string(),
     type: MediaModelTypeSchema,
+    /**
+     * Имя провайдера, объявившего модель (R7.3).
+     *
+     * Проставляет backend (`MediaModelInfo.provider`): в селекте узла
+     * `image_generation` модели группируются по провайдеру
+     * (`[Replicate] flux-pro-1.1-ultra`). Опционально — каталог CreativeLab
+     * этого поля не отдаёт.
+     */
+    provider: z.string().optional(),
     price: z.number().nonnegative(),
     priceUnit: z.string().nullable(),
     priceInput: z.number().nullable(),

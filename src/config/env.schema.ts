@@ -108,6 +108,69 @@ export const CostBudgetEnvSchema = z.object({
 export type CostBudgetEnv = z.infer<typeof CostBudgetEnvSchema>;
 
 /**
+ * Zod-схема прямых image-провайдеров (R7.3, DESIGN v0.9 § 3.3).
+ *
+ * Replicate / FAL / OpenAI Images ходят в свои API напрямую, а не через
+ * GPTunnel CreativeLab. Все ключи опциональны: без ключа провайдер не
+ * регистрируется (`isConfigured === false`), приложение поднимается, а
+ * `GET /media/models` просто не показывает его модели.
+ *
+ * Вынесена отдельным объектом по той же причине, что {@link WorkerEnvSchema} и
+ * {@link CostBudgetEnvSchema}: это единственный источник дефолтов, а значения
+ * нужны и `ConfigModule`, и `MediaModule` (сборка массива провайдеров).
+ */
+export const MediaDirectEnvSchema = z.object({
+  // === Replicate (100+ моделей, REST API) ===
+  /** Токен Replicate. Без него провайдер не регистрируется. */
+  REPLICATE_API_TOKEN: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Base URL Replicate API (дефолт — публичный `https://api.replicate.com/v1`). */
+  REPLICATE_BASE_URL: z
+    .preprocess(emptyToUndefined, httpUrl.optional())
+    .default('https://api.replicate.com/v1'),
+
+  // === FAL (fast inference: flux, SDXL, Kling, ...) ===
+  /** Ключ FAL. Без него провайдер не регистрируется. */
+  FAL_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Base URL FAL (дефолт — `https://fal.run`; очередь — `https://queue.fal.run`). */
+  FAL_BASE_URL: z
+    .preprocess(emptyToUndefined, httpUrl.optional())
+    .default('https://fal.run'),
+
+  // === OpenAI Images (gpt-image-1, dall-e-3) ===
+  /**
+   * Ключ OpenAI Images. Может совпадать с ключом chat (`OPENAI_API_KEY`) —
+   * тогда достаточно оставить эту переменную пустой, а ключ возьмётся из
+   * `OPENAI_API_KEY` (fallback).
+   */
+  OPENAI_IMAGES_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Base URL OpenAI Images (дефолт — публичный `https://api.openai.com/v1`). */
+  OPENAI_IMAGES_BASE_URL: z
+    .preprocess(emptyToUndefined, httpUrl.optional())
+    .default('https://api.openai.com/v1'),
+
+  // === Приоритет провайдеров ===
+  /**
+   * Порядок провайдеров при коллизии id модели (DESIGN v0.9 § 3.3):
+   * `creativelab,replicate,fal,openai_images`. Первый в списке побеждает.
+   * Неизвестные имена игнорируются, отсутствующие дописываются в конец.
+   */
+  MEDIA_PROVIDER_PRIORITY: z
+    .preprocess(emptyToUndefined, z.string().optional())
+    .default('creativelab,replicate,fal,openai_images'),
+
+  /**
+   * Курс USD→RUB для оценки стоимости моделей Replicate/FAL: их каталог
+   * тарифицируется в долларах, а бюджет и тарифы media-узлов считаются в
+   * рублях (R7.1, KI-048). Без пересчёта такие модели получали бы нулевую
+   * оценку и обходили предохранитель бюджета.
+   */
+  MEDIA_USD_RUB_RATE: z.coerce.number().positive().default(100),
+});
+
+/** Валидированные настройки прямых image-провайдеров (R7.3). */
+export type MediaDirectEnv = z.infer<typeof MediaDirectEnvSchema>;
+
+/**
  * Zod-схема переменных окружения, обязательных для запуска приложения.
  *
  * Проверяется ровно один раз при инициализации `ConfigModule` (fail-fast):
@@ -282,6 +345,8 @@ export const EnvSchema = z.object({
   ...WorkerEnvSchema.shape,
   // Бюджет запуска: лимиты стоимости и режим (R7.1, KI-048).
   ...CostBudgetEnvSchema.shape,
+  // Прямые image-провайдеры: Replicate / FAL / OpenAI Images (R7.3, KI-363).
+  ...MediaDirectEnvSchema.shape,
 })
   /**
    * Fail-fast: отказ старта при `AUTH_DISABLED=true` в production.

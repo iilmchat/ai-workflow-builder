@@ -13,14 +13,26 @@ import {
 export const MEDIA_PROVIDERS = 'MEDIA_PROVIDERS';
 
 /**
- * Реестр media-провайдеров (v0.6.0b.2.1).
+ * Реестр media-провайдеров (v0.6.0b.2.1, мультипровайдерность — R7.3).
  *
- * Пока провайдер один (`creativelab`), но реестр уже собран как агрегатор:
- * когда появится второй media-провайдер (v0.6.0b.2.x), достаточно передать его
- * в конструктор — контроллер, дедупликация и UI не изменятся.
+ * R7.3 (KI-363, DESIGN v0.9 § 3.3) добавил прямые провайдеры Replicate, FAL и
+ * OpenAI Images, поэтому реестр перестал быть «обёрткой над одним CreativeLab»:
  *
- * Провайдеры приходят по конструктору (RULES 1.3); сконфигурированные
- * определяются на месте по `isConfigured`, как в `LlmRegistryService`.
+ * - **порядок провайдеров = приоритет** (`MEDIA_PROVIDER_PRIORITY`,
+ *   `creativelab,replicate,fal,openai_images`). Порядок задаёт `MediaModule`
+ *   (`orderMediaProviders`), реестр лишь следует ему: при коллизии id модели
+ *   побеждает первый ({@link deduplicate}), и маршрутизация не зависит от того,
+ *   в каком порядке DI вернул провайдеров;
+ * - **`resolveByModelAsync`** ищет модель по каталогам **сконфигурированных**
+ *   провайдеров: исполнитель узла (`MediaNodeExecutor`) не знает, кто её
+ *   обслуживает. Каталоги кэшируются внутри провайдеров (TTL 15 минут), поэтому
+ *   поиск не бьёт в upstream на каждый вызов (RULES 1.18);
+ * - **`listAllModelsAsync`** агрегирует каталоги всех провайдеров — метод для
+ *   UI (`GET /media/models`) и диагностики.
+ *
+ * Провайдеры приходят по конструктору (RULES 1.3); «сконфигурирован» ли
+ * провайдер, определяется на месте по `isConfigured`, как в
+ * `LlmRegistryService`.
  */
 @Injectable()
 export class MediaRegistryService {
@@ -30,10 +42,14 @@ export class MediaRegistryService {
   private readonly providers: readonly IMediaProvider[];
 
   /**
-   * @param providers - media-провайдеры в порядке приоритета
+   * @param providers - media-провайдеры **в порядке приоритета** (его задаёт
+   *   `MediaModule` через `MEDIA_PROVIDER_PRIORITY`)
    */
   constructor(@Inject(MEDIA_PROVIDERS) providers: readonly IMediaProvider[]) {
     this.providers = providers;
+    this.logger.debug(
+      `Media-провайдеры по приоритету: ${providers.map((provider) => provider.name).join(', ') || 'нет'}`,
+    );
   }
 
   /**
@@ -55,9 +71,47 @@ export class MediaRegistryService {
   async listModelsAsync(
     type?: MediaType,
   ): Promise<readonly MediaModelInfo[]> {
-    const configured = this.providers.filter(
-      (provider) => provider.isConfigured,
-    );
+    return this.collectModelsAsync(type);
+  }
+
+  /**
+   * Агрегирует каталоги всех сконфигурированных провайдеров (R7.3).
+   *
+   * Отличие от {@link listModelsAsync} только в имени: метод добавлен по
+   * DESIGN § 3.3 как явная точка «собрать всё» для UI и диагностики
+   * («какие модели фактически отдают провайдеры»). Оба метода идут по одному
+   * пути, чтобы у них не разошлось поведение дедупликации.
+   *
+   * @param type - тип модели, либо `undefined` — модели всех типов
+   * @returns объединённый список без дубликатов id (побеждает первый по
+   *   приоритету); пустой массив, если ни один провайдер не сконфигурирован
+   * @throws MediaProviderException если сконфигурированный провайдер ответил
+   *   ошибкой
+   */
+  async listAllModelsAsync(
+    type?: MediaType,
+  ): Promise<readonly MediaModelInfo[]> {
+    return this.collectModelsAsync(type);
+  }
+
+  /**
+   * Общий путь обоих методов каталога: параллельный опрос, дедупликация и
+   * простановка поля `provider`.
+   *
+   * `provider` проставляется **здесь**, а не только в провайдерах: каталог
+   * CreativeLab строит свой маппер (`toMediaModelInfo`) и этого поля не знает,
+   * а UI (R7.3) группирует селект модели по провайдеру — без простановки
+   * модели CreativeLab попали бы в группу `undefined` (найдено смоуком R7.3).
+   *
+   * @param type - тип модели, либо `undefined` — модели всех типов
+   * @returns объединённый список моделей без дубликатов
+   * @throws MediaProviderException если сконфигурированный провайдер ответил
+   *   ошибкой
+   */
+  private async collectModelsAsync(
+    type?: MediaType,
+  ): Promise<readonly MediaModelInfo[]> {
+    const configured = this.configuredProviders();
 
     if (configured.length === 0) {
       this.logger.debug('Нет сконфигурированных media-провайдеров');
@@ -70,6 +124,19 @@ export class MediaRegistryService {
     );
 
     return this.deduplicate(configured, results);
+  }
+
+  /**
+   * Возвращает имена провайдеров в порядке приоритета.
+   *
+   * Нужно диагностике и тестам приоритета: без этого «порядок задан» нельзя
+   * проверить, не заглядывая в приватное поле.
+   *
+   * @returns имена всех зарегистрированных провайдеров (включая
+   *   неконфигурированные)
+   */
+  listProviderNames(): readonly string[] {
+    return this.providers.map((provider) => provider.name);
   }
 
   /**
@@ -103,7 +170,7 @@ export class MediaRegistryService {
   async getTaskAsync(taskId: string, model?: string): Promise<MediaTaskResult> {
     const provider = model
       ? await this.resolveByModelAsync(model)
-      : this.providers.find((candidate) => candidate.isConfigured);
+      : this.configuredProviders()[0];
 
     if (!provider) {
       throw new MediaProviderException(
@@ -126,16 +193,30 @@ export class MediaRegistryService {
    *   недоступен или модель не объявлена ни одним провайдером)
    */
   async findParamsAsync(modelId: string): Promise<readonly MediaParam[] | null> {
-    const configured = this.providers.filter(
-      (provider) => provider.isConfigured,
-    );
+    const model = await this.findModelAsync(modelId);
 
-    for (const provider of configured) {
+    return model?.params ?? null;
+  }
+
+  /**
+   * Находит модель в каталогах провайдеров (R7.3).
+   *
+   * Ищет в порядке приоритета и останавливается на первом объявлении — так же,
+   * как {@link resolveByModelAsync}: модель и её параметры обязаны приходить из
+   * одного каталога, иначе форма узла собиралась бы по чужой схеме.
+   *
+   * @param modelId - id модели из каталога (с префиксом провайдера или без)
+   * @returns описание модели либо `null`, если её никто не объявил
+   * @throws MediaProviderException если сконфигурированный провайдер ответил
+   *   ошибкой при чтении каталога
+   */
+  async findModelAsync(modelId: string): Promise<MediaModelInfo | null> {
+    for (const provider of this.configuredProviders()) {
       const models = await provider.listModelsAsync();
       const found = models.find((model) => model.id === modelId);
 
       if (found) {
-        return found.params;
+        return found;
       }
     }
 
@@ -143,17 +224,26 @@ export class MediaRegistryService {
   }
 
   /**
-   * Находит провайдера, объявившего модель.
+   * Находит провайдера, объявившего модель (R7.3, DESIGN v0.9 § 3.3).
+   *
+   * Публичный: `MediaNodeExecutor` (R7.1) маршрутизирует инструменты по
+   * каталогу, и логика поиска должна жить в реестре, а не дублироваться в
+   * исполнителе (KI-370 — дублирование маршрутизации).
    *
    * @param modelId - id модели из каталога
    * @returns провайдер, обслуживающий модель
    * @throws MediaProviderException если модель не объявлена ни одним
-   *   сконфигурированным провайдером
+   *   сконфигурированным провайдером (или провайдеров нет вовсе)
    */
-  private async resolveByModelAsync(modelId: string): Promise<IMediaProvider> {
-    const configured = this.providers.filter(
-      (provider) => provider.isConfigured,
-    );
+  async resolveByModelAsync(modelId: string): Promise<IMediaProvider> {
+    const configured = this.configuredProviders();
+
+    if (configured.length === 0) {
+      throw new MediaProviderException(
+        'media',
+        'Нет сконфигурированных media-провайдеров',
+      );
+    }
 
     for (const provider of configured) {
       const models = await provider.listModelsAsync();
@@ -170,12 +260,24 @@ export class MediaRegistryService {
   }
 
   /**
+   * Возвращает сконфигурированных провайдеров в порядке приоритета.
+   *
+   * @returns провайдеры с `isConfigured === true`
+   */
+  private configuredProviders(): readonly IMediaProvider[] {
+    return this.providers.filter((provider) => provider.isConfigured);
+  }
+
+  /**
    * Склеивает ответы провайдеров, убирая дубликаты id.
    *
    * При коллизии (два провайдера объявили один id) побеждает **первый в
    * порядке приоритета**, а конфликт пишется предупреждением. Так id модели
    * всегда уходит в один и тот же upstream: «последний побеждает» делал бы
    * маршрутизацию зависимой от порядка объявления провайдеров.
+   *
+   * Каждой модели проставляется `provider` (имя объявившего провайдера), если
+   * провайдер его не заполнил: по этому полю UI группирует селект (R7.3).
    *
    * @param providers - провайдеры в порядке приоритета (параллельно `results`)
    * @param results - ответы провайдеров
@@ -200,7 +302,11 @@ export class MediaRegistryService {
         }
 
         seen.add(model.id);
-        merged.push(model);
+        merged.push(
+          model.provider === undefined
+            ? { ...model, provider: providerName }
+            : model,
+        );
       }
     });
 

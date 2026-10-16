@@ -102,7 +102,8 @@ describe('MediaRegistryService', () => {
 
     const models = await registry.listModelsAsync('IMAGE');
 
-    expect(models).toEqual([model('flux-schnell')]);
+    // R7.3: реестр проставляет `provider` — по нему UI группирует селект.
+    expect(models).toEqual([{ ...model('flux-schnell'), provider: 'creativelab' }]);
     expect(provider.listModelsAsync).toHaveBeenCalledWith('IMAGE');
   });
 
@@ -110,7 +111,9 @@ describe('MediaRegistryService', () => {
     const provider = stubProvider('creativelab', [model('kling')]);
     const registry = await createRegistry([provider]);
 
-    await expect(registry.listModelsAsync()).resolves.toEqual([model('kling')]);
+    await expect(registry.listModelsAsync()).resolves.toEqual([
+      { ...model('kling'), provider: 'creativelab' },
+    ]);
     expect(provider.listModelsAsync).toHaveBeenCalledWith(undefined);
   });
 
@@ -120,8 +123,8 @@ describe('MediaRegistryService', () => {
     const registry = await createRegistry([first, second]);
 
     await expect(registry.listModelsAsync()).resolves.toEqual([
-      model('flux-schnell'),
-      model('kling'),
+      { ...model('flux-schnell'), provider: 'creativelab' },
+      { ...model('kling'), provider: 'other-media' },
     ]);
   });
 
@@ -143,12 +146,126 @@ describe('MediaRegistryService', () => {
     const models = await registry.listModelsAsync('IMAGE');
 
     // Первый провайдер в приоритете: его модель остаётся, дубликат отброшен.
-    expect(models).toEqual([model('shared-model')]);
+    expect(models).toEqual([
+      { ...model('shared-model'), provider: 'creativelab' },
+    ]);
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('Модель shared-model уже объявлена'),
     );
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('модель провайдера other-media пропущена'),
     );
+  });
+
+  it('listAllModelsAsync агрегирует каталоги всех провайдеров (R7.3)', async () => {
+    const creativelab = stubProvider('creativelab', [model('flux-schnell')]);
+    const replicate = stubProvider('replicate', [model('replicate:flux-dev')]);
+    const fal = stubProvider('fal', [model('fal:flux-pro')]);
+    const registry = await createRegistry([creativelab, replicate, fal]);
+
+    const models = await registry.listAllModelsAsync('IMAGE');
+
+    expect(models.map((item) => item.id)).toEqual([
+      'flux-schnell',
+      'replicate:flux-dev',
+      'fal:flux-pro',
+    ]);
+    expect(replicate.listModelsAsync).toHaveBeenCalledWith('IMAGE');
+  });
+
+  it('listAllModelsAsync пропускает неконфигурированных провайдеров', async () => {
+    const configured = stubProvider('creativelab', [model('flux-schnell')]);
+    const disabled = stubProvider('replicate', [model('replicate:x')], false);
+    const registry = await createRegistry([configured, disabled]);
+
+    const models = await registry.listAllModelsAsync();
+
+    expect(models.map((item) => item.id)).toEqual(['flux-schnell']);
+    expect(disabled.listModelsAsync).not.toHaveBeenCalled();
+  });
+
+  it('resolveByModelAsync публичный и находит провайдера по модели (R7.3)', async () => {
+    const creativelab = stubProvider('creativelab', [model('flux-schnell')]);
+    const replicate = stubProvider('replicate', [model('replicate:flux-dev')]);
+    const registry = await createRegistry([creativelab, replicate]);
+
+    await expect(registry.resolveByModelAsync('replicate:flux-dev')).resolves.toBe(
+      replicate,
+    );
+    await expect(registry.resolveByModelAsync('нет-такой')).rejects.toThrow(
+      'Модель не поддерживается ни одним media-провайдером: нет-такой',
+    );
+  });
+
+  it('resolveByModelAsync без провайдеров объясняет причину', async () => {
+    const registry = await createRegistry([]);
+
+    await expect(registry.resolveByModelAsync('flux-schnell')).rejects.toThrow(
+      'Нет сконфигурированных media-провайдеров',
+    );
+  });
+
+  it('findModelAsync возвращает модель, объявленную в каталоге', async () => {
+    const creativelab = stubProvider('creativelab', [model('flux-schnell')]);
+    const registry = await createRegistry([creativelab]);
+
+    await expect(registry.findModelAsync('flux-schnell')).resolves.toEqual(
+      model('flux-schnell'),
+    );
+    await expect(registry.findModelAsync('нет-такой')).resolves.toBeNull();
+  });
+
+  it('findParamsAsync берёт параметры из первого каталога, объявившего модель', async () => {
+    const withParams = stubProvider('creativelab', [
+      {
+        ...model('shared'),
+        params: [
+          { key: 'size', type: 'enum', label: 'wfc_size', default: '1024' },
+        ],
+      },
+    ]);
+    const withoutParams = stubProvider('replicate', [model('shared')]);
+    const registry = await createRegistry([withParams, withoutParams]);
+
+    const params = await registry.findParamsAsync('shared');
+
+    expect(params?.map((param) => param.key)).toEqual(['size']);
+  });
+
+  it('listProviderNames отдаёт провайдеров в порядке приоритета', async () => {
+    const registry = await createRegistry([
+      stubProvider('creativelab', []),
+      stubProvider('replicate', []),
+      stubProvider('fal', []),
+    ]);
+
+    expect(registry.listProviderNames()).toEqual([
+      'creativelab',
+      'replicate',
+      'fal',
+    ]);
+  });
+
+  it('проставляет provider моделям, которые его не заполнили (R7.3)', async () => {
+    // Каталог CreativeLab строит свой маппер и поля `provider` не знает:
+    // реестр обязан проставить его сам, иначе UI соберёт группу `undefined`
+    // (найдено смоуком R7.3).
+    const creativelab = stubProvider('creativelab', [model('bgremover')]);
+    const registry = await createRegistry([creativelab]);
+
+    const models = await registry.listModelsAsync();
+
+    expect(models[0]?.provider).toBe('creativelab');
+  });
+
+  it('не перезаписывает provider, если его заполнил сам провайдер', async () => {
+    const provider = stubProvider('replicate', [
+      { ...model('replicate:flux-dev'), provider: 'replicate' },
+    ]);
+    const registry = await createRegistry([provider]);
+
+    const models = await registry.listAllModelsAsync();
+
+    expect(models[0]?.provider).toBe('replicate');
   });
 });

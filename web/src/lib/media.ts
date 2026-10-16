@@ -110,6 +110,87 @@ export function pickDefaultToolModel(
 }
 
 /**
+ * Имя провайдера, которым помечаются модели без поля `provider` (R7.3).
+ *
+ * Backend проставляет `provider` у моделей прямых провайдеров (Replicate, FAL,
+ * OpenAI Images). Каталог CreativeLab поля не отдаёт, а его модели — это ровно
+ * то, что показывал селект до R7.3, поэтому для них используется эта метка;
+ * иначе они собрались бы в группу «неизвестный провайдер».
+ */
+export const DEFAULT_MEDIA_PROVIDER = 'creativelab';
+
+/** Имя провайдера у модели без явного поля `provider`. */
+function providerOf(model: MediaModelInfo): string {
+  const provider = model.provider;
+
+  return typeof provider === 'string' && provider.length > 0
+    ? provider
+    : DEFAULT_MEDIA_PROVIDER;
+}
+
+/**
+ * Группа моделей одного провайдера (R7.3, DESIGN v0.9 § 3.3).
+ */
+export interface MediaModelGroup {
+  /** Имя провайдера (`creativelab`, `replicate`, `fal`, `openai_images`). */
+  provider: string;
+  /** Модели этого провайдера (в исходном порядке каталога). */
+  models: readonly MediaModelInfo[];
+}
+
+/**
+ * Группирует модели по провайдеру — для `<optgroup>` в селекте узла.
+ *
+ * Порядок групп — как у моделей в каталоге: backend отдаёт провайдеров в
+ * порядке приоритета (`MEDIA_PROVIDER_PRIORITY`), поэтому «первый провайдер
+ * первым» в UI совпадает с тем, в какой upstream уйдёт id при коллизии имён.
+ * Сортировать группы по алфавиту нельзя: пользователь увидел бы порядок,
+ * которого нет в маршрутизации.
+ *
+ * @param models - каталог media-моделей (может быть пустым)
+ * @returns непустые группы в порядке первого появления провайдера
+ */
+export function groupModelsByProvider(
+  models: readonly MediaModelInfo[],
+): readonly MediaModelGroup[] {
+  const groups = new Map<string, MediaModelInfo[]>();
+
+  for (const model of models) {
+    const provider = providerOf(model);
+    const bucket = groups.get(provider);
+
+    if (bucket) {
+      bucket.push(model);
+      continue;
+    }
+
+    groups.set(provider, [model]);
+  }
+
+  return [...groups].map(([provider, items]) => ({
+    provider,
+    models: items,
+  }));
+}
+
+/**
+ * Отбирает модели одного провайдера (R7.3).
+ *
+ * Нужен фильтру селекта: модель без поля `provider` считается моделью
+ * CreativeLab (см. {@link DEFAULT_MEDIA_PROVIDER}).
+ *
+ * @param models - каталог media-моделей
+ * @param provider - имя провайдера
+ * @returns модели указанного провайдера (пустой массив, если таких нет)
+ */
+export function filterModelsByProvider(
+  models: readonly MediaModelInfo[],
+  provider: string,
+): readonly MediaModelInfo[] {
+  return models.filter((model) => providerOf(model) === provider);
+}
+
+/**
  * Выбирает модель по умолчанию для нового узла Image Generation (KI-154).
  *
  * Каталог CreativeLab приходит в алфавитном порядке, поэтому «первая модель»

@@ -12,6 +12,7 @@ import {
   type MediaModelInfo,
 } from '@/types/media';
 import { NODE_REGISTRY } from '@/lib/node-registry';
+import { groupModelsByProvider } from '@/lib/media';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
   DATA_TYPE_COLORS,
@@ -125,6 +126,10 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
       : (aspectRatioParam?.options?.[0]?.value?.toString() ?? ''));
   const price = selected ? formatPrice(selected) : null;
   const hasModels = mediaModels.length > 0;
+  // R7.3: модели группируются по провайдеру — в селекте они видны как
+  // `<optgroup label="Replicate">`. Порядок групп повторяет порядок каталога,
+  // а он — приоритет провайдеров на backend (MEDIA_PROVIDER_PRIORITY).
+  const modelGroups = groupModelsByProvider(mediaModels);
 
   return (
     <>
@@ -177,11 +182,22 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
             </option>
           )}
 
-          {mediaModels.map((model) => (
-            <option key={model.id} value={model.id}>
-              {/* У media-модели нет label: короткий `code` читабельнее id. */}
-              {model.code}
-            </option>
+          {modelGroups.map((group) => (
+            <optgroup
+              key={group.provider}
+              // Подпись — из i18n: у незнакомого провайдера показываем его
+              // техническое имя как есть (молчаливой подмены нет, KI-069).
+              label={t(`media.provider.${group.provider}`, {
+                defaultValue: group.provider,
+              })}
+            >
+              {group.models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {/* У media-модели нет label: короткий `code` читабельнее id. */}
+                  {model.code}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
 

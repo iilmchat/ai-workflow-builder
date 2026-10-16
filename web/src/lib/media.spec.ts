@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 // Относительные пути (не `@/`): тестовый конфиг web не задаёт alias —
 // см. KI-155. Остальные (компонентные) тесты сюда не попадают.
-import { pickDefaultMediaModel, pickDefaultToolModel, pickToolModels } from './media';
+import {
+  DEFAULT_MEDIA_PROVIDER,
+  filterModelsByProvider,
+  groupModelsByProvider,
+  pickDefaultMediaModel,
+  pickDefaultToolModel,
+  pickToolModels,
+} from './media';
 import type { MediaInput, MediaModelInfo } from '../types/media';
 
 /**
@@ -164,5 +171,64 @@ describe('pickToolModels / pickDefaultToolModel (R7.1)', () => {
     expect(pickDefaultToolModel(models, 'bg_removal')).toBe('bgremover');
     expect(pickDefaultToolModel(models, 'upscale')).toBe('bgremover');
     expect(pickDefaultToolModel([], 'upscale')).toBe('');
+  });
+});
+
+describe('groupModelsByProvider / filterModelsByProvider (R7.3)', () => {
+  it('группирует модели по провайдеру в порядке каталога', () => {
+    // Порядок каталога = приоритет провайдеров на backend
+    // (MEDIA_PROVIDER_PRIORITY), поэтому группы не сортируются по алфавиту.
+    const catalog = [
+      model('flux-schnell', { provider: 'creativelab' }),
+      model('replicate:black-forest-labs/flux-dev', { provider: 'replicate' }),
+      model('fal:fal-ai/flux-pro/v1.1-ultra', { provider: 'fal' }),
+      model('replicate:black-forest-labs/flux-1.1-pro', {
+        provider: 'replicate',
+      }),
+    ];
+
+    const groups = groupModelsByProvider(catalog);
+
+    expect(groups.map((group) => group.provider)).toEqual([
+      'creativelab',
+      'replicate',
+      'fal',
+    ]);
+    expect(groups[1]?.models.map((item) => item.id)).toEqual([
+      'replicate:black-forest-labs/flux-dev',
+      'replicate:black-forest-labs/flux-1.1-pro',
+    ]);
+  });
+
+  it('модели без поля provider попадают в группу CreativeLab', () => {
+    // Каталог CreativeLab поля `provider` не отдаёт (оно появилось в R7.3):
+    // без явной метки модели собрались бы в группу «неизвестный провайдер».
+    const groups = groupModelsByProvider([model('flux-schnell')]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.provider).toBe(DEFAULT_MEDIA_PROVIDER);
+  });
+
+  it('пустой каталог даёт пустой список групп', () => {
+    expect(groupModelsByProvider([])).toEqual([]);
+  });
+
+  it('фильтр по провайдеру отбирает только его модели', () => {
+    const catalog = [
+      model('flux-schnell'),
+      model('replicate:flux-dev', { provider: 'replicate' }),
+      model('fal:flux-pro', { provider: 'fal' }),
+    ];
+
+    expect(
+      filterModelsByProvider(catalog, 'replicate').map((item) => item.id),
+    ).toEqual(['replicate:flux-dev']);
+    // Модели без `provider` относятся к CreativeLab (совместимость с R7.1).
+    expect(
+      filterModelsByProvider(catalog, DEFAULT_MEDIA_PROVIDER).map(
+        (item) => item.id,
+      ),
+    ).toEqual(['flux-schnell']);
+    expect(filterModelsByProvider(catalog, 'openai_images')).toEqual([]);
   });
 });
