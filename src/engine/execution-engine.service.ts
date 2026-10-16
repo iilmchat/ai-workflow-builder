@@ -7,7 +7,12 @@ import {
 import { and, eq } from 'drizzle-orm';
 import { isDeepStrictEqual } from 'node:util';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { nodeRuns, workflowRuns, workflows, type RunStatus } from '../db/schema.js';
+import {
+  nodeRuns,
+  workflowRuns,
+  workflows,
+  type NodeRunStatus,
+} from '../db/schema.js';
 import { RunEventsService } from '../runs/run-events.service.js';
 import { LlmNodeExecutor, type LlmNodeMetrics } from '../llm/llm-node-executor.service.js';
 import { LlmProviderException } from '../llm/llm-provider.interface.js';
@@ -115,32 +120,6 @@ const NODE_RETRY_BASE_DELAY_MS = 500;
  * (`reason`), чтобы UI показывал состояние одинаково и из снимка, и из потока.
  */
 const NODE_SKIPPED_ERROR = 'Пропущен: упал предшественник';
-
-/**
- * Статусы строки `node_runs`, которые пишет сам движок.
- *
- * `skipped` объявлен здесь, а не в `RUN_STATUSES` (`src/db/schema.ts`): файл
- * схемы и миграции правит параллельная сессия, а колонка `node_runs.status` —
- * обычный `text` без CHECK-ограничения, поэтому значение сохраняется как есть.
- * Приведение к типу колонки локализовано в {@link toNodeRunColumnStatus} и
- * снимается, когда `skipped` переедет в `RUN_STATUSES` (KI-288).
- */
-type NodeRunStatus = RunStatus | 'skipped';
-
-/**
- * Приводит статус движка к типу колонки `node_runs.status`.
- *
- * Нужен ровно для `skipped`: остальные статусы (`running`/`completed`/`failed`)
- * уже входят в `RunStatus`. Тип колонки шире не сделать без правки
- * `src/db/schema.ts` (вне зоны задачи), а значение в БД принимается любое —
- * колонка объявлена как `text`.
- *
- * @param status - статус, которым движок закрывает строку `node_runs`
- * @returns тот же статус в типе колонки (`RunStatus`)
- */
-function toNodeRunColumnStatus(status: NodeRunStatus): RunStatus {
-  return status as RunStatus;
-}
 
 /**
  * Пауза перед повтором узла.
@@ -319,38 +298,14 @@ export class ExecutionEngineService {
       // выполняются — они сразу закрываются статусом `skipped`. Раньше (после
       // KI-287) такой узел получал `null` во входах и падал сам, выглядя как
       // самостоятельно сломанный.
-      const blockedBy = this.findBlockedByPredecessor(
+      // KI-337: тот же механизм используется подграфами `sub_workflow`.
+      const blockedBy = await this.skipBlockedNodesAsync(
+        runId,
         level,
+        graph,
         predecessors,
         failedIds,
         skippedIds,
-      );
-
-      const blockedToSkip: Array<{ node: NodeDto; predecessorId: string }> = [];
-
-      for (const [nodeId, predecessorId] of blockedBy) {
-        skippedIds.add(nodeId);
-
-        const skippedNode = graph.nodes.find((candidate) => candidate.id === nodeId);
-
-        if (skippedNode) {
-          blockedToSkip.push({ node: skippedNode, predecessorId });
-        } else {
-          // Недостижимо для узлов плана (план строится по этому же графу), но
-          // без строки `node_runs` узел исчез бы из UI — фиксируем громко.
-          this.logger.error(
-            `Запуск ${runId}: узел ${nodeId} пропущен, но отсутствует в графе`,
-          );
-        }
-      }
-
-      // Записи пропущенных узлов независимы друг от друга — параллельно
-      // (RULES 4.17). `skippedIds` уже заполнен синхронно выше, поэтому
-      // следующий уровень увидит пропуски независимо от порядка записей.
-      await Promise.all(
-        blockedToSkip.map(({ node, predecessorId }) =>
-          this.markNodeSkippedAsync(runId, node, predecessorId),
-        ),
       );
 
       const activeLevel = level.filter((nodeId) => !blockedBy.has(nodeId));
@@ -510,6 +465,71 @@ export class ExecutionEngineService {
     }
 
     return blocked;
+  }
+
+  /**
+   * Закрывает статусом `skipped` узлы уровня, у которых упал или уже пропущен
+   * предшественник (KI-288, KI-337).
+   *
+   * Общий механизм корневого графа и подграфов `sub_workflow`: уровни в обоих
+   * случаях строит один и тот же `EngineService`, а карта предшественников — из
+   * `executionMap.dependents`. Отличие только в графе: у подграфа id узлов
+   * префиксованы (`sub_<nodeId>__`, DESIGN v0.8 § 5.3), поэтому строка
+   * `node_runs` пропущенного узла подграфа изолирована от строк родителя.
+   *
+   * `skippedIds` пополняется синхронно, до записей в БД: следующий уровень
+   * увидит пропуски независимо от порядка записей (транзитивность). Сами записи
+   * независимы друг от друга и выполняются параллельно (RULES 4.17). Сбой записи
+   * или публикации не роняет запуск — он только логируется (RULES 4.16/4.18).
+   *
+   * @param runId - uuid запуска
+   * @param level - узлы текущего уровня плана
+   * @param graph - граф, которому принадлежат узлы уровня (корневой или подграф)
+   * @param predecessors - карта «узел → его предшественники»
+   * @param failedIds - `id` упавших узлов
+   * @param skippedIds - `id` пропущенных узлов (пополняется здесь)
+   * @returns карта «id пропущенного узла → id предшественника, из-за которого он пропущен»
+   */
+  private async skipBlockedNodesAsync(
+    runId: string,
+    level: readonly string[],
+    graph: GraphDto,
+    predecessors: ReadonlyMap<string, readonly string[]>,
+    failedIds: ReadonlySet<string>,
+    skippedIds: Set<string>,
+  ): Promise<Map<string, string>> {
+    const blockedBy = this.findBlockedByPredecessor(
+      level,
+      predecessors,
+      failedIds,
+      skippedIds,
+    );
+
+    const blockedToSkip: Array<{ node: NodeDto; predecessorId: string }> = [];
+
+    for (const [nodeId, predecessorId] of blockedBy) {
+      skippedIds.add(nodeId);
+
+      const skippedNode = graph.nodes.find((candidate) => candidate.id === nodeId);
+
+      if (skippedNode) {
+        blockedToSkip.push({ node: skippedNode, predecessorId });
+      } else {
+        // Недостижимо для узлов плана (план строится по этому же графу), но
+        // без строки `node_runs` узел исчез бы из UI — фиксируем громко.
+        this.logger.error(
+          `Запуск ${runId}: узел ${nodeId} пропущен, но отсутствует в графе`,
+        );
+      }
+    }
+
+    await Promise.all(
+      blockedToSkip.map(({ node, predecessorId }) =>
+        this.markNodeSkippedAsync(runId, node, predecessorId),
+      ),
+    );
+
+    return blockedBy;
   }
 
   /**
@@ -958,6 +978,21 @@ export class ExecutionEngineService {
    * зависимый узел родителя читает результат через порт `result` (см.
    * `NODE_PORT_CONTRACT.sub_workflow`), не зная внутренних id.
    *
+   * **KI-337 (skip-семантика подграфа):** уровни подграфа обрабатываются так же,
+   * как уровни корневого графа (KI-287/KI-288). Падение узла не прерывает обход:
+   * независимые ветки подграфа доигрываются (RULES 4.16), потомки упавшего узла
+   * получают `node_runs.status='skipped'` и событие `node_skipped` — с тем же
+   * текстом («Пропущен: упал предшественник»), что и в корневом графе, только с
+   * префиксованным id (`sub_<nodeId>__<originalId>`, DESIGN v0.8 § 5.3). До
+   * KI-337 исключение бросалось на первом же падении, и непройденные узлы
+   * подграфа не попадали в `node_runs` вовсе.
+   *
+   * Упавший подграф всё равно считается ошибкой узла `sub_workflow` (DESIGN
+   * § 5.6): после обхода уровней наружу уходит ошибка **первого** падения, и
+   * зависимые узлы родителя пропускаются уже механизмом корневого графа. То есть
+   * подграф сам публикует `node_skipped` для своих узлов, но не «прощает»
+   * падение — контракт родителя не меняется.
+   *
    * @param node - узел `sub_workflow` родительского графа
    * @param runId - uuid запуска
    * @param subContext - контекст ветки родителя
@@ -967,7 +1002,7 @@ export class ExecutionEngineService {
    * @throws SubWorkflowDepthException при превышении глубины вложенности
    * @throws NotFoundException если подграф чужой или не найден
    * @throws BadRequestException если подграф нельзя выполнить (цикл внутри, только аннотации)
-   * @throws Error если узел подграфа исчерпал попытки
+   * @throws Error если узел подграфа исчерпал попытки (первое падение подграфа)
    */
   private async executeSubWorkflowGraphAsync(
     node: NodeDto,
@@ -1009,17 +1044,52 @@ export class ExecutionEngineService {
 
     const outputs: Record<string, Record<string, unknown>> = {};
 
-    for (const level of subPlan.levels) {
+    // KI-337: внутри подграфа пропуск работает так же, как в корневом графе
+    // (KI-288): `failedIds` — упавшие по-настоящему, `skippedIds` — не
+    // запускавшиеся из-за упавшего (или уже пропущенного) предшественника.
+    // До KI-337 первое падение узла подграфа бросало исключение сразу, и
+    // остальные узлы подграфа вообще не получали строк `node_runs` —
+    // асимметрия с корневым графом. Теперь подграф доигрывается целиком:
+    // независимые узлы выполняются (KI-287), потомки упавшего — `skipped`.
+    const failedIds = new Set<string>();
+    const skippedIds = new Set<string>();
+    const failures: Array<{ nodeId: string; error: string; reason: unknown }> = [];
+    const predecessors = this.buildPredecessorMap(subPlan);
+
+    for (const [levelIndex, level] of subPlan.levels.entries()) {
+      // KI-337/KI-288: узлы подграфа с упавшим предшественником закрываются
+      // `skipped` — с тем же текстом ошибки и тем же событием `node_skipped`,
+      // что и в корневом графе (контракт UI не меняется).
+      const blockedBy = await this.skipBlockedNodesAsync(
+        runId,
+        level,
+        prefixed,
+        predecessors,
+        failedIds,
+        skippedIds,
+      );
+
+      const activeLevel = level.filter((subNodeId) => !blockedBy.has(subNodeId));
+
+      // Весь уровень пропущен — выполнять нечего, следующий уровень прочитает
+      // `skippedIds` (транзитивность через предшественников).
+      if (activeLevel.length === 0) {
+        continue;
+      }
+
       const results = await Promise.allSettled(
-        level.map((subNodeId) =>
+        activeLevel.map((subNodeId) =>
           this.executeNodeAsync(runId, subNodeId, prefixed, subPlan, branchContext),
         ),
       );
 
-      let failure: unknown = null;
+      // Падение не прерывает обход уровней подграфа (KI-287/KI-337): узлы того
+      // же уровня уже отработали (`allSettled`, RULES 4.16), а независимые
+      // ветки следующих уровней обязаны доиграться.
+      const levelFailures: Array<{ nodeId: string; error: string; reason: unknown }> = [];
 
       results.forEach((result, index) => {
-        const subNodeId = level[index];
+        const subNodeId = activeLevel[index];
 
         if (result.status === 'fulfilled') {
           outputs[subNodeId] = result.value;
@@ -1027,17 +1097,48 @@ export class ExecutionEngineService {
           return;
         }
 
-        failure ??= result.reason;
+        // Упавший узел подграфа блокирует своих потомков (KI-337).
+        failedIds.add(subNodeId);
+        levelFailures.push({
+          nodeId: subNodeId,
+          error: toMessage(result.reason),
+          reason: result.reason,
+        });
       });
 
-      // Падение узла подграфа останавливает подграф целиком: ошибка
-      // поднимается наверх как ошибка узла `sub_workflow` (DESIGN § 5.6).
-      // Узлы того же уровня уже отработали — `allSettled` (RULES 4.16).
-      if (failure !== null) {
-        throw failure instanceof Error
-          ? failure
-          : new Error(`Узел ${node.id}: подграф ${target.workflowId} упал`);
+      failures.push(...levelFailures);
+
+      if (levelFailures.length > 0 || blockedBy.size > 0) {
+        this.logger.warn(
+          `Узел ${node.id}: подграф ${target.workflowId}, уровень ${levelIndex}:` +
+            ` упало узлов=${levelFailures.length}, пропущено=${blockedBy.size}` +
+            (levelFailures.length > 0
+              ? ` (первый: ${levelFailures[0].nodeId} — ${levelFailures[0].error})`
+              : '') +
+            '; независимые узлы подграфа продолжают выполняться (KI-337)',
+        );
       }
+    }
+
+    // Подграф считается упавшим, если упал хотя бы один его узел: ошибка
+    // поднимается наверх как ошибка узла `sub_workflow` (DESIGN § 5.6), и
+    // зависимые узлы родителя получают `skipped` на его уровне. Но к этому
+    // моменту все узлы подграфа уже получили строки `node_runs` — `completed`,
+    // `failed` или `skipped` (KI-337), а не только те, что успели до падения.
+    const failed = failures[0] ?? null;
+
+    if (failed !== null) {
+      this.logger.error(
+        `Узел ${node.id} запуска ${runId}: подграф ${target.workflowId} упал — ` +
+          `${failed.nodeId}: ${failed.error} (выполнено узлов=${Object.keys(outputs).length},` +
+          ` пропущено=${skippedIds.size})`,
+      );
+
+      throw failed.reason instanceof Error
+        ? failed.reason
+        : new Error(
+            `Узел ${node.id}: подграф ${target.workflowId} упал: ${failed.error}`,
+          );
     }
 
     // Терминальные узлы (без исходящих связей) формируют результат узла.
@@ -1221,7 +1322,7 @@ export class ExecutionEngineService {
 
   /**
    * Закрывает узел статусом `skipped` и публикует событие `node_skipped`
-   * (KI-288).
+   * (KI-288, KI-337).
    *
    * Узел **не выполнялся**: строка `node_runs` нужна только для истории и UI,
    * чтобы пропуск отличался от самостоятельного падения. Запись идёт тем же
@@ -1235,7 +1336,8 @@ export class ExecutionEngineService {
    * равно будут пропущены.
    *
    * @param runId - uuid запуска
-   * @param node - пропускаемый узел графа (нужен `nodeType` для строки истории)
+   * @param node - пропускаемый узел графа (нужен `nodeType` для строки истории);
+   *   у подграфа id узла префиксован (`sub_<nodeId>__`, DESIGN v0.8 § 5.3)
    * @param predecessorId - `id` предшественника, из-за которого узел пропущен
    * @returns промис без значения
    */
@@ -1245,11 +1347,13 @@ export class ExecutionEngineService {
     predecessorId: string,
   ): Promise<void> {
     const now = new Date();
-    const skippedStatus = toNodeRunColumnStatus('skipped');
+    // KI-336: колонка `node_runs.status` типизирована как `NodeRunStatus`
+    // (статусы запуска + `skipped`), поэтому приведение типа не нужно.
+    const skippedStatus: NodeRunStatus = 'skipped';
 
     this.logger.warn(
       `Узел ${node.id} запуска ${runId} пропущен: упал предшественник ` +
-        `${predecessorId} (KI-288)`,
+        `${predecessorId} (KI-288/KI-337)`,
     );
 
     try {

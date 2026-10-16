@@ -11,8 +11,15 @@ import {
 } from 'drizzle-orm/pg-core';
 import type { EdgeDto, GraphSnapshotDto, NodeDto } from '../engine/dto/index.js';
 
-/** Значения колонки workflow_runs.status / node_runs.status. */
-export const RUN_STATUSES = [
+/**
+ * Значения колонки `workflow_runs.status` (KI-336).
+ *
+ * У **запуска** статуса `skipped` не существует: пропуск — свойство узла
+ * (узел не выполнялся, потому что упал его предшественник), а запуск при этом
+ * завершается `failed` либо `completed`. Поэтому список статусов запуска и
+ * список статусов узла разведены: см. {@link NODE_RUN_STATUSES}.
+ */
+export const WORKFLOW_RUN_STATUSES = [
   'pending',
   'running',
   'completed',
@@ -20,7 +27,33 @@ export const RUN_STATUSES = [
   'cancelled',
 ] as const;
 
-export type RunStatus = (typeof RUN_STATUSES)[number];
+/** Статус строки `workflow_runs` (KI-336). */
+export type RunStatus = (typeof WORKFLOW_RUN_STATUSES)[number];
+
+/**
+ * Значения колонки `node_runs.status` (KI-288, KI-336).
+ *
+ * Статусы запуска плюс `skipped` — узел не запускался, потому что его
+ * предшественник упал или уже был пропущен. Колонка `node_runs.status` объявлена
+ * как `text` без CHECK-ограничения, поэтому новое значение не требует миграции:
+ * достаточно типа колонки (`$type<NodeRunStatus>()`), чтобы движку не нужен был
+ * `as RunStatus` при записи пропуска (KI-336).
+ */
+export const NODE_RUN_STATUSES = [...WORKFLOW_RUN_STATUSES, 'skipped'] as const;
+
+/** Статус строки `node_runs` (KI-336). */
+export type NodeRunStatus = (typeof NODE_RUN_STATUSES)[number];
+
+/**
+ * Прежнее имя списка статусов запуска (KI-336).
+ *
+ * Оставлено для совместимости: `src/runs/dto/run-stream-message.dto.ts` выводит
+ * из него схему статуса запуска и добавляет `skipped` только для узла. После
+ * перевода этого DTO на {@link NODE_RUN_STATUSES} псевдоним можно удалить.
+ *
+ * @deprecated используйте {@link WORKFLOW_RUN_STATUSES}
+ */
+export const RUN_STATUSES = WORKFLOW_RUN_STATUSES;
 
 /**
  * users — учётные записи (R6.1a, KI-106).
@@ -118,7 +151,8 @@ export const nodeRuns = pgTable(
       .references(() => workflowRuns.id, { onDelete: 'cascade' }),
     nodeId: text('node_id').notNull(),
     nodeType: text('node_type').notNull(),
-    status: text('status').notNull().default('pending').$type<RunStatus>(),
+    // KI-336: у узла статус шире, чем у запуска — есть `skipped` (KI-288).
+    status: text('status').notNull().default('pending').$type<NodeRunStatus>(),
     inputs: jsonb('inputs').$type<Record<string, unknown>>().default({}),
     outputs: jsonb('outputs').$type<Record<string, unknown>>().default({}),
     error: text('error'),

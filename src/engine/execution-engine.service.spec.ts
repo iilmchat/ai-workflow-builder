@@ -1851,5 +1851,263 @@ describe('ExecutionEngineService', () => {
       expect(findWorkflow).not.toHaveBeenCalled();
       expect(rowOf('sub-1')?.status).toBe('failed');
     });
+
+    /* ─────────────── KI-337: skip-семантика подграфов ─────────────── */
+
+    /** Все события `node_skipped` в порядке публикации. */
+    const skippedEvents = (): Array<Extract<RunEventDto, { type: 'node_skipped' }>> =>
+      publish.mock.calls
+        .map(([, event]) => event)
+        .filter(
+          (event): event is Extract<RunEventDto, { type: 'node_skipped' }> =>
+            event.type === 'node_skipped',
+        );
+
+    /** Порядок событий `node_skipped` (по префиксованным id узлов подграфа). */
+    const skippedOrder = (): string[] => skippedEvents().map((event) => event.nodeId);
+
+    it('KI-337 (линейный A→B→C): падение B → C skipped, строка есть у всех узлов', async () => {
+      // До KI-337 первое падение узла подграфа бросало исключение сразу, и C
+      // не получал строки `node_runs` вообще — асимметрия с корневым графом.
+      findWorkflow.mockResolvedValue({
+        ...subGraph,
+        nodes: [
+          { id: 'SA', type: 'text', data: { value: 'старт' } },
+          { id: 'SB', type: 'llm', data: {} },
+          { id: 'SC', type: 'llm', data: {} },
+        ],
+        edges: [
+          edge('se1', 'SA', 'SB', 'text', 'prompt'),
+          edge('se2', 'SB', 'SC', 'text', 'prompt'),
+        ],
+      });
+      llmExecute.mockImplementation((current: NodeDto) =>
+        current.id === 'sub_sub-1__SB'
+          ? Promise.reject(new Error('SB подграфа упал'))
+          : Promise.resolve(llmNodeResult('ответ подграфа')),
+      );
+
+      const graph: GraphDto = {
+        nodes: [
+          node('sub-1', 'sub_workflow', {
+            kind: 'sub_workflow',
+            workflowId: SUB_WORKFLOW_ID,
+          }),
+          node('out-1', 'output', { name: 'answer' }),
+        ],
+        edges: [edge('e1', 'sub-1', 'out-1', 'result-output', 'text-input')],
+      };
+
+      await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow(
+        'SB подграфа упал',
+      );
+
+      expect(rowOf('sub_sub-1__SA')).toMatchObject({ status: 'completed' });
+      expect(rowOf('sub_sub-1__SB')).toMatchObject({
+        status: 'failed',
+        nodeType: 'llm',
+        error: 'SB подграфа упал',
+      });
+
+      // Пропуск внутри подграфа пишется теми же полями, что и в корне (KI-288):
+      // узел не выполнялся, входов и выходов нет, длительность 0.
+      expect(rowOf('sub_sub-1__SC')).toMatchObject({
+        status: 'skipped',
+        nodeType: 'llm',
+        inputs: {},
+        outputs: null,
+        durationMs: 0,
+        error: 'Пропущен: упал предшественник',
+      });
+
+      // Событие — тот же контракт `node_skipped`, отличается только
+      // префиксованный id (DESIGN v0.8 § 5.3). Родительский `out-1` пропускается
+      // позже — на своём уровне корневого графа.
+      expect(skippedOrder()).toEqual(['sub_sub-1__SC', 'out-1']);
+      expect(skippedEvents()[0]).toEqual({
+        type: 'node_skipped',
+        runId: RUN_ID,
+        nodeId: 'sub_sub-1__SC',
+        nodeType: 'llm',
+        reason: 'Пропущен: упал предшественник',
+        skippedAt: expect.any(String),
+      });
+
+      // Пропущенный узел до исполнителя не доходил.
+      expect(llmExecute.mock.calls.map(([current]) => current.id)).toEqual([
+        'sub_sub-1__SB',
+      ]);
+
+      // Подграф не «прощает» падение: узел sub_workflow — failed (DESIGN § 5.6),
+      // а его потомок в родительском графе — skipped (механизм KI-288).
+      expect(rowOf('sub-1')).toMatchObject({
+        status: 'failed',
+        error: 'SB подграфа упал',
+      });
+      expect(rowOf('out-1')?.status).toBe('skipped');
+      expect(fake.run.status).toBe('failed');
+    });
+
+    it('KI-337 (ветвление A→(B,C)): падение B не мешает независимому C подграфа', async () => {
+      findWorkflow.mockResolvedValue({
+        ...subGraph,
+        nodes: [
+          { id: 'SA', type: 'text', data: { value: 'старт' } },
+          { id: 'SB', type: 'llm', data: {} },
+          { id: 'SC', type: 'llm', data: {} },
+        ],
+        edges: [
+          edge('se1', 'SA', 'SB', 'text', 'prompt'),
+          edge('se2', 'SA', 'SC', 'text', 'prompt'),
+        ],
+      });
+      llmExecute.mockImplementation((current: NodeDto) =>
+        current.id === 'sub_sub-1__SB'
+          ? Promise.reject(new Error('SB упал'))
+          : Promise.resolve(llmNodeResult(`ответ ${current.id}`)),
+      );
+
+      const graph: GraphDto = {
+        nodes: [
+          node('sub-1', 'sub_workflow', {
+            kind: 'sub_workflow',
+            workflowId: SUB_WORKFLOW_ID,
+          }),
+        ],
+        edges: [],
+      };
+
+      await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow('SB упал');
+
+      expect(rowOf('sub_sub-1__SB')?.status).toBe('failed');
+      // C — не потомок B: обязан выполниться (RULES 4.16), а не пропуститься.
+      expect(rowOf('sub_sub-1__SC')).toMatchObject({
+        status: 'completed',
+        outputs: { text: 'ответ sub_sub-1__SC' },
+      });
+      expect(skippedOrder()).toEqual([]);
+      expect(rowOf('sub-1')?.status).toBe('failed');
+    });
+
+    it('KI-337: падение подграфа не мешает независимой ветке следующего уровня', async () => {
+      // Две параллельные ветки подграфа: S1(падает) → S2, и S3 → S4. Второй
+      // уровень обязан быть обработан целиком: независимая ветка доигрывается,
+      // потомок упавшего — skipped (KI-287/KI-337).
+      findWorkflow.mockResolvedValue({
+        ...subGraph,
+        nodes: [
+          { id: 'S1', type: 'llm', data: {} },
+          { id: 'S2', type: 'llm', data: {} },
+          { id: 'S3', type: 'text', data: { value: 'своя ветка' } },
+          { id: 'S4', type: 'text', data: { value: 'её продолжение' } },
+        ],
+        edges: [
+          edge('se1', 'S1', 'S2', 'text', 'prompt'),
+          edge('se2', 'S3', 'S4', 'text', 'text'),
+        ],
+      });
+      llmExecute.mockImplementation((current: NodeDto) =>
+        current.id === 'sub_sub-1__S1'
+          ? Promise.reject(new Error('S1 упал'))
+          : Promise.resolve(llmNodeResult('ok')),
+      );
+
+      const graph: GraphDto = {
+        nodes: [
+          node('sub-1', 'sub_workflow', {
+            kind: 'sub_workflow',
+            workflowId: SUB_WORKFLOW_ID,
+          }),
+        ],
+        edges: [],
+      };
+
+      await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow('S1 упал');
+
+      expect(rowOf('sub_sub-1__S1')?.status).toBe('failed');
+      expect(rowOf('sub_sub-1__S2')?.status).toBe('skipped');
+      expect(rowOf('sub_sub-1__S3')?.status).toBe('completed');
+      expect(rowOf('sub_sub-1__S4')).toMatchObject({
+        status: 'completed',
+        outputs: { text: 'её продолжение' },
+      });
+      expect(skippedOrder()).toEqual(['sub_sub-1__S2']);
+    });
+
+    it('KI-337 (вложенный sub→sub): пропуск проходит через оба подграфа', async () => {
+      const innerId = '88888888-8888-4888-8888-888888888888';
+      const innerGraph: SubWorkflowRecord = {
+        id: innerId,
+        name: 'Внутренний',
+        version: 1,
+        nodes: [
+          { id: 'I1', type: 'text', data: { value: 'внутри' } },
+          { id: 'I2', type: 'llm', data: {} },
+          { id: 'I3', type: 'llm', data: {} },
+        ],
+        edges: [
+          edge('ie1', 'I1', 'I2', 'text', 'prompt'),
+          edge('ie2', 'I2', 'I3', 'text', 'prompt'),
+        ],
+      };
+      const outerGraph: SubWorkflowRecord = {
+        id: SUB_WORKFLOW_ID,
+        name: 'Внешний',
+        version: 1,
+        nodes: [
+          {
+            id: 'O1',
+            type: 'sub_workflow',
+            data: { kind: 'sub_workflow', workflowId: innerId },
+          },
+          { id: 'O2', type: 'text', data: { value: 'после вложенного' } },
+        ],
+        edges: [edge('oe1', 'O1', 'O2', 'result-output', 'text')],
+      };
+
+      findWorkflow.mockImplementation((id: string) =>
+        Promise.resolve(id === innerId ? innerGraph : outerGraph),
+      );
+      llmExecute.mockImplementation((current: NodeDto) =>
+        current.id === 'sub_sub_sub-1__O1__I2'
+          ? Promise.reject(new Error('I2 упал'))
+          : Promise.resolve(llmNodeResult('ответ')),
+      );
+
+      const graph: GraphDto = {
+        nodes: [
+          node('sub-1', 'sub_workflow', {
+            kind: 'sub_workflow',
+            workflowId: SUB_WORKFLOW_ID,
+          }),
+        ],
+        edges: [],
+      };
+
+      await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow('I2 упал');
+
+      // Внутренний подграф: упавший I2 → потомок I3 skipped.
+      expect(rowOf('sub_sub_sub-1__O1__I1')?.status).toBe('completed');
+      expect(rowOf('sub_sub_sub-1__O1__I2')).toMatchObject({
+        status: 'failed',
+        error: 'I2 упал',
+      });
+      expect(rowOf('sub_sub_sub-1__O1__I3')).toMatchObject({
+        status: 'skipped',
+        error: 'Пропущен: упал предшественник',
+      });
+
+      // Внешний подграф: узел-ссылка O1 упал → его потомок O2 skipped.
+      expect(rowOf('sub_sub-1__O1')?.status).toBe('failed');
+      expect(rowOf('sub_sub-1__O2')?.status).toBe('skipped');
+
+      // Пропуски идут изнутри наружу (внешний уровень обрабатывается позже).
+      expect(skippedOrder()).toEqual([
+        'sub_sub_sub-1__O1__I3',
+        'sub_sub-1__O2',
+      ]);
+      expect(rowOf('sub-1')?.status).toBe('failed');
+      expect(fake.run.status).toBe('failed');
+    });
   });
 });

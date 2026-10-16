@@ -2,9 +2,13 @@ import { getTableColumns } from 'drizzle-orm';
 import { expectTypeOf } from 'vitest';
 import type { EdgeDto, GraphSnapshotDto, NodeDto } from '../engine/dto/index.js';
 import {
+  NODE_RUN_STATUSES,
+  WORKFLOW_RUN_STATUSES,
   nodeRuns,
   workflowRuns,
   workflows,
+  type NodeRun,
+  type NodeRunStatus,
   type RunStatus,
   type Workflow,
   type WorkflowRun,
@@ -59,5 +63,30 @@ describe('Drizzle schema (KI-014, KI-015)', () => {
     expectTypeOf<RunStatus>().toEqualTypeOf<
       'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
     >();
+  });
+
+  it('KI-336: skipped — статус узла, а не запуска', () => {
+    // Списки не дублируются: статусы узла выводятся из статусов запуска.
+    expect(WORKFLOW_RUN_STATUSES).toEqual([
+      'pending',
+      'running',
+      'completed',
+      'failed',
+      'cancelled',
+    ]);
+    expect(NODE_RUN_STATUSES).toEqual([...WORKFLOW_RUN_STATUSES, 'skipped']);
+
+    // Типы: у запуска `skipped` нет, у узла — есть (KI-288).
+    expectTypeOf<NodeRunStatus>().toEqualTypeOf<
+      'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped'
+    >();
+  });
+
+  it('KI-336: типы колонок status расходятся ровно на skipped', () => {
+    // Движок пишет `node_runs.status='skipped'` без приведения к `RunStatus`:
+    // колонка узла объявлена шире колонки запуска.
+    expectTypeOf<WorkflowRun['status']>().toEqualTypeOf<RunStatus>();
+    expectTypeOf<NodeRun['status']>().toEqualTypeOf<NodeRunStatus>();
+    expectTypeOf<WorkflowRun['status']>().not.toEqualTypeOf<NodeRunStatus>();
   });
 });
