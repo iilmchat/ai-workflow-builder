@@ -252,6 +252,11 @@
   (`987bc5a`).
 - **KI-108** — Export / Import / Templates (`12ff041`).
 - **KI-109** — Export / Import / Templates (`12ff041`).
+- **KI-293** — timestamptz-дрейф: миграция 0006 + 4 колонки
+  `withTimezone: true` в схеме; API возвращает UTC-корректные даты
+  (`e5f489a`).
+- **KI-296** — `workflows.created_at/updated_at`: `SET NOT NULL` +
+  `SET DEFAULT now()` в 0006 (`e5f489a`).
 
 ### Documented
 - **Gap-анализ GPTunnel (2026-10-15) — новые KI для v0.8/v0.9:**
@@ -347,7 +352,10 @@
     (🟠 High).
   - **KI-294** — ImportSchema.name без max(200) (Low).
   - **KI-295** — WorkflowController Async-стиль (Low).
-
+  - **KI-297** — устаревший комментарий в `findSharedAsync` (Low).
+  - **KI-298** — `drizzle-kit generate` не сверяет схему с БД
+    (Medium, корень KI-293/296).
+    
 ## [0.7.2] — 2026-10-15
 
 **Patch-релиз после v0.7.1. Yandex env + LM Studio auto-discovery + LLM/media фиксы.**

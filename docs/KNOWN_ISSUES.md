@@ -4765,7 +4765,15 @@
 ---
 
 ### KI-293 — Timestamptz-дрейф: `created_at` в БД без таймзоны
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.0e (KI-293-fix, коммит `e5f489a`)
+- **Fix:** миграция `0006_timestamptz_drift.sql` — 6 колонок
+  `ALTER COLUMN ... TYPE timestamptz USING col AT TIME ZONE 'UTC'`;
+  `schema.ts` — 4 колонки получили `{ withTimezone: true }`
+  (ТЗ ошибочно утверждало, что это уже сделано). Смоук before/after:
+  до — `createdAt` на −10800 сек, после — delta 0.
+- **Остаток:** KI-298 (drizzle-kit generate не сверяет схему с БД).
+- **Связанные:** KI-296, KI-297, KI-298, KI-018.
 - **Файлы:** `src/db/schema.ts` (`workflows`, `workflow_runs`,
   `node_runs`), `drizzle/`
 - **Описание:** Drizzle-схема объявляет `timestamp(..., { withTimezone: true })`,
@@ -4802,18 +4810,59 @@
 
 ---
 
+### KI-296 — `notNull`-дрейф `workflows.created_at/updated_at`
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.8.0e (KI-293-fix, коммит e5f489a)
+- **Файлы:** `drizzle/0000_right_valeria_richards.sql`,
+  `src/db/schema.ts`, `drizzle/meta/0006_snapshot.json`
+- **Описание:** Миграция 0000 создала колонки как nullable; схема
+  объявляет `.notNull()`. Snapshot 0000…0005 хранил `notNull: false`,
+  `drizzle-kit generate` эмитил `SET NOT NULL` в каждом diff.
+- **Fix:** `SET NOT NULL` + `SET DEFAULT now()` добавлены в 0006
+  (NULL-значений не было — 86/86 строк заполнены).
+- **Связанные:** KI-293, KI-297, KI-298.
+
+---
+
+### KI-297 — Устаревший комментарий и мёртвый null-fallback в `findSharedAsync`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `src/workflow/workflow.service.ts`
+- **Описание:** Комментарий «В Drizzle-схеме createdAt без .notNull()»
+  неверен — схема объявляет `.notNull()`, а после KI-293-fix колонка
+  NOT NULL и в БД. Выражение `found.createdAt ?? new Date()` —
+  недостижимая ветка.
+- **Решение:** удалить комментарий и `?? new Date()`.
+- **Связанные:** KI-293, KI-296.
+
+---
+
+### KI-298 — `drizzle-kit generate` не сверяет схему с БД (только со snapshot)
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `drizzle.config.ts`, CI, `package.json` (`db:generate`)
+- **Описание:** `generate` не подключается к БД — сравнивает только
+  `schema.ts` ↔ последний snapshot. Любой дрейф `snapshot ↔ фактическая
+  БД` невидим: `pnpm db:generate` рапортует «No schema changes», пока
+  схема и snapshot согласованы между собой. Именно это дало KI-293 и
+  KI-296.
+- **Решение:** CI/локальный гейт, сверяющий `information_schema.columns`
+  с ожидаемыми типами (интеграционный тест на `pg_typeof`), либо
+  `drizzle-kit push --dry-run` в read-only.
+- **Связанные:** KI-293, KI-296, RULES 3.10.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 107 |
+| Fixed | 109 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 167 |
+| Open | 168 |
 | Won't Fix | 1 |
-| **Всего** | **284** |
+| **Всего** | **286** |
 
 ---
 
