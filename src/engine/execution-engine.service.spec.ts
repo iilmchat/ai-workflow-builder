@@ -525,7 +525,7 @@ describe('ExecutionEngineService', () => {
     expect(nodeD?.inputs).toEqual({ text: 'c' });
   });
 
-  it('KI-287: продолжает следующие уровни после падения узла', async () => {
+  it('KI-288 (A→B→C): потомок упавшего узла получает skipped, а не падает сам', async () => {
     const graph: GraphDto = {
       nodes: [node('A', 'text', { value: 'a' }), node('B', 'llm'), node('C', 'llm')],
       edges: [
@@ -540,9 +540,13 @@ describe('ExecutionEngineService', () => {
         inputs: Record<string, unknown>,
       ) => Promise<FakeNodeStep>;
     };
+    /** Узлы, которые реально дошли до исполнителя. */
+    const executed: string[] = [];
 
     vi.spyOn(internals, 'runNodeAsync').mockImplementation(
       async (current: NodeDto) => {
+        executed.push(current.id);
+
         if (current.id === 'B') {
           throw new Error('узел упал');
         }
@@ -555,28 +559,154 @@ describe('ExecutionEngineService', () => {
     // (job-level retry), но запуск уже закрыт 'failed' в БД.
     await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow('узел упал');
 
-    // KI-287: раньше цикл прерывался (`break`) и строки C не было вовсе.
-    // Теперь уровень C выполняется: он не смог прочитать outputs упавшего B и
-    // получил `prompt=null`. Узел `text` вход игнорирует (у него есть
-    // собственное `data.value`), поэтому он честно завершается — «независимая
-    // ветка после падения» работает. Падение зависимого узла из-за null-входа
-    // проверяется отдельно ниже (Т2).
+    // KI-288: раньше (после KI-287) уровень C выполнялся с `prompt=null` и либо
+    // падал сам, либо отдавал fallback в outputs (KI-290). Теперь C не
+    // запускается вообще — у него `skipped`.
     expect(fake.rows.map((row) => [row.nodeId, row.status])).toEqual([
       ['A', 'completed'],
       ['B', 'failed'],
-      ['C', 'completed'],
+      ['C', 'skipped'],
     ]);
     expect(fake.rows[1].error).toBe('узел упал');
-    expect(fake.rows[2].inputs).toEqual({ prompt: null });
-    // KI-287: outputs запуска — только успешно завершившиеся узлы.
-    expect(fake.run.outputs).toEqual({ A: { text: 'ok' }, C: { text: 'ok' } });
 
+    const skippedC = fake.rows[2];
+
+    expect(skippedC.error).toBe('Пропущен: упал предшественник');
+    expect(skippedC.outputs).toBeNull();
+    expect(skippedC.inputs).toEqual({});
+    expect(skippedC.durationMs).toBe(0);
+    expect(skippedC.startedAt).toBeInstanceOf(Date);
+    expect(skippedC.finishedAt).toBeInstanceOf(Date);
+
+    // Пропущенный узел не доходит до исполнителя и не публикует node_started.
+    expect(executed).toEqual(['A', 'B']);
+
+    const startedOrder = publish.mock.calls.flatMap(([, event]) =>
+      event.type === 'node_started' ? [event.nodeId] : [],
+    );
+
+    expect(startedOrder).toEqual(['A', 'B']);
+
+    // KI-290: fallback-выход пропущенного узла в outputs запуска не попадает.
+    expect(fake.run.outputs).toEqual({ A: { text: 'ok' } });
     // Запуск всё равно `failed`, а ошибка в workflow_runs — первого падения.
     expect(fake.run.status).toBe('failed');
     expect(fake.run.error).toBe('узел упал');
     expect(eventTypes()).toContain('node_failed');
+    expect(lastEventOfType('node_skipped')).toEqual({
+      type: 'node_skipped',
+      runId: RUN_ID,
+      nodeId: 'C',
+      nodeType: 'llm',
+      reason: 'Пропущен: упал предшественник',
+      skippedAt: expect.any(String),
+    });
     // KI-060: запуск закрыт в БД, но run_completed отдаёт процессор.
     expect(eventTypes()).not.toContain('run_completed');
+  });
+
+  it('KI-288: ветвление A→(B,C) — падение B не мешает независимому C', async () => {
+    // Оба узла — потомки A, но друг от друга не зависят: B падает, C обязан
+    // выполниться (RULES 4.16), а не превратиться в `skipped`.
+    const graph: GraphDto = {
+      nodes: [node('A', 'text', { value: 'a' }), node('B', 'llm'), node('C', 'llm')],
+      edges: [
+        edge('ab', 'A', 'B', 'text', 'prompt'),
+        edge('ac', 'A', 'C', 'text', 'prompt'),
+      ],
+    };
+
+    llmExecute.mockImplementation((current: NodeDto) =>
+      current.id === 'B'
+        ? Promise.reject(new Error('B упал'))
+        : Promise.resolve(llmNodeResult('ответ C')),
+    );
+
+    await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow('B упал');
+
+    const statusOf = (nodeId: string): string | undefined =>
+      fake.rows.find((row) => row.nodeId === nodeId)?.status;
+
+    expect(statusOf('A')).toBe('completed');
+    expect(statusOf('B')).toBe('failed');
+    expect(statusOf('C')).toBe('completed');
+    // C независим от B: его выход остаётся в outputs запуска.
+    expect(fake.run.outputs).toEqual({ A: { text: 'a' }, C: { text: 'ответ C' } });
+    expect(fake.run.status).toBe('failed');
+  });
+
+  it('KI-288: пропуск транзитивен A→B→C→D (B упал → C и D skipped)', async () => {
+    const graph: GraphDto = {
+      nodes: [
+        node('A', 'text', { value: 'a' }),
+        node('B', 'text', { value: 'b' }),
+        node('C', 'text', { value: 'c' }),
+        node('D', 'text', { value: 'd' }),
+      ],
+      edges: [
+        edge('ab', 'A', 'B', 'text', 'text'),
+        edge('bc', 'B', 'C', 'text', 'text'),
+        edge('cd', 'C', 'D', 'text', 'text'),
+      ],
+    };
+
+    spyRunNode(async (current: NodeDto) => {
+      if (current.id === 'B') {
+        throw new Error('B упал');
+      }
+
+      return { outputs: { text: String(current.data.value) }, metrics: null };
+    });
+
+    await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow('B упал');
+
+    // C пропущен как потомок упавшего B, D — как потомок пропущенного C.
+    expect(fake.rows.map((row) => [row.nodeId, row.status])).toEqual([
+      ['A', 'completed'],
+      ['B', 'failed'],
+      ['C', 'skipped'],
+      ['D', 'skipped'],
+    ]);
+
+    const skippedOrder = publish.mock.calls.flatMap(([, event]) =>
+      event.type === 'node_skipped' ? [event.nodeId] : [],
+    );
+
+    expect(skippedOrder).toEqual(['C', 'D']);
+
+    // KI-290: fallback-значения text-узлов ('c'/'d' из data.value) в outputs
+    // запуска не попадают — ветка результата не дала.
+    expect(fake.run.outputs).toEqual({ A: { text: 'a' } });
+    expect(fake.run.status).toBe('failed');
+  });
+
+  it('KI-288: узел пропускается, если упал хотя бы один из двух предшественников', async () => {
+    // A падает, B успешен, оба питают C: узел пропускается (для узлов с
+    // несколькими входами «упал любой предшественник» = нет полного набора
+    // данных; пофайловый merge — KI-035/KI-278).
+    const graph: GraphDto = {
+      nodes: [
+        node('A', 'llm'),
+        node('B', 'text', { value: 'b' }),
+        node('C', 'compare', { mode: 'diff' }),
+      ],
+      edges: [
+        edge('ac', 'A', 'C', 'text', 'a'),
+        edge('bc', 'B', 'C', 'text', 'b'),
+      ],
+    };
+
+    llmExecute.mockRejectedValue(new Error('A упал'));
+
+    await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow('A упал');
+
+    const statusOf = (nodeId: string): string | undefined =>
+      fake.rows.find((row) => row.nodeId === nodeId)?.status;
+
+    expect(statusOf('A')).toBe('failed');
+    expect(statusOf('B')).toBe('completed');
+    expect(statusOf('C')).toBe('skipped');
+    expect(fake.run.outputs).toEqual({ B: { text: 'b' } });
   });
 
   it('KI-287 (Т1): падение на уровне не мешает независимым узлам того же уровня', async () => {
@@ -614,70 +744,68 @@ describe('ExecutionEngineService', () => {
     expect(fake.rows.find((row) => row.nodeId === 'A')?.error).toBe('llm недоступен');
     expect(fake.rows.find((row) => row.nodeId === 'B')?.outputs).toEqual({ text: 'b' });
     expect(fake.rows.find((row) => row.nodeId === 'C')?.outputs).toEqual({ text: 'c' });
+    // Событий пропуска нет: B и C не потомки упавшего A.
+    expect(eventTypes()).not.toContain('node_skipped');
 
     // Т3: хотя независимые узлы завершились, запуск закрыт `failed`.
     expect(fake.run.status).toBe('failed');
     expect(fake.run.error).toBe('llm недоступен');
   });
 
-  it('KI-287 (Т2): независимая ветка следующего уровня выполняется, зависимая падает', async () => {
-    // План: ['источник'] → ['зависимый'] → ['независимый'] (уровни плана —
-    // расстояние в «хопах» от корней). Зависимый читает выход упавшего
-    // предшественника и падает сам; независимый от него не зависит и обязан
-    // выполниться — до KI-287 цикл прерывался и до третьего уровня не доходил.
+  it('KI-287 (Т2) / KI-288: независимая ветка следующего уровня выполняется, зависимая пропускается', async () => {
+    // Две параллельные ветки: `источник`(http, падает) → `зависимый`, и
+    // `независимый-1` → `независимый-2`. Второй уровень обязан быть обработан
+    // целиком: независимая ветка доигрывается, зависимый узел — `skipped`
+    // (до KI-287 цикл прерывался и третьего/второго уровня не было вовсе).
     const graph: GraphDto = {
       nodes: [
         node('источник', 'http', { url: 'http://127.0.0.1:1/never' }),
         node('зависимый', 'llm'),
-        node('независимый', 'llm'),
+        node('независимый-1', 'text', { value: 'своя ветка' }),
+        node('независимый-2', 'text', { value: 'её продолжение' }),
       ],
       edges: [
         edge('e1', 'источник', 'зависимый', 'text', 'prompt'),
-        edge('e2', 'зависимый', 'независимый', 'text', 'prompt'),
+        edge('e2', 'независимый-1', 'независимый-2', 'text', 'text'),
       ],
     };
 
-    // Проверяем, что план действительно трёхуровневый (иначе тест не о том).
+    // Проверяем, что план действительно двухуровневый (иначе тест не о том).
     expect((await engineService.buildExecutionPlanAsync(graph)).levels).toEqual([
-      ['источник'],
-      ['зависимый'],
-      ['независимый'],
+      ['источник', 'независимый-1'],
+      ['зависимый', 'независимый-2'],
     ]);
-
-    // Узел `http` падает сам (порт 1 закрыт) — это первое падение; падает
-    // только провайдер `llm` у зависимого узла (вход `null`).
-    llmExecute.mockImplementation((current: NodeDto) => {
-      if (current.id === 'зависимый') {
-        throw new Error('llm: пустой prompt');
-      }
-
-      return Promise.resolve(llmNodeResult('независимый ответ'));
-    });
 
     await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow();
 
-    const rowOf = (nodeId: string) => fake.rows.find((row) => row.nodeId === nodeId);
+    const statusOf = (nodeId: string): string | undefined =>
+      fake.rows.find((row) => row.nodeId === nodeId)?.status;
 
-    // Зависимый узел получил null-вход, выполнился и упал; независимый —
-    // completed, хотя находится на третьем уровне, после двух падений ниже.
-    expect(fake.rows.map((row) => [row.nodeId, row.status])).toEqual([
-      ['источник', 'failed'],
-      ['зависимый', 'failed'],
-      ['независимый', 'completed'],
-    ]);
-    expect(rowOf('зависимый')?.inputs).toEqual({ prompt: null });
-    expect(rowOf('зависимый')?.error).toBe('llm: пустой prompt');
-    expect(rowOf('независимый')?.outputs).toEqual({ text: 'независимый ответ' });
+    // `http` падает сам (порт 1 закрыт), зависимый узел не запускается, а
+    // независимая ветка выполняется до конца.
+    expect(statusOf('источник')).toBe('failed');
+    expect(statusOf('независимый-1')).toBe('completed');
+    expect(statusOf('зависимый')).toBe('skipped');
+    expect(statusOf('независимый-2')).toBe('completed');
+
+    const dependentRow = fake.rows.find((row) => row.nodeId === 'зависимый');
+
+    // До KI-288 здесь был `prompt: null` и падение самого узла.
+    expect(dependentRow?.inputs).toEqual({});
+    expect(dependentRow?.error).toBe('Пропущен: упал предшественник');
 
     // В outputs запуска попадают только успешно завершившиеся узлы.
-    expect(fake.run.outputs).toEqual({ независимый: { text: 'независимый ответ' } });
+    expect(fake.run.outputs).toEqual({
+      'независимый-1': { text: 'своя ветка' },
+      'независимый-2': { text: 'её продолжение' },
+    });
     expect(fake.run.status).toBe('failed');
   });
 
-  it('KI-287 (Т3): несколько падений → run failed, независимые ветки записаны', async () => {
-    // Три уровня: a и d → b и e → c. Падений три (a, b, c), но независимые
-    // d (уровень 1) и e (уровень 2) обязаны выполниться — именно их терял
-    // прежний `break`.
+  it('KI-287 (Т3) / KI-288: несколько падений → независимые ветки записаны, зависимые пропущены', async () => {
+    // Три уровня: a и d → b, e и f → c. Падает только a: b (и его потомок c) и
+    // e пропускаются, а независимая ветка d → f доигрывается до конца — именно
+    // её терял прежний `break` (KI-287).
     const graph: GraphDto = {
       nodes: [
         node('a', 'llm'),
@@ -685,25 +813,25 @@ describe('ExecutionEngineService', () => {
         node('c', 'http'),
         node('d', 'text', { value: 'd' }),
         node('e', 'text', { value: 'e' }),
+        node('f', 'text', { value: 'f' }),
       ],
       edges: [
         edge('ab', 'a', 'b', 'text', 'prompt'),
         edge('bc', 'b', 'c', 'text', 'prompt'),
         edge('ae', 'a', 'e', 'text', 'text'),
+        edge('df', 'd', 'f', 'text', 'text'),
       ],
     };
 
-    // 'e' не зависит от 'a' по данным, но связь тянет его на уровень 2 —
-    // это и есть «независимая ветка следующего уровня» из KI-287.
     expect((await engineService.buildExecutionPlanAsync(graph)).levels).toEqual([
       ['a', 'd'],
-      ['b', 'e'],
+      ['b', 'e', 'f'],
       ['c'],
     ]);
 
     llmExecute.mockImplementation((current: NodeDto) => {
-      if (current.id === 'a' || current.id === 'b') {
-        throw new Error(`узел ${current.id} упал`);
+      if (current.id === 'a') {
+        throw new Error('узел a упал');
       }
 
       return Promise.resolve(llmNodeResult('ok'));
@@ -711,19 +839,45 @@ describe('ExecutionEngineService', () => {
 
     await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow('узел a упал');
 
-    expect(fake.rows.map((row) => [row.nodeId, row.status])).toEqual([
-      ['a', 'failed'],
-      ['d', 'completed'],
-      ['b', 'failed'],
-      ['e', 'completed'],
-      ['c', 'failed'],
-    ]);
+    const statusOf = (nodeId: string): string | undefined =>
+      fake.rows.find((row) => row.nodeId === nodeId)?.status;
+
+    expect(statusOf('a')).toBe('failed');
+    expect(statusOf('d')).toBe('completed');
+    expect(statusOf('b')).toBe('skipped');
+    expect(statusOf('e')).toBe('skipped');
+    expect(statusOf('f')).toBe('completed');
+    expect(statusOf('c')).toBe('skipped');
+
     // Ошибка запуска — первого падения, а не последнего.
     expect(fake.run.status).toBe('failed');
     expect(fake.run.error).toBe('узел a упал');
-    expect(fake.run.outputs).toEqual({ d: { text: 'd' }, e: { text: 'e' } });
-    // Событий node_failed ровно столько, сколько упавших узлов.
-    expect(eventTypes().filter((type) => type === 'node_failed')).toHaveLength(3);
+    expect(fake.run.outputs).toEqual({ d: { text: 'd' }, f: { text: 'f' } });
+    // Падение одно; пропусков три (b, e и потомок пропущенного b — c).
+    expect(eventTypes().filter((type) => type === 'node_failed')).toHaveLength(1);
+    expect(eventTypes().filter((type) => type === 'node_skipped')).toHaveLength(3);
+  });
+
+  it('KI-290: fallback-выход text-потомка упавшего узла не попадает в outputs', async () => {
+    // До KI-288: A падает → B (text с собственным `data.value`) выполнялся с
+    // `null`-входом, вход игнорировал и отдавал 'fallback' — это значение
+    // оседало в `workflow_runs.outputs` как полноценный результат ветки.
+    const graph: GraphDto = {
+      nodes: [
+        node('A', 'http', { url: 'http://127.0.0.1:1/never' }),
+        node('B', 'text', { value: 'fallback' }),
+      ],
+      edges: [edge('ab', 'A', 'B', 'text', 'text')],
+    };
+
+    await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow();
+
+    const rowB = fake.rows.find((row) => row.nodeId === 'B');
+
+    expect(rowB?.status).toBe('skipped');
+    expect(rowB?.outputs).toBeNull();
+    expect(fake.run.outputs).toEqual({});
+    expect(fake.run.status).toBe('failed');
   });
 
   it('прокидывает null, когда выход предшественника пуст (prompt = null)', async () => {
@@ -846,6 +1000,48 @@ describe('ExecutionEngineService', () => {
       // Детерминированная ошибка: сеть не дёргалась, повторов не было (KI-041).
       expect(fetchMock).not.toHaveBeenCalled();
       expect(fake.rows[0].logs).toEqual([]);
+      expect(fake.run.status).toBe('failed');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('KI-289: http с failOnHttpError=true делает 4xx ошибкой узла и пропускает потомка', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve({
+        status: 404,
+        headers: new Headers(),
+        text: () => Promise.resolve('not found'),
+      } as unknown as Response),
+    );
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const graph: GraphDto = {
+        nodes: [
+          node('A', 'http', {
+            method: 'GET',
+            url: 'https://example.com/missing',
+            failOnHttpError: true,
+          }),
+          node('B', 'text', { value: 'fallback-потомок' }),
+        ],
+        edges: [edge('ab', 'A', 'B', 'result', 'text')],
+      };
+
+      await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow('HTTP 404');
+
+      const rowA = fake.rows.find((row) => row.nodeId === 'A');
+      const rowB = fake.rows.find((row) => row.nodeId === 'B');
+
+      // KI-289: узел закрыт failed, а не completed с { status, body }.
+      expect(rowA?.status).toBe('failed');
+      expect(rowA?.error).toBe('HTTP 404');
+      expect(rowA?.outputs).toBeNull();
+      // KI-288: потомок упавшего http-узла не запускается вовсе.
+      expect(rowB?.status).toBe('skipped');
+      expect(fake.run.outputs).toEqual({});
       expect(fake.run.status).toBe('failed');
     } finally {
       vi.unstubAllGlobals();

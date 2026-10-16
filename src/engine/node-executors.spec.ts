@@ -157,6 +157,82 @@ describe('node-executors', () => {
       ).resolves.toEqual({ status: 404, body: 'not found' });
     });
 
+    it('KI-289: failOnHttpError=true превращает 404 в ошибку узла', async () => {
+      mockFetch(() => Promise.resolve(response('not found', 404)));
+
+      await expect(
+        executeHttpNode({
+          method: 'GET',
+          url: 'https://example.com/missing',
+          failOnHttpError: true,
+        }),
+      ).rejects.toThrow('HTTP 404');
+    });
+
+    it('KI-289: failOnHttpError=true превращает 5xx в ошибку узла', async () => {
+      mockFetch(() => Promise.resolve(response('boom', 503)));
+
+      await expect(
+        executeHttpNode({
+          method: 'GET',
+          url: 'https://example.com/flaky',
+          failOnHttpError: true,
+        }),
+      ).rejects.toThrow('HTTP 503');
+    });
+
+    it('KI-289: текст ошибки без тела и заголовков ответа (RULES 5.9)', async () => {
+      // В теле чужого ответа могут быть секреты/PII: в `node_runs.error`
+      // уходит только код, тело в текст ошибки не подставляется.
+      mockFetch(() => Promise.resolve(response('secret-token-42', 500)));
+
+      const error: unknown = await executeHttpNode({
+        method: 'GET',
+        url: 'https://example.com/leak',
+        failOnHttpError: true,
+      }).then(
+        () => null,
+        (reason: unknown) => reason,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('HTTP 500');
+      expect(String(error)).not.toContain('secret-token-42');
+    });
+
+    it('KI-289: failOnHttpError=false и отсутствие поля сохраняют прежнее поведение', async () => {
+      mockFetch(() => Promise.resolve(response('denied', 403)));
+
+      await expect(
+        executeHttpNode({
+          method: 'GET',
+          url: 'https://example.com/forbidden',
+          failOnHttpError: false,
+        }),
+      ).resolves.toEqual({ status: 403, body: 'denied' });
+
+      // Успешный ответ не падает и при failOnHttpError=true.
+      mockFetch(() => Promise.resolve(response('ok', 200)));
+
+      await expect(
+        executeHttpNode({
+          method: 'GET',
+          url: 'https://example.com/ok',
+          failOnHttpError: true,
+        }),
+      ).resolves.toEqual({ status: 200, body: 'ok' });
+    });
+
+    it('KI-289: failOnHttpError не boolean — ошибка валидации данных узла', async () => {
+      await expect(
+        executeHttpNode({
+          method: 'GET',
+          url: 'https://example.com',
+          failOnHttpError: 'yes',
+        }),
+      ).rejects.toThrow(NodeDataValidationException);
+    });
+
     it('обрезает тело ответа до 1 МБ', async () => {
       mockFetch(() => Promise.resolve(response('a'.repeat(MAX_BODY_BYTES + 500))));
 

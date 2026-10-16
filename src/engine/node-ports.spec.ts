@@ -19,6 +19,37 @@ describe('node-ports', () => {
       expect(handleIdToOutputPort('')).toBeNull();
       expect(handleIdToOutputPort('unknown-handle')).toBeNull();
     });
+
+    it('не подставляет порт чужого типа: image_generation + text-output → null (KI-301)', () => {
+      // До KI-301 поиск по всем контрактам отдавал 'text', хотя у узла
+      // `image_generation` в outputs только `url` — зависимый узел читал null.
+      expect(handleIdToOutputPort('text-output', 'image_generation')).toBeNull();
+      // Свой хендл того же типа по-прежнему разрешается.
+      expect(handleIdToOutputPort('image-output', 'image_generation')).toBe('url');
+      // Симметричный случай: text-узел с чужим image-output.
+      expect(handleIdToOutputPort('image-output', 'text')).toBeNull();
+    });
+
+    it('разрешает хендл по контракту типа-источника (KI-301)', () => {
+      expect(handleIdToOutputPort('text-output', 'text')).toBe('text');
+      expect(handleIdToOutputPort('text-output', 'llm')).toBe('text');
+      expect(handleIdToOutputPort('result-output', 'sub_workflow')).toBe('result');
+      expect(handleIdToOutputPort('http-output', 'http')).toBe('result');
+    });
+
+    it('падает на нетипизированный поиск, если у типа нет контракта (KI-301)', () => {
+      // У `compare`/`merge` контракта в реестре нет — прежнее поведение KI-030
+      // сохраняется, чтобы не потерять данные у узлов без контракта.
+      expect(handleIdToOutputPort('text-output', 'compare')).toBe('text');
+      expect(handleIdToOutputPort('text-output', 'merge')).toBe('text');
+      expect(handleIdToOutputPort('text-output', '')).toBe('text');
+    });
+
+    it('возвращает null для null sourceHandle даже с известным типом (KI-301)', () => {
+      expect(handleIdToOutputPort(null, 'text')).toBeNull();
+      expect(handleIdToOutputPort(undefined, 'image_generation')).toBeNull();
+      expect(handleIdToOutputPort('', 'llm')).toBeNull();
+    });
   });
 
   describe('inferDefaultOutputPort', () => {

@@ -144,6 +144,14 @@ export interface HttpNodeData {
   body?: string;
   /** Таймаут запроса в мс (по умолчанию {@link HTTP_DEFAULT_TIMEOUT_MS}). */
   timeoutMs?: number;
+  /**
+   * Считать ли ответ 4xx/5xx ошибкой узла (KI-289).
+   *
+   * По умолчанию `false` — backward compat: узел завершается `completed` с
+   * `{ status, body }`, а решение «это провал» принимает граф (например, узел
+   * `condition`). При `true` ответ с кодом ≥ 400 переводит узел в `failed`.
+   */
+  failOnHttpError?: boolean;
 }
 
 /** Таймаут HTTP-запроса по умолчанию, мс (RULES 4.19). */
@@ -172,6 +180,9 @@ const HttpNodeDataSchema = z.object({
     .positive()
     .max(HTTP_MAX_TIMEOUT_MS, `таймаут не может превышать ${HTTP_MAX_TIMEOUT_MS} мс`)
     .optional(),
+  // KI-289: необязательное поле — старые графы (без него) сохраняют прежнее
+  // поведение «4xx/5xx — не ошибка узла».
+  failOnHttpError: z.boolean().optional(),
 });
 
 /**
@@ -244,22 +255,28 @@ function truncateToBytes(value: string, maxBytes: number): string {
 }
 
 /**
- * Исполнитель узла `http` (KI-105, RULES 4.19 / 5.9).
+ * Исполнитель узла `http` (KI-105, KI-289, RULES 4.19 / 5.9).
  *
  * Запрос уходит через глобальный `fetch` (Node 18+) с жёстким таймаутом
- * `AbortSignal.timeout`. Коды 4xx/5xx **не** считаются ошибкой узла: узел
- * возвращает `{ status, body }`, а решение «это провал» принимает граф
- * (например, узел `condition`). Наружу пробрасываются только сетевые ошибки
- * и таймаут — движок запишет их в `node_runs.error`.
+ * `AbortSignal.timeout`. По умолчанию коды 4xx/5xx **не** считаются ошибкой
+ * узла: узел возвращает `{ status, body }`, а решение «это провал» принимает
+ * граф (например, узел `condition`). Если в `data.failOnHttpError` стоит `true`
+ * (KI-289), ответ с кодом ≥ 400 переводит узел в `failed` — текст ошибки
+ * намеренно короткий, без тела и заголовков. Наружу в обоих случаях
+ * пробрасываются сетевые ошибки и таймаут — движок запишет их в
+ * `node_runs.error`.
  *
  * Тело и заголовки запроса сознательно не логируются: в них попадают токены
- * авторизации (RULES 5.9).
+ * авторизации (RULES 5.9). Тело **ответа** тоже не попадает в текст ошибки:
+ * `failOnHttpError` бросает только код, поэтому PII/секреты из чужого ответа не
+ * оседают ни в `node_runs.error`, ни в логах.
  *
- * @param data - распарсенные данные узла (`method`/`url`/`headers`/`body`/`timeoutMs`)
+ * @param data - распарсенные данные узла (`method`/`url`/`headers`/`body`/`timeoutMs`/`failOnHttpError`)
  * @param inputs - входы узла; `inputs.prompt` используется как URL-фолбэк
  * @returns `{ status, body }`, где `body` обрезано до 1 МБ
  * @throws NodeDataValidationException если данные не проходят Zod-схему
- * @throws Error если URL не задан или запрос прерван по таймауту
+ * @throws Error если URL не задан, запрос прерван по таймауту либо
+ *   `failOnHttpError=true` и сервер ответил кодом ≥ 400 (`HTTP <код>`)
  */
 export async function executeHttpNode(
   data: unknown,
@@ -308,10 +325,19 @@ export async function executeHttpNode(
   }
 
   // Тело ответа читается целиком и обрезается до лимита: `node_runs.outputs`
-  // — jsonb, и мегабайтные ответы не должны раздувать БД (KI-025).
+  // — jsonb, и мегабайтные ответы не должны раздувать БД (KI-025). Чтение идёт
+  // и при `failOnHttpError`: незакрытый ответ держал бы соединение undici, а
+  // `await response.text()` заодно сливает поток до конца.
   const rawBody = await response.text();
+  const body = truncateToBytes(rawBody, HTTP_MAX_BODY_BYTES);
 
-  return { status: response.status, body: truncateToBytes(rawBody, HTTP_MAX_BODY_BYTES) };
+  // KI-289: явный заказ «4xx/5xx — это падение». Сравнение с `true` строгое:
+  // отсутствие поля (старые графы) и `false` сохраняют прежнее поведение.
+  if (parsed.failOnHttpError === true && response.status >= 400) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return { status: response.status, body };
 }
 
 /* ──────────────── Узел condition (MVP, без маршрутизации) ──────────────── */

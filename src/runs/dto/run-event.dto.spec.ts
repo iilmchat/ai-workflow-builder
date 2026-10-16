@@ -32,6 +32,14 @@ describe('RunEventSchema', () => {
         finishedAt: ISO_NOW,
       },
       {
+        type: 'node_skipped',
+        runId: RUN_ID,
+        nodeId: 'n2',
+        nodeType: 'llm',
+        reason: 'Пропущен: упал предшественник',
+        skippedAt: ISO_NOW,
+      },
+      {
         type: 'run_completed',
         runId: RUN_ID,
         status: 'failed',
@@ -155,6 +163,39 @@ describe('RunEventSchema', () => {
     expect(RunEventSchema.safeParse(base).success).toBe(false);
     // final обязан быть boolean.
     expect(RunEventSchema.safeParse({ ...base, final: 'true' }).success).toBe(false);
+  });
+
+  it('требует nodeId/nodeType/reason в node_skipped (KI-288)', () => {
+    const base = {
+      type: 'node_skipped',
+      runId: RUN_ID,
+      skippedAt: ISO_NOW,
+    };
+
+    // Без nodeId/nodeType/reason событие бесполезно: UI не знает, какой узел
+    // пропущен и почему.
+    expect(RunEventSchema.safeParse(base).success).toBe(false);
+    expect(
+      RunEventSchema.safeParse({ ...base, nodeId: 'n2', nodeType: 'llm' }).success,
+    ).toBe(false);
+    expect(
+      RunEventSchema.safeParse({
+        ...base,
+        nodeId: 'n2',
+        nodeType: 'llm',
+        reason: 'Пропущен: упал предшественник',
+      }).success,
+    ).toBe(true);
+    // Дата пропуска обязана быть ISO-строкой.
+    expect(
+      RunEventSchema.safeParse({
+        ...base,
+        nodeId: 'n2',
+        nodeType: 'llm',
+        reason: 'Пропущен: упал предшественник',
+        skippedAt: 'вчера',
+      }).success,
+    ).toBe(false);
   });
 
   it('отклоняет событие с неизвестным дискриминатором type', () => {

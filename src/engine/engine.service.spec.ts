@@ -460,6 +460,30 @@ describe('EngineService', () => {
       });
     });
 
+    it('игнорирует чужой хендл и берёт порт по типу источника (KI-301)', async () => {
+      // `image_generation` не отдаёт порт `text`/`text-output`: хендл чужой,
+      // поэтому резолвер возвращает null, а порт берётся из типа источника —
+      // `url`. До KI-301 здесь был `fromPort='text'` и данные терялись.
+      const graph: GraphDto = {
+        nodes: [node('A', 'image_generation'), node('B', 'llm')],
+        edges: [
+          {
+            id: 'e1',
+            source: 'A',
+            target: 'B',
+            sourceHandle: 'text-output',
+            targetHandle: 'text-input',
+          },
+        ],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      expect(plan.executionMap.B.inputs).toEqual({
+        prompt: { fromNode: 'A', fromPort: 'url' },
+      });
+    });
+
     it('разрешает порты всего UI-графа text→llm→image_generation (KI-030)', async () => {
       const graph: GraphDto = {
         nodes: [node('A', 'text'), node('B', 'llm'), node('C', 'image_generation')],

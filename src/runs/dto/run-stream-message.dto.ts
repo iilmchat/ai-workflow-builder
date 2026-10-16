@@ -23,6 +23,23 @@ import { RunEventSchema } from './run-event.dto.js';
  */
 export const RunStatusSchema = z.enum(RUN_STATUSES);
 
+/**
+ * Статусы строки `node_runs`, которые может отдать снимок (KI-288).
+ *
+ * Отличается от {@link RunStatusSchema} ровно на `skipped`: это статус **узла**,
+ * у запуска такого значения нет. Список выведен из `RUN_STATUSES` (а не
+ * продублирован), чтобы новые статусы запуска подхватывались автоматически.
+ * Без `skipped` в этой схеме валидация снимка падала бы на каждом запуске с
+ * пропущенным узлом, и SSE-поток закрывался бы ошибкой (RULES 1.17).
+ */
+export const NODE_RUN_STATUSES = [...RUN_STATUSES, 'skipped'] as const;
+
+/** Zod-схема статуса узла запуска (включая `skipped`, KI-288). */
+export const NodeRunStatusSchema = z.enum(NODE_RUN_STATUSES);
+
+/** Статус строки `node_runs` в снимке состояния. */
+export type NodeRunStatus = (typeof NODE_RUN_STATUSES)[number];
+
 /** Zod-схема запуска внутри снимка состояния. */
 export const RunSnapshotSchema = z.object({
   id: z.uuid(),
@@ -35,7 +52,8 @@ export const RunSnapshotSchema = z.object({
 export const NodeRunSnapshotSchema = z.object({
   nodeId: z.string(),
   nodeType: z.string(),
-  status: RunStatusSchema,
+  // KI-288: узел может быть в статусе `skipped` — см. NodeRunStatusSchema.
+  status: NodeRunStatusSchema,
   inputs: z.record(z.string(), z.unknown()),
   outputs: z.record(z.string(), z.unknown()).nullable(),
   error: z.string().nullable(),

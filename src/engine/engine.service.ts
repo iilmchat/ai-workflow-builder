@@ -160,9 +160,10 @@ export class EngineService {
    *   fallback `targetHandle` → `sourceHandle` → `edge.id` (KI-003), поэтому
    *   несколько входов без заданных портов не перезаписывают друг друга.
    *   `fromPort` разрешается в два шага: сначала id хендла React Flow
-   *   переводится в имя порта (`handleIdToOutputPort`: `text-output` → `text`,
-   *   `image-output` → `url`, KI-030), а для неизвестного/отсутствующего хендла
-   *   порт выводится из типа узла-источника (`inferDefaultOutputPort`, KI-022);
+   *   переводится в имя порта **по контракту типа узла-источника**
+   *   (`handleIdToOutputPort`: `text-output` → `text`, `image-output` → `url`,
+   *   KI-030/KI-301), а для отсутствующего/чужого хендла порт выводится из типа
+   *   узла-источника (`inferDefaultOutputPort`, KI-022);
    * - `dependents` — `id` узлов, которые ждут завершения этого узла.
    *
    * @param graph - валидированный DTO графа
@@ -231,8 +232,10 @@ export class EngineService {
 
         plan.inputs[inputKey] = {
           fromNode: edge.source,
+          // KI-301: тип узла-источника передаётся в резолвер — иначе чужой
+          // хендл (`text-output` у `image_generation`) дал бы порт другого типа.
           fromPort:
-            handleIdToOutputPort(edge.sourceHandle) ??
+            handleIdToOutputPort(edge.sourceHandle, sourceNode?.type) ??
             inferDefaultOutputPort(sourceNode?.type ?? ''),
         };
       }

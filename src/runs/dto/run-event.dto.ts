@@ -68,6 +68,24 @@ export const RunEventSchema = z.discriminatedUnion('type', [
     logs: z.array(z.string()).nullable().optional(),
     finishedAt: z.iso.datetime(),
   }),
+  /**
+   * Узел пропущен: движок его не выполнял, потому что упал (или был пропущен
+   * сам) его предшественник — KI-288.
+   *
+   * Отдельное событие, а не `node_failed`: узел не падал, и в UI это другое
+   * состояние («не запускался»), хотя в `node_runs.status` строка и лежит со
+   * значением `skipped`. Метрик и выходов у такого узла нет, поэтому в событии
+   * только причина.
+   */
+  z.object({
+    type: z.literal('node_skipped'),
+    runId: z.uuid(),
+    nodeId: z.string(),
+    nodeType: z.string(),
+    /** Причина пропуска — тот же текст, что записан в `node_runs.error`. */
+    reason: z.string(),
+    skippedAt: z.iso.datetime(),
+  }),
   /** Запуск завершён — успешно или с ошибкой (см. KI-059 о финальности). */
   z.object({
     type: z.literal('run_completed'),

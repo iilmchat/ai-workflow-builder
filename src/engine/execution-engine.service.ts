@@ -7,7 +7,7 @@ import {
 import { and, eq } from 'drizzle-orm';
 import { isDeepStrictEqual } from 'node:util';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { nodeRuns, workflowRuns, workflows } from '../db/schema.js';
+import { nodeRuns, workflowRuns, workflows, type RunStatus } from '../db/schema.js';
 import { RunEventsService } from '../runs/run-events.service.js';
 import { LlmNodeExecutor, type LlmNodeMetrics } from '../llm/llm-node-executor.service.js';
 import { LlmProviderException } from '../llm/llm-provider.interface.js';
@@ -109,6 +109,40 @@ const NODE_MAX_ATTEMPTS = 3;
 const NODE_RETRY_BASE_DELAY_MS = 500;
 
 /**
+ * Текст ошибки узла, пропущенного из-за упавшего предшественника (KI-288).
+ *
+ * Один и тот же текст уходит в `node_runs.error` и в событие `node_skipped`
+ * (`reason`), чтобы UI показывал состояние одинаково и из снимка, и из потока.
+ */
+const NODE_SKIPPED_ERROR = 'Пропущен: упал предшественник';
+
+/**
+ * Статусы строки `node_runs`, которые пишет сам движок.
+ *
+ * `skipped` объявлен здесь, а не в `RUN_STATUSES` (`src/db/schema.ts`): файл
+ * схемы и миграции правит параллельная сессия, а колонка `node_runs.status` —
+ * обычный `text` без CHECK-ограничения, поэтому значение сохраняется как есть.
+ * Приведение к типу колонки локализовано в {@link toNodeRunColumnStatus} и
+ * снимается, когда `skipped` переедет в `RUN_STATUSES` (KI-288).
+ */
+type NodeRunStatus = RunStatus | 'skipped';
+
+/**
+ * Приводит статус движка к типу колонки `node_runs.status`.
+ *
+ * Нужен ровно для `skipped`: остальные статусы (`running`/`completed`/`failed`)
+ * уже входят в `RunStatus`. Тип колонки шире не сделать без правки
+ * `src/db/schema.ts` (вне зоны задачи), а значение в БД принимается любое —
+ * колонка объявлена как `text`.
+ *
+ * @param status - статус, которым движок закрывает строку `node_runs`
+ * @returns тот же статус в типе колонки (`RunStatus`)
+ */
+function toNodeRunColumnStatus(status: NodeRunStatus): RunStatus {
+  return status as RunStatus;
+}
+
+/**
  * Пауза перед повтором узла.
  *
  * @param ms - длительность паузы в миллисекундах
@@ -191,21 +225,27 @@ export class ExecutionEngineService {
    * **KI-287:** план проходится до конца. Раньше уровень с падением прерывал
    * цикл (`break`), и независимые ветки следующих уровней не выполнялись —
    * это противоречило RULES 4.16 (смоук E2 R6.5.2: упавший `http` не дал
-   * выполниться независимым `condition` и `compare`). Теперь узел, зависящий
-   * от упавшего, просто не находит `completed`-выходы предшественника и
-   * получает `null` во входах (`collectInputsAsync`) — он выполняется и, если
-   * для его типа `null` неприемлем, падает сам, оставаясь видимым в UI как
-   * `failed`. Полное «пропускание» зависимых узлов (транзитивное замыкание
-   * от упавших, статус `skipped`) не реализовано: в `RUN_STATUSES`
-   * (`src/db/schema.ts`) такого статуса нет — см. KI-288.
+   * выполниться независимым `condition` и `compare`). Теперь узел, не зависящий
+   * от упавшего, выполняется всегда, сколько бы уровней ни лежало выше.
+   *
+   * **KI-288:** узел, у которого среди предшественников есть упавший (или уже
+   * пропущенный), не выполняется вообще: перед каждым уровнем такие узлы
+   * закрываются статусом `skipped` (`node_runs.error` — «Пропущен: упал
+   * предшественник») и публикуется событие `node_skipped`. Пропуск транзитивен:
+   * потомок пропущенного узла тоже пропускается. До KI-288 зависимый узел
+   * запускался с `null`-входами и падал сам, выглядя в UI как самостоятельно
+   * сломанный. Заодно закрывается KI-290: fallback-выходы таких узлов больше не
+   * попадают в `workflow_runs.outputs` — пропущенный узел туда не пишется.
    *
    * Итоговый статус запуска — `failed`, если упал **хотя бы один** узел,
    * независимо от того, сколько независимых узлов успешно завершилось.
+   * Пропущенные узлы статус запуска не меняют: они следствие падения, а не
+   * самостоятельная ошибка.
    *
    * В `workflow_runs.outputs` пишется словарь `nodeId` → outputs **всех**
    * успешно завершившихся узлов (а не только последнего уровня): так при
    * падении сохраняется частичный результат, а UI (R4) видит полную картину.
-   * Упавшие узлы в `outputs` не попадают.
+   * Упавшие и пропущенные узлы в `outputs` не попадают.
    *
    * Две разные стратегии обработки ошибок:
    * - **фаза планирования** (KI-037): ошибки детерминированы (цикл, битые
@@ -257,6 +297,17 @@ export class ExecutionEngineService {
     const outputs: Record<string, Record<string, unknown>> = {};
     const failures: Array<{ nodeId: string; error: string; reason: unknown }> = [];
 
+    // KI-288: два множества узлов, которые больше не запускаются.
+    // `failedIds` — упавшие по-настоящему, `skippedIds` — не запускавшиеся
+    // из-за упавшего (или уже пропущенного) предшественника. Потомок любого из
+    // них попадает в `skippedIds` — так получается транзитивное замыкание.
+    const failedIds = new Set<string>();
+    const skippedIds = new Set<string>();
+
+    // Обратные рёбра плана: «узел → его предшественники». Нужны, чтобы на
+    // каждом уровне понять, чей предшественник уже упал (KI-288).
+    const predecessors = this.buildPredecessorMap(plan);
+
     // R6.7 (KI-200): контекст для узлов sub_workflow. Владелец запуска нужен,
     // чтобы подграф загружался только у своего workflow (чужой → 404), а
     // `visitedWorkflows`/`depth` — для защиты от рекурсии. Запрос к БД
@@ -264,8 +315,54 @@ export class ExecutionEngineService {
     const subContext = await this.createSubWorkflowContextAsync(runId, graph);
 
     for (const [levelIndex, level] of plan.levels.entries()) {
+      // KI-288: узлы с упавшим (или пропущенным) предшественником НЕ
+      // выполняются — они сразу закрываются статусом `skipped`. Раньше (после
+      // KI-287) такой узел получал `null` во входах и падал сам, выглядя как
+      // самостоятельно сломанный.
+      const blockedBy = this.findBlockedByPredecessor(
+        level,
+        predecessors,
+        failedIds,
+        skippedIds,
+      );
+
+      const blockedToSkip: Array<{ node: NodeDto; predecessorId: string }> = [];
+
+      for (const [nodeId, predecessorId] of blockedBy) {
+        skippedIds.add(nodeId);
+
+        const skippedNode = graph.nodes.find((candidate) => candidate.id === nodeId);
+
+        if (skippedNode) {
+          blockedToSkip.push({ node: skippedNode, predecessorId });
+        } else {
+          // Недостижимо для узлов плана (план строится по этому же графу), но
+          // без строки `node_runs` узел исчез бы из UI — фиксируем громко.
+          this.logger.error(
+            `Запуск ${runId}: узел ${nodeId} пропущен, но отсутствует в графе`,
+          );
+        }
+      }
+
+      // Записи пропущенных узлов независимы друг от друга — параллельно
+      // (RULES 4.17). `skippedIds` уже заполнен синхронно выше, поэтому
+      // следующий уровень увидит пропуски независимо от порядка записей.
+      await Promise.all(
+        blockedToSkip.map(({ node, predecessorId }) =>
+          this.markNodeSkippedAsync(runId, node, predecessorId),
+        ),
+      );
+
+      const activeLevel = level.filter((nodeId) => !blockedBy.has(nodeId));
+
+      // Весь уровень пропущен — выполнять нечего, следующий уровень читает
+      // `skippedIds` (транзитивность через предшественников).
+      if (activeLevel.length === 0) {
+        continue;
+      }
+
       const results = await Promise.allSettled(
-        level.map((nodeId) =>
+        activeLevel.map((nodeId) =>
           this.executeNodeAsync(runId, nodeId, graph, plan, subContext),
         ),
       );
@@ -277,7 +374,7 @@ export class ExecutionEngineService {
       const levelFailures: Array<{ nodeId: string; error: string; reason: unknown }> = [];
 
       results.forEach((result, index) => {
-        const nodeId = level[index];
+        const nodeId = activeLevel[index];
 
         if (result.status === 'fulfilled') {
           // В `outputs` попадают только успешно завершившиеся узлы: у упавших
@@ -288,6 +385,10 @@ export class ExecutionEngineService {
           return;
         }
 
+        // KI-288: упавший узел блокирует своих потомков — на следующих уровнях
+        // они получат `skipped`, а не «запустятся с null-входами и упадут сами».
+        failedIds.add(nodeId);
+
         levelFailures.push({
           nodeId,
           error: toMessage(result.reason),
@@ -297,11 +398,14 @@ export class ExecutionEngineService {
 
       failures.push(...levelFailures);
 
-      if (levelFailures.length > 0) {
+      if (levelFailures.length > 0 || blockedBy.size > 0) {
         this.logger.warn(
-          `Запуск ${runId}: на уровне ${levelIndex} упало узлов=${levelFailures.length}` +
-            ` (первый: ${levelFailures[0].nodeId} — ${levelFailures[0].error});` +
-            ' независимые узлы следующих уровней продолжают выполняться (KI-287)',
+          `Запуск ${runId}: на уровне ${levelIndex} упало узлов=${levelFailures.length},` +
+            ` пропущено=${blockedBy.size}` +
+            (levelFailures.length > 0
+              ? ` (первый: ${levelFailures[0].nodeId} — ${levelFailures[0].error})`
+              : '') +
+            '; независимые узлы следующих уровней продолжают выполняться (KI-287)',
         );
       }
     }
@@ -319,7 +423,8 @@ export class ExecutionEngineService {
      this.logger.log(
       `Запуск ${runId} завершён: status=${status},`
         + ` узлов выполнено=${executedNodes},`
-        + ` провалено=${failures.length}`
+        + ` провалено=${failures.length},`
+        + ` пропущено=${skippedIds.size}`
         + (failed ? `, первая ошибка: ${failed.error}` : ''),
     );
 
@@ -342,6 +447,69 @@ export class ExecutionEngineService {
       error: null,
       outputs,
     };
+  }
+
+  /**
+   * Строит обратный граф зависимостей плана: «узел → его предшественники».
+   *
+   * Источник — `executionMap.dependents` (прямые рёбра «источник → потомок»),
+   * а не `executionMap.inputs`: ключи входов сворачиваются в один
+   * нормализованный порт (KI-034/KI-035), поэтому `inputs` может не содержать
+   * всех предшественников узла. `dependents` содержит все исходящие связи.
+   *
+   * @param plan - план выполнения графа
+   * @returns карта «id узла → id его предшественников» (пустой массив у корней)
+   */
+  private buildPredecessorMap(plan: ExecutionPlanDto): Map<string, string[]> {
+    const predecessors = new Map<string, string[]>();
+
+    for (const nodeId of Object.keys(plan.executionMap)) {
+      predecessors.set(nodeId, []);
+    }
+
+    for (const [sourceId, nodePlan] of Object.entries(plan.executionMap)) {
+      for (const dependentId of nodePlan.dependents) {
+        predecessors.get(dependentId)?.push(sourceId);
+      }
+    }
+
+    return predecessors;
+  }
+
+  /**
+   * Ищет узлы уровня, которые нельзя выполнять: их предшественник упал или уже
+   * пропущен (KI-288).
+   *
+   * Все предшественники узла лежат на строго более ранних уровнях (свойство
+   * уровней Кана), поэтому к моменту обработки уровня множества заполнены
+   * полностью — и пропуск получается транзитивным без отдельного обхода.
+   *
+   * @param level - узлы текущего уровня плана
+   * @param predecessors - карта «узел → его предшественники»
+   * @param failedIds - `id` упавших узлов
+   * @param skippedIds - `id` узлов, уже пропущенных из-за упавших предшественников
+   * @returns карта «id пропускаемого узла → id предшественника, из-за которого он пропущен»
+   */
+  private findBlockedByPredecessor(
+    level: readonly string[],
+    predecessors: ReadonlyMap<string, readonly string[]>,
+    failedIds: ReadonlySet<string>,
+    skippedIds: ReadonlySet<string>,
+  ): Map<string, string> {
+    const blocked = new Map<string, string>();
+
+    for (const nodeId of level) {
+      const blockingPredecessor = (predecessors.get(nodeId) ?? []).find(
+        (predecessorId) =>
+          failedIds.has(predecessorId) || skippedIds.has(predecessorId),
+      );
+
+      if (blockingPredecessor !== undefined) {
+        blocked.set(nodeId, blockingPredecessor);
+      }
+    }
+
+    return blocked;
   }
 
   /**
@@ -1047,6 +1215,117 @@ export class ExecutionEngineService {
     } catch (error: unknown) {
       this.logger.error(
         `Не удалось опубликовать node_failed запуска ${runId}: ${toMessage(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Закрывает узел статусом `skipped` и публикует событие `node_skipped`
+   * (KI-288).
+   *
+   * Узел **не выполнялся**: строка `node_runs` нужна только для истории и UI,
+   * чтобы пропуск отличался от самостоятельного падения. Запись идёт тем же
+   * UPSERT по (`run_id`, `node_id`), что и у выполняемых узлов (KI-031): при
+   * повторном прогоне графа строка обновляется, а не дублируется, и переход
+   * «пропущен → выполнен» (когда упавший предшественник на ретрае отработал)
+   * остаётся возможным.
+   *
+   * Сбой записи или публикации не роняет запуск (RULES 4.16/4.18): он только
+   * логируется, а сам пропуск уже зафиксирован в `skippedIds` — потомки всё
+   * равно будут пропущены.
+   *
+   * @param runId - uuid запуска
+   * @param node - пропускаемый узел графа (нужен `nodeType` для строки истории)
+   * @param predecessorId - `id` предшественника, из-за которого узел пропущен
+   * @returns промис без значения
+   */
+  private async markNodeSkippedAsync(
+    runId: string,
+    node: NodeDto,
+    predecessorId: string,
+  ): Promise<void> {
+    const now = new Date();
+    const skippedStatus = toNodeRunColumnStatus('skipped');
+
+    this.logger.warn(
+      `Узел ${node.id} запуска ${runId} пропущен: упал предшественник ` +
+        `${predecessorId} (KI-288)`,
+    );
+
+    try {
+      await this.db
+        .insert(nodeRuns)
+        .values({
+          runId,
+          nodeId: node.id,
+          nodeType: node.type,
+          status: skippedStatus,
+          // Входы не собирались: узел не выполнялся. Пустой словарь (как у
+          // колонки по умолчанию) лучше `null` — `collectInputsAsync` и UI
+          // работают с `inputs` как с объектом.
+          inputs: {},
+          outputs: null,
+          error: NODE_SKIPPED_ERROR,
+          logs: [],
+          durationMs: 0,
+          startedAt: now,
+          finishedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [nodeRuns.runId, nodeRuns.nodeId],
+          set: {
+            status: skippedStatus,
+            inputs: {},
+            outputs: null,
+            error: NODE_SKIPPED_ERROR,
+            logs: [],
+            durationMs: 0,
+            // KI-038: метрики прошлой попытки не должны «прилипать» к пропуску.
+            tokensIn: null,
+            tokensOut: null,
+            costUsd: null,
+            costRub: null,
+            startedAt: now,
+            finishedAt: now,
+          },
+        })
+        // `returning` явно закрывает запрос: тот же приём, что и в
+        // `executeNodeAsync` (KI-031), — Drizzle выполняет INSERT/UPDATE только
+        // через `await` на терминальном вызове.
+        .returning({ id: nodeRuns.id });
+    } catch (error: unknown) {
+      this.logger.error(
+        `Не удалось пометить узел ${node.id} запуска ${runId} как skipped: ` +
+          toMessage(error),
+      );
+    }
+
+    await this.publishNodeSkippedAsync(runId, node);
+  }
+
+  /**
+   * Публикует `node_skipped` «по возможности».
+   *
+   * Сбой публикации не должен менять исход пропуска (он уже записан в БД),
+   * поэтому он только логируется — как у `node_failed` (KI-024).
+   *
+   * @param runId - uuid запуска
+   * @param node - пропущенный узел графа
+   * @returns промис без значения
+   */
+  private async publishNodeSkippedAsync(runId: string, node: NodeDto): Promise<void> {
+    try {
+      await this.runEvents.publishAsync(runId, {
+        type: 'node_skipped',
+        runId,
+        nodeId: node.id,
+        nodeType: node.type,
+        reason: NODE_SKIPPED_ERROR,
+        skippedAt: new Date().toISOString(),
+      });
+    } catch (error: unknown) {
+      this.logger.error(
+        `Не удалось опубликовать node_skipped запуска ${runId}: ${toMessage(error)}`,
       );
     }
   }

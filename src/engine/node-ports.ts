@@ -8,12 +8,27 @@
  * - KI-030: UI присылает `sourceHandle` с id хендла React Flow
  *   (`text-output`, `image-output`), а исполнители пишут outputs под именами
  *   `text`/`url`. Без перевода данных молча терялись (`null`).
+ * - KI-301: поиск хендла по всем контрактам подряд подставлял порт чужого типа
+ *   (`text-output` у `image_generation` → `text`), поэтому резолвер стал
+ *   type-aware: `handleIdToOutputPort(handleId, sourceNodeType)`.
  *
  * Держится отдельно от `node-executors.ts`, чтобы планировщик
  * (`EngineService`) не зависел от реализаций исполнителей: из
  * `node-executors.ts` он берёт только метаданные `ANNOTATION_NODE_TYPES`
  * (KI-266), а не сами `execute*Node`.
  */
+
+/**
+ * Тип узла графа.
+ *
+ * `NodeSchema.type` (`./dto/graph.dto.js`) — свободная строка: граф приходит из
+ * внешнего источника (RULES 1.17) и может содержать тип, которого движок не
+ * знает. Такой узел должен падать на выполнении понятной ошибкой
+ * (`UnsupportedNodeTypeException`), а не отказывать в валидации всего графа,
+ * поэтому псевдоним не сужается до перечисления известных типов: «известность»
+ * проверяется по {@link NODE_PORT_CONTRACT} в месте использования.
+ */
+export type NodeType = string;
 
 /** Контракт портов узла: id хендлов React Flow + имена портов в node_runs. */
 export interface NodePortContract {
@@ -138,16 +153,40 @@ export function inferInputPortName(nodeType: string): string {
 /**
  * Переводит id хендла React Flow (`edge.sourceHandle`) в имя выходного порта.
  *
+ * Разрешение type-aware (KI-301): при заданном `sourceNodeType` хендл сверяется
+ * с контрактом **именно этого типа**. До KI-301 поиск шёл по всем контрактам
+ * сразу, поэтому чужой хендл давал порт другого узла: `image_generation` с
+ * `sourceHandle='text-output'` получал `fromPort='text'`, хотя отдаёт только
+ * `url` — зависимый узел молча читал `null`.
+ *
+ * Если для типа контракта нет (`compare`, `task`, произвольный тип от API),
+ * сохраняется прежнее поведение — поиск по всем контрактам (fallback KI-030).
+ *
  * @param handleId - `edge.sourceHandle` из React Flow (может быть null/undefined)
+ * @param sourceNodeType - тип узла-источника связи; без него работает
+ *   нетипизированный поиск по всем контрактам (fallback)
  * @returns имя порта (`text-output` → `text`, `image-output` → `url`) либо
- *   `null`, если handle id не задан или неизвестен (тогда вызывающий код
- *   использует {@link inferDefaultOutputPort})
+ *   `null`, если handle id не задан, не подходит типу источника или неизвестен
+ *   (тогда вызывающий код использует {@link inferDefaultOutputPort})
  */
 export function handleIdToOutputPort(
   handleId: string | null | undefined,
+  sourceNodeType?: NodeType,
 ): string | null {
   if (!handleId) {
     return null;
+  }
+
+  // KI-301: для известного типа сверяем хендл с его контрактом и не даём
+  // подставить порт чужого типа. Для типа без контракта — уходим в fallback.
+  if (sourceNodeType !== undefined) {
+    const ownContract = NODE_PORT_CONTRACT[sourceNodeType];
+
+    if (ownContract) {
+      return ownContract.sourceHandleId === handleId
+        ? ownContract.outputPortName
+        : null;
+    }
   }
 
   for (const contract of Object.values(NODE_PORT_CONTRACT)) {
