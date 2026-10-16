@@ -183,6 +183,10 @@ remaining: $Y)'`. UI — прогресс-бар в TopBar (`data-run-budget`),
 
 **Закрывает:** KI-361. **~8 ч.**
 
+**TTS-фолбэк (KI-385):** CreativeLab не отдаёт type=AUDIO (пустой
+список); TTS-модели лежат в MUSIC (tts2, параметр voice). Узел
+audio_generation использует фолбэк AUDIO ∪ MUSIC-модели с voice — временно.
+
 **Три новых узла:**
 
     interface VideoGenNodeData {
@@ -190,7 +194,8 @@ remaining: $Y)'`. UI — прогресс-бар в TopBar (`data-run-budget`),
       model: string;
       prompt?: string;
       imageUrl?: string;      // опционально: image-to-video
-      durationSec?: number;   // 3–10
+      durationSec?: number;   // значение из enum модели (реально:
+                              // kling-v2-5 {5,10}, kling-v4 до 30; KI-388)
       aspectRatio?: string;
     }
 
@@ -206,7 +211,8 @@ remaining: $Y)'`. UI — прогресс-бар в TopBar (`data-run-budget`),
       kind: 'music_generation';
       model: string;
       prompt?: string;
-      durationSec?: number;   // 15–120
+      durationSec?: number;   // из enum модели (реально:
+                              // grom-zvuk вернул 240; KI-388)
       genre?: string;
     }
 
