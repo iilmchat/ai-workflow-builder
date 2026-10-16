@@ -1,0 +1,59 @@
+{
+  "$comment": "Источник правды SSE-контракта запуска (KI-347/KI-348): поля каждого события прогресса и блоков снимка. Обновляется вместе со схемами — расхождение роняет src/runs/dto/sse-contract.spec.ts (backend) и web/src/types/run-stream-contract.spec.ts (зеркало). Поле-дискриминатор type в списки не входит: его значение обязано совпадать с ключом события (проверяется отдельно).",
+  "version": 1,
+  "events": {
+    "run_started": ["runId", "startedAt"],
+    "node_started": ["runId", "nodeId", "nodeType", "startedAt"],
+    "node_completed": [
+      "runId",
+      "nodeId",
+      "outputs",
+      "durationMs",
+      "costRub",
+      "tokensIn",
+      "tokensOut",
+      "costUsd",
+      "logs",
+      "finishedAt"
+    ],
+    "node_failed": [
+      "runId",
+      "nodeId",
+      "error",
+      "costRub",
+      "tokensIn",
+      "tokensOut",
+      "costUsd",
+      "logs",
+      "finishedAt"
+    ],
+    "node_skipped": ["runId", "nodeId", "nodeType", "reason", "skippedAt"],
+    "run_completed": [
+      "runId",
+      "status",
+      "attemptsMade",
+      "attempts",
+      "final",
+      "finishedAt"
+    ]
+  },
+  "snapshot": {
+    "run": ["id", "workflowId", "status", "createdAt", "error"],
+    "node": [
+      "nodeId",
+      "nodeType",
+      "status",
+      "inputs",
+      "outputs",
+      "error",
+      "logs",
+      "tokensIn",
+      "tokensOut",
+      "costUsd",
+      "costRub",
+      "durationMs",
+      "startedAt",
+      "finishedAt"
+    ]
+  }
+}

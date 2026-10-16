@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkflowStore, type GraphSnapshot } from './workflow';
 import type { AppNode } from '@/types/graph';
+import type { SnapshotMessage } from '@/types/run-stream';
 
 /**
  * Заглушка i18n: настоящий модуль на импорте пишет `document.documentElement.lang`
@@ -397,6 +398,8 @@ describe('useWorkflowStore — SSE-события статуса узла (KI-28
         workflowId: 'w1',
         status: 'failed',
         createdAt: ISO_AT,
+        // KI-347: причина падения запуска приходит в снимке.
+        error: 'Узел B упал: HTTP 404',
       },
       nodes: [
         {
@@ -460,5 +463,69 @@ describe('useWorkflowStore — SSE-события статуса узла (KI-28
     expect(state().nodeErrors.C).toBe(SKIP_REASON);
     expect(state().runStatus).toBe('failed');
     expect(state().nodeOutputs.A).toEqual({ text: 'a' });
+    // KI-347: причина падения запуска из снимка — то, что панель показывает
+    // после F5 вместо «причина недоступна».
+    expect(state().runError).toBe('Узел B упал: HTTP 404');
+  });
+});
+
+describe('useWorkflowStore — run.error в снимке (KI-347)', () => {
+  /** ISO-время снимка. */
+  const ISO_SNAPSHOT_AT = '2026-10-16T11:00:00.000Z';
+
+  beforeEach(() => {
+    // Снимок завершённого запуска трогает `?runId=` (`window`), а тесты идут в
+    // node-окружении — подставляем минимальный window (как в KI-288-спеке).
+    vi.stubGlobal('window', {
+      location: { href: 'http://127.0.0.1:5173/?workflowId=w1' },
+      history: { replaceState: () => undefined },
+    });
+    useWorkflowStore.setState({ ...EMPTY_STATE, runStatus: null, runError: null });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * Собирает снимок завершившегося с ошибкой запуска.
+   *
+   * @param error - значение `run.error` (`null` — ошибки ещё нет)
+   * @returns сообщение-снимок без узлов
+   */
+  function snapshotWithError(error: string | null): SnapshotMessage {
+    return {
+      type: 'snapshot',
+      run: {
+        id: 'run-1',
+        workflowId: 'w1',
+        status: 'failed',
+        createdAt: ISO_SNAPSHOT_AT,
+        error,
+      },
+      nodes: [],
+    };
+  }
+
+  it('снимок с непустым error заполняет runError', () => {
+    state().applySnapshot(snapshotWithError('Узел B упал: HTTP 404'));
+
+    expect(state().runError).toBe('Узел B упал: HTTP 404');
+    expect(state().runStatus).toBe('failed');
+  });
+
+  it('снимок с error=null не перетирает уже известную ошибку', () => {
+    state().applySnapshot(snapshotWithError('Узел B упал: HTTP 404'));
+    // Снимок, собранный до заполнения `workflow_runs.error`, не должен стирать
+    // причину, пришедшую с `node_failed` (принцип KI-271).
+    state().applySnapshot(snapshotWithError(null));
+
+    expect(state().runError).toBe('Узел B упал: HTTP 404');
+  });
+
+  it('снимок с error=null при пустом runError оставляет null', () => {
+    state().applySnapshot(snapshotWithError(null));
+
+    expect(state().runError).toBeNull();
   });
 });

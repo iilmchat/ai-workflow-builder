@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { RUN_STATUSES } from '../../db/schema.js';
+import { WORKFLOW_RUN_STATUSES } from '../../db/schema.js';
 import { RunEventSchema } from './run-event.dto.js';
 
 /**
@@ -18,21 +18,23 @@ import { RunEventSchema } from './run-event.dto.js';
 /**
  * Zod-схема статуса запуска/узла.
  *
- * Значения берутся из `RUN_STATUSES` (`db/schema.ts`) — единственного источника
- * истины, чтобы список статусов не разошёлся с БД.
+ * Значения берутся из `WORKFLOW_RUN_STATUSES` (`db/schema.ts`) — единственного
+ * источника истины, чтобы список статусов не разошёлся с БД. KI-336 развёл
+ * статусы запуска и узла, поэтому здесь именно список запуска.
  */
-export const RunStatusSchema = z.enum(RUN_STATUSES);
+export const RunStatusSchema = z.enum(WORKFLOW_RUN_STATUSES);
 
 /**
  * Статусы строки `node_runs`, которые может отдать снимок (KI-288).
  *
  * Отличается от {@link RunStatusSchema} ровно на `skipped`: это статус **узла**,
- * у запуска такого значения нет. Список выведен из `RUN_STATUSES` (а не
- * продублирован), чтобы новые статусы запуска подхватывались автоматически.
- * Без `skipped` в этой схеме валидация снимка падала бы на каждом запуске с
- * пропущенным узлом, и SSE-поток закрывался бы ошибкой (RULES 1.17).
+ * у запуска такого значения нет. Список выведен из `WORKFLOW_RUN_STATUSES`
+ * (а не продублирован), чтобы новые статусы запуска подхватывались
+ * автоматически. Без `skipped` в этой схеме валидация снимка падала бы на
+ * каждом запуске с пропущенным узлом, и SSE-поток закрывался бы ошибкой
+ * (RULES 1.17).
  */
-export const NODE_RUN_STATUSES = [...RUN_STATUSES, 'skipped'] as const;
+export const NODE_RUN_STATUSES = [...WORKFLOW_RUN_STATUSES, 'skipped'] as const;
 
 /** Zod-схема статуса узла запуска (включая `skipped`, KI-288). */
 export const NodeRunStatusSchema = z.enum(NODE_RUN_STATUSES);
@@ -46,6 +48,16 @@ export const RunSnapshotSchema = z.object({
   workflowId: z.uuid(),
   status: RunStatusSchema,
   createdAt: z.iso.datetime(),
+  /**
+   * Текст ошибки запуска — колонка `workflow_runs.error` (KI-347).
+   *
+   * Без него клиент после F5 видел только `status: 'failed'` и показывал
+   * «причина недоступна», хотя причина уже записана в БД. Значение
+   * обязательное (`null` — ошибки не было): снимок всегда собирает backend,
+   * так что «поля нет» — это расхождение контракта, а не совместимость
+   * (RULES 1.17).
+   */
+  error: z.string().nullable(),
 });
 
 /** Zod-схема узла запуска внутри снимка состояния. */

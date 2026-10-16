@@ -63,6 +63,7 @@ describe('RunStreamMessageSchema: статус узла skipped (KI-288)', () =>
       workflowId: WORKFLOW_ID,
       status: 'skipped',
       createdAt: ISO_NOW,
+      error: null,
     });
 
     expect(parsed.success).toBe(false);
@@ -78,6 +79,7 @@ describe('RunStreamMessageSchema: статус узла skipped (KI-288)', () =>
         workflowId: WORKFLOW_ID,
         status: 'failed',
         createdAt: ISO_NOW,
+        error: null,
       },
       nodes: [
         { ...nodeSnapshot('completed'), nodeId: 'A' },
@@ -92,5 +94,44 @@ describe('RunStreamMessageSchema: статус узла skipped (KI-288)', () =>
       'failed',
       'skipped',
     ]);
+  });
+});
+
+describe('RunSnapshotSchema: error запуска (KI-347)', () => {
+  /** Собирает объект запуска снимка со всеми обязательными полями. */
+  function runSnapshot(error: unknown): Record<string, unknown> {
+    return {
+      id: RUN_ID,
+      workflowId: WORKFLOW_ID,
+      status: 'failed',
+      createdAt: ISO_NOW,
+      error,
+    };
+  }
+
+  it('принимает error=null — у запуска без ошибки поле обязательное', () => {
+    const parsed = RunSnapshotSchema.safeParse(runSnapshot(null));
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.error).toBeNull();
+  });
+
+  it('принимает текст ошибки из workflow_runs.error', () => {
+    const parsed = RunSnapshotSchema.safeParse(runSnapshot('Узел B упал: HTTP 404'));
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.error).toBe('Узел B упал: HTTP 404');
+  });
+
+  it('отклоняет снимок без поля error: контракт обязателен (KI-347)', () => {
+    const withoutError = runSnapshot(null);
+
+    delete withoutError.error;
+
+    expect(RunSnapshotSchema.safeParse(withoutError).success).toBe(false);
+  });
+
+  it('отклоняет error не-строку', () => {
+    expect(RunSnapshotSchema.safeParse(runSnapshot(404)).success).toBe(false);
   });
 });

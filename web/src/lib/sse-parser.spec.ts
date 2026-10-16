@@ -132,6 +132,8 @@ describe('зеркало SSE-контракта (KI-288)', () => {
         workflowId: '11111111-1111-4111-8111-111111111111',
         status: 'failed',
         createdAt: ISO_AT,
+        // KI-347: поле ошибки запуска обязательно в зеркале снимка.
+        error: 'Узел B упал: HTTP 404',
       },
       nodes: [
         snapshotNode('completed'),

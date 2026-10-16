@@ -10,7 +10,7 @@ import { z } from 'zod';
  * следом (в R4.3+ общие типы стоит вынести в shared-пакет).
  */
 
-/** Статус запуска (совпадает с `RUN_STATUSES` backend). */
+/** Статус запуска (совпадает с `WORKFLOW_RUN_STATUSES` backend, KI-336). */
 export const RunStatusSchema = z.enum([
   'pending',
   'running',
@@ -45,6 +45,14 @@ export const RunSnapshotSchema = z.object({
   workflowId: z.string(),
   status: RunStatusSchema,
   createdAt: z.string(),
+  /**
+   * Текст ошибки запуска — зеркало backend `error` (KI-347).
+   *
+   * Backend отдаёт колонку `workflow_runs.error`; без поля панель после F5
+   * показывала «причина недоступна». Значение обязательное (`null` — ошибки не
+   * было): иначе Zod отбросил бы расхождение контракта молча (RULES 1.17).
+   */
+  error: z.string().nullable(),
 });
 
 /** Снимок состояния узла запуска. */

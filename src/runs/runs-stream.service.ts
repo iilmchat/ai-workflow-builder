@@ -58,7 +58,7 @@ export class RunsStreamService {
    * @throws NotFoundException если запуск не найден или чужой
    */
   async assertRunExistsAsync(runId: string, userId?: string): Promise<void> {
-    await this.runsService.getRunAsync(runId, userId);
+    await this.runsService.getRunRowAsync(runId, userId);
   }
 
   /**
@@ -178,7 +178,9 @@ export class RunsStreamService {
     runId: string,
     userId?: string,
   ): Promise<SnapshotMessage> {
-    const run = await this.runsService.getRunAsync(runId, userId);
+    // KI-347: строка целиком, а не `RunResponse`: снимок отдаёт `error`, и
+    // читать его повторным запросом к БД незачем (RULES 4.17).
+    const run = await this.runsService.getRunRowAsync(runId, userId);
 
     // Порядок по `nodeId` детерминирован (в отличие от nullable `started_at`);
     // UI сортирует узлы так, как ему нужно.
@@ -195,6 +197,9 @@ export class RunsStreamService {
         workflowId: run.workflowId,
         status: run.status,
         createdAt: run.createdAt.toISOString(),
+        // KI-347: причина падения запуска — панель результата показывает её
+        // после F5 вместо «причина недоступна».
+        error: run.error,
       },
       nodes: rows.map((row) => this.toNodeSnapshot(row)),
     };

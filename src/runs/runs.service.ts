@@ -121,6 +121,26 @@ export class RunsService {
    * @throws NotFoundException если запуск не найден или принадлежит другому
    */
   async getRunAsync(id: string, userId?: string): Promise<RunResponse> {
+    return this.toRunResponse(await this.getRunRowAsync(id, userId));
+  }
+
+  /**
+   * Возвращает строку `workflow_runs` целиком — без проекции в публичный ответ.
+   *
+   * Нужна SSE-снимку (KI-347): он отдаёт `error` запуска, которого нет в
+   * {@link RunResponse}. Публичный `GET /runs/:id` намеренно не расширяется —
+   * это отдельная задача (KI-077), а лишние поля меняли бы REST-контракт
+   * без запроса.
+   *
+   * KI-202: если передан `userId`, чужой запуск неотличим от несуществующего —
+   * отдаём 404, а не 403, чтобы не раскрывать факт существования.
+   *
+   * @param id - uuid запуска
+   * @param userId - владелец из access-токена (необязательный)
+   * @returns строка таблицы `workflow_runs`
+   * @throws NotFoundException если запуск не найден или принадлежит другому
+   */
+  async getRunRowAsync(id: string, userId?: string): Promise<WorkflowRun> {
     const [run] = await this.db
       .select()
       .from(workflowRuns)
@@ -145,7 +165,7 @@ export class RunsService {
       throw new NotFoundException(`Запуск ${id} не найден`);
     }
 
-    return this.toRunResponse(run);
+    return run;
   }
 
   /**

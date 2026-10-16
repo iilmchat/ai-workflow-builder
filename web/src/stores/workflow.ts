@@ -432,7 +432,12 @@ export interface WorkflowState extends HistorySlice {
   runId: string | null;
   /** Статус запуска из SSE (`null` — запуск не стартовал). */
   runStatus: RunStatus | null;
-  /** Текст последней ошибки запуска (для панели результата R4.3). */
+  /**
+   * Текст последней ошибки запуска (для панели результата R4.3).
+   *
+   * Приходит из `node_failed` (событие падения узла) и из `run.error` снимка
+   * (KI-347) — так причина видна и сразу, и после F5.
+   */
   runError: string | null;
   /** id узла → статус выполнения (snapshot + события потока). */
   nodeStatuses: Record<string, NodeRunStatus>;
@@ -567,6 +572,8 @@ export interface WorkflowState extends HistorySlice {
    *
    * Snapshot — источник истины на момент подключения, поэтому слияние с прошлым
    * состоянием неверно (после переподключения остались бы устаревшие статусы).
+   * Исключение — `runError`: он обновляется только непустым `run.error`
+   * (KI-347), иначе снимок промежуточной попытки стёр бы уже известную причину.
    *
    * @param snapshot - сообщение-снимок из потока
    */
@@ -1679,15 +1686,20 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
     // Snapshot — источник истины на момент подключения: карты заменяются
     // целиком, а не сливаются с прошлым состоянием.
-    set({
+    set((state) => ({
       runId: snapshot.run.id,
       runStatus: snapshot.run.status,
+      // KI-347: причина падения запуска приходит и в снимке — после F5 панель
+      // показывает её, а не «причина недоступна». `null` не перетирает уже
+      // известную ошибку (KI-271): снимок промежуточной попытки мог быть собран
+      // до того, как `workflow_runs.error` заполнился.
+      runError: snapshot.run.error ?? state.runError,
       nodeStatuses,
       nodeOutputs,
       nodeErrors,
       nodeLogs,
       nodeMetrics,
-    });
+    }));
 
     // KI-271: снимок уже завершённого запуска (F5 после финала на backend, где
     // `run_completed` больше не придёт) — `?runId=` в адресной строке устарел.

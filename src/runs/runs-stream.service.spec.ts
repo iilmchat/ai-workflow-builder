@@ -3,20 +3,32 @@ import { NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Observable } from 'rxjs';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import type { NodeRun } from '../db/schema.js';
+import type { NodeRun, WorkflowRun } from '../db/schema.js';
 import { RunEventsService } from './run-events.service.js';
-import { RunsService, type RunResponse } from './runs.service.js';
+import { RunsService } from './runs.service.js';
 import { RunsStreamService } from './runs-stream.service.js';
 import type { RunEventDto, RunStreamMessage } from './dto/index.js';
 
 const RUN_ID = '22222222-2222-4222-8222-222222222222';
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
 
-const runResponse: RunResponse = {
+/**
+ * Строка `workflow_runs` — снимок читает её целиком (KI-347).
+ *
+ * Остальные колонки нужны только для типизации `WorkflowRun`: снимок берёт из
+ * строки `id`, `workflowId`, `status`, `createdAt` и `error`.
+ */
+const runRow: WorkflowRun = {
   id: RUN_ID,
   workflowId: WORKFLOW_ID,
   status: 'running',
+  inputs: {},
+  outputs: {},
+  error: null,
+  snapshot: { nodes: [], edges: [] },
   createdAt: new Date('2024-01-01T00:00:00.000Z'),
+  startedAt: new Date('2024-01-01T00:00:00.000Z'),
+  finishedAt: null,
 };
 
 /**
@@ -237,23 +249,23 @@ describe('RunsStreamService', () => {
   /**
    * Собирает сервис на заглушках.
    *
-   * @param options - строки `node_runs`, подписка и поведение `getRunAsync`
+   * @param options - строки `node_runs`, подписка и поведение `getRunRowAsync`
    * @returns сервис и его заглушки
    */
   async function createService(options: {
     rows?: NodeRun[];
     events?: { subscribeAsync: ReturnType<typeof vi.fn> };
-    run?: RunResponse | null;
+    run?: WorkflowRun | null;
   }): Promise<{
     service: RunsStreamService;
-    runs: { getRunAsync: ReturnType<typeof vi.fn> };
+    runs: { getRunRowAsync: ReturnType<typeof vi.fn> };
     events: { subscribeAsync: ReturnType<typeof vi.fn> };
   }> {
     const runs = {
-      getRunAsync: vi.fn(() =>
+      getRunRowAsync: vi.fn(() =>
         options.run === null
           ? Promise.reject(new NotFoundException('Запуск не найден'))
-          : Promise.resolve(options.run ?? runResponse),
+          : Promise.resolve(options.run ?? runRow),
       ),
     };
     const events = options.events ?? {
@@ -290,6 +302,8 @@ describe('RunsStreamService', () => {
         workflowId: WORKFLOW_ID,
         status: 'running',
         createdAt: '2024-01-01T00:00:00.000Z',
+        // KI-347: у запуска без ошибки поле присутствует и равно null.
+        error: null,
       },
       nodes: [
         {
@@ -310,6 +324,28 @@ describe('RunsStreamService', () => {
         },
       ],
     });
+  });
+
+  it('KI-347: отдаёт error запуска из workflow_runs в snapshot', async () => {
+    const { service } = await createService({
+      rows: [],
+      run: {
+        ...runRow,
+        status: 'failed',
+        error: 'Узел B упал: HTTP 404',
+      },
+    });
+    const messages = await collectAsync(
+      service.streamAsync(RUN_ID, new AbortController().signal),
+    );
+    const snapshot = payloads(messages)[0] as {
+      run: { status: string; error: string | null };
+    };
+
+    // После F5 панель берёт причину именно отсюда — до KI-347 в снимке её не
+    // было, и UI показывал «причина недоступна» (KI-347).
+    expect(snapshot.run.error).toBe('Узел B упал: HTTP 404');
+    expect(snapshot.run.status).toBe('failed');
   });
 
   it('KI-114: отдаёт cost_rub в snapshot — для media-узла и null для остальных', async () => {
