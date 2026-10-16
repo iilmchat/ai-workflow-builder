@@ -139,7 +139,6 @@ function CanvasInner({ onReady }: CanvasProps) {
   // R6.4b.2b: откат/повтор правок графа (DESIGN v0.8 § 7.2).
   const undo = useWorkflowStore((state) => state.undo);
   const redo = useWorkflowStore((state) => state.redo);
-  const isEmpty = nodes.length === 0;
   // KI-189: направляющие выравнивания (ручная реализация — `useAligning`
   // доступен только в @xyflow/pro).
   const [helperLines, setHelperLines] = useState<HelperLines>({});
@@ -150,6 +149,44 @@ function CanvasInner({ onReady }: CanvasProps) {
   const clearPendingEdge = useWorkflowStore((state) => state.clearPendingEdge);
 
   const { getViewport, fitView, screenToFlowPosition } = useReactFlow();
+
+  /**
+   * Признак того, что загруженный граф уже вписан в видимую область.
+   *
+   * Хранит id workflow, для которого `fitView` уже отработал: без этого
+   * повторный прогон эффекта (например, когда `useReactFlow` меняет ссылку
+   * после инициализации вьюпорта) сбрасывал бы вид, который пользователь
+   * успел настроить руками.
+   */
+  const fittedWorkflowId = useRef<string | null>(null);
+
+  /**
+   * Вписывает загруженный граф в видимую область (R6.5.2-fix2).
+   *
+   * Раньше подгонка висела на пропе `fitView={isEmpty}`: на монтировании граф
+   * ещё пуст (`nodes = []`), поэтому React Flow ставил `fitView` в очередь, а
+   * после прихода узлов из `loadWorkflowAsync` проп менялся на `false` и
+   * подгонка не перезапускалась — вьюпорт оставался дефолтным, и узлы с
+   * ненулевыми координатами (после F5 сохранённый граф) оказывались за кадром.
+   *
+   * Зависимость — `currentWorkflowId`, а **не** `nodes.length`: иначе подгонка
+   * дёргалась бы на каждое добавление узла и сбрасывала текущий вид.
+   */
+  useEffect(() => {
+    if (currentWorkflowId === null || nodes.length === 0) {
+      return;
+    }
+
+    if (fittedWorkflowId.current === currentWorkflowId) {
+      return;
+    }
+
+    fittedWorkflowId.current = currentWorkflowId;
+    // `padding`/`maxZoom` перенесены из пропа `fitViewOptions` (R4.x):
+    // без `maxZoom` один-два узла растягиваются на весь экран.
+    void fitView({ padding: 0.2, maxZoom: 1, duration: 200 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentWorkflowId, fitView]);
 
   /**
    * Переводит центр контейнера из экранных координат в координаты холста
@@ -402,10 +439,8 @@ function CanvasInner({ onReady }: CanvasProps) {
           ariaLabelConfig={ariaLabels(t)}
           // Цвет и толщина связей — из переменных React Flow (theme.css), чтобы
           // рёбра менялись вместе с темой (R5.2); width: 2 задан в --xy-edge-stroke-width.
-          // maxZoom: иначе один-два узла растягиваются на весь экран.
-          // При загрузке графа из backend подгоняем вид по всем узлам.
-          fitView={isEmpty}
-          fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
+          // R6.5.2-fix2: подгонка вида после загрузки графа — в `useEffect` выше,
+          // а не через проп `fitView={isEmpty}` (см. комментарий у эффекта).
         >
           <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
           <Controls />
@@ -481,8 +516,19 @@ function CanvasInner({ onReady }: CanvasProps) {
           его провайдера; `pointer-events-none` на обёртке + `pointer-events-auto`
           на кнопках — так панель не перехватывает pan/zoom вокруг себя.
           Показывается и на пустом холсте: режим и миникарта — настройки вида,
-          а не свойство графа. */}
-      <div className="pointer-events-none absolute bottom-6 left-4 z-20">
+          а не свойство графа.
+          R6.5.2-fix2: угол `bottom-right` вместо `bottom-left` — в левом нижнем
+          углу панель перекрывала встроенный `<Controls />` (zoom/fit/lock).
+          Отступ по вертикали зависит от миникарты: при её показе правый нижний
+          угол занят (`202×152` px), поэтому панель поднимается над ней
+          (`bottom-44` = 176 px), иначе возвращается в угол (`bottom-6`).
+          Замер смоука: панель `right-6` пересекала бы `<MiniMap />` в обоих
+          вариантах (даже `right-24` — левый край миникарты в 217 px от края). */}
+      <div
+        className={`pointer-events-none absolute right-6 z-20 ${
+          showMinimap ? 'bottom-44' : 'bottom-6'
+        }`}
+      >
         <div className="pointer-events-auto flex items-center gap-1 rounded-xl bg-background p-1 shadow-lg ring-1 ring-border">
           {CANVAS_MODE_BUTTONS.map((mode) => {
             const active = canvasMode === mode;
