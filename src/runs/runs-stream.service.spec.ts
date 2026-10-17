@@ -52,10 +52,18 @@ function nodeRun(overrides: Partial<NodeRun> = {}): NodeRun {
     tokensOut: null,
     costUsd: null,
     costRub: null,
+    // R7.7/R7.8: кэш-токены и своя ссылка на media — колонки, которых у
+    // старых строк не было; в заглушке они `null`, как в БД без значения.
     durationMs: 5,
     startedAt: new Date('2024-01-01T00:00:01.000Z'),
     finishedAt: new Date('2024-01-01T00:00:01.005Z'),
     ...overrides,
+    // R7.7: после спреда Partial<NodeRun> расширяет тип до `| undefined`.
+    // Возвращаем к `number | null` / `string | null`, как объявлено в схеме.
+    cacheReadTokens: overrides.cacheReadTokens ?? null,
+    cacheCreationTokens: overrides.cacheCreationTokens ?? null,
+    storedUrl: overrides.storedUrl ?? null,
+    storedExpiresAt: overrides.storedExpiresAt ?? null,
   };
 }
 
@@ -318,6 +326,12 @@ describe('RunsStreamService', () => {
           tokensOut: null,
           costUsd: null,
           costRub: null,
+          // R7.7/R7.8: новые колонки присутствуют в снимке (null без данных).
+          cacheReadTokens: null,
+          cacheCreationTokens: null,
+          cacheSavingsUsd: null,
+          storedUrl: null,
+          storedExpiresAt: null,
           durationMs: 5,
           startedAt: '2024-01-01T00:00:01.000Z',
           finishedAt: '2024-01-01T00:00:01.005Z',
