@@ -17,6 +17,42 @@
 ---
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-18
+
+**Minor-релиз v0.9.0 после v0.8.5. Медиа-инструменты и бюджет, генерация
+video/audio/music, прямые image-провайдеры, Vector DB / Memory, Agent,
+Share-участники, observability, sandbox и media-storage.**
+
+Восемь подшагов R7.1..R7.8.
+
+### Added
+
+- **R7.1:** `image_tool` (upscale/bg-removal/chromakey/trim/lipsync) +
+  Cost budget (KI-048).
+- **R7.2:** `video_generation`, `audio_generation`, `music_generation`
+  (KI-361).
+- **R7.3:** Прямые image-провайдеры: Replicate, FAL, OpenAI Images
+  (KI-363).
+- **R7.4a:** Vector DB / Memory — 4 узла (pgvector, KI-128).
+- **R7.4b:** Agent node (LLM loop + 7 tools, KI-128).
+- **R7.6:** Share-участники по ID (workflow_collaborators, роли
+  viewer/editor, KI-197).
+- **R7.7:** Reasoning cache tokens (KI-055, KI-150), OpenTelemetry traces
+  (KI-365), per-provider semaphore (KI-067, KI-206, KI-234).
+- **R7.8:** Media storage (local + S3 stub, TTL, KI-362).
+
+### Fixed
+
+- **R7.2b:** Изоляция BullMQ (`BULLMQ_PREFIX`, `REDIS_QUEUE_DB`,
+  `instanceId` — KI-387), честный pricing каталога (KI-384).
+- **R7.5:** QuickJS-WASM sandbox для condition-узла (KI-364).
+- **R7.4b:** Устаревшая `nodeErrors` после job-retry (KI-410).
+- **R7.7:** Прайс по last segment для RouterAI-префиксов (KI-417).
+
+### Documented
+
+- **KI-366..417** — все новые KI v0.9 (см. KNOWN_ISSUES.md).
+
 ## [0.8.5] — 2026-10-16
 
 **Patch после v0.8.4. Единый источник статусов + паритет-гейт REST-контракта.**

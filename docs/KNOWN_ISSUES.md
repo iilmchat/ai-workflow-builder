@@ -811,9 +811,18 @@
 ---
 
 ### KI-048 — Нет предохранителя по стоимости повторов
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
-- **Файлы:** `src/engine/execution-engine.service.ts`,
-  `src/runs/runs.processor.ts`
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-13
+- **Исправлено в:** v0.9.0 (R7.1, коммит `1dc35f5`)
+- **Fix:** `CostBudgetService` — лимит стоимости на запуск (`hard`/`soft`,
+  дефолт `$5` / `500 ₽`, `WORKFLOW_RUN_MAX_COST_*`). Оценка media-вызова
+  считается по каталогу и проверяется **до** обращения к провайдеру
+  (`assertWithinBudgetAsync`), при превышении узел падает без списания.
+  Повторы не обходят предохранитель: каждый повторный вызов проходит ту же
+  проверку по уже потраченному.
+- **Остаток:** KI-372 (фиксированный курс, нулевая оценка LLM-вызова),
+  KI-407 (Agent и `llm_call` обходят бюджет).
+- **Файлы:** `src/runs/cost-budget.service.ts`,
+  `src/media/media-node-executor.service.ts`
 - **Описание:** До 3 job-попыток × 3 node-попыток = до 9 вызовов
   провайдера на узел за запуск, и каждый job-retry прогоняет **весь
   граф** заново (KI-046).
@@ -919,8 +928,20 @@
 ---
 
 ### KI-055 — Прайс-лист статичен и неполон
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-13
-- **Файлы:** `src/llm/model-pricing.ts`
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-13
+- **Исправлено в:** v0.9.0 (R7.7, коммит `3e2844a`)
+- **Fix:** кэш-токены учитываются в прайсе и расчёте:
+  `cacheReadPerMillionUsd` / `cacheCreationPerMillionUsd` в
+  `ModelPricing`, `LlmCacheTokens` (+ `cacheTokensIncludedInInput` —
+  Anthropic отдаёт кэш отдельно от `input`), `calculateCacheSavingsUsd`,
+  колонки `node_runs.cache_read_tokens` / `cache_creation_tokens`
+  (миграция 0009), строка «Cache read: N (экономия $X)» в панели
+  результата. Кэш-токены без отдельного тарифа считаются по входной цене —
+  стоимость не занижается.
+- **Остаток:** версионирование таблицы и batch-скидки не сделаны; включение
+  Anthropic prompt caching — KI-414.
+- **Файлы:** `src/llm/model-pricing.ts`, `src/llm/token-usage.ts`,
+  `src/db/schema.ts`, `web/src/components/RunResultPanel.tsx`
 - **Описание:** `MODEL_PRICING` не содержит даты актуализации/версии,
   не учитывает **cache-токены** Anthropic
   (`cache_read_input_tokens` / `cache_creation_input_tokens`
@@ -1113,8 +1134,16 @@
 ---
 
 ### KI-067 — `concurrency` глобальный, нет fairness
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
-- **Файлы:** `src/runs/runs.worker-options.ts`, `src/config/env.schema.ts`
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-13
+- **Исправлено в:** v0.9.0 (R7.7, коммит `3e2844a`)
+- **Fix:** per-provider семафор `ProviderSemaphore` (`src/llm/provider-semaphore.ts`)
+  — FIFO-очередь, идемпотентный `release`, лимит на провайдера из
+  `LLM_PROVIDER_MAX_CONCURRENCY_<NAME>` (default — без ограничения,
+  backward compat). Вызовы LLM не бьют в одного провайдера сверх лимита.
+- **Остаток:** глобальный `concurrency` очереди BullMQ (5) не пересчитан
+  нагрузочным тестом — калибровка остаётся открытой (KI-065).
+- **Файлы:** `src/llm/provider-semaphore.ts`, `src/llm/llm.service.ts`,
+  `src/config/env.schema.ts`
 - **Описание:** `concurrency = 5` — глобальный параметр очереди. Пять
   тяжёлых запусков одновременно бьют в одного провайдера (429/лимиты,
   рост расходов); нет разделения по пользователю/workflow и
@@ -2085,8 +2114,19 @@
 ---
 
 ### KI-128 — Узлы-сервисы с внутренним конфигом (концепт)
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-14
-- **Файлы:** —
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.9.0 (R7.4a `3be8555`, R7.4b `8e1e89a`)
+- **Fix:** сервисные узлы с собственным конфигом и runtime-состоянием:
+  - **R7.4a** — Vector DB / Memory на pgvector: `vector_upsert`,
+    `vector_query`, `memory_write`, `memory_read`; таблицы
+    `workflow_vectors`, `workflow_memory` (миграция 0008), `VectorStoreService`.
+  - **R7.4b** — `agent`: LLM-loop + 7 tools (vector/memory/http/image и др.),
+    `AgentService`, транскрипт шагов в `node_runs.logs`.
+- **Остаток:** «Веб-поиск» отдельным узлом не заведён; неидемпотентность
+  `vector_upsert` (KI-401), каталог embedding-моделей (KI-402),
+  Agent обходит бюджет (KI-407).
+- **Файлы:** `src/vector/vector-store.service.ts`, `src/agent/agent.service.ts`,
+  `src/engine/node-executors.ts`, `src/db/schema.ts`
 - **Описание:** GPTunnel (2026-10-14) показывает класс узлов, которые
   мы ещё не поддержали: «Веб-поиск», «Векторная база», «Память» —
   с собственным UI, входами/выходами и состоянием («у вас ещё нет
@@ -2802,7 +2842,16 @@
 ---
 
 ### KI-150 — `cost_usd` не заполняется для моделей вне прайс-листа
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.9.0 (R7.7, коммит `3e2844a`)
+- **Fix:** `findModelPricing` ищет тариф в три шага: точное совпадение →
+  `bareModelId` → **последний сегмент** id. Модели RouterAI с префиксом
+  (`openai/gpt-4o`) больше не дают `cost_usd = null` — считается по
+  `MODEL_PRICING` (смоук: `$0.008735`). Для кэш-токенов стоимость
+  считается отдельно (KI-055).
+- **Остаток:** модели вне `MODEL_PRICING` (часть DeepSeek/GPTunnel) по-прежнему
+  дают `null` — это честное «неизвестно», но подписи «цена неизвестна» в UI
+  нет. Правка прайса — по мере появления тарифов.
 - **Файлы:** `src/llm/model-pricing.ts`, `web/src/components/RunResultPanel.tsx`
 - **Описание:** Для моделей RouterAI/GPTunnel/DeepSeek/Yandex прайс-лист пуст,
   поэтому `costUsd` остаётся `null` и панель не показывает стоимость вовсе —
@@ -3282,7 +3331,13 @@
 
 ### KI-196 — Медиа-инструменты (upscale, bg-removal, lipsync, 3D, motion)
 - **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
-- **Файлы:** `src/media/providers/creativelab.provider.ts`
+- **Остаток (v0.9.0):** R7.1 выпустил узел `image_tool` с операциями
+  upscale / bg-removal / chromakey / trim / lipsync, но KI **не закрыт**
+  (DESIGN v0.9 § 6): 3D-сцена и motion-ролик перенесены в v0.10; у
+  upscale/chromakey/trim нет дефолтных моделей (KI-367), lipsync без поля
+  `audioUrl` в UI (KI-369), `bgremover` требует лишний prompt (KI-374).
+- **Файлы:** `src/media/image-tool.ts`,
+  `web/src/components/nodes/ImageToolNode.tsx`
 - **Описание:** GPTunnel: Photoshop / Видеоредактор / 3D-сцена /
   Моушн-ролик / Удалить фон / Липсинк / Апскейл / Хромакей / Обрезка.
   У нас — только генерация (text-to-image).
@@ -3295,7 +3350,8 @@
 
 ### KI-197 — Публичный share workflow (read-only ссылка)
 - **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-15
-- **Исправлено в:** v0.8.0b (коммиты `ae5e461`, `abf88ff`)
+- **Исправлено в:** v0.8.0b (ссылка — коммиты `ae5e461`, `abf88ff`),
+  v0.9.0 (участники — R7.6, коммит `60f9e22`)
 - **Fix (R6.2.1, backend):** `share_token` (uuid, генерация в БД) +
   `POST/DELETE /workflow/:id/share` + публичный
   `GET /workflow/share/:token` (без auth). Ответ без `userId` /
@@ -3305,15 +3361,20 @@
   `ShareModal` (создать / копировать / отозвать + предупреждение
   KI-233), `ShareViewPage` (route без ProtectedRoute, read-only
   ReactFlow + баннер), Vite `/workflow` bypass для SPA deep-link.
-- **Файлы:** `src/workflow/` (новый эндпоинт), `src/db/schema.ts`,
-  `web/src/components/TopBar.tsx`
+- **Fix (R7.6, участники по ID):** таблица `workflow_collaborators`
+  (роли `viewer`/`editor`), приглашение по ID, owner-проверка через
+  `buildAccessFilter` (`viewer` — GET, `editor` — запись), управление
+  участниками в `ShareModal`. Остаток UX — KI-397..400.
+- **Файлы:** `src/workflow/` (эндпоинт share + collaborators),
+  `src/db/schema.ts`, `src/workflow/workflow-access.ts`,
+  `web/src/components/TopBar.tsx`, `web/src/components/ShareModal.tsx`
 - **Описание:** В GPTunnel есть «Поделиться»: toggle «Доступ по ссылке»
   (любой по ссылке видит и делает копию), «Участники» (приглашение по
   ID с ролью Просмотр/Редактирование), «Разрешить копирование»
   (toggle). У нас workflow доступен только владельцу, публичной ссылки
   нет — поделиться графом невозможно.
 - **Решение:** (1)–(3) реализовано в v0.8.0b; (4) copy-to-my-account —
-  R6.6 (Export/Import); участники-по-ID — v0.9+.
+  R6.6 (Export/Import); участники-по-ID — реализованы в v0.9.0 (R7.6).
 - **Когда чинить:** — (закрыто в v0.8.0b).
 - **Связанные:** KI-233..243.
 
@@ -3472,12 +3533,17 @@
 
 ### KI-206 — Нет rate limiting / refresh / logout
 - **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Остаток (v0.9.0):** refresh/logout реализованы в R6.1b (v0.8.0,
+  коммит `4b1c149`), **rate-limit не сделан** — `@nestjs/throttler` нет в
+  зависимостях, на `/auth/login` ограничения нет. R7.7 закрыл rate limiting
+  на уровне **провайдеров** (семафор, KI-067), а не HTTP-ручек. KI остаётся
+  открытым до появления throttler'а.
 - **Файлы:** `src/auth/`
 - **Описание:** MVP R6.1a: без rate-limit на `/auth/login` (брутфорс
   не ограничен); нет refresh-токена (R6.1b), нет logout/revocation.
 - **Решение:** `@nestjs/throttler` для login; refresh + logout в R6.1b.
 - **Когда чинить:** R6.1b (refresh/logout) + v0.8.x (throttle).
-- **Связанные:** KI-201.
+- **Связанные:** KI-201, KI-234.
 
 ---
 
@@ -3890,6 +3956,10 @@
 
 ### KI-234 — Нет rate-limit на публичных ручках
 - **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Остаток (v0.9.0):** throttler'а на публичных ручках нет —
+  `GET /workflow/share/:token` и `POST /auth/login` по-прежнему без
+  ограничения. R7.7 добавил per-provider семафор (KI-067), это не HTTP
+  rate-limit. KI остаётся открытым вместе с KI-206.
 - **Файлы:** `src/workflow/workflow-share.controller.ts`,
   `src/auth/auth.controller.ts`
 - **Описание:** `GET /workflow/share/:token` без throttler — перебор
@@ -5762,9 +5832,19 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-362 — Хранение media-результатов: TTL 48h ссылок CreativeLab
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-16
-- **Файлы:** `src/media/media-node-executor.service.ts`, `src/db/schema.ts`
-  (опционально S3-колонка), `.env` (S3 credentials)
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.9.0 (R7.8, коммит `3e2844a`)
+- **Fix:** `IMediaStorage` + `LocalMediaStorage` (`./data/media`, TTL 30 дней,
+  sanitize key, защита от path traversal) и `S3MediaStorage` (заглушка).
+  Миграция 0010: `node_runs.stored_url`, `stored_expires_at`. Публичный
+  `GET /media/file/:runId/:fileName` (uuid как capability). UI показывает
+  `storedUrl ?? mediaUrl` и `ExpiredMediaPlaceholder`. Ошибка сохранения не
+  роняет узел (генерация уже оплачена).
+- **Остаток:** S3-загрузка не реализована (KI-412), TTL-очистка файлов не
+  сделана (KI-413), `/media/file` без signed URL (KI-415).
+- **Файлы:** `src/media/media-storage.service.ts`,
+  `src/media/media-node-executor.service.ts`, `src/db/schema.ts`,
+  `web/src/components/ExpiredMediaPlaceholder.tsx`
 - **Описание:** CreativeLab отдаёт `resultUrls`, живущие 48 часов. Файла у
   нас нет; через 2 суток история запусков (node_runs.outputs) содержит
   мёртвые ссылки. `workflow_runs.outputs` тоже. KI-105-fix (v0.8.0e) закрыл
@@ -5795,11 +5875,17 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-364 — Condition sandbox (QuickJS-WASM)
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.9.0 (R7.5, коммит `2b6243c`)
+- **Fix:** QuickJS-WASM (`quickjs-emscripten`) в `QuickJsRunnerService`:
+  timeout 100 мс, memory 16 МБ, allowlist глобалов;
+  `ConditionNodeData.mode: 'dsl' | 'sandbox'` (default `'dsl'`) —
+  обратная совместимость с MVP-DSL. 26 тестов.
+- **Остаток:** allowlist расширен до 14 имён сверх DESIGN § 3.5 — KI-395.
 - **Файлы:** `src/engine/node-executors.ts` (executeConditionNode),
   `web/src/components/nodes/ConditionNode.tsx`,
   `web/src/types/graph.ts` (ConditionNodeData.mode),
-  новый модуль `src/sandbox/quickjs-runner.service.ts`
+  `src/sandbox/quickjs-runner.service.ts`
 - **Описание:** Condition-узел поддерживает только MVP-DSL (`>`, `<`, `===`,
   `includes`). Произвольные JS-выражения (`input.value > 100 &&
   input.name.includes('foo')`) невозможны без изоляции. `new Function` —
@@ -5814,11 +5900,15 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-365 — OpenTelemetry traces (observability)
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
-- **Файлы:** `src/main.ts`, новый модуль `src/observability/otel.service.ts`,
-  `package.json` (`@opentelemetry/sdk-node`,
-  `@opentelemetry/exporter-trace-otlp-http`), `.env.example`,
-  `docker-compose.otel.yml` (опционально Jaeger)
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.9.0 (R7.7, коммит `3e2844a`)
+- **Fix:** адаптер `tracing.ts` (no-op по умолчанию) + `OtelService`
+  (SDK стартует при `OTEL_ENABLED=true`, гасится в
+  `onApplicationShutdown`). Spans: `run.execute`, `node.execute`,
+  `llm.call`, `media.createTask`. Смоук: живой POST `/v1/traces` (4 span'а).
+- **Остаток:** span `agent.step` не добавлен — KI-416.
+- **Файлы:** `src/main.ts`, `src/observability/otel.service.ts`,
+  `src/observability/tracing.ts`, `package.json`, `.env.example`
 - **Описание:** Нет телеметрии — невозможно диагностировать медленные
   LLM/media-вызовы, узкие места в цепочке узлов. Production-ready продукт
   требует traces.
@@ -6044,9 +6134,18 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-384 — `pricing` каталога не читается: `price` ≠ фактическая стоимость media
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-17
-- **Файлы:** `src/media/dto/media-model.dto.ts`, `src/media/dto/media-model.mapper.ts`,
-  `src/runs/cost-budget.service.ts`, `src/media/media-node-executor.service.ts`
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-17
+- **Исправлено в:** v0.9.0 (R7.2b, коммит `2172d1a`)
+- **Fix:** DTO и маппер читают блок `pricing` каталога (`fixed` /
+  `per_second` / `per_character` / `matrix` / `tiers` / `plus`), оценка
+  бюджета считается по параметрам вызова (`duration`, `resolution`, длина
+  текста), а не по `price`. `tts2` (`price=0`, `per_character.ratePer1K=60`)
+  больше не даёт нулевую оценку.
+- **Остаток:** `pricing.plus` и `expr.units`-объекты не учитываются —
+  KI-393; семантика `matrix.unitParam` — KI-392.
+- **Файлы:** `src/media/dto/media-model.dto.ts`,
+  `src/media/dto/media-model.mapper.ts`, `src/runs/cost-budget.service.ts`,
+  `src/media/media-node-executor.service.ts`
 - **Описание:** Каталожный `price` расходится со списанием: `glabs-veo-3` 480 vs
   `pricing.cost` 960; `glabs-veo-3-1-fast` 49 vs 245; `kling-v3` 210 vs
   `per_second` 33.6 ₽/с (5 с → 168 ₽); `sound-effect` `price_unit=per_second`;
@@ -6089,9 +6188,18 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-387 — Несколько инстансов backend делят очередь BullMQ: job узла выполняет чужой воркер
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-17
+- **Исправлено в:** v0.9.0 (R7.2b, коммит `2172d1a`)
+- **Fix:** изоляция инстансов в два рубежа: (1) префикс очереди и номер
+  логической БД Redis — `BULLMQ_PREFIX` + `REDIS_QUEUE_DB` (env, дефолты
+  `workflow-runs` / `0`); (2) маркер `instanceId` в payload job'а —
+  `RUNS_INSTANCE_ID`, чужое задание пропускается с логом. `.env.example`
+  документирует dev/smoke/prod-значения.
+- **Остаток:** рестарт без явного `INSTANCE_ID` оставляет run в `pending`
+  (KI-391); операционная миграция префикса `bull` → `workflow-runs`
+  (KI-394).
 - **Файлы:** `src/runs/runs.processor.ts`, `src/runs/runs.worker-options.ts`,
-  `src/redis/redis.module.ts`, `.env.example`
+  `src/redis/redis.module.ts`, `src/config/env.schema.ts`, `.env.example`
 - **Описание:** Обнаружено смоуком R7.2: UI-запуск, созданный backend-ом с
   mock-upstream, был выполнен воркером параллельного backend-а с **боевым**
   ключом CreativeLab — узлы ушли в настоящий upstream и списали 80.38 ₽
@@ -6373,7 +6481,7 @@ MediaModelInfo, engine-DTO
 
 ### KI-410 — устаревшая `nodeErrors` после job-retry
 - **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-18
-- **Исправлено в:** v0.9-R7.4b (коммит `8e1e89a`)
+- **Исправлено в:** v0.9.0 (R7.4b, коммит `8e1e89a`)
 - **Файлы:** `web/src/stores/workflow.ts`
 - **Описание:** `node_completed` не очищал `nodeErrors[nodeId]`. Панель
   показывала «Ошибка» после успешного retry.
@@ -6449,7 +6557,7 @@ MediaModelInfo, engine-DTO
 
 ### KI-417 — `cost_usd` для префиксов provider/model (RouterAI)
 - **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-18
-- **Исправлено в:** v0.9-R7.7 (коммит `3e2844a`)
+- **Исправлено в:** v0.9.0 (R7.7, коммит `3e2844a`)
 - **Файлы:** `src/llm/model-pricing.ts`
 - **Описание:** `bareModelId('openai/gpt-4o')` возвращал `openai` (модели
   RouterAI без прайса → `cost_usd=null`). Fallback на последний сегмент
@@ -6465,12 +6573,12 @@ MediaModelInfo, engine-DTO
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 139 |
+| Fixed | 149 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 257 |
+| Open | 247 |
 | Won't Fix | 1 |
 | **Всего** | **405** |
 

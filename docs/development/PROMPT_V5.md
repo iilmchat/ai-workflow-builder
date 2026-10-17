@@ -1,9 +1,9 @@
 # PROMPT_V5.md — Стартовый промпт для нового чата
 
-**Версия промпта:** v6.0
-**Дата:** 2026-10-16
-**Актуальный релиз:** v0.8.5 (единый источник статусов, паритет-гейт REST-контракта backend ↔ web)
-**Текущий этап:** v0.9 — DESIGN
+**Версия промпта:** v6.3
+**Дата:** 2026-10-18
+**Актуальный релиз:** v0.9.0 (media, vector, agent, sandbox, observability)
+**Текущий этап:** v0.10 — планирование (v0.9.0 выпущен)
 **Репозиторий:** https://github.com/iilmchat/ai-workflow-builder
 **Рабочий путь:** локальный клон репозитория — **зависит от машины**
 (`C:\Projects\AI\ai-workflow-builder`, `D:\Projects\AI\workflow-builder`
@@ -84,7 +84,7 @@
 - **BullMQ 6** + **ioredis** — очередь `workflow-runs`.
 - **Zod 4** — валидация на границах.
 - **Pino** — логи.
-- **Vitest 4** — тесты (**570 + 6** на v0.8.5).
+- **Vitest 4** — тесты (**920** на v0.9.0).
 - **@anthropic-ai/sdk** 0.133, **openai** 7.32.
 
 ### Frontend (`web/`)
@@ -94,7 +94,7 @@
 - **Zustand 5** — state.
 - **Tailwind CSS v4** (плагин `@tailwindcss/vite`, без JS-конфига).
 - **react-i18next** + **i18next** — i18n RU/EN (212 ключей).
-- **Vitest 4** (197 frontend-тестов).
+- **Vitest 4** (287 frontend-тестов).
 - **Zod** — валидация API-ответов (в `web/dependencies`).
 
 ### Инструменты
@@ -171,7 +171,7 @@
 2. **`docs/CHANGELOG.md`** — история. Не трогать без нужды, при релизе —
    `[Unreleased]` → `[X.Y.Z] — YYYY-MM-DD`, сверху пустая `[Unreleased]`.
 3. **`docs/KNOWN_ISSUES.md`** — реестр KI. Нумерация с KI-001, **не
-   пропускать** (RULES § 3.18). **348 KI на v0.8.5** (последний KI-359).
+   пропускать** (RULES § 3.18). **405 KI на v0.9.0** (последний KI-417).
    При закрытии — статус `Fixed` + «Исправлено в: vX.Y.Z».
 4. **`docs/development/PROMPT_V5.md`** (этот файл).
 5. **`docs/development/v0.8/DESIGN_V08_FEATURES.md`** — DESIGN v0.8
@@ -214,7 +214,7 @@
 
 ---
 
-## § 5. Текущее состояние (v0.8.5, 2026-10-16)
+## § 5. Текущее состояние (v0.9.0, 2026-10-18)
 
 ### Что работает
 
@@ -232,10 +232,22 @@
   cost tracking.
 - **Аннотации** (`comment`): исключены из плана (`ANNOTATION_NODE_TYPES`),
   персистятся на backend (KI-266).
-- **Новые типы узлов**: `http`, `condition` (MVP-DSL без new Function),
-  `output`, `compare` (mode='diff'), `sub_workflow` (рекурсия,
+- **Новые типы узлов**: `http`, `condition` (MVP-DSL + QuickJS-WASM
+  sandbox), `output`, `compare` (mode='diff'), `sub_workflow` (рекурсия,
   branch-local `visitedWorkflows`, max depth 5, префикс id
-  `sub_<nodeId>__`, owner-check).
+  `sub_<nodeId>__`, owner-check), а также v0.9.0: `image_tool`,
+  `video_generation`, `audio_generation`, `music_generation`,
+  `vector_upsert`, `vector_query`, `memory_read`, `memory_write`,
+  `agent` (всего 18 типов).
+- **v0.9.0 (R7.1..R7.8):** `image_tool` (upscale/bg-removal/chromakey/
+  trim/lipsync) + cost budget (`hard`/`soft`); media-generation
+  (video/audio/music) + прямые image-провайдеры (Replicate / FAL /
+  OpenAI Images); Vector DB / Memory на pgvector; `agent` (LLM-loop +
+  7 tools); share-участники по ID (`workflow_collaborators`,
+  viewer/editor); reasoning cache tokens, OpenTelemetry traces,
+  per-provider семафор; QuickJS-WASM sandbox; media storage
+  (local + S3-заглушка, TTL); изоляция BullMQ (`BULLMQ_PREFIX`,
+  `REDIS_QUEUE_DB`, `instanceId`).
 - **Export/Import/Templates**: `GET /workflow/:id/export` (JSON,
   version 1, без userId/shareToken), `POST /workflow/import`,
   `GET /templates`, `POST /templates/:id/instantiate`. 3 шаблона в
@@ -256,6 +268,9 @@
 - Узлы: Text, LLM, ImageGen, **Comment** (стикер), **Http**,
   **Condition** (2 выхода T/F), **Output**, **Compare** (2 входа
   a/b), **SubWorkflow** (селект своих workflow, «Открыть в редакторе»).
+- **v0.9.0:** ImageTool, MediaGeneration (video/audio/music),
+  Vector/Memory (4 узла), Agent, участники шаринга в `ShareModal`,
+  `ExpiredMediaPlaceholder`, бюджет-бар запуска.
 - **Тёмная/светлая тема**, **i18n RU/EN** (212 ключей, паритет-тест).
 - **SSE-подписка** (fetch + ReadableStream, Bearer), подсветка узлов.
 - **Панель результата** (outputs, метрики, logs, word-wrap).
@@ -276,45 +291,56 @@
 - **fitView после F5** — `useEffect` с ref-защитой (R6.5.2-fix2).
 - **Панель режимов** — right-6, адаптивная (bottom-44 при миникарте).
 
-**Database (5 таблиц):**
+**Database (8 таблиц):**
 - `workflows` — nodes/edges jsonb, version, user_id (uuid NOT NULL),
   share_token.
-- `workflow_runs`, `node_runs` — timestamptz везде.
+- `workflow_collaborators` — участники шаринга по ID (роль
+  viewer/editor, R7.6).
+- `workflow_vectors`, `workflow_memory` — pgvector / память (R7.4a).
+- `workflow_runs`, `node_runs` — timestamptz везде; `node_runs` +
+  `cache_read_tokens` / `cache_creation_tokens` (0009) и
+  `stored_url` / `stored_expires_at` (0010).
 - `users`, `refresh_tokens` — auth (R6.1).
 
-**Метрики (v0.8.5):**
-- 570 + 6 backend-тестов, 197 frontend-тестов.
-- Bundle: ~700.72 kB JS (лимит предупреждения 710).
+**Метрики (v0.9.0):**
+- 920 backend-тестов, 287 frontend-тестов.
+- Bundle: ~770.9 kB JS (chunkSizeWarningLimit 780).
 - CI: 2 job, зелёный (шаги Typecheck и Apply migrations).
-- 348 KI в реестре: Fixed 136, Open 203, Documented 7, Planned 1,
+- 405 KI в реестре: Fixed 149, Open 247, Documented 7, Planned 1,
   Won't Fix 1.
 - Husky pre-commit + GitHub Push Protection.
 
 ---
 
-## § 6. Открытые KI (актуально на v0.8.5)
+## § 6. Открытые KI (актуально на v0.9.0)
 
 **Полный реестр — `docs/KNOWN_ISSUES.md`. Правило (RULES 3.20): перед
 правкой § 6 пересчитать grep'ом, не по памяти.**
 
-**🟠 High (v0.8.5):** — нет открытых (KI-336/337/347/348 закрыты
-в v0.8.4).
+**🟠 High (v0.9.0):** KI-066/104/238 (давние), KI-361 (media-generation
+как KI-фича — код есть, KI не закрыт), KI-366/367/378/380 (медиа: нет
+моделей для upscale/chromakey/trim, lipsync без audio, `data:`-URI
+OpenAI Images), KI-391 (рестарт без `INSTANCE_ID`), KI-406
+(`DEFAULT_EMBEDDING_MODEL`), KI-407 (Agent и `llm_call` обходят бюджет).
 
-**🟡 Medium (v0.8.5/v0.9):**
-- KI-330/331 — share UX (selection, fit-сброс).
-- KI-332 — TTL workflow-list кэша.
-- KI-335 — формула KI-314 (документация).
-- KI-338 — condition не маршрутизирует.
-- KI-340 — http.failOnHttpError не ретраит 5xx/429.
-- KI-344 — test:parity не enforced.
-- KI-349 — TextNode без target-handle.
+**🟡 Medium (v0.9.0):**
+- KI-234 — нет HTTP rate-limit на публичных ручках (вместе с KI-206).
+- KI-369 — lipsync: нет поля `audioUrl` в UI.
+- KI-372 — бюджет: фиксированный курс + нулевая оценка LLM-вызова.
+- KI-386/388/389/390 — метаданные audio/music, `durationSec`, каталог
+  голосов, бандл web.
+- KI-393 — `pricing.plus` и `expr.units` не учитываются в бюджете.
+- KI-397..400 — share-участники: viewer-UI, список, владелец, гонка invite.
+- KI-412/413 — S3-заглушка и TTL-cleanup media.
+- KI-330/331/332/335/338/340/344/349 — share UX, кэш списка, condition,
+  http, test:parity, TextNode.
 - KI-061/062/063/077 — GET /runs, retryable, final, nodes.
-- KI-150 — cost_usd = null вне прайса.
-- KI-356 — workflow без backend-DTO (`shareToken`).
-- KI-357 — REST-зеркала вне паритет-гейта.
+- KI-356/357 — REST-зеркала вне паритет-гейта.
 
-**🟢 Low / долг:** KI-330..351, KI-354, KI-355, KI-358, KI-359 + остатки
-v0.6.x/v0.7.x — см. полный список в KNOWN_ISSUES.md.
+**🟢 Low / долг:** KI-206 (throttle на login/logout), KI-330..351,
+KI-354/355/358/359, KI-375, KI-392/394/395, KI-405, KI-408/409,
+KI-414/415/416 + остатки v0.6.x/v0.7.x — см. полный список в
+KNOWN_ISSUES.md.
 
 ---
 
@@ -442,44 +468,52 @@ v0.6.x/v0.7.x — см. полный список в KNOWN_ISSUES.md.
 - R6.7 Sub-workflows (KI-200, KI-300..305).
 - R6.5.2-fix2 (fitView race + панель, KI-306, 307).
 
-**Метрики (v0.8.5):** backend 570+6 тестов, frontend 197 тестов,
-bundle ~700.72 kB (chunkSizeWarningLimit 710), CI 2 job (Typecheck +
-Apply migrations). 348 KI в реестре: Fixed 136 · Open 203 ·
+**Метрики (на v0.9.0):** backend 920 тестов, frontend 287 тестов,
+bundle ~770.9 kB (chunkSizeWarningLimit 780), CI 2 job (Typecheck +
+Apply migrations). 405 KI в реестре: Fixed 149 · Open 247 ·
 Documented 7 · Planned 1 · Won't Fix 1.
-**Tag + Release:** v0.8.5 (Latest).
+**Tag + Release:** v0.9.0 (Latest).
 
-### v0.8.1 — фиксы (следующий этап, план)
+### v0.8.1 — фиксы ✅ ВЫПУЩЕН
 
-**Приоритеты (от старшего к младшему):**
+План v0.8.1 выполнен в v0.8.1..v0.9.0; что осталось — в § 6.
 
-- **KI-299/072/120** — единый `/api`-префикс (Vite proxy + backend
-  `setGlobalPrefix`). Три раза одна ошибка — структурный фикс.
-- **KI-306** — `fitView({ minZoom })` при большом разбросе координат
-  (или `<ReactFlow minZoom>` снизить).
-- **KI-293-follow-up**: KI-298 — CI-гейт на сверку `information_schema`
-  ↔ drizzle schema.
-- **KI-300** — инкремент `workflows.version` при PATCH.
-- **KI-301** — type-aware `handleIdToOutputPort`.
-- **KI-304** — префиксные id подграфа в SSE/outputs.
-- **KI-292** — `nest-cli assets` для `templates/*.json`.
-- **KI-288** — skip-статус для потомков упавших узлов.
-- **KI-289** — `failOnHttpError` в `http`-executor.
-- **KI-067/048/066/062** — concurrency, cost budget, heartbeat, retryable.
+- **KI-299/072/120** — единый `/api`-префикс (закрыт в v0.8.1).
+- **KI-306** — `fitView({ minZoom })` (закрыт в v0.8.1).
+- **KI-298** — CI-гейт `information_schema` ↔ drizzle schema (закрыт).
+- **KI-300** — инкремент `workflows.version` при PATCH (закрыт).
+- **KI-301** — type-aware `handleIdToOutputPort` (закрыт).
+- **KI-304** — префиксные id подграфа в SSE/outputs (закрыт).
+- **KI-292** — `nest-cli assets` для `templates/*.json` (закрыт).
+- **KI-288/289** — skip-статус и `failOnHttpError` (закрыты в v0.8.3).
+- **KI-067/048** — concurrency и cost budget закрыты в v0.9.0
+  (R7.7 / R7.1); KI-066/062 (heartbeat, retryable) остаются открытыми.
 
-**Скоуп ~1-2 дня dsh.**
+### v0.9.0 — медиа + агенты + observability (2026-10-18) ✅ ВЫПУЩЕН
 
-### v0.9 — медиа + агенты + observability
+**DESIGN v0.9 закрыт.** 8 подшагов R7.1..R7.8:
+- **R7.1** — `image_tool` (upscale/bg-removal/chromakey/trim/lipsync) +
+  cost budget (KI-048; KI-196 — частично, 3D/motion в v0.10).
+- **R7.2** — `video_generation` / `audio_generation` / `music_generation`
+  (KI-361 — код есть, KI не закрыт).
+- **R7.3** — прямые image-провайдеры Replicate / FAL / OpenAI Images
+  (KI-363).
+- **R7.4** — Vector DB / Memory на pgvector + `agent` (KI-128).
+- **R7.5** — QuickJS-WASM sandbox для condition (KI-364).
+- **R7.6** — share-участники по ID (KI-197, остаток).
+- **R7.7** — cache tokens, OpenTelemetry, per-provider семафор
+  (KI-055, KI-150, KI-365, KI-067).
+- **R7.8** — media storage (local + S3-заглушка, TTL; KI-362).
 
-- **Медиа-инструменты:** upscale, bg-removal, lipsync, 3D, motion
-  (KI-196).
-- **Vector DB / Memory / Agent** (KI-128).
-- **Video / Audio / Music** узлы (KI-105 remaining).
-- **Image providers** напрямую: Replicate / FAL.
-- **Condition sandbox** (isolated-vm).
-- **Share — участники по ID** (роли Просмотр/Редактирование).
-- **Node types remaining** (KI-194 Note/Compare — закрыт в v0.8).
-- **Reasoning cache tokens** (Anthropic).
-- OpenTelemetry traces, rate limiting per provider, human-in-the-loop.
+### v0.10 — план (следующий этап)
+
+- **3D-сцена / motion-ролик** — остаток KI-196.
+- **HTTP-throttler** на auth/share (KI-206, KI-234).
+- **S3-загрузка + TTL-cleanup** media (KI-412, KI-413).
+- **Agent:** учёт стоимости (KI-407) и span `agent.step` (KI-416).
+- **Медиа-каталог:** дефолтные модели для upscale/chromakey/trim
+  (KI-367), `audioUrl` в UI для lipsync (KI-369).
+- MCP-tools, human-in-the-loop, вынос vector store (KI-360).
 
 ---
 
@@ -613,16 +647,15 @@ RULES — скажи «это стоит добавить в RULES § X.Y».
 
 ## § 12. Итог
 
-**Проект в состоянии: v0.8.5 выпущен, CI зелёный,
-570/570 backend + 197/197 frontend, 348 KI.**
+**Проект в состоянии: v0.9.0 выпущен, CI зелёный,
+920/920 backend + 287/287 frontend, 405 KI (Fixed 149, Open 247).**
 
-**Следующий этап — v0.8.1 (фиксы):** единый `/api` (KI-299/072/120),
-KI-306 (fitView minZoom), KI-298 (drizzle ↔ БД), KI-300 (version),
-KI-301 (type-aware портов), KI-304 (prefix в SSE), KI-292 (nest assets),
-KI-288/289.
+**Следующий этап — v0.10:** 3D/motion (остаток KI-196), HTTP-throttler
+(KI-206/234), S3 + TTL-cleanup media (KI-412/413), Agent-бюджет и
+`agent.step` (KI-407/416), дефолтные модели медиа-инструментов (KI-367).
 
-**Долгосрочно:** v0.9 — медиа-инструменты, Vector DB / Agent, Video /
-Audio / Music узлы, sandbox для condition.
+**Долгосрочно:** human-in-the-loop, MCP-tools, вынос vector store в
+отдельный сервис (KI-360).
 
 ---
 
@@ -633,10 +666,6 @@ Audio / Music узлы, sandbox для condition.
 **Статус:** Approved 2026-10-15, **закрыт v0.8.0** (2026-10-16).
 **Закрыл 16 KI v0.8 + KI-200** (Sub-workflows).
 
-**Следующий DESIGN** — `docs/development/v0.9/DESIGN_V09_FEATURES.md`
-(создать перед v0.9). Приоритеты:
-- Медиа-инструменты (upscale, bg-removal, lipsync, 3D, motion).
-- Vector DB / Memory / Agent nodes.
-- Condition sandbox.
-- Share participants by ID.
-- Reasoning cache tokens.
+**DESIGN v0.9** — `docs/development/v0.9/DESIGN_V09_FEATURES.md`,
+**Released (v0.9.0, 2026-10-18)**, закрыл R7.1..R7.8 (см. § 8).
+**Следующий DESIGN** — v0.10 (медиа-остаток, throttler, MCP).
