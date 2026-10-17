@@ -6391,18 +6391,88 @@ MediaModelInfo, engine-DTO
 - **Связанные:** KI-410.
 
 ---
+
+### KI-412 — S3 media storage: заглушка без загрузки
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/media/media-storage.service.ts`
+- **Описание:** `S3MediaStorage` валидирует env, но `uploadAsync` возвращает
+  `null` (нет SDK, SigV4 не реализован). `MEDIA_STORAGE_BACKEND=s3` = `none`
+  + warning в логе.
+- **Решение:** добавить `@aws-sdk/client-s3` или SigV4 через `node:crypto`.
+- **Связанные:** KI-362, KI-413.
+
+---
+
+### KI-413 — TTL локальных media-файлов не чистится
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/media/media-storage.service.ts`, `src/runs/runs.processor.ts`
+- **Описание:** `stored_expires_at` фиксируется (30 дней), но cron/cleanup
+  нет — `./data/media` растёт неограниченно.
+- **Решение:** BullMQ repeatable job (раз в сутки): удалять файлы старше TTL
+  + старые `data/media/{runId}/`.
+- **Связанные:** KI-362, KI-215 (cleanup `refresh_tokens` — тот же паттерн).
+
+---
+
+### KI-414 — Anthropic prompt caching не включается
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/llm/providers/anthropic.provider.ts`
+- **Описание:** нет `cache_control: ephemeral` при `systemPrompt > 1024`, нет
+  `PROMPT_CACHE_ENABLED` / `PROMPT_CACHE_MIN_TOKENS` (DESIGN § 3.7.3).
+  `cache_creation_tokens` от наших вызовов всегда `null`.
+- **Решение:** аннотировать последний system-block `cache_control` при длине
+  `systemPrompt` > порога; env-флаги.
+- **Связанные:** KI-055, DESIGN v0.9 § 3.7.3.
+
+---
+
+### KI-415 — `/media/file/:runId/:fileName` публичен
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/media/media-storage.controller.ts`
+- **Описание:** `<img src>` не несёт `Authorization` → ручка без auth.
+  Защита: непредсказуемый `runId` (uuid) + sanitize key. Нет signed URL.
+- **Решение:** signed URL (HMAC параметр `?sign=...`) или JWT в cookie.
+- **Связанные:** KI-362, KI-197.
+
+---
+
+### KI-416 — OTel span `agent.step` отсутствует
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/agent/agent.service.ts`
+- **Описание:** DESIGN § 3.7.1 перечисляет `agent.step`, R7.7 ограничен
+  `run.execute` / `node.execute` / `llm.call` / `media.createTask`.
+- **Решение:** обернуть каждую итерацию агента в
+  `tracing.runAsync('agent.step', ...)`.
+- **Связанные:** R7.4b, DESIGN v0.9 § 3.7.1.
+
+---
+
+### KI-417 — `cost_usd` для префиксов provider/model (RouterAI)
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.9-R7.7 (коммит `3e2844a`)
+- **Файлы:** `src/llm/model-pricing.ts`
+- **Описание:** `bareModelId('openai/gpt-4o')` возвращал `openai` (модели
+  RouterAI без прайса → `cost_usd=null`). Fallback на последний сегмент
+  (в `findModelPricing`, R7.7) → `0.008735` для `gpt-4o`. Остаётся риск для
+  новых префиксов, которых нет ни в `MODEL_PRICING`, ни в последнем сегменте.
+- **Fix:** в R7.7 (`3e2844a`) — третий шаг поиска по последнему сегменту
+  + тест.
+- **Решение:** документировать правило «прайс по последнему сегменту».
+- **Связанные:** KI-150, KI-055.
+
+---
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 138 |
+| Fixed | 139 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 252 |
+| Open | 257 |
 | Won't Fix | 1 |
-| **Всего** | **399** |
+| **Всего** | **405** |
 
 ---
 
