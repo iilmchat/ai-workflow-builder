@@ -42,8 +42,11 @@ import type { MediaModelInfo } from '@/types/media';
 import {
   DEFAULT_CONDITION_MODE,
   DEFAULT_CONDITION_OPERATOR,
+  DEFAULT_EMBEDDING_MODEL,
   DEFAULT_LLM_MODEL_ID,
   DEFAULT_OUTPUT_NAME,
+  DEFAULT_VECTOR_SCORE_THRESHOLD,
+  DEFAULT_VECTOR_TOPK,
   IMAGE_TOOL_OPERATIONS,
   type AppNode,
   type AudioGenNodeData,
@@ -55,11 +58,15 @@ import {
   type ImageToolNodeData,
   type ImageToolOperation,
   type LlmNodeData,
+  type MemoryReadNodeData,
+  type MemoryWriteNodeData,
   type MusicGenNodeData,
   type NodeData,
   type NodeType,
   type OutputNodeData,
   type SubWorkflowNodeData,
+  type VectorQueryNodeData,
+  type VectorUpsertNodeData,
   type VideoGenNodeData,
 } from '@/types/graph';
 import {
@@ -74,6 +81,14 @@ import {
   validateWorkflowVersion,
 } from '@/lib/sub-workflow-fields';
 import { validateMaxTokensOverride, validateReasoningEffort } from '@/lib/llm-node-fields';
+import {
+  validateCollection,
+  validateEmbeddingModel,
+  validateMemoryKey,
+  validateOptionalFieldName,
+  validateScoreThreshold,
+  validateTopK,
+} from '@/lib/vector-memory-node-fields';
 import {
   cloneNodesForDuplicate,
   insertPositionOnEdge,
@@ -998,6 +1013,44 @@ function createNode(
         type: 'sub_workflow',
         data: { kind: 'sub_workflow', workflowId: '' },
       };
+    // R7.4a (KI-128, DESIGN v0.9 § 3.4): vector/memory-узлы. Коллекция и ключ
+    // пусты до заполнения (KI-069: не подставляем «какое-нибудь» значение).
+    // Модель эмбеддингов — единственная совместимая с vector(1536); topK и
+    // порог — дефолты DESIGN § 3.4, чтобы узел был запускаем сразу.
+    case 'vector_upsert':
+      return {
+        ...shared,
+        type: 'vector_upsert',
+        data: {
+          kind: 'vector_upsert',
+          collection: '',
+          embeddingModel: DEFAULT_EMBEDDING_MODEL,
+        },
+      };
+    case 'vector_query':
+      return {
+        ...shared,
+        type: 'vector_query',
+        data: {
+          kind: 'vector_query',
+          collection: '',
+          embeddingModel: DEFAULT_EMBEDDING_MODEL,
+          topK: DEFAULT_VECTOR_TOPK,
+          scoreThreshold: DEFAULT_VECTOR_SCORE_THRESHOLD,
+        },
+      };
+    case 'memory_read':
+      return {
+        ...shared,
+        type: 'memory_read',
+        data: { kind: 'memory_read', key: '' },
+      };
+    case 'memory_write':
+      return {
+        ...shared,
+        type: 'memory_write',
+        data: { kind: 'memory_write', key: '' },
+      };
     // Нет default: — новый NodeType поймает tsc (KI-129).
   }
 }
@@ -1344,6 +1397,79 @@ function nodeDataFromApi(type: NodeType, data: Record<string, unknown>): NodeDat
 
       if (inputsMap !== undefined) {
         result.inputsMap = inputsMap;
+      }
+
+      return result;
+    }
+    // R7.4a (KI-128): vector/memory-узлы. Поля из jsonb проверяются на границе
+    // (RULES 1.17), пустые необязательные не создаются (KI-129), а числа
+    // проходят диапазонную валидацию — мусор не должен менять поведение Run.
+    case 'vector_upsert': {
+      const result: VectorUpsertNodeData = {
+        kind: 'vector_upsert',
+        collection: validateCollection(data.collection),
+        embeddingModel: validateEmbeddingModel(data.embeddingModel),
+      };
+
+      const contentField = validateOptionalFieldName(data.contentField);
+
+      if (contentField !== undefined) {
+        result.contentField = contentField;
+      }
+
+      if (typeof data.prompt === 'string') {
+        result.prompt = data.prompt;
+      }
+
+      return result;
+    }
+    case 'vector_query': {
+      const result: VectorQueryNodeData = {
+        kind: 'vector_query',
+        collection: validateCollection(data.collection),
+        embeddingModel: validateEmbeddingModel(data.embeddingModel),
+      };
+
+      const topK = validateTopK(data.topK);
+
+      if (topK !== undefined) {
+        result.topK = topK;
+      }
+
+      const scoreThreshold = validateScoreThreshold(data.scoreThreshold);
+
+      if (scoreThreshold !== undefined) {
+        result.scoreThreshold = scoreThreshold;
+      }
+
+      if (typeof data.prompt === 'string') {
+        result.prompt = data.prompt;
+      }
+
+      return result;
+    }
+    case 'memory_read': {
+      const result: MemoryReadNodeData = {
+        kind: 'memory_read',
+        key: validateMemoryKey(data.key),
+      };
+
+      return result;
+    }
+    case 'memory_write': {
+      const result: MemoryWriteNodeData = {
+        kind: 'memory_write',
+        key: validateMemoryKey(data.key),
+      };
+
+      const valueField = validateOptionalFieldName(data.valueField);
+
+      if (valueField !== undefined) {
+        result.valueField = valueField;
+      }
+
+      if (typeof data.value === 'string') {
+        result.value = data.value;
       }
 
       return result;

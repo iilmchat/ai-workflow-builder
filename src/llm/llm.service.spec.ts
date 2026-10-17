@@ -35,6 +35,8 @@ describe('LlmService', () => {
       ],
       isConfigured: true,
       generateAsync,
+      // R7.4a: метод обязателен в контракте ILlmProvider.
+      embedAsync: vi.fn(),
     };
 
     const registry = {
@@ -104,6 +106,8 @@ describe('LlmService', () => {
           usage: { inputTokens: 3, outputTokens: 2, model: 'qwen2.5-7b-instruct' },
         }),
       ),
+      // R7.4a: метод обязателен в контракте ILlmProvider.
+      embedAsync: vi.fn(),
     };
     const registry = {
       resolveByModel: vi.fn(() => localProvider),

@@ -507,3 +507,117 @@ describe('sub_workflow — createNode и Load (R6.7, KI-200)', () => {
     expect(state().nodes[0]?.data).toEqual(firstLoad);
   });
 });
+
+describe('vector/memory — createNode и Load (R7.4a, KI-128)', () => {
+  beforeEach(() => {
+    useWorkflowStore.setState({
+      nodes: [],
+      edges: [],
+      past: [],
+      future: [],
+      notice: null,
+      isLoading: false,
+    });
+    vi.mocked(getWorkflowAsync).mockReset();
+  });
+
+  it('createNode: vector_upsert — модель по умолчанию, пустая коллекция', () => {
+    const data = dataOfNewNode('vector_upsert');
+
+    expect(data).toEqual({
+      kind: 'vector_upsert',
+      collection: '',
+      embeddingModel: 'text-embedding-3-small',
+    });
+  });
+
+  it('createNode: vector_query — дефолты topK=5 и scoreThreshold=0.7', () => {
+    const data = dataOfNewNode('vector_query');
+
+    expect(data).toEqual({
+      kind: 'vector_query',
+      collection: '',
+      embeddingModel: 'text-embedding-3-small',
+      topK: 5,
+      scoreThreshold: 0.7,
+    });
+  });
+
+  it('createNode: memory_read / memory_write — пустой ключ, без лишних полей', () => {
+    expect(dataOfNewNode('memory_read')).toEqual({ kind: 'memory_read', key: '' });
+    expect(dataOfNewNode('memory_write')).toEqual({ kind: 'memory_write', key: '' });
+  });
+
+  it('nodeDataFromApi: поля vector_upsert/vector_query переносятся и валидируются', async () => {
+    vi.mocked(getWorkflowAsync).mockResolvedValue({
+      id: 'wf-vector',
+      userId: 'user-smoke',
+      name: 'R7.4a',
+      version: 1,
+      edges: [],
+      nodes: [
+        {
+          id: 'vu-1',
+          type: 'vector_upsert',
+          position: AT_ZERO,
+          data: {
+            kind: 'vector_upsert',
+            collection: 'docs',
+            embeddingModel: 'text-embedding-3-small',
+            contentField: 'body',
+            prompt: 'текст',
+          },
+        },
+        {
+          id: 'vq-1',
+          type: 'vector_query',
+          position: AT_ZERO,
+          data: {
+            kind: 'vector_query',
+            collection: 'docs',
+            embeddingModel: 'text-embedding-3-large',
+            topK: 500,
+            scoreThreshold: 7,
+          },
+        },
+        {
+          id: 'mr-1',
+          type: 'memory_read',
+          position: AT_ZERO,
+          data: { kind: 'memory_read', key: 42 },
+        },
+        {
+          id: 'mw-1',
+          type: 'memory_write',
+          position: AT_ZERO,
+          data: { kind: 'memory_write', key: 'profile', value: 'Аня' },
+        },
+      ],
+    });
+
+    await state().loadWorkflowAsync('wf-vector');
+
+    const loaded = state().nodes.map((node) => node.data);
+
+    expect(loaded[0]).toEqual({
+      kind: 'vector_upsert',
+      collection: 'docs',
+      embeddingModel: 'text-embedding-3-small',
+      contentField: 'body',
+      prompt: 'текст',
+    });
+    // 3-large не помещается в vector(1536) → дефолт; topK 500 и порог 7
+    // отбрасываются (backend применит свои дефолты).
+    expect(loaded[1]).toEqual({
+      kind: 'vector_query',
+      collection: 'docs',
+      embeddingModel: 'text-embedding-3-small',
+    });
+    expect(loaded[2]).toEqual({ kind: 'memory_read', key: '' });
+    expect(loaded[3]).toEqual({
+      kind: 'memory_write',
+      key: 'profile',
+      value: 'Аня',
+    });
+  });
+});

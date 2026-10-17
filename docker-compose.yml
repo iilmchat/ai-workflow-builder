@@ -1,6 +1,9 @@
 services:
   db:
-    image: postgres:17-alpine
+    # R7.4a: образ с расширением pgvector (vector(1536) + HNSW).
+    # Официальный postgres:17-alpine расширения не содержит — миграция
+    # 0008_pgvector.sql падала бы на `CREATE EXTENSION vector`.
+    image: pgvector/pgvector:pg17
     container_name: workflow-builder-db
     restart: unless-stopped
     environment:

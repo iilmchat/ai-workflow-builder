@@ -6,7 +6,10 @@
  * преобразования (`text`, `condition`, `output`, `compare`), сетевой `http`
  * (R6.5.1, KI-105) и заглушка `image_generation` (R4). С R7.5 (KI-364)
  * `condition` в режиме `sandbox` — асинхронный: выражение исполняет
- * QuickJS-WASM через переданный исполнитель.
+ * QuickJS-WASM через переданный исполнитель. С R7.4a (KI-128) здесь же живут
+ * `vector_upsert`/`vector_query`/`memory_read`/`memory_write`: они принимают
+ * {@link VectorMemoryContext} (хранилище + эмбеддинги), поэтому остаются
+ * тестируемыми без Nest-DI и без PostgreSQL.
  *
  * Правило для `data`: она приходит из jsonb-графа как `unknown` и валидируется
  * Zod'ом **внутри исполнителя**, а не в `NodeDto` (там `data` — свободный
@@ -21,6 +24,10 @@
  */
 import { NotFoundException } from '@nestjs/common';
 import { z } from 'zod';
+import {
+  DEFAULT_EMBEDDING_DIMENSIONS,
+  DEFAULT_EMBEDDING_MODEL,
+} from '../llm/llm-constants.js';
 import type { SandboxEvaluation, SandboxOptions } from '../sandbox/quickjs-runner.service.js';
 import type { EdgeDto, GraphDto, NodeDto } from './dto/index.js';
 import { inferInputPortName } from './node-ports.js';
@@ -1096,6 +1103,467 @@ export function executeCompareNode(
   const equal = stringifyOperand(left) === stringifyOperand(right);
 
   return { diff: equal ? '' : buildDiffDescription(left, right), equal };
+}
+
+/* ──────────────────── Узлы vector_* / memory_* (R7.4a) ──────────────────── */
+
+/**
+ * Запись для INSERT в `workflow_vectors`.
+ *
+ * Интерфейс объявлен здесь, а не в сервисе БД: исполнители тестируются без
+ * Nest-DI и без PostgreSQL, поэтому им достаточно структурного контракта
+ * (тот же приём, что у {@link SubWorkflowLookup}).
+ */
+export interface VectorRecordInput {
+  /** Владелец данных — workflow запуска (изоляция коллекций). */
+  readonly workflowId: string;
+  /** Логическая коллекция внутри workflow. */
+  readonly collection: string;
+  /** Вектор эмбеддинга; длина проверяется исполнителем. */
+  readonly embedding: number[];
+  /** Содержимое записи (`{ text }` — текст, ушедший в эмбеддинг). */
+  readonly content: Record<string, unknown>;
+  /** Произвольные метаданные (по умолчанию `{}`). */
+  readonly metadata: Record<string, unknown>;
+}
+
+/** Параметры косинусного поиска по коллекции. */
+export interface VectorQueryInput {
+  /** Владелец данных — workflow запуска. */
+  readonly workflowId: string;
+  /** Логическая коллекция внутри workflow. */
+  readonly collection: string;
+  /** Вектор запроса. */
+  readonly embedding: number[];
+  /** Сколько ближайших записей вернуть (LIMIT). */
+  readonly topK: number;
+  /** Порог косинусной близости: результаты ниже отбрасываются. */
+  readonly scoreThreshold: number;
+}
+
+/** Совпадение векторного поиска. */
+export interface VectorMatch {
+  /** uuid записи `workflow_vectors`. */
+  readonly id: string;
+  /** Содержимое записи. */
+  readonly content: Record<string, unknown>;
+  /** Метаданные записи. */
+  readonly metadata: Record<string, unknown>;
+  /** Косинусная близость `1 - (embedding <=> query)` в диапазоне [-1, 1]. */
+  readonly score: number;
+}
+
+/**
+ * Хранилище vector/memory-данных (реализация — `VectorStoreService`).
+ *
+ * Методы с суффиксом `Async` (RULES 1.4). `readMemoryAsync` возвращает
+ * `undefined` для отсутствующего ключа, а не `null`: `null` — валидное
+ * сохранённое JSON-значение, и различать эти случаи обязан вызывающий.
+ */
+export interface VectorMemoryStore {
+  /**
+   * Добавляет вектор в коллекцию workflow.
+   *
+   * @param record - workflow, коллекция, вектор, содержимое и метаданные
+   * @returns `id` созданной строки
+   */
+  insertVectorAsync(record: VectorRecordInput): Promise<{ id: string }>;
+
+  /**
+   * Ищет ближайшие векторы коллекции по косинусной близости.
+   *
+   * @param query - workflow, коллекция, вектор запроса, topK и порог
+   * @returns совпадения, отсортированные по убыванию `score`
+   */
+  queryVectorsAsync(query: VectorQueryInput): Promise<VectorMatch[]>;
+
+  /**
+   * Читает значение памяти workflow по ключу.
+   *
+   * @param workflowId - владелец памяти
+   * @param key - ключ записи
+   * @returns сохранённое значение либо `undefined`, если ключа нет
+   */
+  readMemoryAsync(workflowId: string, key: string): Promise<unknown>;
+
+  /**
+   * Записывает значение памяти (UPSERT по `workflow_id` + `key`).
+   *
+   * @param workflowId - владелец памяти
+   * @param key - ключ записи
+   * @param value - произвольное JSON-значение
+   */
+  writeMemoryAsync(workflowId: string, key: string, value: unknown): Promise<void>;
+}
+
+/**
+ * Контекст выполнения vector/memory-узлов.
+ *
+ * Собирается движком: он знает `runId` → `workflow_id`, имеет доступ к БД и
+ * к реестру LLM-провайдеров. Исполнители остаются чистыми функциями, поэтому
+ * их юнит-тесты не поднимают Nest-модуль и не ходят в сеть.
+ */
+export interface VectorMemoryContext {
+  /** workflow, которому принадлежат векторы и память. */
+  readonly workflowId: string;
+  /** Хранилище (в продакшене — `VectorStoreService`). */
+  readonly store: VectorMemoryStore;
+  /**
+   * Эмбеддинг текста.
+   *
+   * @param texts - тексты для векторизации
+   * @param model - id модели эмбеддингов
+   * @returns векторы в порядке `texts`
+   */
+  embedAsync(texts: string[], model: string): Promise<number[][]>;
+}
+
+/** Zod-схема данных узла `vector_upsert`. */
+const VectorUpsertNodeDataSchema = z.object({
+  kind: z.literal('vector_upsert').optional(),
+  collection: z.string().trim().min(1, 'collection обязателен'),
+  embeddingModel: z.string().trim().min(1).default(DEFAULT_EMBEDDING_MODEL),
+  contentField: z.string().trim().min(1).optional(),
+  // Текст, введённый прямо в узле (textarea). Связь `inputs.prompt` важнее.
+  prompt: z.string().optional(),
+});
+
+/** Zod-схема данных узла `vector_query`. */
+const VectorQueryNodeDataSchema = z.object({
+  kind: z.literal('vector_query').optional(),
+  collection: z.string().trim().min(1, 'collection обязателен'),
+  embeddingModel: z.string().trim().min(1).default(DEFAULT_EMBEDDING_MODEL),
+  // DESIGN § 3.4: default topK = 5, scoreThreshold = 0.7. Верхняя граница
+  // topK — защита от запроса «вся таблица»: HNSW всё равно сканирует индекс,
+  // но в память попадут все строки.
+  topK: z.number().int().positive().max(100).default(5),
+  scoreThreshold: z.number().min(-1).max(1).default(0.7),
+  prompt: z.string().optional(),
+});
+
+/** Zod-схема данных узла `memory_read`. */
+const MemoryReadNodeDataSchema = z.object({
+  kind: z.literal('memory_read').optional(),
+  key: z.string().trim().min(1, 'key обязателен'),
+});
+
+/** Zod-схема данных узла `memory_write`. */
+const MemoryWriteNodeDataSchema = z.object({
+  kind: z.literal('memory_write').optional(),
+  key: z.string().trim().min(1, 'key обязателен'),
+  valueField: z.string().trim().min(1).optional(),
+  // Текст, введённый прямо в узле (textarea), — fallback без связи.
+  value: z.unknown().optional(),
+});
+
+/** Ключи входов, из которых берётся текст, если поле не задано явно. */
+const VECTOR_INPUT_FALLBACK_KEYS = ['prompt', 'text', 'value', 'input'] as const;
+
+/**
+ * Приводит значение входа к тексту для эмбеддинга.
+ *
+ * Строка уходит как есть, объект/массив — в JSON: иначе `String(объект)` дал бы
+ * `[object Object]` и вектор не нёс бы смысла.
+ *
+ * @param value - значение входа узла (`unknown`)
+ * @returns текст либо `null`, если значение пустое/не представимо
+ */
+function toVectorText(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    return value.trim().length > 0 ? value : null;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+
+  if (typeof value === 'object') {
+    try {
+      const serialized = JSON.stringify(value);
+
+      return serialized !== undefined && serialized !== '{}' && serialized !== '[]'
+        ? serialized
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Выбирает текст для эмбеддинга из входов и данных узла.
+ *
+ * Приоритет: явное поле `field` (если задано — его отсутствие ошибка, а не
+ * молчаливая подмена), затем стандартные входы `prompt`/`text`/`value`/`input`,
+ * затем текст из `data.prompt` (textarea узла).
+ *
+ * @param nodeType - тип узла (для текста ошибки)
+ * @param field - имя поля входа из `data.contentField`/`valueField`
+ * @param inputs - собранные входы узла
+ * @param fallback - текст из данных узла
+ * @returns непустой текст
+ * @throws Error если текст не найден ни в одном источнике
+ */
+function pickVectorText(
+  nodeType: string,
+  field: string | undefined,
+  inputs: Record<string, unknown>,
+  fallback: string | undefined,
+): string {
+  if (field !== undefined) {
+    const value = toVectorText(inputs[field]);
+
+    if (value === null) {
+      throw new Error(
+        `Узел ${nodeType}: поле входа '${field}' не найдено или пусто ` +
+          `(получены ключи: ${Object.keys(inputs).join(', ') || '(нет)'})`,
+      );
+    }
+
+    return value;
+  }
+
+  for (const key of VECTOR_INPUT_FALLBACK_KEYS) {
+    const value = toVectorText(inputs[key]);
+
+    if (value !== null) {
+      return value;
+    }
+  }
+
+  const own = fallback !== undefined ? toVectorText(fallback) : null;
+
+  if (own !== null) {
+    return own;
+  }
+
+  throw new Error(
+    `Узел ${nodeType}: не задан текст (ни во входе prompt, ни в поле узла)`,
+  );
+}
+
+/**
+ * Получает один эмбеддинг и проверяет его размерность.
+ *
+ * Размерность фиксирована колонкой `vector(1536)`: модель `3-large` (3072)
+ * дала бы ошибку PostgreSQL на INSERT, поэтому проверка делается раньше —
+ * с понятным текстом и без «грязной» записи.
+ *
+ * @param nodeType - тип узла (для текста ошибки)
+ * @param context - контекст с `embedAsync`
+ * @param text - текст для векторизации
+ * @param model - id модели эмбеддингов
+ * @returns вектор длины {@link DEFAULT_EMBEDDING_DIMENSIONS}
+ * @throws Error если провайдер вернул не ровно один вектор или неверную длину
+ */
+async function embedVectorAsync(
+  nodeType: string,
+  context: VectorMemoryContext,
+  text: string,
+  model: string,
+): Promise<number[]> {
+  const vectors = await context.embedAsync([text], model);
+  const vector = vectors[0];
+
+  if (vectors.length !== 1 || vector === undefined) {
+    throw new Error(
+      `Узел ${nodeType}: провайдер вернул ${vectors.length} векторов на 1 текст`,
+    );
+  }
+
+  if (vector.length !== DEFAULT_EMBEDDING_DIMENSIONS) {
+    throw new Error(
+      `Узел ${nodeType}: модель '${model}' вернула вектор размерности ` +
+        `${vector.length}, ожидается ${DEFAULT_EMBEDDING_DIMENSIONS} ` +
+        '(колонка vector(1536)); используйте text-embedding-3-small',
+    );
+  }
+
+  return vector;
+}
+
+/**
+ * Исполнитель узла `vector_upsert` (R7.4a, DESIGN v0.9 § 3.4).
+ *
+ * Текст берётся из входа (`data.contentField` либо `prompt`/`text`/`value`/
+ * `input`) или из textarea узла, векторизуется и пишется в
+ * `workflow_vectors`. Повторный запуск **добавляет** новую строку: ключа
+ * идемпотентности у коллекции нет (см. отчёт R7.4a — решение обосновано).
+ *
+ * @param data - данные узла (`collection`, `embeddingModel`, `contentField?`, `prompt?`)
+ * @param inputs - входы узла (`prompt` от Text/LLM)
+ * @param context - workflow, хранилище и провайдер эмбеддингов
+ * @returns `{ result: { id, collection } }`
+ * @throws NodeDataValidationException если `data` не проходят Zod-схему
+ * @throws Error если текст не найден, провайдер вернул неверную размерность
+ *   или запись в БД упала
+ */
+export async function executeVectorUpsertNodeAsync(
+  data: unknown,
+  inputs: Record<string, unknown>,
+  context: VectorMemoryContext,
+): Promise<Record<string, unknown>> {
+  const parsed = parseNodeData('vector_upsert', VectorUpsertNodeDataSchema, data);
+  const text = pickVectorText(
+    'vector_upsert',
+    parsed.contentField,
+    inputs,
+    parsed.prompt,
+  );
+  const embedding = await embedVectorAsync(
+    'vector_upsert',
+    context,
+    text,
+    parsed.embeddingModel,
+  );
+  const { id } = await context.store.insertVectorAsync({
+    workflowId: context.workflowId,
+    collection: parsed.collection,
+    embedding,
+    content: { text },
+    metadata: {},
+  });
+
+  return { result: { id, collection: parsed.collection } };
+}
+
+/**
+ * Исполнитель узла `vector_query` (R7.4a, DESIGN v0.9 § 3.4).
+ *
+ * Косинусный поиск (`embedding <=> $1`) с `LIMIT topK`; порог `scoreThreshold`
+ * применяется к `1 - distance` уже после topK — так узел не отбрасывает
+ * «лучшее из плохого», если коллекция ещё пустая по смыслу.
+ *
+ * @param data - данные узла (`collection`, `embeddingModel`, `topK?`, `scoreThreshold?`, `prompt?`)
+ * @param inputs - входы узла (`prompt` — текст запроса)
+ * @param context - workflow, хранилище и провайдер эмбеддингов
+ * @returns `{ result: VectorMatch[] }` — совпадения по убыванию `score`
+ * @throws NodeDataValidationException если `data` не проходят Zod-схему
+ * @throws Error если текст запроса не найден или провайдер вернул неверную размерность
+ */
+export async function executeVectorQueryNodeAsync(
+  data: unknown,
+  inputs: Record<string, unknown>,
+  context: VectorMemoryContext,
+): Promise<Record<string, unknown>> {
+  const parsed = parseNodeData('vector_query', VectorQueryNodeDataSchema, data);
+  const text = pickVectorText('vector_query', undefined, inputs, parsed.prompt);
+  const embedding = await embedVectorAsync(
+    'vector_query',
+    context,
+    text,
+    parsed.embeddingModel,
+  );
+  const matches = await context.store.queryVectorsAsync({
+    workflowId: context.workflowId,
+    collection: parsed.collection,
+    embedding,
+    topK: parsed.topK,
+    scoreThreshold: parsed.scoreThreshold,
+  });
+
+  return { result: matches };
+}
+
+/**
+ * Исполнитель узла `memory_read` (R7.4a, DESIGN v0.9 § 3.4).
+ *
+ * @param data - данные узла (`key`)
+ * @param _inputs - входы узла (не используются: ключ задан в узле)
+ * @param context - workflow и хранилище
+ * @returns `{ result, found }`: `result` — значение либо `null`,
+ *   `found` — был ли ключ в памяти
+ * @throws NodeDataValidationException если `key` пуст
+ */
+export async function executeMemoryReadNodeAsync(
+  data: unknown,
+  _inputs: Record<string, unknown>,
+  context: VectorMemoryContext,
+): Promise<Record<string, unknown>> {
+  const parsed = parseNodeData('memory_read', MemoryReadNodeDataSchema, data);
+  const value = await context.store.readMemoryAsync(context.workflowId, parsed.key);
+
+  if (value === undefined) {
+    return { result: null, found: false };
+  }
+
+  return { result: value, found: true };
+}
+
+/**
+ * Исполнитель узла `memory_write` (R7.4a, DESIGN v0.9 § 3.4).
+ *
+ * Значение берётся из входа `data.valueField` (если задан), иначе из
+ * `prompt`/`text`/`value`/`input`/`result`, иначе из textarea узла. UPSERT по
+ * `(workflow_id, key)`: повторный запуск обновляет значение, а не плодит ключи.
+ *
+ * @param data - данные узла (`key`, `valueField?`, `value?`)
+ * @param inputs - входы узла
+ * @param context - workflow и хранилище
+ * @returns `{ result: value, key }`
+ * @throws NodeDataValidationException если `key` пуст
+ * @throws Error если значение не найдено ни в одном источнике
+ */
+export async function executeMemoryWriteNodeAsync(
+  data: unknown,
+  inputs: Record<string, unknown>,
+  context: VectorMemoryContext,
+): Promise<Record<string, unknown>> {
+  const parsed = parseNodeData('memory_write', MemoryWriteNodeDataSchema, data);
+  const value = pickMemoryValue(parsed.valueField, inputs, parsed.value);
+
+  await context.store.writeMemoryAsync(context.workflowId, parsed.key, value);
+
+  return { result: value, key: parsed.key };
+}
+
+/**
+ * Выбирает значение для записи в память.
+ *
+ * @param field - явное поле входа (`data.valueField`); если задано, его
+ *   отсутствие — ошибка, а не тихая подмена другим значением
+ * @param inputs - входы узла
+ * @param fallback - значение из textarea узла
+ * @returns JSON-значение для `workflow_memory.value`
+ * @throws Error если значение не найдено
+ */
+function pickMemoryValue(
+  field: string | undefined,
+  inputs: Record<string, unknown>,
+  fallback: unknown,
+): unknown {
+  if (field !== undefined) {
+    if (!Object.hasOwn(inputs, field)) {
+      throw new Error(
+        `Узел memory_write: поле входа '${field}' не найдено ` +
+          `(получены ключи: ${Object.keys(inputs).join(', ') || '(нет)'})`,
+      );
+    }
+
+    return inputs[field];
+  }
+
+  const keys = [...VECTOR_INPUT_FALLBACK_KEYS, 'result'] as const;
+
+  for (const key of keys) {
+    if (Object.hasOwn(inputs, key) && inputs[key] !== undefined) {
+      return inputs[key];
+    }
+  }
+
+  if (fallback !== undefined && fallback !== null) {
+    return fallback;
+  }
+
+  throw new Error(
+    'Узел memory_write: не задано значение (ни во входах, ни в поле узла)',
+  );
 }
 
 /* ─────────────────────────── Узел sub_workflow ─────────────────────────── */

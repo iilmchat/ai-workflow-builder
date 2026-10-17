@@ -281,6 +281,12 @@ export class LlmProviderFactory {
         this.config.get<string>('ROUTERAI_BASE_URL') ?? 'https://routerai.ru/api/v1',
       models: ROUTERAI_MODELS,
       envKey: 'ROUTERAI_API_KEY',
+      // R7.4a: у RouterAI embedding-модели адресуются с префиксом провайдера
+      // (`openai/text-embedding-3-small`) — проверено живым запросом
+      // 2026-10-17: без префикса upstream отвечает 400 «Model ... not found».
+      // Chat-модели уже несут свой префикс в id, поэтому их не трогаем.
+      resolveEmbeddingModel: (model) =>
+        model.includes('/') ? model : `openai/${model}`,
     });
   }
 

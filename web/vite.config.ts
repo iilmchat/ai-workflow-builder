@@ -91,7 +91,8 @@ export default defineConfig({
     // `audio_generation`, `music_generation`), их компоненты и зеркало
     // контрактов дали 734.19 kB → порог 750 kB. Рост +23 kB на три узла —
     // аргумент за code-split (KI-008) до v0.10.
-    chunkSizeWarningLimit: 750,
+    // R7.4a (KI-128): четыре vector/memory-узла дали 758.92 kB → порог 780 kB.
+    chunkSizeWarningLimit: 780,
   },
   server: {
     host: '127.0.0.1',

@@ -5,9 +5,10 @@ import {
   type OpenAiCompatibleConfig,
 } from './openai-compatible.provider.js';
 
-const { createMock, constructorMock } = vi.hoisted(() => ({
+const { createMock, constructorMock, embedMock } = vi.hoisted(() => ({
   createMock: vi.fn(),
   constructorMock: vi.fn(),
+  embedMock: vi.fn(),
 }));
 
 // Реальный SDK в юнит-тестах не вызывается: подменяем клиент целиком
@@ -16,6 +17,7 @@ const { createMock, constructorMock } = vi.hoisted(() => ({
 vi.mock('openai', () => ({
   default: class MockOpenAI {
     readonly chat = { completions: { create: createMock } };
+    readonly embeddings = { create: embedMock };
 
     constructor(options: unknown) {
       constructorMock(options);
@@ -385,5 +387,110 @@ describe('OpenAiCompatibleProvider', () => {
     );
 
     expect(retryableOf(await catchGenerateError(provider))).toBe(true);
+  });
+});
+
+describe('OpenAiCompatibleProvider.embedAsync (R7.4a)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('вызывает /embeddings с моделью по умолчанию и возвращает векторы по порядку индексов', async () => {
+    // upstream вправе вернуть data не по порядку — сортируем по index.
+    embedMock.mockResolvedValue({
+      data: [
+        { index: 1, embedding: [0.4, 0.5] },
+        { index: 0, embedding: [0.1, 0.2] },
+      ],
+    });
+
+    const provider = new OpenAiCompatibleProvider(providerConfig());
+    const vectors = await provider.embedAsync(['первый', 'второй']);
+
+    expect(vectors).toEqual([
+      [0.1, 0.2],
+      [0.4, 0.5],
+    ]);
+    expect(embedMock).toHaveBeenCalledTimes(1);
+
+    const [request, requestOptions] = embedMock.mock.calls[0];
+
+    expect(request).toEqual({
+      model: 'text-embedding-3-small',
+      input: ['первый', 'второй'],
+    });
+    // RULES 4.19: вызов не может висеть без таймаута.
+    expect(requestOptions.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('пробрасывает явную модель и не делает запрос для пустого списка', async () => {
+    const provider = new OpenAiCompatibleProvider(providerConfig());
+
+    embedMock.mockResolvedValue({ data: [{ index: 0, embedding: [1] }] });
+
+    await provider.embedAsync(['x'], { model: 'custom-embed' });
+    expect(embedMock.mock.calls[0][0].model).toBe('custom-embed');
+
+    embedMock.mockClear();
+    await expect(provider.embedAsync([])).resolves.toEqual([]);
+    expect(embedMock).not.toHaveBeenCalled();
+  });
+
+  it('падает, если upstream вернул не то число векторов', async () => {
+    embedMock.mockResolvedValue({ data: [{ index: 0, embedding: [1, 2] }] });
+
+    const provider = new OpenAiCompatibleProvider(providerConfig());
+
+    await expect(provider.embedAsync(['a', 'b'])).rejects.toThrow(
+      'embeddings вернул 1 векторов на 2 текстов',
+    );
+  });
+
+  it('оборачивает ошибку SDK в LlmProviderException с retryable для 429', async () => {
+    embedMock.mockRejectedValue(
+      Object.assign(new Error('rate limited'), { status: 429 }),
+    );
+
+    const provider = new OpenAiCompatibleProvider(providerConfig());
+
+    try {
+      await provider.embedAsync(['x']);
+      throw new Error('ожидалась ошибка провайдера');
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(LlmProviderException);
+      expect(retryableOf(error)).toBe(true);
+    }
+  });
+
+  it('без ключа бросает LlmProviderException, не трогая SDK', async () => {
+    const provider = new OpenAiCompatibleProvider(providerConfig({ apiKey: '' }));
+
+    await expect(provider.embedAsync(['x'])).rejects.toThrow(
+      'OPENAI_API_KEY не задан',
+    );
+    expect(embedMock).not.toHaveBeenCalled();
+  });
+
+  it('флаг supportsEmbeddings: true — реестр может выбрать провайдера', () => {
+    const provider = new OpenAiCompatibleProvider(providerConfig());
+
+    expect(provider.supportsEmbeddings).toBe(true);
+  });
+
+  it('resolveEmbeddingModel: провайдер вправе переписать id (RouterAI-префикс)', async () => {
+    embedMock.mockResolvedValue({ data: [{ index: 0, embedding: [1, 2] }] });
+
+    const provider = new OpenAiCompatibleProvider(
+      providerConfig({
+        name: 'routerai',
+        resolveEmbeddingModel: (model) => `openai/${model}`,
+      }),
+    );
+
+    await provider.embedAsync(['x']);
+
+    expect(embedMock.mock.calls[0][0].model).toBe(
+      'openai/text-embedding-3-small',
+    );
   });
 });

@@ -148,6 +148,39 @@ export const NODE_PORT_CONTRACT: Record<string, NodePortContract> = {
     targetHandleId: 'text-input',
     inputPortName: 'prompt',
   },
+  // R7.4a (KI-128, DESIGN v0.9 § 3.4): vector/memory-узлы.
+  //
+  // Вход у всех четырёх — текстовый порт `prompt` (content/query приходят от
+  // Text/LLM). Выход — `result`: у `vector_query` это массив совпадений, у
+  // `memory_read` — сохранённое значение, у upsert/write — подтверждение
+  // записи. Хендлы названы по семействам (`vector-output` / `memory-output`):
+  // разрешение type-aware (KI-301), поэтому одинаковый id у двух типов одного
+  // семейства не подменяет порт чужого узла, а в графе видно, какой поток
+  // несёт результат.
+  vector_upsert: {
+    sourceHandleId: 'vector-output',
+    outputPortName: 'result',
+    targetHandleId: 'text-input',
+    inputPortName: 'prompt',
+  },
+  vector_query: {
+    sourceHandleId: 'vector-output',
+    outputPortName: 'result',
+    targetHandleId: 'text-input',
+    inputPortName: 'prompt',
+  },
+  memory_read: {
+    sourceHandleId: 'memory-output',
+    outputPortName: 'result',
+    targetHandleId: 'text-input',
+    inputPortName: 'prompt',
+  },
+  memory_write: {
+    sourceHandleId: 'memory-output',
+    outputPortName: 'result',
+    targetHandleId: 'text-input',
+    inputPortName: 'prompt',
+  },
   // `compare` сознательно БЕЗ контракта: `NodePortContract` описывает один
   // вход, а узлу нужны два (`a` и `b`). С контрактом обе связи свернулись бы
   // в один ключ (KI-035) и второй операнд потерялся бы. Без контракта работает

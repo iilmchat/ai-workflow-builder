@@ -139,4 +139,31 @@ export class LlmRegistryService {
         })),
       );
   }
+
+  /**
+   * Возвращает первого провайдера, умеющего embeddings (R7.4a).
+   *
+   * Порядок — приоритет {@link LLM_PROVIDERS}: Anthropic стоит первым, но
+   * `supportsEmbeddings === false`, поэтому пропускается; следующим идёт
+   * OpenAI-совместимый провайдер (OpenAI, RouterAI, …). Метод намеренно
+   * асинхронный (RULES 1.4): вызывающий код (исполнитель узла) работает в
+   * async-контексте, а в будущем выбор может потребовать I/O (каталог моделей).
+   *
+   * @returns сконфигурированный провайдер с `supportsEmbeddings === true`
+   * @throws LlmProviderException если ни один провайдер не умеет embeddings
+   */
+  async resolveEmbeddingProviderAsync(): Promise<ILlmProvider> {
+    const provider = this.providers.find(
+      (candidate) => candidate.isConfigured && candidate.supportsEmbeddings === true,
+    );
+
+    if (!provider) {
+      throw new LlmProviderException(
+        'registry',
+        'нет сконфигурированного провайдера с поддержкой embeddings',
+      );
+    }
+
+    return provider;
+  }
 }

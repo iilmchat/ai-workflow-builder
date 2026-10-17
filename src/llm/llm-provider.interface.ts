@@ -124,6 +124,17 @@ export interface ModelInfo {
   readonly defaultMaxTokens?: number;
 }
 
+/** Опции вызова embeddings (R7.4a). */
+export interface EmbeddingOptions {
+  /**
+   * id модели эмбеддингов. По умолчанию — `text-embedding-3-small`
+   * (1536 измерений — как колонка `vector(1536)`).
+   */
+  model?: string;
+  /** AbortSignal для отмены/таймаута (RULES 4.19). */
+  signal?: AbortSignal;
+}
+
 /** Провайдер LLM. */
 export interface ILlmProvider {
   /**
@@ -133,6 +144,16 @@ export interface ILlmProvider {
   readonly name: string;
   /** Модели, доступные у провайдера, с их модальностями (v0.6.0a). */
   readonly models: readonly ModelInfo[];
+  /**
+   * Поддерживает ли провайдер embeddings (R7.4a).
+   *
+   * `false`/отсутствие поля — провайдер не умеет `/embeddings` (Anthropic),
+   * и `resolveEmbeddingProviderAsync` его пропускает. Флаг нужен потому, что
+   * требование контракта «метод есть» и «метод работает» — разные вещи:
+   * Anthropic обязан реализовать `embedAsync`, но только чтобы бросить
+   * {@link EmbeddingNotSupportedException}.
+   */
+  readonly supportsEmbeddings?: boolean;
   /**
    * Готов ли провайдер к вызовам.
    *
@@ -161,6 +182,45 @@ export interface ILlmProvider {
    * @throws LlmProviderException при ошибке провайдера, таймауте или отсутствии ключа
    */
   generateAsync(prompt: string, options: LlmGenerateOptions): Promise<LlmGenerateResult>;
+
+  /**
+   * Получить эмбеддинги для набора текстов (R7.4a, DESIGN v0.9 § 3.4).
+   *
+   * Провайдеры без embeddings (Anthropic) обязаны реализовать метод, но
+   * бросают {@link EmbeddingNotSupportedException}: контракт интерфейса един
+   * для всех, а выбор провайдера делает
+   * `LlmRegistryService.resolveEmbeddingProviderAsync`.
+   *
+   * Порядок векторов в ответе **совпадает** с порядком `texts` — executor
+   * вектора полагается на это, склеивая текст и вектор.
+   *
+   * @param texts - тексты для векторизации; пустой массив — пустой результат
+   * @param options - модель эмбеддингов и отмена (RULES 4.19)
+   * @returns массив векторов: `result[i]` — эмбеддинг `texts[i]`
+   * @throws EmbeddingNotSupportedException если провайдер не умеет embeddings
+   * @throws LlmProviderException при ошибке провайдера, таймауте или отсутствии ключа
+   */
+  embedAsync(
+    texts: string[],
+    options?: EmbeddingOptions,
+  ): Promise<number[][]>;
+}
+
+/**
+ * Ошибка: выбранный провайдер не поддерживает embeddings (R7.4a).
+ *
+ * Наследуется от `Error`, а не от `LlmProviderException`: это не сбой вызова,
+ * а несовместимая возможность провайдера. `retryable` у неё нет намеренно —
+ * повтор с тем же провайдером даст тот же результат.
+ */
+export class EmbeddingNotSupportedException extends Error {
+  /**
+   * @param provider - идентификатор провайдера (например, `anthropic`)
+   */
+  constructor(provider: string) {
+    super(`[${provider}] провайдер не поддерживает embeddings`);
+    this.name = 'EmbeddingNotSupportedException';
+  }
 }
 
 /**

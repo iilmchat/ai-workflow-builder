@@ -2,7 +2,9 @@ import Anthropic from '@anthropic-ai/sdk';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  EmbeddingNotSupportedException,
   LlmProviderException,
+  type EmbeddingOptions,
   type ILlmProvider,
   type LlmGenerateOptions,
   type LlmGenerateResult,
@@ -61,6 +63,12 @@ function extractUsage(
 @Injectable()
 export class AnthropicProvider implements ILlmProvider {
   readonly name = 'anthropic';
+
+  /**
+   * Anthropic не предоставляет embeddings API (DESIGN v0.9 § 3.4):
+   * для эмбеддингов используется OpenAI-совместимый провайдер.
+   */
+  readonly supportsEmbeddings = false;
 
   readonly models: readonly ModelInfo[] = [
     {
@@ -156,5 +164,25 @@ export class AnthropicProvider implements ILlmProvider {
     } catch (error: unknown) {
       throw toProviderException(this.name, error, signal);
     }
+  }
+
+  /**
+   * Anthropic не поддерживает embeddings (R7.4a, DESIGN v0.9 § 3.4).
+   *
+   * Метод обязателен по контракту {@link ILlmProvider}, но всегда бросает
+   * {@link EmbeddingNotSupportedException}: реестр пропускает провайдера по
+   * флагу {@link supportsEmbeddings}, а прямой вызов обязан падать явно, а не
+   * возвращать пустые векторы.
+   *
+   * @param _texts - тексты для векторизации (не используются)
+   * @param _options - модель и signal отмены (не используются)
+   * @returns никогда — метод всегда бросает исключение
+   * @throws EmbeddingNotSupportedException всегда
+   */
+  async embedAsync(
+    _texts: string[],
+    _options?: EmbeddingOptions,
+  ): Promise<number[][]> {
+    throw new EmbeddingNotSupportedException(this.name);
   }
 }

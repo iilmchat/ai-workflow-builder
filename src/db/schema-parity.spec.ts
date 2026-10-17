@@ -61,6 +61,11 @@ const PG_DATA_TYPE_BY_COLUMN_TYPE: Readonly<Record<string, string>> = {
   PgJsonb: 'jsonb',
   PgBoolean: 'boolean',
   PgNumeric: 'numeric',
+  // R7.4a: расширение pgvector регистрирует тип `vector` как user-defined —
+  // `information_schema.columns.data_type` для него — `USER-DEFINED`.
+  // Размерность (1536) живёт в `udt_name`/типе колонки, гейт её не сверяет:
+  // длина проверяется исполнителем и миграцией.
+  PgVector: 'USER-DEFINED',
 };
 
 /** Строка ответа `information_schema.columns` (только нужные поля). */

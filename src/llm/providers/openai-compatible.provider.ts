@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import OpenAI from 'openai';
 import {
   LlmProviderException,
+  type EmbeddingOptions,
   type ILlmProvider,
   type LlmGenerateOptions,
   type LlmGenerateResult,
@@ -10,7 +11,10 @@ import {
   type ReasoningEffort,
 } from '../llm-provider.interface.js';
 /** Лимит токенов ответа по умолчанию. */
-import { DEFAULT_MAX_TOKENS } from '../llm-constants.js';
+import {
+  DEFAULT_EMBEDDING_MODEL,
+  DEFAULT_MAX_TOKENS,
+} from '../llm-constants.js';
 import { toProviderException } from '../provider-errors.js';
 
 /** Таймаут вызова по умолчанию, если свой signal не передан (RULES 4.19). */
@@ -146,6 +150,49 @@ function readReasoningText(message: {
   return '';
 }
 
+/**
+ * Извлекает векторы из ответа `embeddings.create` (R7.4a).
+ *
+ * Ответ провайдера — внешние данные (RULES 1.17), поэтому форма проверяется
+ * явно: ожидается `{ data: [{ index, embedding: number[] }] }`. Векторы
+ * сортируются по `index` — upstream не обязан возвращать их в порядке входа,
+ * а исполнитель склеивает `texts[i]` с `vectors[i]` по позиции.
+ *
+ * @param response - ответ `client.embeddings.create`
+ * @param providerName - идентификатор провайдера (для текста ошибки)
+ * @returns векторы в порядке исходных текстов; пустой массив, если данных нет
+ * @throws LlmProviderException если вектор содержит не числа
+ */
+function extractEmbeddings(
+  response: {
+    data?: Array<{ index?: unknown; embedding?: unknown }>;
+  },
+  providerName: string,
+): number[][] {
+  const items = response.data ?? [];
+  const ordered = [...items].sort(
+    (left, right) =>
+      (typeof left.index === 'number' ? left.index : 0) -
+      (typeof right.index === 'number' ? right.index : 0),
+  );
+
+  return ordered.map((item) => {
+    const embedding = item.embedding;
+
+    if (
+      !Array.isArray(embedding) ||
+      !embedding.every((value) => typeof value === 'number' && Number.isFinite(value))
+    ) {
+      throw new LlmProviderException(
+        providerName,
+        'ответ /embeddings содержит вектор не из чисел',
+      );
+    }
+
+    return embedding;
+  });
+}
+
 /** Конфиг OpenAI-совместимого провайдера. */
 export interface OpenAiCompatibleConfig {
   /** Идентификатор для UI ('openai', 'routerai', 'deepseek', ...). */
@@ -179,6 +226,15 @@ export interface OpenAiCompatibleConfig {
    * По умолчанию id уходит как есть.
    */
   resolveModel?: (model: string) => string;
+  /**
+   * Преобразует id модели эмбеддингов для upstream (R7.4a).
+   *
+   * Отдельно от {@link resolveModel}: у RouterAI embedding-модели имеют
+   * префикс провайдера (`openai/text-embedding-3-small`), а chat-модели — свой
+   * (`anthropic/claude-sonnet-4`), поэтому одна функция на оба случая
+   * подставляла бы неверный префикс. По умолчанию id уходит как есть.
+   */
+  resolveEmbeddingModel?: (model: string) => string;
 }
 
 /**
@@ -206,6 +262,12 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
   readonly models: readonly ModelInfo[];
 
   /**
+   * Поддержка embeddings (R7.4a): `/v1/embeddings` есть у всех
+   * OpenAI-совместимых API, которые обслуживает этот класс.
+   */
+  readonly supportsEmbeddings = true;
+
+  /**
    * Локальный ли провайдер (LM Studio — да, облачные — нет).
    *
    * Влияет на расчёт стоимости: у локального она `0`, а не `null` (KI-148).
@@ -214,6 +276,9 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
 
   /** Преобразование id модели для upstream (KI-159); `undefined` — как есть. */
   private readonly resolveModel: ((model: string) => string) | undefined;
+
+  /** Преобразование id embedding-модели (R7.4a); `undefined` — как есть. */
+  private readonly resolveEmbeddingModel: ((model: string) => string) | undefined;
 
   private readonly logger: Logger;
   /** Клиент SDK: создаётся всегда, кроме случая отсутствия ключа. */
@@ -230,6 +295,7 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
     this.envKey = config.envKey;
     this.isLocal = config.isLocal ?? false;
     this.resolveModel = config.resolveModel;
+    this.resolveEmbeddingModel = config.resolveEmbeddingModel;
     this.logger = new Logger(`OpenAiCompatibleProvider:${config.name}`);
 
     if (!config.apiKey) {
@@ -346,5 +412,66 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
     }
 
     return { text: answer.text, usage };
+  }
+
+  /**
+   * Получает эмбеддинги через OpenAI-совместимый `/v1/embeddings` (R7.4a).
+   *
+   * Модель по умолчанию — `text-embedding-3-small` (1536 измерений).
+   * `resolveModel` здесь **не** применяется: он существует для chat-моделей
+   * Yandex (`gpt://…`). Отдельный `resolveEmbeddingModel` нужен прокси вроде
+   * RouterAI, где id embedding-модели несёт префикс провайдера
+   * (`openai/text-embedding-3-small`).
+   *
+   * @param texts - тексты для векторизации (порядок сохраняется)
+   * @param options - модель и signal отмены (RULES 4.19)
+   * @returns массив векторов: `result[i]` — эмбеддинг `texts[i]`
+   * @throws LlmProviderException если ключ не задан, вызов упал, истёк таймаут
+   *   или провайдер вернул не то число векторов
+   */
+  async embedAsync(
+    texts: string[],
+    options: EmbeddingOptions = {},
+  ): Promise<number[][]> {
+    if (!this.client) {
+      throw new LlmProviderException(
+        this.name,
+        `${this.envKey ?? 'API key'} не задан`,
+      );
+    }
+
+    if (texts.length === 0) {
+      return [];
+    }
+
+    const signal = options.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
+    const requestedModel = options.model ?? DEFAULT_EMBEDDING_MODEL;
+    const model = this.resolveEmbeddingModel
+      ? this.resolveEmbeddingModel(requestedModel)
+      : requestedModel;
+
+    let vectors: number[][];
+
+    try {
+      const response = await this.client.embeddings.create(
+        { model, input: texts },
+        { signal },
+      );
+
+      vectors = extractEmbeddings(response, this.name);
+    } catch (error: unknown) {
+      throw toProviderException(this.name, error, signal);
+    }
+
+    // Один текст → один вектор. Расхождение означает, что upstream вернул
+    // частичный ответ: склеивать его с текстами по индексу нельзя.
+    if (vectors.length !== texts.length) {
+      throw new LlmProviderException(
+        this.name,
+        `embeddings вернул ${vectors.length} векторов на ${texts.length} текстов`,
+      );
+    }
+
+    return vectors;
   }
 }

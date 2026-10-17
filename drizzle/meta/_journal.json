@@ -57,6 +57,13 @@
       "when": 1792267411902,
       "tag": "0007_collaborators",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792269338836,
+      "tag": "0008_pgvector",
+      "breakpoints": true
     }
   ]
 }

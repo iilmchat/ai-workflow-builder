@@ -16,11 +16,13 @@ import {
 import { RunEventsService } from '../runs/run-events.service.js';
 import { LlmNodeExecutor, type LlmNodeMetrics } from '../llm/llm-node-executor.service.js';
 import { LlmProviderException } from '../llm/llm-provider.interface.js';
+import { LlmRegistryService } from '../llm/llm-registry.service.js';
 import {
   MediaNodeExecutor,
   type MediaNodeMetrics,
 } from '../media/media-node-executor.service.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
+import { VectorStoreService } from '../vector/vector-store.service.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
 import type { GraphDto, NodeDto } from './dto/index.js';
 import { EngineService, type ExecutionPlanDto } from './engine.service.js';
@@ -29,11 +31,16 @@ import {
   executeCompareNode,
   executeConditionNode,
   executeHttpNode,
+  executeMemoryReadNodeAsync,
+  executeMemoryWriteNodeAsync,
   executeOutputNode,
   executeSubWorkflowNode,
   executeTextNode,
+  executeVectorQueryNodeAsync,
+  executeVectorUpsertNodeAsync,
   prefixSubWorkflowGraph,
   type SubWorkflowContext,
+  type VectorMemoryContext,
 } from './node-executors.js';
 
 /**
@@ -195,6 +202,10 @@ export class ExecutionEngineService {
     // R6.7 (KI-200): узел sub_workflow загружает подграф — нужен доступ к
     // workflow того же владельца. WorkflowModule экспортирует сервис.
     private readonly workflowService: WorkflowService,
+    // R7.4a (KI-128): vector/memory-узлы. Реестр выбирает провайдера
+    // эмбеддингов, хранилище — единственное место с SQL к pgvector.
+    private readonly llmRegistry: LlmRegistryService,
+    private readonly vectorStore: VectorStoreService,
   ) {}
 
   /**
@@ -828,7 +839,9 @@ export class ExecutionEngineService {
    * {@link LlmNodeExecutor} и возвращает метрики в USD, `image_generation`,
    * `image_tool` (R7.1) и media-генерация R7.2 (`video_generation`,
    * `audio_generation`, `music_generation`) — через {@link MediaNodeExecutor} с
-   * метриками в рублях, `http` (R6.5.1) — сетевой запрос, остальные (`text`,
+   * метриками в рублях, `http` (R6.5.1) — сетевой запрос, `vector_upsert`,
+   * `vector_query`, `memory_read`, `memory_write` (R7.4a) — через
+   * {@link VectorStoreService} и провайдера эмбеддингов, остальные (`text`,
    * `condition`, `output`, `compare`) — чистые преобразования без метрик.
    *
    * `runId` передаётся и LLM-исполнителю: там он нужен предохранителю по
@@ -891,6 +904,42 @@ export class ExecutionEngineService {
       }
       case 'compare': {
         const outputs = executeCompareNode(node.data, inputs);
+
+        return { kind: 'plain', outputs, metrics: null };
+      }
+      // R7.4a (KI-128, DESIGN v0.9 § 3.4): vector/memory-узлы. Контекст
+      // создаётся на узел: workflow_id — из строки запуска, провайдер
+      // эмбеддингов резолвится лениво (в графе может не быть vector-узлов, и
+      // тогда реестр embeddings вообще не нужен).
+      case 'vector_upsert': {
+        const vectorContext = await this.createVectorMemoryContextAsync(runId);
+        const outputs = await executeVectorUpsertNodeAsync(
+          node.data,
+          inputs,
+          vectorContext,
+        );
+
+        return { kind: 'plain', outputs, metrics: null };
+      }
+      case 'vector_query': {
+        const vectorContext = await this.createVectorMemoryContextAsync(runId);
+        const outputs = await executeVectorQueryNodeAsync(
+          node.data,
+          inputs,
+          vectorContext,
+        );
+
+        return { kind: 'plain', outputs, metrics: null };
+      }
+      case 'memory_read': {
+        const vectorContext = await this.createVectorMemoryContextAsync(runId);
+        const outputs = await executeMemoryReadNodeAsync(node.data, inputs, vectorContext);
+
+        return { kind: 'plain', outputs, metrics: null };
+      }
+      case 'memory_write': {
+        const vectorContext = await this.createVectorMemoryContextAsync(runId);
+        const outputs = await executeMemoryWriteNodeAsync(node.data, inputs, vectorContext);
 
         return { kind: 'plain', outputs, metrics: null };
       }
@@ -957,6 +1006,34 @@ export class ExecutionEngineService {
       default:
         throw new UnsupportedNodeTypeException(node.type);
     }
+  }
+
+  /**
+   * Собирает контекст vector/memory-узлов (R7.4a).
+   *
+   * `workflowId` читается из `workflow_runs`: у узла графа нет собственного
+   * владельца данных, а коллекции и память изолированы по workflow. Провайдер
+   * эмбеддингов резолвится **внутри** `embedAsync` — только когда узел реально
+   * дошёл до векторизации (граф без vector-узлов не трогает реестр LLM).
+   *
+   * @param runId - uuid запуска
+   * @returns контекст: workflow, хранилище и ленивый `embedAsync`
+   * @throws Error если строка запуска не найдена
+   */
+  private async createVectorMemoryContextAsync(
+    runId: string,
+  ): Promise<VectorMemoryContext> {
+    const workflowId = await this.vectorStore.findWorkflowIdByRunAsync(runId);
+
+    return {
+      workflowId,
+      store: this.vectorStore,
+      embedAsync: async (texts: string[], model: string): Promise<number[][]> => {
+        const provider = await this.llmRegistry.resolveEmbeddingProviderAsync();
+
+        return provider.embedAsync(texts, { model });
+      },
+    };
   }
 
   /**

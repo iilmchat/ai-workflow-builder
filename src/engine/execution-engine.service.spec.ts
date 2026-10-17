@@ -11,7 +11,9 @@ import { ExecutionEngineService } from './execution-engine.service.js';
 import { LlmNodeExecutor } from '../llm/llm-node-executor.service.js';
 import { MediaNodeExecutor } from '../media/media-node-executor.service.js';
 import { LlmProviderException } from '../llm/llm-provider.interface.js';
+import { LlmRegistryService } from '../llm/llm-registry.service.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
+import { VectorStoreService } from '../vector/vector-store.service.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
 import { UnsupportedNodeTypeException, type SubWorkflowRecord } from './node-executors.js';
 
@@ -447,6 +449,27 @@ describe('ExecutionEngineService', () => {
         },
         // R6.7 (KI-200): источник подграфов для узла sub_workflow.
         { provide: WorkflowService, useValue: { findOneAsync: findWorkflow } },
+        // R7.4a (KI-128): vector/memory-узлы. В юнит-тестах движка они не
+        // выполняются, но зависимости обязаны резолвиться (иначе Nest падает
+        // на компиляции модуля).
+        {
+          provide: LlmRegistryService,
+          useValue: {
+            resolveEmbeddingProviderAsync: vi.fn(() =>
+              Promise.reject(new Error('embeddings не вызываются в этом спеке')),
+            ),
+          },
+        },
+        {
+          provide: VectorStoreService,
+          useValue: {
+            findWorkflowIdByRunAsync: vi.fn(() => Promise.resolve('wf-spec')),
+            insertVectorAsync: vi.fn(),
+            queryVectorsAsync: vi.fn(),
+            readMemoryAsync: vi.fn(),
+            writeMemoryAsync: vi.fn(),
+          },
+        },
         // R7.5 (KI-364): режим `sandbox` узла condition. Здесь — настоящий
         // QuickJS-WASM (не мок): проверяем сквозной путь движок → песочница.
         QuickJsRunnerService,

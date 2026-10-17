@@ -8,10 +8,14 @@ import { AudioGenNode } from '@/components/nodes/AudioGenNode';
 import { ImageGenNode } from '@/components/nodes/ImageGenNode';
 import { ImageToolNode } from '@/components/nodes/ImageToolNode';
 import { LLMNode } from '@/components/nodes/LLMNode';
+import { MemoryReadNode } from '@/components/nodes/MemoryReadNode';
+import { MemoryWriteNode } from '@/components/nodes/MemoryWriteNode';
 import { MusicGenNode } from '@/components/nodes/MusicGenNode';
 import { OutputNode } from '@/components/nodes/OutputNode';
 import { SubWorkflowNode } from '@/components/nodes/SubWorkflowNode';
 import { TextNode } from '@/components/nodes/TextNode';
+import { VectorQueryNode } from '@/components/nodes/VectorQueryNode';
+import { VectorUpsertNode } from '@/components/nodes/VectorUpsertNode';
 import { VideoGenNode } from '@/components/nodes/VideoGenNode';
 import i18n from '@/i18n';
 import type {
@@ -24,12 +28,16 @@ import type {
   ImageGenFlowNode,
   ImageToolFlowNode,
   LlmFlowNode,
+  MemoryReadFlowNode,
+  MemoryWriteFlowNode,
   MusicGenFlowNode,
   NodeCategory,
   NodeType,
   OutputFlowNode,
   SubWorkflowFlowNode,
   TextFlowNode,
+  VectorQueryFlowNode,
+  VectorUpsertFlowNode,
   VideoGenFlowNode,
 } from '@/types/graph';
 
@@ -54,7 +62,11 @@ export type NodeComponent =
   | ComponentType<NodeProps<ConditionFlowNode>>
   | ComponentType<NodeProps<OutputFlowNode>>
   | ComponentType<NodeProps<CompareFlowNode>>
-  | ComponentType<NodeProps<SubWorkflowFlowNode>>;
+  | ComponentType<NodeProps<SubWorkflowFlowNode>>
+  | ComponentType<NodeProps<VectorUpsertFlowNode>>
+  | ComponentType<NodeProps<VectorQueryFlowNode>>
+  | ComponentType<NodeProps<MemoryReadFlowNode>>
+  | ComponentType<NodeProps<MemoryWriteFlowNode>>;
 
 /**
  * Описание узла в реестре: единый источник правды.
@@ -242,6 +254,47 @@ export const NODE_REGISTRY = {
     // — `false`: ссылка лежит в `data` самого графа, а не во внешнем хранилище,
     // как у будущих узлов-сервисов (KI-128).
     capabilities: { externalState: false, userConfig: true },
+  },
+  // R7.4a (KI-128, DESIGN v0.9 § 3.4): vector/memory-узлы.
+  //
+  // `externalState: true` — впервые в проекте: узлы пишут и читают состояние
+  // вне графа (таблицы `workflow_vectors`/`workflow_memory`). Это тот самый
+  // класс сервисных узлов, который описан в KI-128, поэтому capability
+  // выставлена честно, а не как у чистых преобразований.
+  //
+  // `userConfig: true` у всех: коллекция/ключ/модель выбираются до запуска.
+  // `canBeInsertedOnEdge: true` — у каждого есть target-хендл `text-input`.
+  vector_upsert: {
+    labelKey: 'node.vector_upsert.label',
+    icon: '📚',
+    category: 'vector',
+    component: VectorUpsertNode,
+    canBeInsertedOnEdge: true,
+    capabilities: { externalState: true, userConfig: true },
+  },
+  vector_query: {
+    labelKey: 'node.vector_query.label',
+    icon: '🔎',
+    category: 'vector',
+    component: VectorQueryNode,
+    canBeInsertedOnEdge: true,
+    capabilities: { externalState: true, userConfig: true },
+  },
+  memory_read: {
+    labelKey: 'node.memory_read.label',
+    icon: '📖',
+    category: 'state',
+    component: MemoryReadNode,
+    canBeInsertedOnEdge: true,
+    capabilities: { externalState: true, userConfig: true },
+  },
+  memory_write: {
+    labelKey: 'node.memory_write.label',
+    icon: '💾',
+    category: 'state',
+    component: MemoryWriteNode,
+    canBeInsertedOnEdge: true,
+    capabilities: { externalState: true, userConfig: true },
   },
 } as const satisfies Record<NodeType, NodeRegistryEntry>;
 

@@ -34,6 +34,8 @@ import { LlmService } from './llm.service.js';
     LlmService,
     LlmNodeExecutor,
   ],
-  exports: [LlmService, LlmNodeExecutor],
+  // R7.4a: реестр нужен ExecutionEngineService, чтобы выбрать провайдера
+  // эмбеддингов для узлов vector_upsert/vector_query.
+  exports: [LlmService, LlmNodeExecutor, LlmRegistryService],
 })
 export class LlmModule {}

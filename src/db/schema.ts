@@ -1,6 +1,7 @@
 import { relations, sql } from 'drizzle-orm';
 import {
   check,
+  index,
   integer,
   jsonb,
   numeric,
@@ -10,6 +11,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  vector,
 } from 'drizzle-orm/pg-core';
 import type { EdgeDto, GraphSnapshotDto, NodeDto } from '../engine/dto/index.js';
 
@@ -176,6 +178,84 @@ export const workflowCollaborators = pgTable(
 export type WorkflowCollaborator = typeof workflowCollaborators.$inferSelect;
 /** Значения для INSERT в `workflow_collaborators`. */
 export type NewWorkflowCollaborator = typeof workflowCollaborators.$inferInsert;
+
+/**
+ * Размерность вектора эмбеддинга (R7.4a, DESIGN v0.9 § 3.4).
+ *
+ * Зафиксирована колонкой `vector(1536)` — это размерность
+ * `text-embedding-3-small`. Модель с другой размерностью (например
+ * `text-embedding-3-large` — 3072) в эту колонку не помещается: executor
+ * проверяет длину и падает понятной ошибкой, а не пишет обрезанный вектор.
+ */
+export const VECTOR_DIMENSIONS = 1536;
+
+/**
+ * workflow_vectors — векторы workflow-коллекций (R7.4a, KI-128).
+ *
+ * Одна таблица обслуживает все коллекции всех workflow: `collection` — это
+ * логическое имя внутри workflow (аналог namespace), `workflow_id` изолирует
+ * данные владельца workflow. `ON DELETE CASCADE` обязателен: удаление
+ * workflow не должно оставлять «сиротские» векторы (RULES 4.26).
+ *
+ * HNSW-индекс по `embedding` (`vector_cosine_ops`) в Drizzle-схеме **не**
+ * объявлен: drizzle-kit не умеет генерировать `CREATE EXTENSION vector`, а
+ * индекс без расширения не создаётся. Поэтому расширение и HNSW-индекс
+ * создаются вручную в `drizzle/0008_pgvector.sql` (raw SQL), а btree-индекс
+ * `(workflow_id, collection)` объявлен здесь и генерируется штатно.
+ */
+export const workflowVectors = pgTable(
+  'workflow_vectors',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workflowId: uuid('workflow_id')
+      .notNull()
+      .references(() => workflows.id, { onDelete: 'cascade' }),
+    collection: text('collection').notNull(),
+    embedding: vector('embedding', { dimensions: VECTOR_DIMENSIONS }).notNull(),
+    /**
+     * Исходное содержимое записи. Хранится объектом `{ text }`, а не голой
+     * строкой: jsonb-колонка должна оставаться расширяемой (метаданные,
+     * чанки, ссылки) без миграции.
+     */
+    content: jsonb('content').$type<Record<string, unknown>>().notNull(),
+    /** Произвольные метаданные записи (фильтры, источник, теги). */
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('workflow_vectors_collection_idx').on(table.workflowId, table.collection),
+  ],
+);
+
+/** Строка таблицы `workflow_vectors`. */
+export type WorkflowVector = typeof workflowVectors.$inferSelect;
+/** Значения для INSERT в `workflow_vectors`. */
+export type NewWorkflowVector = typeof workflowVectors.$inferInsert;
+
+/**
+ * workflow_memory — key-value память workflow (R7.4a, KI-128).
+ *
+ * Первичный ключ `(workflow_id, key)` делает запись идемпотентной: повторный
+ * `memory_write` по тому же ключу обновляет значение, а не плодит строки.
+ * `value` — произвольный JSON: память хранит и строки, и объекты, и массивы.
+ */
+export const workflowMemory = pgTable(
+  'workflow_memory',
+  {
+    workflowId: uuid('workflow_id')
+      .notNull()
+      .references(() => workflows.id, { onDelete: 'cascade' }),
+    key: text('key').notNull(),
+    value: jsonb('value').$type<unknown>().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.workflowId, table.key] })],
+);
+
+/** Строка таблицы `workflow_memory`. */
+export type WorkflowMemory = typeof workflowMemory.$inferSelect;
+/** Значения для INSERT/UPDATE в `workflow_memory`. */
+export type NewWorkflowMemory = typeof workflowMemory.$inferInsert;
 
 /**
  * workflow_runs — один запуск workflow. snapshot хранит копию nodes+edges

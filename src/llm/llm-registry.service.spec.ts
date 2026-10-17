@@ -108,6 +108,8 @@ function stubProvider(name: string, modelIds: string[]): ILlmProvider {
     })),
     isConfigured: true,
     generateAsync: vi.fn(),
+    // R7.4a: метод обязателен в контракте ILlmProvider.
+    embedAsync: vi.fn(),
   };
 }
 

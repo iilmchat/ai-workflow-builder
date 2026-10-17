@@ -26,7 +26,11 @@ export type NodeData =
   | ConditionNodeData
   | OutputNodeData
   | CompareNodeData
-  | SubWorkflowNodeData;
+  | SubWorkflowNodeData
+  | VectorUpsertNodeData
+  | VectorQueryNodeData
+  | MemoryReadNodeData
+  | MemoryWriteNodeData;
 
 /** Узел графа — совместим с backend-DTO `NodeDto`. */
 export type GraphNode = {
@@ -71,6 +75,10 @@ export type Graph = {
  * R6.7 (KI-200, DESIGN v0.8 § 5): добавлен исполняемый узел `sub_workflow` —
  * ссылка на другой workflow владельца. В `ANNOTATION_NODE_TYPES` (backend) его
  * нет: узел выполняется, а не лежит заметкой на холсте.
+ *
+ * R7.4a (KI-128, DESIGN v0.9 § 3.4): четыре узла vector/memory —
+ * `vector_upsert`, `vector_query`, `memory_read`, `memory_write`. Типы совпадают
+ * с backend-контрактом (`node-executors.ts`): значения уходят в граф как есть.
  */
 export type NodeType =
   | 'text'
@@ -85,7 +93,11 @@ export type NodeType =
   | 'condition'
   | 'output'
   | 'compare'
-  | 'sub_workflow';
+  | 'sub_workflow'
+  | 'vector_upsert'
+  | 'vector_query'
+  | 'memory_read'
+  | 'memory_write';
 
 /**
  * Категории узлов для каталога (KI-127, § 5.2 DESIGN v0.7).
@@ -106,6 +118,9 @@ export type NodeType =
 export const NODE_CATEGORIES = [
   'input',
   'ai',
+  // R7.4a: vector-узлы (pgvector) и state-узлы (память workflow).
+  'vector',
+  'state',
   'media',
   'media_generation',
   'media_tools',
@@ -521,6 +536,104 @@ export interface SubWorkflowNodeData extends Record<string, unknown> {
   inputsMap?: Record<string, string>;
 }
 
+/**
+ * Модели эмбеддингов, доступные в UI (R7.4a).
+ *
+ * Список намеренно короткий: колонка `workflow_vectors.embedding` объявлена
+ * как `vector(1536)`, поэтому `text-embedding-3-large` (3072) в неё не
+ * помещается — backend отклонит его проверкой размерности. Предлагать
+ * несовместимую модель в селекте — значит гарантированно ронять Run.
+ */
+export const EMBEDDING_MODELS = ['text-embedding-3-small'] as const;
+
+/** id модели эмбеддингов. */
+export type EmbeddingModelId = (typeof EMBEDDING_MODELS)[number];
+
+/** Модель эмбеддингов по умолчанию — как на backend (`llm-constants.ts`). */
+export const DEFAULT_EMBEDDING_MODEL: EmbeddingModelId = 'text-embedding-3-small';
+
+/** Верхняя граница `topK` узла `vector_query` (совпадает с backend-схемой). */
+export const VECTOR_TOPK_LIMIT = 100;
+
+/** `topK` по умолчанию (DESIGN v0.9 § 3.4). */
+export const DEFAULT_VECTOR_TOPK = 5;
+
+/** Порог косинусной близости по умолчанию (DESIGN v0.9 § 3.4). */
+export const DEFAULT_VECTOR_SCORE_THRESHOLD = 0.7;
+
+/**
+ * Данные узла `vector_upsert` (R7.4a, DESIGN v0.9 § 3.4).
+ *
+ * Порты (`src/engine/node-ports.ts`): вход `text-input` → порт `prompt`
+ * (текст чанка; `contentField` позволяет взять другой ключ входа), выход
+ * `vector-output` → порт `result`.
+ */
+export interface VectorUpsertNodeData extends Record<string, unknown> {
+  kind: 'vector_upsert';
+  /** Логическая коллекция внутри workflow. */
+  collection: string;
+  /** id модели эмбеддингов (`text-embedding-3-small`). */
+  embeddingModel: string;
+  /**
+   * Ключ `inputs`, из которого брать текст (необязательно).
+   *
+   * Если задан, его отсутствие — ошибка узла, а не тихая подмена `prompt`
+   * (принцип KI-069: не угадывать за автора).
+   */
+  contentField?: string;
+  /** Текст, введённый прямо в узле; связь `inputs.prompt` важнее. */
+  prompt?: string;
+}
+
+/**
+ * Данные узла `vector_query` (R7.4a, DESIGN v0.9 § 3.4).
+ *
+ * Порты: вход `text-input` → порт `prompt` (текст запроса), выход
+ * `vector-output` → порт `result` (массив совпадений `{ id, content, metadata,
+ * score }`).
+ */
+export interface VectorQueryNodeData extends Record<string, unknown> {
+  kind: 'vector_query';
+  /** Логическая коллекция внутри workflow. */
+  collection: string;
+  /** id модели эмбеддингов. */
+  embeddingModel: string;
+  /** Сколько ближайших записей вернуть; `undefined` — дефолт backend (5). */
+  topK?: number;
+  /** Минимальная косинусная близость; `undefined` — дефолт backend (0.7). */
+  scoreThreshold?: number;
+  /** Текст запроса, введённый прямо в узле (иначе — вход `prompt`). */
+  prompt?: string;
+}
+
+/**
+ * Данные узла `memory_read` (R7.4a, DESIGN v0.9 § 3.4).
+ *
+ * Входов у узла нет (кроме зарегистрированного `text-input` ради вставки в
+ * связь), выход `memory-output` → порт `result` + `found`.
+ */
+export interface MemoryReadNodeData extends Record<string, unknown> {
+  kind: 'memory_read';
+  /** Ключ памяти workflow. */
+  key: string;
+}
+
+/**
+ * Данные узла `memory_write` (R7.4a, DESIGN v0.9 § 3.4).
+ *
+ * Значение берётся из `inputs[valueField]` либо из входа `prompt`, либо из
+ * textarea узла; запись UPSERT по `(workflow_id, key)`.
+ */
+export interface MemoryWriteNodeData extends Record<string, unknown> {
+  kind: 'memory_write';
+  /** Ключ памяти workflow. */
+  key: string;
+  /** Ключ `inputs`, из которого брать значение (необязательно). */
+  valueField?: string;
+  /** Значение, введённое прямо в узле; связь важнее. */
+  value?: string;
+}
+
 /** Узел Text в терминах React Flow. */
 export type TextFlowNode = Node<TextNodeData, 'text'>;
 /** Узел LLM в терминах React Flow. */
@@ -547,6 +660,14 @@ export type OutputFlowNode = Node<OutputNodeData, 'output'>;
 export type CompareFlowNode = Node<CompareNodeData, 'compare'>;
 /** Узел под-workflow в терминах React Flow (R6.7, KI-200). */
 export type SubWorkflowFlowNode = Node<SubWorkflowNodeData, 'sub_workflow'>;
+/** Узел записи в векторную коллекцию (R7.4a). */
+export type VectorUpsertFlowNode = Node<VectorUpsertNodeData, 'vector_upsert'>;
+/** Узел косинусного поиска по коллекции (R7.4a). */
+export type VectorQueryFlowNode = Node<VectorQueryNodeData, 'vector_query'>;
+/** Узел чтения памяти workflow (R7.4a). */
+export type MemoryReadFlowNode = Node<MemoryReadNodeData, 'memory_read'>;
+/** Узел записи памяти workflow (R7.4a). */
+export type MemoryWriteFlowNode = Node<MemoryWriteNodeData, 'memory_write'>;
 
 /** Любой узел редактора. */
 export type AppNode =
@@ -562,5 +683,9 @@ export type AppNode =
   | ConditionFlowNode
   | OutputFlowNode
   | CompareFlowNode
-  | SubWorkflowFlowNode;
+  | SubWorkflowFlowNode
+  | VectorUpsertFlowNode
+  | VectorQueryFlowNode
+  | MemoryReadFlowNode
+  | MemoryWriteFlowNode;
 

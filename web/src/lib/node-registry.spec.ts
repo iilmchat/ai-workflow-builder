@@ -33,14 +33,23 @@ const GENERATION_TYPES = [
   'music_generation',
 ] as const;
 
+/** Типы, добавленные в R7.4a (KI-128, DESIGN v0.9 § 3.4). */
+const VECTOR_MEMORY_TYPES = [
+  'vector_upsert',
+  'vector_query',
+  'memory_read',
+  'memory_write',
+] as const;
+
 /** Все типы реестра — для проверки labelKey в обоих i18n-файлах. */
 const ALL_TYPES: readonly NodeType[] = [...NODE_TYPES];
 
 describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
   it('все четыре типа зарегистрированы, реестр покрывает NodeType целиком', () => {
     // R6.7: типов стало девять (+sub_workflow); R7.1 — десять (+image_tool);
-    // R7.2 — тринадцать (+video/audio/music_generation).
-    expect(ALL_TYPES).toHaveLength(13);
+    // R7.2 — тринадцать (+video/audio/music_generation); R7.4a — семнадцать
+    // (+vector_upsert/vector_query/memory_read/memory_write).
+    expect(ALL_TYPES).toHaveLength(17);
     expect(ALL_TYPES).toEqual(
       expect.arrayContaining([
         'text',
@@ -179,6 +188,45 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
       // До запуска выбираются модель и её параметры.
       expect(entry.capabilities, type).toEqual({
         externalState: false,
+        userConfig: true,
+      });
+
+      expect(ru, `ru: ${entry.labelKey}`).toHaveProperty([entry.labelKey]);
+      expect(en, `en: ${entry.labelKey}`).toHaveProperty([entry.labelKey]);
+    }
+  });
+
+  it('R7.4a: vector/memory-узлы — категории, externalState и i18n', () => {
+    expect(NODE_CATEGORIES).toContain('vector');
+    expect(NODE_CATEGORIES).toContain('state');
+    expect(ru).toHaveProperty(['catalog.category.vector']);
+    expect(en).toHaveProperty(['catalog.category.vector']);
+    expect(ru).toHaveProperty(['catalog.category.state']);
+    expect(en).toHaveProperty(['catalog.category.state']);
+
+    /** Ожидаемая категория и ключевые поля каждого узла R7.4a. */
+    const expected: ReadonlyArray<{
+      type: (typeof VECTOR_MEMORY_TYPES)[number];
+      category: 'vector' | 'state';
+    }> = [
+      { type: 'vector_upsert', category: 'vector' },
+      { type: 'vector_query', category: 'vector' },
+      { type: 'memory_read', category: 'state' },
+      { type: 'memory_write', category: 'state' },
+    ];
+
+    for (const { type, category } of expected) {
+      const entry = NODE_REGISTRY[type];
+
+      expect(entry.category, type).toBe(category);
+      expect(entry.icon, `иконка ${type}`).not.toBe('');
+      expect(typeof entry.component, `компонент ${type}`).toBe('function');
+      // Вход `text-input` есть у всех — вставка в связь (KI-259).
+      expect(canInsertOnEdge(type), type).toBe(true);
+      expect(isNodeType(type), type).toBe(true);
+      // R7.4a: впервые узлы держат состояние вне графа (KI-128).
+      expect(entry.capabilities, type).toEqual({
+        externalState: true,
         userConfig: true,
       });
 

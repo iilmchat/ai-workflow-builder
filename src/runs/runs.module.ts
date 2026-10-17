@@ -8,6 +8,7 @@ import { LlmModule } from '../llm/llm.module.js';
 import { MediaModule } from '../media/media.module.js';
 // R7.5 (KI-364): QuickJsRunnerService для режима `sandbox` узла condition.
 import { SandboxModule } from '../sandbox/sandbox.module.js';
+import { VectorStoreService } from '../vector/vector-store.service.js';
 import { WorkflowModule } from '../workflow/workflow.module.js';
 import { RunEventsService } from './run-events.service.js';
 import { WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
@@ -76,6 +77,8 @@ import { RUNS_QUEUE_DB, RUNS_QUEUE_PREFIX } from './runs.worker-options.js';
     RunsProcessor,
     RunEventsService,
     ExecutionEngineService,
+    // R7.4a (KI-128): SQL к pgvector для узлов vector_*/memory_*.
+    VectorStoreService,
   ],
   exports: [RunsService, RunEventsService],
 })
