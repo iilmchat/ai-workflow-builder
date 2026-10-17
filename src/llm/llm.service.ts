@@ -1,9 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type {
   LlmGenerateOptions,
   LlmGenerateResult,
 } from './llm-provider.interface.js';
 import { LlmRegistryService } from './llm-registry.service.js';
+import {
+  createProviderSemaphoreRegistry,
+  type ProviderSemaphoreRegistry,
+} from './provider-semaphore.js';
+import { withSpanAsync } from '../observability/tracing.js';
 
 /** Таймаут вызова LLM по умолчанию (RULES 4.19). */
 const LLM_TIMEOUT_MS = 60_000;
@@ -14,10 +20,34 @@ const LLM_TIMEOUT_MS = 60_000;
  * Единственная точка входа для исполнителей узлов — они не знают, какой
  * провайдер обслуживает модель. Таймаут ставится здесь, чтобы ни один вызов
  * не мог висеть бесконечно (RULES 4.19).
+ *
+ * **R7.7 (KI-067):** здесь же ограничивается число одновременных вызовов на
+ * провайдера ({@link ProviderSemaphoreRegistry}) — очередь воркера общая, а
+ * провайдерские лимиты разные.
+ *
+ * **R7.7 (KI-365):** каждый вызов оборачивается span'ом `llm.call` с
+ * провайдером, моделью и временем ожидания слота.
  */
 @Injectable()
 export class LlmService {
-  constructor(private readonly registry: LlmRegistryService) {}
+  /** Лимиты одновременных вызовов по провайдерам. */
+  private readonly semaphores: ProviderSemaphoreRegistry;
+
+  /**
+   * @param registry - реестр провайдеров (резолв по модели)
+   * @param config - доступ к env (RULES 4.6); `@Optional()` — тесты создают
+   *   сервис без `ConfigModule`, тогда лимитов нет (backward compat)
+   */
+  constructor(
+    private readonly registry: LlmRegistryService,
+    @Optional() config?: ConfigService,
+  ) {
+    this.semaphores = createProviderSemaphoreRegistry(
+      config === undefined
+        ? undefined
+        : { get: (key: string) => config.get<unknown>(key) },
+    );
+  }
 
   /**
    * Вызывает LLM по id модели.
@@ -39,14 +69,35 @@ export class LlmService {
   ): Promise<LlmGenerateResult> {
     const provider = this.registry.resolveByModel(model);
 
-    const result = await provider.generateAsync(prompt, {
-      // Таймаут по умолчанию; явный options.signal имеет приоритет.
-      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
-      ...options,
-      // model задаётся аргументом и снаружи не переопределяется.
-      model,
-    });
+    // R7.7 (KI-365): span на весь вызов, включая ожидание слота семафора —
+    // иначе «медленный» вызов из-за лимита провайдера выглядел бы быстрым.
+    return withSpanAsync(
+      'llm.call',
+      {
+        'llm.provider': provider.name,
+        'llm.model': model,
+        'llm.local': provider.isLocal ?? false,
+      },
+      async (span) => {
+        const waitStartedAt = Date.now();
+        const result = await this.semaphores.runAsync(provider.name, () =>
+          provider.generateAsync(prompt, {
+            // Таймаут по умолчанию; явный options.signal имеет приоритет.
+            signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+            ...options,
+            // model задаётся аргументом и снаружи не переопределяется.
+            model,
+          }),
+        );
+        const waitMs = Date.now() - waitStartedAt;
 
-    return { ...result, isLocal: provider.isLocal ?? false };
+        span.setAttribute('llm.wait_ms', waitMs);
+        span.setAttribute('llm.input_tokens', result.usage?.inputTokens ?? null);
+        span.setAttribute('llm.output_tokens', result.usage?.outputTokens ?? null);
+        span.setAttribute('llm.cache_read_tokens', result.usage?.cacheReadTokens ?? null);
+
+        return { ...result, isLocal: provider.isLocal ?? false };
+      },
+    );
   }
 }

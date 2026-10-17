@@ -282,6 +282,140 @@ export const AgentEnvSchema = z.object({
 export type AgentEnv = z.infer<typeof AgentEnvSchema>;
 
 /**
+ * Zod-схема наблюдаемости (R7.7, KI-365).
+ *
+ * `OTEL_ENABLED` — аварийный выключатель: по умолчанию `false`, потому что
+ * `NodeSDK.start()` подменяет глобальный провайдер трассировки во всём
+ * процессе и держит фоновый экспортёр (процесс не завершается без `shutdown`).
+ * Включать осознанно — когда есть коллектор.
+ */
+export const ObservabilityEnvSchema = z.object({
+  /**
+   * Включена ли трассировка (default false). Строка `'true'`/`'false'`
+   * (как в `.env`) или boolean (как после `validateEnv`).
+   */
+  OTEL_ENABLED: z
+    .preprocess(
+      emptyToUndefined,
+      z
+        .union([z.boolean(), z.enum(['true', 'false'])])
+        .transform((value) => value === true || value === 'true')
+        .optional(),
+    )
+    .default(false),
+  /**
+   * Базовый URL OTLP/HTTP-коллектора (default `http://localhost:4318`).
+   * Экспортёр ходит на `${endpoint}/v1/traces`.
+   */
+  OTEL_EXPORTER_OTLP_ENDPOINT: z
+    .preprocess(emptyToUndefined, httpUrl.optional())
+    .default('http://localhost:4318'),
+  /** Имя сервиса в телеметрии (`service.name`), default `workflow-builder`. */
+  OTEL_SERVICE_NAME: z
+    .preprocess(emptyToUndefined, z.string().min(1).max(128).optional())
+    .default('workflow-builder'),
+});
+
+/** Валидированные настройки наблюдаемости (R7.7). */
+export type ObservabilityEnv = z.infer<typeof ObservabilityEnvSchema>;
+
+/**
+ * Zod-схема хранилища media-результатов (R7.8, KI-362).
+ *
+ * `local` (default) — файлы на диске (`./data/media`), `s3` — внешнее
+ * хранилище (заглушка: параметры валидируются, но загрузка выключена до
+ * появления SDK), `none` — ничего не сохраняем (ссылки провайдера живут 48 ч).
+ */
+export const MediaStorageEnvSchema = z.object({
+  /** Бэкенд хранилища: `local`, `s3` или `none` (default `local`). */
+  MEDIA_STORAGE_BACKEND: z
+    .preprocess(emptyToUndefined, z.enum(['local', 's3', 'none']).optional())
+    .default('local'),
+  /** Каталог локального хранилища (default `./data/media`). */
+  MEDIA_STORAGE_LOCAL_PATH: z
+    .preprocess(emptyToUndefined, z.string().min(1).optional())
+    .default('./data/media'),
+  /**
+   * TTL локального хранилища в днях (default 30). `0` — без срока
+   * (`stored_expires_at = NULL`): файлы не удаляются автоматически.
+   */
+  MEDIA_STORAGE_LOCAL_TTL_DAYS: z
+    .preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(3650).optional())
+    .default(30),
+  /** S3-совместимый endpoint (AWS S3, MinIO, R2, Yandex Object Storage). */
+  S3_ENDPOINT: z.preprocess(emptyToUndefined, httpUrl.optional()),
+  /** Бакет для media-файлов. */
+  S3_BUCKET: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+  /** Access key S3. */
+  S3_ACCESS_KEY_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Secret key S3 (в репозиторий не попадает, RULES 5.1). */
+  S3_SECRET_ACCESS_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Регион S3 (для AWS обязателен, для MinIO — обычно `us-east-1`). */
+  S3_REGION: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** TTL ссылок S3 в днях (default 30). */
+  S3_TTL_DAYS: z
+    .preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(3650).optional())
+    .default(30),
+});
+
+/** Валидированные настройки хранилища media-результатов (R7.8). */
+export type MediaStorageEnv = z.infer<typeof MediaStorageEnvSchema>;
+
+/**
+ * Zod-схема лимитов одновременных вызовов на провайдера LLM (R7.7, KI-067).
+ *
+ * Глобальный `concurrency` воркера (5) не разделяет провайдеров: пять тяжёлых
+ * запусков бьют в одного и того же провайдера, ловят 429 и растят расходы.
+ * Лимит по каждому провайдеру ограничивает число одновременных вызовов.
+ *
+ * Переменные перечислены явно (а не `z.record`): так их видно в `.env.example`
+ * и в типах. Значение `0`/отсутствие — без ограничения (backward compat).
+ * Для провайдера, которого здесь нет, лимит всё равно читается динамически
+ * (`LLM_PROVIDER_MAX_CONCURRENCY_<NAME>`) — см. `provider-semaphore.ts`.
+ */
+export const ProviderConcurrencyEnvSchema = z.object({
+  /** Лимит одновременных вызовов Anthropic (default — без ограничения). */
+  LLM_PROVIDER_MAX_CONCURRENCY_ANTHROPIC: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(1000).optional(),
+  ),
+  /** Лимит одновременных вызовов OpenAI. */
+  LLM_PROVIDER_MAX_CONCURRENCY_OPENAI: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(1000).optional(),
+  ),
+  /** Лимит одновременных вызовов RouterAI. */
+  LLM_PROVIDER_MAX_CONCURRENCY_ROUTERAI: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(1000).optional(),
+  ),
+  /** Лимит одновременных вызовов DeepSeek. */
+  LLM_PROVIDER_MAX_CONCURRENCY_DEEPSEEK: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(1000).optional(),
+  ),
+  /** Лимит одновременных вызовов Yandex AI Studio. */
+  LLM_PROVIDER_MAX_CONCURRENCY_YANDEX: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(1000).optional(),
+  ),
+  /** Лимит одновременных вызовов LM Studio (локальный сервер). */
+  LLM_PROVIDER_MAX_CONCURRENCY_LMSTUDIO: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(1000).optional(),
+  ),
+  /** Лимит одновременных вызовов GPTunnel. */
+  LLM_PROVIDER_MAX_CONCURRENCY_GPTUNNEL: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(1000).optional(),
+  ),
+});
+
+/** Валидированные лимиты одновременных вызовов на провайдера (R7.7). */
+export type ProviderConcurrencyEnv = z.infer<typeof ProviderConcurrencyEnvSchema>;
+
+
+/**
  * Zod-схема переменных окружения, обязательных для запуска приложения.
  *
  * Проверяется ровно один раз при инициализации `ConfigModule` (fail-fast):
@@ -474,6 +608,12 @@ export const EnvSchema = z.object({
   ...SandboxEnvSchema.shape,
   // Лимиты agent-узла: итерации и токены на шаг (R7.4b, DESIGN § 3.4).
   ...AgentEnvSchema.shape,
+  // Наблюдаемость: OTel-трейсы (R7.7, KI-365).
+  ...ObservabilityEnvSchema.shape,
+  // Хранилище media-результатов: local/S3/TTL (R7.8, KI-362).
+  ...MediaStorageEnvSchema.shape,
+  // Лимиты одновременных вызовов на провайдера LLM (R7.7, KI-067).
+  ...ProviderConcurrencyEnvSchema.shape,
 })
   /**
    * Fail-fast: отказ старта при `AUTH_DISABLED=true` в production.

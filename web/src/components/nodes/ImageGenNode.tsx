@@ -2,15 +2,13 @@ import { useCallback, useEffect, useRef } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode } from '@/components/nodes/BaseNode';
+import { ExpiredMediaPlaceholder } from '@/components/ExpiredMediaPlaceholder';
 import i18n from '@/i18n';
 import { useAutoResize } from '@/hooks/use-auto-resize';
 import { useNodeDataHistory } from '@/hooks/use-node-data-history';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
-import {
-  MediaNodeOutputsSchema,
-  isRenderableMediaUrl,
-  type MediaModelInfo,
-} from '@/types/media';
+import { resolveMediaSource } from '@/lib/media-source';
+import type { MediaModelInfo } from '@/types/media';
 import { NODE_REGISTRY } from '@/lib/node-registry';
 import { groupModelsByProvider } from '@/lib/media';
 import { useWorkflowStore } from '@/stores/workflow';
@@ -80,6 +78,8 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
   const loadMediaModels = useWorkflowStore((state) => state.loadMediaModelsAsync);
   const removeNode = useWorkflowStore((state) => state.removeNode);
   const outputs = useWorkflowStore((state) => state.nodeOutputs[id]);
+  // R7.7/R7.8: метрики узла несут свою ссылку на сохранённый результат.
+  const nodeMetrics = useWorkflowStore((state) => state.nodeMetrics[id]);
 
   // Список моделей грузится лениво при появлении узла и кэшируется в сторе.
   useEffect(() => {
@@ -105,16 +105,13 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
   // показываем как есть, но помечаем недоступной — молчаливой подмены нет.
   const isUnavailable = (data.model ?? '') !== '' && selected === undefined;
 
-  // Outputs приходят из SSE как `unknown`-записи — валидируем на границе.
-  const parsedOutputs = outputs ? MediaNodeOutputsSchema.safeParse(outputs) : null;
-  const mediaUrl =
-    parsedOutputs !== null && parsedOutputs.success
-      ? parsedOutputs.data.mediaUrl
-      : null;
-  // KI-006: ссылку от внешнего провайдера подставляем только с http(s).
-  const safeMediaUrl =
-    mediaUrl !== null && isRenderableMediaUrl(mediaUrl) ? mediaUrl : null;
-  const isInvalidUrl = mediaUrl !== null && safeMediaUrl === null;
+  // R7.8 (KI-362): своя ссылка (`storedUrl`) важнее ссылки провайдера; при
+  // истёкшем TTL — плейсхолдер «ссылка истекла», а не битая картинка.
+  const mediaSource = resolveMediaSource({
+    outputs,
+    storedUrl: nodeMetrics?.storedUrl ?? null,
+    storedExpiresAt: nodeMetrics?.storedExpiresAt ?? null,
+  });
 
   const aspectRatioParam = selected?.params.find(
     (param) => param.key === ASPECT_RATIO_KEY,
@@ -233,13 +230,15 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
             <div className="flex min-h-20 items-center justify-center rounded-lg border border-red-200 bg-red-50 px-2 text-center text-[10px] text-red-600">
               {t('node.image.error')}
             </div>
-          ) : safeMediaUrl !== null ? (
+          ) : mediaSource.expired ? (
+            <ExpiredMediaPlaceholder />
+          ) : mediaSource.src !== null ? (
             <img
-              src={safeMediaUrl}
+              src={mediaSource.src}
               alt={t('node.image.alt')}
               className="w-full rounded-lg border border-border"
             />
-          ) : isInvalidUrl ? (
+          ) : mediaSource.invalid ? (
             <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-amber-300 px-2 text-center text-[10px] text-amber-600">
               {t('node.image.invalid_url')}
             </div>

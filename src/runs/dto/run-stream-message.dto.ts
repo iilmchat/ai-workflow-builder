@@ -77,6 +77,25 @@ export const NodeRunSnapshotSchema = z.object({
    * ещё не знают про поле (фронтенд читает его как `.optional()`).
    */
   costRub: z.string().nullable().optional(),
+  /**
+   * Кэш-токены чтения (R7.7, KI-055): колонка `cache_read_tokens`.
+   *
+   * Необязательное — как `costRub`: старые снимки остаются совместимыми.
+   */
+  cacheReadTokens: z.number().int().nullable().optional(),
+  /** Кэш-токены записи (R7.7, KI-150): колонка `cache_creation_tokens`. */
+  cacheCreationTokens: z.number().int().nullable().optional(),
+  /**
+   * Экономия на чтении из кэша, USD (R7.7).
+   *
+   * Пересчитывается при сборке снимка по прайсу модели узла (в БД не
+   * хранится). `null` — посчитать нельзя (модель вне прайса/цены кэша нет).
+   */
+  cacheSavingsUsd: z.number().nullable().optional(),
+  /** Своя ссылка на media-результат (R7.8, KI-362). */
+  storedUrl: z.string().nullable().optional(),
+  /** Когда `storedUrl` перестанет быть доступной (R7.8). */
+  storedExpiresAt: z.iso.datetime().nullable().optional(),
   durationMs: z.number().int().nullable(),
   startedAt: z.iso.datetime().nullable(),
   finishedAt: z.iso.datetime().nullable(),

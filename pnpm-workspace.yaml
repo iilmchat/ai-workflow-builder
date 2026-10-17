@@ -1,6 +1,11 @@
 allowBuilds:
   esbuild: true
   msgpackr-extract: true
+  # R7.7: `@opentelemetry/sdk-node` тянет `protobufjs`, у которого есть
+  # postinstall-скрипт (генерация кода для CLI). На рантайм OTLP/HTTP он не
+  # влияет, поэтому сборка пакета явно запрещена: иначе `pnpm install` в
+  # pnpm 12 падает с ERR_PNPM_IGNORED_BUILDS.
+  protobufjs: false
 
 # KI-010: pnpm 12 self-management пишет @pnpm/exe в packageManagerDependencies
 # при каждой не-install команде (pnpm/pnpm#14575). pmOnFail: ignore

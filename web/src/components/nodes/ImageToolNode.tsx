@@ -2,13 +2,11 @@ import { useCallback, useEffect } from 'react';
 import { Handle, Position, type Edge, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode } from '@/components/nodes/BaseNode';
+import { ExpiredMediaPlaceholder } from '@/components/ExpiredMediaPlaceholder';
 import i18n from '@/i18n';
 import { useNodeDataHistory } from '@/hooks/use-node-data-history';
-import {
-  ImageToolOutputsSchema,
-  isRenderableMediaUrl,
-  type MediaModelInfo,
-} from '@/types/media';
+import { resolveMediaSource } from '@/lib/media-source';
+import type { MediaModelInfo } from '@/types/media';
 import { inputUrlFromOutputs, pickInputPreviewUrl } from '@/lib/image-tool-node';
 import { NODE_REGISTRY } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
@@ -55,6 +53,8 @@ export function ImageToolNode({ id, data }: NodeProps<ImageToolFlowNode>) {
   const loadToolModels = useWorkflowStore((state) => state.loadToolModelsAsync);
   const removeNode = useWorkflowStore((state) => state.removeNode);
   const outputs = useWorkflowStore((state) => state.nodeOutputs[id]);
+  // R7.8: метрики узла несут свою ссылку на сохранённый результат.
+  const nodeMetrics = useWorkflowStore((state) => state.nodeMetrics[id]);
   const edges = useWorkflowStore((state) => state.edges);
   const nodeOutputs = useWorkflowStore((state) => state.nodeOutputs);
 
@@ -85,17 +85,13 @@ export function ImageToolNode({ id, data }: NodeProps<ImageToolFlowNode>) {
     data.inputUrl,
   );
 
-  // Выходы приходят из SSE как `unknown`-записи — валидируем на границе.
-  const parsedOutputs = outputs ? ImageToolOutputsSchema.safeParse(outputs) : null;
-  const rawResultUrl =
-    parsedOutputs !== null && parsedOutputs.success
-      ? (parsedOutputs.data.resultUrls[0] ?? null)
-      : null;
-  const resultUrl =
-    rawResultUrl !== null && isRenderableMediaUrl(rawResultUrl)
-      ? rawResultUrl
-      : null;
-  const isInvalidUrl = rawResultUrl !== null && resultUrl === null;
+  // R7.8 (KI-362): у инструмента результат — `resultUrls`; своя ссылка
+  // (`storedUrl`) важнее, при истёкшем TTL — плейсхолдер.
+  const mediaSource = resolveMediaSource({
+    outputs,
+    storedUrl: nodeMetrics?.storedUrl ?? null,
+    storedExpiresAt: nodeMetrics?.storedExpiresAt ?? null,
+  });
 
   const selected = toolModels.find((model) => model.id === data.model);
   // Модель, которой нет в каталоге (старое значение или провайдер отключён):
@@ -198,13 +194,15 @@ export function ImageToolNode({ id, data }: NodeProps<ImageToolFlowNode>) {
             <div className="flex min-h-20 items-center justify-center rounded-lg border border-red-200 bg-red-50 px-2 text-center text-[10px] text-red-600">
               {t('node.image_tool.error')}
             </div>
-          ) : resultUrl !== null ? (
+          ) : mediaSource.expired ? (
+            <ExpiredMediaPlaceholder />
+          ) : mediaSource.src !== null ? (
             <img
-              src={resultUrl}
+              src={mediaSource.src}
               alt={t('node.image_tool.alt')}
               className="w-full rounded-lg border border-border"
             />
-          ) : isInvalidUrl ? (
+          ) : mediaSource.invalid ? (
             <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-amber-300 px-2 text-center text-[10px] text-amber-600">
               {t('node.image.invalid_url')}
             </div>

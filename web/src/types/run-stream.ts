@@ -76,6 +76,25 @@ export const NodeRunSnapshotSchema = z.object({
    * backend начнёт отдавать поле, оно подхватится без правок фронтенда.
    */
   costRub: z.string().nullable().optional(),
+  /**
+   * Кэш-токены чтения (R7.7, KI-055) — зеркало backend
+   * `cache_read_tokens`. Необязательное: старые события/снимки остаются
+   * валидными, а панель просто не рисует строку кэша.
+   */
+  cacheReadTokens: z.number().int().nullable().optional(),
+  /** Кэш-токены записи (R7.7, KI-150). */
+  cacheCreationTokens: z.number().int().nullable().optional(),
+  /**
+   * Экономия на чтении из кэша, USD (R7.7).
+   *
+   * Backend присылает её в событии и пересчитывает в снимке; фронтенд не
+   * дублирует прайс-лист.
+   */
+  cacheSavingsUsd: z.number().nullable().optional(),
+  /** Своя (стабильная) ссылка на media-результат (R7.8, KI-362). */
+  storedUrl: z.string().nullable().optional(),
+  /** Когда `storedUrl` перестанет быть доступной (R7.8). */
+  storedExpiresAt: z.string().nullable().optional(),
   durationMs: z.number().int().nullable(),
   startedAt: z.string().nullable(),
   finishedAt: z.string().nullable(),
@@ -118,6 +137,13 @@ export const RunEventSchema = z.discriminatedUnion('type', [
     tokensIn: z.number().int().nonnegative().nullable().optional(),
     tokensOut: z.number().int().nonnegative().nullable().optional(),
     costUsd: z.string().nullable().optional(),
+    // R7.7 (KI-055/KI-150): кэш-токены и экономия — панель показывает их
+    // сразу, не дожидаясь F5. R7.8 (KI-362): своя ссылка на media-результат.
+    cacheReadTokens: z.number().int().nonnegative().nullable().optional(),
+    cacheCreationTokens: z.number().int().nonnegative().nullable().optional(),
+    cacheSavingsUsd: z.number().nullable().optional(),
+    storedUrl: z.string().nullable().optional(),
+    storedExpiresAt: z.string().nullable().optional(),
     logs: z.array(z.string()).nullable().optional(),
     finishedAt: z.string(),
   }),

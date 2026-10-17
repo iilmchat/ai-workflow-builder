@@ -46,6 +46,27 @@ export const RunEventSchema = z.discriminatedUnion('type', [
     tokensOut: z.number().int().nonnegative().nullable().optional(),
     /** Стоимость LLM в долларах (v0.6.0b.2.2). */
     costUsd: z.string().nullable().optional(),
+    /**
+     * Кэш-токены чтения (R7.7, KI-055): панель показывает «Cache read: N».
+     * Необязательное — старые события из Redis остаются валидными.
+     */
+    cacheReadTokens: z.number().int().nonnegative().nullable().optional(),
+    /** Кэш-токены записи (R7.7, KI-150). */
+    cacheCreationTokens: z.number().int().nonnegative().nullable().optional(),
+    /**
+     * Экономия на чтении из кэша, USD (R7.7, KI-055).
+     *
+     * В БД не хранится: для события её считает executor по прайсу, для снимка
+     * она пересчитывается по `cacheReadTokens` и модели узла.
+     */
+    cacheSavingsUsd: z.number().nonnegative().nullable().optional(),
+    /**
+     * Своя (стабильная) ссылка на media-результат (R7.8, KI-362).
+     * `null` — сохранение выключено или не удалось.
+     */
+    storedUrl: z.string().nullable().optional(),
+    /** Когда `storedUrl` перестанет быть доступной (ISO, R7.8). */
+    storedExpiresAt: z.iso.datetime().nullable().optional(),
     /** Логи ретраев / диагностика (KI-036, KI-043). */
     logs: z.array(z.string()).nullable().optional(),
     finishedAt: z.iso.datetime(),

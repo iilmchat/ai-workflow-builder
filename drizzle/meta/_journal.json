@@ -64,6 +64,20 @@
       "when": 1792269338836,
       "tag": "0008_pgvector",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792273138880,
+      "tag": "0009_cache_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792273146240,
+      "tag": "0010_media_storage",
+      "breakpoints": true
     }
   ]
 }

@@ -4,6 +4,8 @@ import { eq } from 'drizzle-orm';
 import { Observable, type Subscriber } from 'rxjs';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { nodeRuns, type NodeRun } from '../db/schema.js';
+import type { GraphSnapshotDto } from '../engine/dto/index.js';
+import { calculateCacheSavingsUsd } from '../llm/model-pricing.js';
 import {
   RunStreamMessageSchema,
   type NodeRunSnapshot,
@@ -201,7 +203,7 @@ export class RunsStreamService {
         // после F5 вместо «причина недоступна».
         error: run.error,
       },
-      nodes: rows.map((row) => this.toNodeSnapshot(row)),
+      nodes: rows.map((row) => this.toNodeSnapshot(row, run.snapshot)),
     };
   }
 
@@ -209,10 +211,21 @@ export class RunsStreamService {
    * Приводит строку `node_runs` к узлу снимка (даты — ISO, `cost_usd` — строка,
    * как её отдаёт колонка `numeric`).
    *
+   * **R7.7 (KI-055):** `cacheSavingsUsd` в БД не хранится — он пересчитывается
+   * здесь по модели узла из снимка графа и `cacheReadTokens` (тарифы живут
+   * только в `model-pricing.ts`). Без модели (узел удалён/тип без модели)
+   * экономия — `null`, токены при этом всё равно отдаются.
+   *
    * @param row - строка таблицы `node_runs`
+   * @param snapshot - снимок графа запуска (нужен `data.model` узла)
    * @returns узел снимка состояния
    */
-  private toNodeSnapshot(row: NodeRun): NodeRunSnapshot {
+  private toNodeSnapshot(
+    row: NodeRun,
+    snapshot: GraphSnapshotDto,
+  ): NodeRunSnapshot {
+    const model = snapshot.nodes.find((node) => node.id === row.nodeId)?.data.model;
+
     return {
       nodeId: row.nodeId,
       nodeType: row.nodeType,
@@ -225,6 +238,14 @@ export class RunsStreamService {
       tokensOut: row.tokensOut,
       costUsd: row.costUsd,
       costRub: row.costRub ?? null,
+      cacheReadTokens: row.cacheReadTokens,
+      cacheCreationTokens: row.cacheCreationTokens,
+      cacheSavingsUsd:
+        typeof model === 'string'
+          ? calculateCacheSavingsUsd(model, row.cacheReadTokens)
+          : null,
+      storedUrl: row.storedUrl,
+      storedExpiresAt: row.storedExpiresAt?.toISOString() ?? null,
       durationMs: row.durationMs,
       startedAt: row.startedAt?.toISOString() ?? null,
       finishedAt: row.finishedAt?.toISOString() ?? null,

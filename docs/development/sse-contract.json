@@ -13,6 +13,11 @@
       "tokensIn",
       "tokensOut",
       "costUsd",
+      "cacheReadTokens",
+      "cacheCreationTokens",
+      "cacheSavingsUsd",
+      "storedUrl",
+      "storedExpiresAt",
       "logs",
       "finishedAt"
     ],
@@ -51,6 +56,11 @@
       "tokensOut",
       "costUsd",
       "costRub",
+      "cacheReadTokens",
+      "cacheCreationTokens",
+      "cacheSavingsUsd",
+      "storedUrl",
+      "storedExpiresAt",
       "durationMs",
       "startedAt",
       "finishedAt"

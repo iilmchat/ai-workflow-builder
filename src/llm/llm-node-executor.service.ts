@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { NodeDto } from '../engine/dto/index.js';
 import { CostBudgetService } from '../runs/cost-budget.service.js';
-import { calculateCostUsdForProvider } from './model-pricing.js';
+import { calculateCacheSavingsUsd, calculateCostUsdForProvider } from './model-pricing.js';
 import { LlmProviderException, type ReasoningEffort } from './llm-provider.interface.js';
 import { LlmService } from './llm.service.js';
 
@@ -81,6 +81,18 @@ export interface LlmNodeMetrics {
   outputTokens: number | null;
   /** Оценка стоимости в USD (`null`, если модель отсутствует в прайс-листе). */
   costUsd: number | null;
+  /** Кэш-токены чтения (R7.7, KI-055); `null` — кэш не применялся. */
+  cacheReadTokens: number | null;
+  /** Кэш-токены записи (R7.7, KI-150); `null` — провайдер их не отдал. */
+  cacheCreationTokens: number | null;
+  /**
+   * Экономия на чтении из кэша, USD (R7.7, KI-055).
+   *
+   * `null` — экономию посчитать нельзя (модели нет в прайсе или цена кэша у
+   * неё не задана). Само поле не хранится в БД: в снимке оно пересчитывается
+   * по прайсу (`runs-stream.service.ts`), а в событии приходит готовым.
+   */
+  cacheSavingsUsd: number | null;
   /** Модель, фактически использованная провайдером. */
   model: string;
 }
@@ -170,9 +182,15 @@ export class LlmNodeExecutor {
     });
     const usage = result.usage;
     const usedModel = usage?.model ?? model;
+    // R7.7 (KI-055/KI-150): кэш-токены идут отдельными полями — они дешевле
+    // обычных входных, и стоимость считается по отдельным тарифам.
+    const cacheReadTokens = usage?.cacheReadTokens ?? null;
+    const cacheCreationTokens = usage?.cacheCreationTokens ?? null;
     const metrics: LlmNodeMetrics = {
       inputTokens: usage?.inputTokens ?? null,
       outputTokens: usage?.outputTokens ?? null,
+      cacheReadTokens,
+      cacheCreationTokens,
       // KI-148: у локальных провайдеров (LM Studio) стоимость — 0, а не null,
       // иначе панель показывала бы токены без цены.
       costUsd: calculateCostUsdForProvider(
@@ -180,13 +198,20 @@ export class LlmNodeExecutor {
         usedModel,
         usage?.inputTokens ?? null,
         usage?.outputTokens ?? null,
+        {
+          cacheReadTokens,
+          cacheCreationTokens,
+          cacheTokensIncludedInInput: usage?.cacheTokensIncludedInInput,
+        },
       ),
+      cacheSavingsUsd: calculateCacheSavingsUsd(usedModel, cacheReadTokens),
       model: usedModel,
     };
 
     this.logger.log(
       `LLM-узел ${node.id}: tokens=${metrics.inputTokens ?? '?'}/` +
-        `${metrics.outputTokens ?? '?'}, costUsd=${metrics.costUsd ?? '?'}`,
+        `${metrics.outputTokens ?? '?'}, costUsd=${metrics.costUsd ?? '?'}` +
+        (cacheReadTokens === null ? '' : `, cacheRead=${cacheReadTokens}`),
     );
 
     return { outputs: { text: result.text }, metrics };

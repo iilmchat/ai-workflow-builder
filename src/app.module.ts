@@ -11,6 +11,9 @@ import { MediaModule } from './media/media.module.js';
 import { WorkflowModule } from './workflow/workflow.module.js';
 import { EngineModule } from './engine/engine.module.js';
 import { NodesModule } from './nodes/nodes.module.js';
+// R7.7 (KI-365): OTel-трейсы — @Global(), SDK стартует только при
+// OTEL_ENABLED=true.
+import { ObservabilityModule } from './observability/observability.module.js';
 import { RedisModule } from './redis/redis.module.js';
 // R7.1 (KI-048): бюджет запуска — @Global(), нужен исполнителям узлов
 // (LlmModule/MediaModule) и HTTP-ручке в RunsModule.
@@ -37,6 +40,7 @@ import { TemplatesModule } from './templates/templates.module.js';
     }),
     DbModule,
     RedisModule,
+    ObservabilityModule,
     AuthModule,
     LlmModule,
     MediaModule,

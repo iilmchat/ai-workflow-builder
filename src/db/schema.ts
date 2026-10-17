@@ -304,6 +304,40 @@ export const nodeRuns = pgTable(
      * USD в одной колонке нельзя (RULES 4.23 — валюты не смешиваются).
      */
     costRub: numeric('cost_rub', { precision: 10, scale: 6 }),
+    /**
+     * Кэш-токены чтения (R7.7, KI-055/KI-150).
+     *
+     * Сколько входных токенов провайдер отдал из своего промпт-кэша
+     * (`cache_read_input_tokens` Anthropic, `cached_tokens` OpenAI,
+     * `prompt_cache_hit_tokens` DeepSeek). Такие токены стоят дешевле
+     * обычных входных, поэтому стоимость считается отдельно
+     * (`calculateCostUsd`). `NULL` — провайдер кэш не применял или не отдал
+     * метрику; `0` не пишется, чтобы «кэша не было» не выглядело как факт.
+     */
+    cacheReadTokens: integer('cache_read_tokens'),
+    /**
+     * Кэш-токены записи (R7.7). Есть только у Anthropic
+     * (`cache_creation_input_tokens`): такие токены стоят **дороже** обычных
+     * входных (1.25×), поэтому их нельзя сваливать в `tokens_in`.
+     */
+    cacheCreationTokens: integer('cache_creation_tokens'),
+    /**
+     * Стабильная ссылка на сохранённый media-результат (R7.8, KI-362).
+     *
+     * Ссылки провайдеров (CreativeLab) живут 48 часов, поэтому после успешной
+     * генерации файл скачивается к нам (`LocalMediaStorage` или S3) и
+     * записывается своя ссылка. `outputs.resultUrls`/`outputs.mediaUrl`
+     * остаются как есть — для совместимости и как fallback.
+     */
+    storedUrl: text('stored_url'),
+    /**
+     * Когда `stored_url` перестанет быть доступной (R7.8, KI-362).
+     *
+     * TTL локального хранилища (`MEDIA_STORAGE_LOCAL_TTL_DAYS`) или S3
+     * (`S3_TTL_DAYS`). `NULL` — срок не задан (хранилище без TTL). UI по этому
+     * полю показывает плейсхолдер «ссылка истекла».
+     */
+    storedExpiresAt: timestamp('stored_expires_at', { withTimezone: true }),
     durationMs: integer('duration_ms'),
     startedAt: timestamp('started_at', { withTimezone: true }),
     finishedAt: timestamp('finished_at', { withTimezone: true }),

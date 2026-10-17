@@ -347,6 +347,29 @@ export interface NodeRunMetrics {
    * заполняется executor'ом, но в снимок не попадает.
    */
   costRub: string | null;
+  /**
+   * Кэш-токены чтения (R7.7, KI-055): сколько входных токенов пришло из
+   * кэша провайдера. `null` — кэш не применялся или метрики нет.
+   */
+  cacheReadTokens: number | null;
+  /** Кэш-токены записи (R7.7, KI-150; только Anthropic). */
+  cacheCreationTokens: number | null;
+  /**
+   * Экономия на чтении из кэша, USD (R7.7).
+   *
+   * Считается на backend (в событии — executor'ом, в снимке — по прайсу
+   * модели), фронтенд только форматирует.
+   */
+  cacheSavingsUsd: number | null;
+  /**
+   * Своя (стабильная) ссылка на media-результат (R7.8, KI-362).
+   *
+   * `null` — сохранение выключено/не удалось: UI берёт ссылку провайдера из
+   * `nodeOutputs`.
+   */
+  storedUrl: string | null;
+  /** Когда `storedUrl` перестанет быть доступной (ISO) — для плейсхолдера. */
+  storedExpiresAt: string | null;
 }
 
 /** Пустые метрики: узел ещё не отдавал ни одного значения. */
@@ -356,6 +379,11 @@ const EMPTY_METRICS: NodeRunMetrics = {
   tokensOut: null,
   costUsd: null,
   costRub: null,
+  cacheReadTokens: null,
+  cacheCreationTokens: null,
+  cacheSavingsUsd: null,
+  storedUrl: null,
+  storedExpiresAt: null,
 };
 
 /**
@@ -2270,6 +2298,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         costUsd: node.costUsd,
         // Поле в снимке необязательное (backend пока его не отдаёт, KI-114).
         costRub: node.costRub ?? null,
+        cacheReadTokens: node.cacheReadTokens ?? null,
+        cacheCreationTokens: node.cacheCreationTokens ?? null,
+        cacheSavingsUsd: node.cacheSavingsUsd ?? null,
+        storedUrl: node.storedUrl ?? null,
+        storedExpiresAt: node.storedExpiresAt ?? null,
       };
     }
 
@@ -2361,6 +2394,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
                 tokensIn: event.tokensIn ?? null,
                 tokensOut: event.tokensOut ?? null,
                 costUsd: event.costUsd ?? null,
+                cacheReadTokens: event.cacheReadTokens ?? null,
+                cacheCreationTokens: event.cacheCreationTokens ?? null,
+                cacheSavingsUsd: event.cacheSavingsUsd ?? null,
+                storedUrl: event.storedUrl ?? null,
+                storedExpiresAt: event.storedExpiresAt ?? null,
               },
             },
             ...withNodeLogs(state, event.nodeId, event.logs),
@@ -2386,6 +2424,14 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
               tokensIn: event.tokensIn ?? null,
               tokensOut: event.tokensOut ?? null,
               costUsd: event.costUsd ?? null,
+              // R7.7/R7.8: на падении кэш-метрик и своей ссылки нет — не
+              // оставляем значения предыдущей попытки (ср. обработку ошибки
+              // в node_completed выше).
+              cacheReadTokens: null,
+              cacheCreationTokens: null,
+              cacheSavingsUsd: null,
+              storedUrl: null,
+              storedExpiresAt: null,
             },
           },
           ...withNodeLogs(state, event.nodeId, event.logs),

@@ -14,6 +14,7 @@ import {
 /** Лимит токенов ответа по умолчанию. */
 import { DEFAULT_MAX_TOKENS } from '../llm-constants.js';
 import { toProviderException } from '../provider-errors.js';
+import { readAnthropicCacheTokens } from '../token-usage.js';
 
 /** Таймаут вызова по умолчанию, если свой signal не передан (RULES 4.19). */
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -43,12 +44,17 @@ function extractUsage(
     typeof response.model === 'string' && response.model.length > 0
       ? response.model
       : fallbackModel;
+  // R7.7 (KI-055/KI-150): `cache_read_input_tokens` и
+  // `cache_creation_input_tokens` Anthropic **не входят** в `input_tokens` —
+  // `cacheTokensIncludedInInput: false` сообщает это расчётчику стоимости.
+  const cache = readAnthropicCacheTokens(usage);
 
   return {
     inputTokens:
       typeof candidate.input_tokens === 'number' ? candidate.input_tokens : null,
     outputTokens:
       typeof candidate.output_tokens === 'number' ? candidate.output_tokens : null,
+    ...cache,
     model,
   };
 }

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { z } from 'zod';
 import type { NodeDto } from '../engine/dto/index.js';
 import { NodeDataValidationException } from '../engine/node-executors.js';
+import { withSpanAsync } from '../observability/tracing.js';
 import {
   calculateMediaCostEstimate,
   CostBudgetService,
@@ -38,6 +39,11 @@ import {
   type MediaParam,
   type MediaType,
 } from './media-provider.interface.js';
+import {
+  MEDIA_STORAGE,
+  type IMediaStorage,
+  type MediaStoredFile,
+} from './media-storage.service.js';
 import type { MediaTaskResult } from './dto/media-task.mapper.js';
 
 /** Модель по умолчанию, если узел её не задал. */
@@ -66,6 +72,16 @@ export interface MediaNodeMetrics {
   mediaType: MediaType;
   /** id задачи в upstream (для диагностики). */
   taskId: string;
+  /**
+   * Своя ссылка на сохранённый результат (R7.8, KI-362).
+   *
+   * `null` — сохранение выключено (`MEDIA_STORAGE_BACKEND=none`), не задано
+   * (`local` ещё не успел) или упало: узел при этом не падает, UI берёт
+   * `outputs.mediaUrl`/`resultUrls` провайдера.
+   */
+  storedUrl: string | null;
+  /** Когда `storedUrl` перестанет быть доступной (`null` — без TTL/не сохранено). */
+  storedExpiresAt: Date | null;
 }
 
 /** Результат выполнения media-узла: выходы + метрики. */
@@ -255,12 +271,16 @@ export class MediaNodeExecutor {
    *   `CREATIVELAB_MEDIA_TIMEOUT_MS`. `@Optional()` — потому что исполнителя
    *   собирают и без `ConfigModule` (юнит-тесты инструментов R7.1, которые
    *   этой опцией не пользуются); без конфига берётся дефолт 10 минут
+   * @param storage - хранилище результатов (R7.8, KI-362). `@Optional()`:
+   *   без него (старые тесты, `MEDIA_STORAGE_BACKEND=none`) результат не
+   *   сохраняется, и узел живёт на ссылке провайдера
    */
   constructor(
     private readonly registry: MediaRegistryService,
     @Inject(MEDIA_PROVIDERS) private readonly providers: readonly IMediaProvider[],
     private readonly costBudget: CostBudgetService,
     @Optional() private readonly config?: ConfigService,
+    @Optional() @Inject(MEDIA_STORAGE) private readonly storage?: IMediaStorage,
   ) {}
 
   /**
@@ -316,13 +336,24 @@ export class MediaNodeExecutor {
       `Media-узел ${node.id}: model=${model}, promptLen=${prompt.length}, type=${mediaType}`,
     );
 
-    const task = await this.registry.createTaskAsync({
-      model,
-      prompt,
-      params,
-      idempotencyKey,
-      wait: true,
-    });
+    const task = await withSpanAsync(
+      'media.createTask',
+      { 'media.node_id': node.id, 'media.model': model, 'media.type': mediaType },
+      async (span) => {
+        const created = await this.registry.createTaskAsync({
+          model,
+          prompt,
+          params,
+          idempotencyKey,
+          wait: true,
+        });
+
+        span.setAttribute('media.task_id', created.taskId);
+        span.setAttribute('media.task_status', created.status);
+
+        return created;
+      },
+    );
 
     this.logger.log(`Media-узел ${node.id}: taskId=${task.taskId}`);
 
@@ -341,14 +372,18 @@ export class MediaNodeExecutor {
       );
     }
 
+    // R7.8 (KI-362): результат провайдера живёт 48 ч — сразу сохраняем копию.
+    const stored = await this.storeResultAsync(node, runId, finished.resultUrls[0]);
     const metrics: MediaNodeMetrics = {
       costRub: finished.costRub,
       mediaType,
       taskId: finished.taskId,
+      storedUrl: stored?.storedUrl ?? null,
+      storedExpiresAt: stored?.storedExpiresAt ?? null,
     };
 
     this.logger.log(
-      `Media-узел ${node.id}: cost=${metrics.costRub ?? '?'}₽, url=${finished.resultUrls[0] ?? '?'}`,
+      `Media-узел ${node.id}: cost=${metrics.costRub ?? '?'}₽, url=${finished.resultUrls[0] ?? '?'}, stored=${metrics.storedUrl ?? '—'}`,
     );
 
     return {
@@ -410,13 +445,33 @@ export class MediaNodeExecutor {
       }),
     );
 
-    const task = await target.provider.applyToolAsync(inputUrl, data.operation, {
-      ...toolParams,
-      model: target.model.id,
-      // Ключ стабилен при повторе: тот же runId и nodeId на job-level retry
-      // (KI-040) не создадут вторую платную задачу.
-      idempotencyKey: `${runId}:${node.id}`,
-    });
+    const task = await withSpanAsync(
+      'media.createTask',
+      {
+        'media.node_id': node.id,
+        'media.model': target.model.id,
+        'media.type': 'TOOL',
+        'media.operation': data.operation,
+      },
+      async (span) => {
+        const created = await target.provider.applyToolAsync(
+          inputUrl,
+          data.operation,
+          {
+            ...toolParams,
+            model: target.model.id,
+            // Ключ стабилен при повторе: тот же runId и nodeId на job-level retry
+            // (KI-040) не создадут вторую платную задачу.
+            idempotencyKey: `${runId}:${node.id}`,
+          },
+        );
+
+        span.setAttribute('media.task_id', created.taskId);
+        span.setAttribute('media.task_status', created.status);
+
+        return created;
+      },
+    );
 
     // Инструменты обычно отвечают быстро (`wait: true`), но апскейл/липсинк
     // бывают дольше окна ожидания upstream — тогда задача добирается опросом.
@@ -432,14 +487,18 @@ export class MediaNodeExecutor {
       );
     }
 
+    // R7.8 (KI-362): инструмент отдаёт список URL — сохраняем первый.
+    const stored = await this.storeResultAsync(node, runId, finished.resultUrls[0]);
     const metrics: MediaNodeMetrics = {
       costRub: finished.costRub,
       mediaType: 'TOOL',
       taskId: finished.taskId,
+      storedUrl: stored?.storedUrl ?? null,
+      storedExpiresAt: stored?.storedExpiresAt ?? null,
     };
 
     this.logger.log(
-      `Media-инструмент ${node.id}: cost=${metrics.costRub ?? '?'}₽, url=${finished.resultUrls[0] ?? '?'}`,
+      `Media-инструмент ${node.id}: cost=${metrics.costRub ?? '?'}₽, url=${finished.resultUrls[0] ?? '?'}, stored=${metrics.storedUrl ?? '—'}`,
     );
 
     return {
@@ -629,29 +688,49 @@ export class MediaNodeExecutor {
 
     await this.assertBudgetAsync(runId, estimateRub);
 
-    const task = await this.registry.createTaskAsync({
-      model: resolved.id,
-      prompt: request.prompt.length > 0 ? request.prompt : undefined,
-      params,
-      ...(taskInputs === undefined ? {} : { inputs: taskInputs }),
-      // Ключ стабилен при повторе: тот же runId и nodeId на job-level retry
-      // (KI-040) не создадут вторую платную генерацию.
-      idempotencyKey: `${runId}:${node.id}`,
-      wait: true,
-    });
+    const task = await withSpanAsync(
+      'media.createTask',
+      {
+        'media.node_id': node.id,
+        'media.model': resolved.id,
+        'media.type': request.mediaType,
+        'media.kind': request.kind,
+      },
+      async (span) => {
+        const created = await this.registry.createTaskAsync({
+          model: resolved.id,
+          prompt: request.prompt.length > 0 ? request.prompt : undefined,
+          params,
+          ...(taskInputs === undefined ? {} : { inputs: taskInputs }),
+          // Ключ стабилен при повторе: тот же runId и nodeId на job-level retry
+          // (KI-040) не создадут вторую платную генерацию.
+          idempotencyKey: `${runId}:${node.id}`,
+          wait: true,
+        });
+
+        span.setAttribute('media.task_id', created.taskId);
+        span.setAttribute('media.task_status', created.status);
+
+        return created;
+      },
+    );
 
     this.logger.log(`Media-узел ${node.id}: taskId=${task.taskId}`);
 
     const finished = await this.awaitTaskAsync(node, task, request.mediaType);
 
+    // R7.8 (KI-362): ссылка провайдера живёт 48 ч — сохраняем копию к себе.
+    const stored = await this.storeResultAsync(node, runId, finished.resultUrls[0]);
     const metrics: MediaNodeMetrics = {
       costRub: finished.costRub,
       mediaType: request.mediaType,
       taskId: finished.taskId,
+      storedUrl: stored?.storedUrl ?? null,
+      storedExpiresAt: stored?.storedExpiresAt ?? null,
     };
 
     this.logger.log(
-      `Media-узел ${node.id}: cost=${metrics.costRub ?? '?'}₽, url=${finished.resultUrls[0] ?? '?'}`,
+      `Media-узел ${node.id}: cost=${metrics.costRub ?? '?'}₽, url=${finished.resultUrls[0] ?? '?'}, stored=${metrics.storedUrl ?? '—'}`,
     );
 
     return {
@@ -1077,6 +1156,53 @@ export class MediaNodeExecutor {
    */
   private async assertBudgetAsync(runId: string, priceRub: number): Promise<void> {
     await this.costBudget.assertWithinBudgetAsync(runId, { rub: priceRub });
+  }
+
+  /**
+   * Сохраняет результат генерации в media-хранилище (R7.8, KI-362).
+   *
+   * Скачивание идёт сразу после успешной задачи: ссылка провайдера живёт
+   * 48 часов, а `node_runs.stored_url` должен остаться рабочим после них.
+   *
+   * **Ошибка сохранения не роняет узел.** Генерация уже оплачена, и её
+   * результат доступен по ссылке провайдера: упасть здесь — значит потерять
+   * уже полученный результат из-за сбоя диска/сети. Поэтому ошибка только
+   * логируется, а узел отдаёт `storedUrl: null` (UI берёт ссылку провайдера).
+   *
+   * @param node - узел графа (id — второй сегмент ключа)
+   * @param runId - uuid запуска (первый сегмент ключа)
+   * @param mediaUrl - ссылка провайдера на результат (`undefined` — ссылки нет)
+   * @returns сохранённый файл либо `null` (сохранение выключено/упало)
+   */
+  private async storeResultAsync(
+    node: NodeDto,
+    runId: string,
+    mediaUrl: string | undefined,
+  ): Promise<MediaStoredFile | null> {
+    if (
+      this.storage === undefined ||
+      this.storage.backend === 'none' ||
+      mediaUrl === undefined
+    ) {
+      return null;
+    }
+
+    try {
+      return await this.storage.uploadAsync({
+        runId,
+        nodeId: node.id,
+        sourceUrl: mediaUrl,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      this.logger.warn(
+        `Media-узел ${node.id}: не удалось сохранить результат (${message}) — ` +
+          'остаётся ссылка провайдера',
+      );
+
+      return null;
+    }
   }
 
   /**

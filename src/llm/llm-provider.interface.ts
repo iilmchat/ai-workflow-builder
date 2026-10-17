@@ -39,6 +39,30 @@ export interface LlmUsage {
   inputTokens: number | null;
   /** Токенов на выходе (null, если провайдер не отдал значение). */
   outputTokens: number | null;
+  /**
+   * Сколько входных токенов провайдер отдал из промпт-кэша (R7.7, KI-055).
+   *
+   * Источники: Anthropic `cache_read_input_tokens`, OpenAI
+   * `prompt_tokens_details.cached_tokens`, DeepSeek `prompt_cache_hit_tokens`.
+   * Отсутствие поля — «кэш не применялся или провайдер метрику не отдал»
+   * (нулевые значения не проставляются).
+   */
+  cacheReadTokens?: number;
+  /**
+   * Сколько токенов записано в промпт-кэш (R7.7, KI-150).
+   *
+   * Есть только у Anthropic (`cache_creation_input_tokens`): такие токены
+   * стоят дороже обычных входных, поэтому их нельзя сваливать в `inputTokens`.
+   */
+  cacheCreationTokens?: number;
+  /**
+   * Входят ли кэш-токены в {@link inputTokens} (R7.7).
+   *
+   * `undefined`/`true` — входят (OpenAI, DeepSeek): при расчёте стоимости
+   * обычная цена применяется к остатку `inputTokens - cacheRead - cacheCreation`.
+   * `false` — не входят (Anthropic): `input_tokens` там только некешированные.
+   */
+  cacheTokensIncludedInInput?: boolean;
   /** Модель, фактически использованная провайдером. */
   model: string;
 }

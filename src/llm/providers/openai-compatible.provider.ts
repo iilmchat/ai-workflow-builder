@@ -16,6 +16,7 @@ import {
   DEFAULT_MAX_TOKENS,
 } from '../llm-constants.js';
 import { toProviderException } from '../provider-errors.js';
+import { readOpenAiCacheTokens } from '../token-usage.js';
 
 /** Таймаут вызова по умолчанию, если свой signal не передан (RULES 4.19). */
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -81,6 +82,10 @@ function extractUsage(
     typeof completion.model === 'string' && completion.model.length > 0
       ? completion.model
       : fallbackModel;
+  // R7.7 (KI-055/KI-150): кэш-токены — отдельно от inputTokens. Поле `usage`
+  // у прокси разное (OpenAI `prompt_tokens_details.cached_tokens`, DeepSeek
+  // `prompt_cache_hit_tokens`), нормализация — в `token-usage.ts`.
+  const cache = readOpenAiCacheTokens(usage);
 
   return {
     inputTokens:
@@ -89,6 +94,7 @@ function extractUsage(
       typeof candidate.completion_tokens === 'number'
         ? candidate.completion_tokens
         : null,
+    ...cache,
     model,
   };
 }

@@ -14,6 +14,7 @@ import {
   type NodeRunStatus,
 } from '../db/schema.js';
 import { RunEventsService } from '../runs/run-events.service.js';
+import { withSpanAsync } from '../observability/tracing.js';
 import { AgentService } from '../agent/agent.service.js';
 import { LlmNodeExecutor, type LlmNodeMetrics } from '../llm/llm-node-executor.service.js';
 import { LlmProviderException } from '../llm/llm-provider.interface.js';
@@ -274,6 +275,45 @@ export class ExecutionEngineService {
    * `RunsProcessor` — он и публикует событие после возврата или проброса.
    */
   async executeAsync(runId: string, graph: GraphDto): Promise<ExecutionResult> {
+    // R7.7 (KI-365): корневой span запуска. `node.execute`, `llm.call` и
+    // `media.createTask` создаются внутри и становятся его детьми
+    // (`startActiveSpan` в OTel-адаптере).
+    return withSpanAsync(
+      'run.execute',
+      { 'run.id': runId, 'workflow.node_count': graph.nodes.length },
+      async (span) => {
+        let result: ExecutionResult;
+
+        try {
+          result = await this.executeRunAsync(runId, graph);
+        } catch (error: unknown) {
+          span.setAttribute('run.status', 'failed');
+          throw error;
+        }
+
+        span.setAttribute('run.status', result.status);
+        span.setAttribute('run.executed_nodes', result.executedNodes);
+
+        return result;
+      },
+    );
+  }
+
+  /**
+   * Тело {@link executeAsync}: планирует и выполняет граф.
+   *
+   * Вынесено отдельным методом, чтобы публичный `executeAsync` оставался
+   * тонкой обёрткой span'а `run.execute` (R7.7, KI-365) и не дублировал
+   * разбор статуса для телеметрии.
+   *
+   * @param runId - uuid запуска
+   * @param graph - граф из `workflow_runs.snapshot`
+   * @returns итог выполнения запуска
+   */
+  private async executeRunAsync(
+    runId: string,
+    graph: GraphDto,
+  ): Promise<ExecutionResult> {
     let plan: ExecutionPlanDto;
 
     try {
@@ -648,6 +688,50 @@ export class ExecutionEngineService {
       throw new Error(`Узел ${nodeId} не найден в графе`);
     }
 
+    // R7.7 (KI-365): span узла. Ошибка узла помечает span статусом ERROR
+    // автоматически (адаптер записывает exception), успех — `node.status`.
+    return withSpanAsync(
+      'node.execute',
+      { 'run.id': runId, 'node.id': nodeId, 'node.type': node.type },
+      async (span) => {
+        const outputs = await this.executeNodeRunAsync(
+          runId,
+          nodeId,
+          node,
+          plan,
+          subContext,
+        );
+
+        span.setAttribute('node.status', 'completed');
+
+        return outputs;
+      },
+    );
+  }
+
+  /**
+   * Тело {@link executeNodeAsync}: собирает входы, пишет статусы узла и
+   * выполняет его с повторами.
+   *
+   * Вынесено отдельным методом, чтобы span `node.execute` (R7.7) оборачивал
+   * весь жизненный цикл узла — включая запись `node_runs` и публикацию
+   * событий, — но не раздувал публичный `executeNodeAsync`.
+   *
+   * @param runId - uuid запуска
+   * @param nodeId - `id` узла в графе
+   * @param node - узел графа (уже найден)
+   * @param plan - план выполнения графа
+   * @param subContext - контекст под-воркфлоу (R6.7): владелец, стек, глубина
+   * @returns выходы узла (свежие либо переиспользованные)
+   * @throws Error если узел исчерпал попытки или не удалось записать статус
+   */
+  private async executeNodeRunAsync(
+    runId: string,
+    nodeId: string,
+    node: NodeDto,
+    plan: ExecutionPlanDto,
+    subContext: SubWorkflowContext,
+  ): Promise<Record<string, unknown>> {
     const inputs = await this.collectInputsAsync(runId, nodeId, plan);
 
     // KI-046: узел, успешно завершившийся в предыдущей попытке запуска с теми
@@ -694,6 +778,12 @@ export class ExecutionEngineService {
           tokensOut: null,
           costUsd: null,
           costRub: null,
+          // R7.7/R7.8: кэш-токены и своя ссылка на media — тоже состояние
+          // конкретной попытки, а не узла навсегда.
+          cacheReadTokens: null,
+          cacheCreationTokens: null,
+          storedUrl: null,
+          storedExpiresAt: null,
           startedAt: new Date(),
           finishedAt: null,
         },
@@ -740,6 +830,15 @@ export class ExecutionEngineService {
                 step.kind === 'llm' ? toNumericString(step.metrics.costUsd) : null,
               costRub:
                 step.kind === 'media' ? toNumericString(step.metrics.costRub) : null,
+              // R7.7 (KI-055/KI-150): кэш-токены — только у LLM-узла.
+              cacheReadTokens:
+                step.kind === 'llm' ? step.metrics.cacheReadTokens : null,
+              cacheCreationTokens:
+                step.kind === 'llm' ? step.metrics.cacheCreationTokens : null,
+              // R7.8 (KI-362): своя ссылка на media-результат — только у media.
+              storedUrl: step.kind === 'media' ? step.metrics.storedUrl : null,
+              storedExpiresAt:
+                step.kind === 'media' ? step.metrics.storedExpiresAt : null,
               finishedAt: new Date(),
             })
             .where(eq(nodeRuns.id, nodeRun.id));
@@ -759,6 +858,21 @@ export class ExecutionEngineService {
             tokensOut: step.kind === 'llm' ? step.metrics.outputTokens : null,
             costUsd:
               step.kind === 'llm' ? toNumericString(step.metrics.costUsd) : null,
+            // R7.7 (KI-055/KI-365): кэш-токены и экономия — панель показывает
+            // их сразу, не дожидаясь F5. Экономия не хранится в БД: в снимке
+            // пересчитывается по прайсу (`runs-stream.service.ts`).
+            cacheReadTokens:
+              step.kind === 'llm' ? step.metrics.cacheReadTokens : null,
+            cacheCreationTokens:
+              step.kind === 'llm' ? step.metrics.cacheCreationTokens : null,
+            cacheSavingsUsd:
+              step.kind === 'llm' ? step.metrics.cacheSavingsUsd : null,
+            // R7.8 (KI-362): своя ссылка на результат media-узла.
+            storedUrl: step.kind === 'media' ? step.metrics.storedUrl : null,
+            storedExpiresAt:
+              step.kind === 'media'
+                ? (step.metrics.storedExpiresAt?.toISOString() ?? null)
+                : null,
             logs,
             finishedAt: new Date().toISOString(),
           });

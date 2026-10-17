@@ -51,7 +51,11 @@ void i18n.use(initReactI18next).init({
   interpolation: { escapeValue: false },
 });
 
-document.documentElement.lang = i18n.language;
+// KI-155: в `environment: 'node'` (юнит-тесты web) `document` нет. Проверка
+// делает модуль безопасным для импорта вне браузера, не меняя поведение в нём.
+if (typeof document !== 'undefined') {
+  document.documentElement.lang = i18n.language;
+}
 
 /**
  * Меняет язык + сохраняет в localStorage + обновляет `<html lang>`.

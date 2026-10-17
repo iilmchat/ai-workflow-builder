@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { MediaController } from './media.controller.js';
 import { MediaNodeExecutor } from './media-node-executor.service.js';
 import { MEDIA_PROVIDERS, MediaRegistryService } from './media-registry.service.js';
+import { MediaStorageController } from './media-storage.controller.js';
+import { mediaStorageProvider } from './media-storage.service.js';
 import {
   orderMediaProviders,
   parseMediaProviderPriority,
@@ -38,12 +40,14 @@ import { ReplicateProvider } from './providers/replicate.provider.js';
  * них. `ConfigService` приходит из глобального `ConfigModule`.
  */
 @Module({
-  controllers: [MediaController],
+  controllers: [MediaController, MediaStorageController],
   providers: [
     CreativeLabProvider,
     ReplicateProvider,
     FalProvider,
     OpenAiImagesProvider,
+    // R7.8 (KI-362): хранилище media-результатов (local/s3/none) по env.
+    mediaStorageProvider,
     {
       provide: MEDIA_PROVIDERS,
       inject: [

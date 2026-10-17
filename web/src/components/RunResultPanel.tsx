@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import i18n from '@/i18n';
 import { parseAgentSteps } from '@/lib/agent-timeline';
+import { formatCacheRead, formatMetrics } from '@/lib/run-metrics';
 import { nodeLabelOf } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
 import type { NodeRunStatus } from '@/types/run-stream';
@@ -43,81 +43,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 /**
- * Форматирует рубли для панели: backend отдаёт `numeric` с 6 знаками
- * («0.600000»), в UI это лишний шум — показываем копейки.
- *
- * @param value - стоимость в рублях строкой (как пришла из snapshot)
- * @returns строка вида «0.60 ₽»; исходная строка, если распарсить не удалось
- */
-function formatRub(value: string): string {
-  const amount = Number(value);
-
-  return Number.isFinite(amount) ? `${amount.toFixed(2)} ₽` : `${value} ₽`;
-}
-
-/**
- * Форматирует доллары для панели: backend отдаёт `numeric` с 6 знаками
- * («0.000000», «2.500000»), в UI это лишний шум — показываем центы (KI-151).
- *
- * Устроено по образцу {@link formatRub}: нечисловое значение не превращается
- * в «$NaN», а отдаётся как есть.
- *
- * @param value - стоимость в USD строкой (как пришла из snapshot)
- * @returns строка вида «$0.00»; исходная строка, если распарсить не удалось
- */
-function formatUsd(value: string): string {
-  const amount = Number(value);
-
-  return Number.isFinite(amount) ? `$${amount.toFixed(2)}` : `$${value}`;
-}
-
-/**
- * Форматирует метрики узла в строку «длительность · токены · стоимость».
- *
- * Валюты не смешиваются: LLM-узлы отдают `costUsd`, media-узлы — `costRub`
- * (v0.6.0b.2.3), поэтому в строке появляется та, что заполнена.
- *
- * @param metrics - метрики узла (или `undefined`, если узел не выполнялся)
- * @returns строка метрик либо `null`, если показывать нечего
- */
-function formatMetrics(metrics: {
-  durationMs: number | null;
-  tokensIn: number | null;
-  tokensOut: number | null;
-  costUsd: string | null;
-  costRub: string | null;
-} | undefined): string | null {
-  if (!metrics) {
-    return null;
-  }
-
-  const parts: string[] = [];
-
-  if (metrics.durationMs !== null) {
-    parts.push(i18n.t('runResultPanel.unit.ms', { value: metrics.durationMs }));
-  }
-
-  if (metrics.tokensIn !== null || metrics.tokensOut !== null) {
-    parts.push(
-      i18n.t('runResultPanel.metrics.tokens', {
-        input: metrics.tokensIn ?? '?',
-        output: metrics.tokensOut ?? '?',
-      }),
-    );
-  }
-
-  if (metrics.costUsd !== null) {
-    parts.push(formatUsd(metrics.costUsd));
-  }
-
-  if (metrics.costRub !== null) {
-    parts.push(formatRub(metrics.costRub));
-  }
-
-  return parts.length > 0 ? parts.join(' · ') : null;
-}
-
-/**
  * Панель результата снизу: данные выбранной ноды либо запуска целиком.
  *
  * Нода выбирается кликом по холсту (`selectedNodeId` в сторе), поэтому панель
@@ -145,9 +70,11 @@ export function RunResultPanel() {
   const outputs = selectedNodeId !== null ? nodeOutputs[selectedNodeId] : undefined;
   const error = selectedNodeId !== null ? nodeErrors[selectedNodeId] : undefined;
   const logs = selectedNodeId !== null ? nodeLogs[selectedNodeId] : undefined;
-  const metrics = formatMetrics(
-    selectedNodeId !== null ? nodeMetrics[selectedNodeId] : undefined,
-  );
+  const metrics = selectedNodeId !== null ? nodeMetrics[selectedNodeId] : undefined;
+  const formattedMetrics = formatMetrics(metrics);
+  // R7.7 (KI-055): «Cache read: N токенов (экономия $X)». Токены и экономию
+  // считает backend: событие несёт готовую экономию, снимок — пересчитанную.
+  const cacheRead = formatCacheRead(metrics);
   // R7.4b: агент кладёт в выходы `steps`. Парсер терпим к форме: если шагов
   // нет или они не похожи на шаги агента, timeline просто не рисуется.
   const agentSteps = parseAgentSteps(outputs?.steps);
@@ -302,9 +229,19 @@ export function RunResultPanel() {
                 </Section>
               ) : null}
 
-              {metrics !== null ? (
+              {formattedMetrics !== null || cacheRead !== null ? (
                 <Section title={t('runResultPanel.section.metrics')}>
-                  <p className="text-xs text-muted-foreground">{metrics}</p>
+                  {formattedMetrics !== null ? (
+                    <p className="text-xs text-muted-foreground">{formattedMetrics}</p>
+                  ) : null}
+                  {cacheRead !== null ? (
+                    <p
+                      data-cache-read=""
+                      className="mt-0.5 text-xs text-emerald-700"
+                    >
+                      {cacheRead}
+                    </p>
+                  ) : null}
                 </Section>
               ) : null}
 

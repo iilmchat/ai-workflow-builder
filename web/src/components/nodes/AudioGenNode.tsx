@@ -2,15 +2,13 @@ import { useCallback, useEffect, useRef } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode } from '@/components/nodes/BaseNode';
+import { ExpiredMediaPlaceholder } from '@/components/ExpiredMediaPlaceholder';
 import i18n from '@/i18n';
 import { useAutoResize } from '@/hooks/use-auto-resize';
 import { useNodeDataHistory } from '@/hooks/use-node-data-history';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
-import {
-  MediaNodeOutputsSchema,
-  isRenderableMediaUrl,
-  type MediaModelInfo,
-} from '@/types/media';
+import { resolveMediaSource } from '@/lib/media-source';
+import type { MediaModelInfo } from '@/types/media';
 import { NODE_REGISTRY } from '@/lib/node-registry';
 import {
   GENERATION_MEDIA_TYPE_BY_NODE,
@@ -83,6 +81,8 @@ export function AudioGenNode({ id, data }: NodeProps<AudioGenFlowNode>) {
   );
   const removeNode = useWorkflowStore((state) => state.removeNode);
   const outputs = useWorkflowStore((state) => state.nodeOutputs[id]);
+  // R7.7/R7.8: метрики узла несут свою ссылку на сохранённый результат.
+  const nodeMetrics = useWorkflowStore((state) => state.nodeMetrics[id]);
 
   useEffect(() => {
     void loadGenerationModels(GENERATION_MEDIA_TYPE_BY_NODE.audio_generation);
@@ -107,14 +107,13 @@ export function AudioGenNode({ id, data }: NodeProps<AudioGenFlowNode>) {
   const voiceParam = pickDeclaredParam(selected, VOICE_PARAM_KEYS);
   const speedParam = pickDeclaredParam(selected, [SPEED_KEY]);
 
-  const parsedOutputs = outputs ? MediaNodeOutputsSchema.safeParse(outputs) : null;
-  const mediaUrl =
-    parsedOutputs !== null && parsedOutputs.success
-      ? parsedOutputs.data.mediaUrl
-      : null;
-  const safeMediaUrl =
-    mediaUrl !== null && isRenderableMediaUrl(mediaUrl) ? mediaUrl : null;
-  const isInvalidUrl = mediaUrl !== null && safeMediaUrl === null;
+  // R7.8 (KI-362): своя ссылка (`storedUrl`) важнее ссылки провайдера; при
+  // истёкшем TTL — плейсхолдер «ссылка истекла», а не битое аудио.
+  const mediaSource = resolveMediaSource({
+    outputs,
+    storedUrl: nodeMetrics?.storedUrl ?? null,
+    storedExpiresAt: nodeMetrics?.storedExpiresAt ?? null,
+  });
 
   return (
     <>
@@ -226,14 +225,16 @@ export function AudioGenNode({ id, data }: NodeProps<AudioGenFlowNode>) {
             <div className="flex min-h-20 items-center justify-center rounded-lg border border-red-200 bg-red-50 px-2 text-center text-[10px] text-red-600">
               {t('node.audio.error')}
             </div>
-          ) : safeMediaUrl !== null ? (
+          ) : mediaSource.expired ? (
+            <ExpiredMediaPlaceholder />
+          ) : mediaSource.src !== null ? (
             <audio
-              src={safeMediaUrl}
+              src={mediaSource.src}
               controls
               aria-label={t('node.audio.alt')}
               className="w-full"
             />
-          ) : isInvalidUrl ? (
+          ) : mediaSource.invalid ? (
             <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-amber-300 px-2 text-center text-[10px] text-amber-600">
               {t('node.image.invalid_url')}
             </div>
