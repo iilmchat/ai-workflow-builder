@@ -11,6 +11,7 @@ import {
 } from '../db/schema.js';
 import { EXECUTE_RUN_JOB, WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 import { RunsService } from './runs.service.js';
+import { RUNS_INSTANCE_ID } from './runs.worker-options.js';
 
 /** Стабильные идентификаторы тестовых данных. */
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
@@ -142,7 +143,12 @@ describe('RunsService', () => {
         }),
       );
       expect(insertChain.returning).toHaveBeenCalled();
-      expect(queue.add).toHaveBeenCalledWith(EXECUTE_RUN_JOB, { runId: RUN_ID });
+      // KI-387: в payload едет маркер инстанса, чтобы чужой воркер пропустил
+      // задание на общем Redis.
+      expect(queue.add).toHaveBeenCalledWith(EXECUTE_RUN_JOB, {
+        runId: RUN_ID,
+        instanceId: RUNS_INSTANCE_ID,
+      });
       expect(result).toEqual({
         id: RUN_ID,
         workflowId: WORKFLOW_ID,

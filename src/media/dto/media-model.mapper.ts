@@ -68,6 +68,13 @@ export function toMediaModelInfo(dto: MediaModelDto): MediaModelInfo {
     priceUnit: dto.price_unit ?? null,
     priceInput: dto.price_input ?? null,
     priceInputUnit: dto.price_input_unit ?? null,
+    // KI-384: блок тарификации уже в camelCase (`baseRates`, `ratePer1K`,
+    // `unitParam`), поэтому маппинг — только «есть/нет»: отсутствующий или
+    // null-блок не добавляем в ответ вовсе, чтобы не менять контракт каталога
+    // для моделей без тарифа (`sound-effect`).
+    ...(dto.pricing === undefined || dto.pricing === null
+      ? {}
+      : { pricing: dto.pricing }),
     moderation: dto.moderation,
     prompt: dto.prompt,
     params: dto.params.map(toMediaParam),

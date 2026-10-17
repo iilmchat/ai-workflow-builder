@@ -12,6 +12,7 @@ import { RunEventsService } from './run-events.service.js';
 import { WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 import {
   RUN_STALE_THRESHOLD_MS,
+  RUNS_INSTANCE_ID,
   WORKFLOW_RUNS_WORKER_OPTIONS,
 } from './runs.worker-options.js';
 
@@ -93,7 +94,16 @@ export class RunsProcessor extends WorkerHost {
    * сам переведёт запуск в `running` со свежим `started_at`, а лишний UPDATE
    * создал бы окно, в котором запуск выглядит ожидающим задания.
    *
-   * @param job - задание BullMQ с payload `{ runId }`
+   * **Изоляция инстансов (KI-387).** Если payload несёт `instanceId` и он не
+   * совпадает с идентификатором текущего процесса, задание создано другим
+   * backend-ом (dev/smoke/prod) на общем Redis: воркер его пропускает, чтобы не
+   * выполнить чужой запуск и не списать деньги боевым ключом. Задание без
+   * маркера считается «своим» — это совместимость с заданиями, поставленными до
+   * введения проверки. Главный рубеж изоляции — префикс/БД Redis
+   * (`BULLMQ_PREFIX`, `REDIS_QUEUE_DB`), маркер — второй рубеж на случай, когда
+   * два инстанса всё же смотрят в одно пространство ключей.
+   *
+   * @param job - задание BullMQ с payload `{ runId, instanceId? }`
    * @returns промис без значения; итог виден в `workflow_runs`/`node_runs`
    * @throws Error если payload или snapshot невалидны, запуск не найден либо выполнение упало
    */
@@ -110,7 +120,19 @@ export class RunsProcessor extends WorkerHost {
       );
     }
 
-    const { runId } = payload.data;
+    const { runId, instanceId } = payload.data;
+
+    // KI-387: задание чужого инстанса не выполняем и не трогаем его запуск в
+    // БД — владелец задания сам доведёт запуск до финала в своём процессе.
+    if (instanceId !== undefined && instanceId !== RUNS_INSTANCE_ID) {
+      this.logger.warn(
+        `Запуск ${runId}: задание создано инстансом ${instanceId}, ` +
+          `текущий инстанс ${RUNS_INSTANCE_ID} — пропущено (KI-387)`,
+      );
+
+      return;
+    }
+
     const run = await this.findRunAsync(runId);
 
     if (!run) {

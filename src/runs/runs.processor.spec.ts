@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Job } from 'bullmq';
 import { DRIZZLE, type Database } from '../db/db.module.js';
@@ -6,7 +7,10 @@ import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import type { ExecuteRunJobDto, RunEventDto } from './dto/index.js';
 import { RunEventsService } from './run-events.service.js';
 import { RunsProcessor } from './runs.processor.js';
-import { WORKFLOW_RUNS_WORKER_OPTIONS } from './runs.worker-options.js';
+import {
+  RUNS_INSTANCE_ID,
+  WORKFLOW_RUNS_WORKER_OPTIONS,
+} from './runs.worker-options.js';
 
 /** Стабильный uuid запуска. */
 const RUN_ID = '22222222-2222-4222-8222-222222222222';
@@ -304,12 +308,54 @@ describe('RunsProcessor', () => {
           concurrency: WORKFLOW_RUNS_WORKER_OPTIONS.concurrency,
           lockDuration: WORKFLOW_RUNS_WORKER_OPTIONS.lockDuration,
           maxStalledCount: WORKFLOW_RUNS_WORKER_OPTIONS.maxStalledCount,
+          // KI-387: воркер обязан слушать тот же префикс, что и очередь.
+          prefix: WORKFLOW_RUNS_WORKER_OPTIONS.prefix,
         }),
       );
+      expect(WORKFLOW_RUNS_WORKER_OPTIONS.prefix).toBe('workflow-runs');
     });
 
     it('concurrency больше 1 — очередь не блокируется одним заданием', () => {
       expect(WORKFLOW_RUNS_WORKER_OPTIONS.concurrency).toBeGreaterThan(1);
+    });
+  });
+
+  describe('изоляция инстансов (KI-387)', () => {
+    it('пропускает задание чужого instanceId: лог + return без обращения к БД', async () => {
+      const warn = vi
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+
+      await expect(
+        processor.process(job({ runId: RUN_ID, instanceId: 'other-instance' })),
+      ).resolves.toBeUndefined();
+
+      // Задание чужого инстанса не должно трогать чужой запуск в БД и не
+      // должно выполнять граф: именно это привело к списанию 80 ₽ в R7.2.
+      expect(db.select).not.toHaveBeenCalled();
+      expect(executor.executeAsync).not.toHaveBeenCalled();
+      expect(events.publishAsync).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('KI-387'));
+    });
+
+    it('выполняет задание, созданное этим же инстансом', async () => {
+      await expect(
+        processor.process(job({ runId: RUN_ID, instanceId: RUNS_INSTANCE_ID })),
+      ).resolves.toBeUndefined();
+
+      expect(executor.executeAsync).toHaveBeenCalledWith(
+        RUN_ID,
+        expect.objectContaining({ nodes: expect.any(Array) }),
+      );
+    });
+
+    it('выполняет задание без instanceId (обратная совместимость)', async () => {
+      // Задания, поставленные до R7.2b, маркера не несут — их нельзя терять.
+      await expect(
+        processor.process(job({ runId: RUN_ID })),
+      ).resolves.toBeUndefined();
+
+      expect(executor.executeAsync).toHaveBeenCalled();
     });
   });
 

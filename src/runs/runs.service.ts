@@ -17,6 +17,7 @@ import {
 } from '../db/schema.js';
 import type { CreateRunDto, ExecuteRunJobDto } from './dto/index.js';
 import { EXECUTE_RUN_JOB, WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
+import { RUNS_INSTANCE_ID } from './runs.worker-options.js';
 
 /**
  * Публичное представление запуска workflow, которое отдаёт API.
@@ -90,7 +91,12 @@ export class RunsService {
       .returning();
 
     try {
-      await this.queue.add(EXECUTE_RUN_JOB, { runId: run.id });
+      // KI-387: маркер инстанса в payload. Воркер чужого инстанса пропустит
+      // задание, даже если оба процесса смотрят в одну очередь Redis.
+      await this.queue.add(EXECUTE_RUN_JOB, {
+        runId: run.id,
+        instanceId: RUNS_INSTANCE_ID,
+      });
     } catch (error: unknown) {
       const reason = error instanceof Error ? error.message : String(error);
 

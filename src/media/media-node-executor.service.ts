@@ -3,7 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import { z } from 'zod';
 import type { NodeDto } from '../engine/dto/index.js';
 import { NodeDataValidationException } from '../engine/node-executors.js';
-import { CostBudgetService } from '../runs/cost-budget.service.js';
+import {
+  calculateMediaCostEstimate,
+  CostBudgetService,
+} from '../runs/cost-budget.service.js';
 import {
   DEFAULT_IMAGE_TOOL_MODELS,
   IMAGE_TOOL_OPERATIONS,
@@ -288,11 +291,21 @@ export class MediaNodeExecutor {
     const params = await this.readParamsAsync(node, model);
     const mediaType = this.readMediaType(node);
 
-    // R7.1 (KI-048): бюджет запуска проверяется ДО платного вызова. Оценка —
-    // цена модели из каталога (CreativeLab тарифицирует в рублях); если модель
-    // неизвестна каталогу, оценка нулевая — превышение всё равно ловится по
-    // уже потраченному.
-    await this.assertBudgetAsync(runId, await this.findModelPriceRubAsync(node, model));
+    // R7.1 (KI-048) + R7.2b (KI-384): бюджет проверяется ДО платного вызова.
+    // Оценка считается по блоку `pricing` и параметрам вызова, а не только по
+    // устаревшему `price`; если модель неизвестна каталогу, оценка нулевая —
+    // превышение всё равно ловится по уже потраченному.
+    const modelInfo = await this.findModelAsync(node, model);
+    const estimateRub =
+      modelInfo === null
+        ? 0
+        : calculateMediaCostEstimate(modelInfo, {
+            ...node.data,
+            ...params,
+            prompt,
+          });
+
+    await this.assertBudgetAsync(runId, estimateRub);
 
     // Ключ стабилен при повторе: тот же runId и nodeId на job-level retry
     // (KI-040) не создадут вторую платную генерацию.
@@ -384,12 +397,21 @@ export class MediaNodeExecutor {
       `Media-инструмент ${node.id}: operation=${data.operation}, model=${target.model.id}, inputLen=${inputUrl.length}`,
     );
 
-    // Бюджет проверяется до платного вызова (KI-048). Оценка — цена модели из
-    // каталога в рублях; CostBudgetService сам нормализует её в USD.
-    await this.assertBudgetAsync(runId, target.model.price);
+    const toolParams = this.readToolParams(node, data);
+
+    // Бюджет проверяется до платного вызова (KI-048). Оценка — тариф модели
+    // (`pricing`) по параметрам вызова (KI-384); CostBudgetService сам
+    // нормализует рубли в USD.
+    await this.assertBudgetAsync(
+      runId,
+      calculateMediaCostEstimate(target.model, {
+        ...node.data,
+        ...toolParams,
+      }),
+    );
 
     const task = await target.provider.applyToolAsync(inputUrl, data.operation, {
-      ...this.readToolParams(node, data),
+      ...toolParams,
       model: target.model.id,
       // Ключ стабилен при повторе: тот же runId и nodeId на job-level retry
       // (KI-040) не создадут вторую платную задачу.
@@ -590,10 +612,22 @@ export class MediaNodeExecutor {
         `promptLen=${request.prompt.length}, params=${Object.keys(params).join(',') || 'нет'}`,
     );
 
-    // KI-048: бюджет проверяется ДО платного вызова. Оценка — цена модели из
-    // каталога (CreativeLab тарифицирует в рублях); если модель каталогу
-    // неизвестна, оценка нулевая — превышение всё равно ловится по потраченному.
-    await this.assertBudgetAsync(runId, resolved.info?.price ?? 0);
+    // KI-048 + KI-384: бюджет проверяется ДО платного вызова. Оценка считается
+    // по тарифу `pricing` и фактическим параметрам вызова (длительность,
+    // разрешение, длина текста), а не по устаревшему `price`. Если модель
+    // каталогу неизвестна, оценка нулевая — превышение всё равно ловится по
+    // потраченному.
+    const estimateRub =
+      resolved.info === null
+        ? 0
+        : calculateMediaCostEstimate(resolved.info, {
+            ...node.data,
+            ...params,
+            prompt: request.prompt,
+            text: request.prompt,
+          });
+
+    await this.assertBudgetAsync(runId, estimateRub);
 
     const task = await this.registry.createTaskAsync({
       model: resolved.id,
@@ -1002,17 +1036,20 @@ export class MediaNodeExecutor {
   }
 
   /**
-   * Возвращает цену модели из каталога (оценка стоимости вызова для бюджета).
+   * Находит модель в каталогах провайдеров — для оценки стоимости вызова.
+   *
+   * Возвращает именно описание модели, а не цену: бюджету нужен весь блок
+   * `pricing` (KI-384), а не устаревшее поле `price`.
    *
    * @param node - узел графа (для лога)
    * @param modelId - id модели
-   * @returns цену в рублях; `0`, если модель не объявлена ни одним провайдером
+   * @returns описание модели либо `null`, если её не объявил ни один провайдер
    *   (оценка тогда нулевая — превышение ловится по уже потраченному)
    */
-  private async findModelPriceRubAsync(
+  private async findModelAsync(
     node: NodeDto,
     modelId: string,
-  ): Promise<number> {
+  ): Promise<MediaModelInfo | null> {
     const configured = this.providers.filter((provider) => provider.isConfigured);
 
     for (const provider of configured) {
@@ -1020,7 +1057,7 @@ export class MediaNodeExecutor {
       const model = models.find((candidate) => candidate.id === modelId);
 
       if (model) {
-        return model.price;
+        return model;
       }
     }
 
@@ -1028,7 +1065,7 @@ export class MediaNodeExecutor {
       `Media-узел ${node.id}: модель ${modelId} не найдена в каталоге — оценка стоимости 0`,
     );
 
-    return 0;
+    return null;
   }
 
   /**

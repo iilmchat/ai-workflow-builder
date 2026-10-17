@@ -61,6 +61,108 @@ export const MediaRuleSchema = z
   .object({ type: z.string() })
   .passthrough();
 
+/**
+ * Схема одного тарифа матрицы (`pricing.matrix` / `pricing.tiers`, KI-384).
+ *
+ * `condition` — набор параметров вызова, при которых действует `cost`
+ * (например, `{ resolution: '720p', variant: 'base' }`). Поля без `condition`
+ * считаются тарифом по умолчанию.
+ */
+export const MediaPricingTierSchema = z
+  .object({
+    cost: z.number().nonnegative(),
+    condition: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough();
+
+/**
+ * Схема доплаты матрицы (`pricing.plus`, KI-384).
+ *
+ * Простая форма — `{ rate, param, free? }` (доп. reference сверх `free`). Но
+ * upstream использует `plus` и как «составную» доплату с `base`/`unitsSum`/
+ * `tierRates` без `rate`/`param` (`krea-3`, `minimax-h3-max`, `seedance-2-5`),
+ * поэтому все поля необязательны: незнакомая доплата не должна ронять разбор
+ * всего каталога (RULES 1.17).
+ */
+export const MediaPricingPlusSchema = z
+  .object({
+    rate: z.number().nonnegative().optional(),
+    param: z.string().optional(),
+    free: z.number().nonnegative().optional(),
+  })
+  .passthrough();
+
+/**
+ * Схема блока `pricing` каталога CreativeLab (KI-384).
+ *
+ * Upstream отдаёт **дискриминированный по `type`** блок, а не скалярные поля:
+ * - `{ type: 'fixed', cost: 960 }` — фиксированная цена (`glabs-veo-3`);
+ * - `{ type: 'per_second', baseRates: { '720p': 33.6 }, baseBy: 'resolution',
+ *   unitParam: 'duration' }` — цена за секунду, ставка по параметру
+ *   (`kling-v3`, `wan-2.5`);
+ * - `{ type: 'per_character', ratePer1K: 60 }` — цена за 1000 символов (`tts2`);
+ * - `{ type: 'matrix', tiers: [{ cost, condition }] }` — таблица тарифов
+ *   (`recraftv4`, `wan-3.0`);
+ * - `{ type: 'per_resolution', rates: { '2K': 8 }, rateBy: 'resolution' }` —
+ *   ставка по параметру (`qwen-image-2.1`);
+ * - `{ type: 'expr', units: ['duration'], tierRates: { ... }, tierBy }` —
+ *   ставка × длительность (`vidu-q4`).
+ *
+ * Упрощённые поля `fixed`/`per_second` тоже принимаются: заказчик KI-384
+ * описывал блок именно так, и провайдеры R7.3 вправе отдавать его короче.
+ * `passthrough()` сохраняет незнакомые поля — каталог меняется без нашего
+ * релиза (RULES 1.17).
+ */
+export const MediaPricingSchema = z
+  .object({
+    /** Вид тарификации из upstream (`fixed`, `per_second`, `matrix`, ...). */
+    type: z.string().optional(),
+    /** Фиксированная цена вызова, ₽ (упрощённая форма). */
+    fixed: z.number().nonnegative().optional(),
+    /** Фиксированная цена вызова, ₽ (форма upstream `type: 'fixed'`). */
+    cost: z.number().nonnegative().optional(),
+    /** Цена за секунду, ₽ (упрощённая форма). */
+    per_second: z.number().nonnegative().optional(),
+    /** Цена за 1000 символов текста (`tts2`, вложенная форма). */
+    per_character: z
+      .object({ ratePer1K: z.number().nonnegative() })
+      .passthrough()
+      .optional(),
+    /**
+     * Цена за 1000 символов текста в **реальном** ответе upstream: у `tts2`
+     * блок выглядит как `{ type: 'per_character', ratePer1K: 60 }`, без
+     * вложенного объекта. Обе формы поддерживаются (KI-384).
+     */
+    ratePer1K: z.number().nonnegative().optional(),
+    /** Таблица тарифов (форма upstream). */
+    matrix: z.array(MediaPricingTierSchema).optional(),
+    /** Таблица тарифов (синоним `matrix` в части ответов upstream). */
+    tiers: z.array(MediaPricingTierSchema).optional(),
+    /** Доплаты к тарифу (например, за дополнительные референсы). */
+    plus: z.array(MediaPricingPlusSchema).optional(),
+    /** Базовые ставки per_second по значению `baseBy` (`{ '': 32 }`). */
+    baseRates: z.record(z.string(), z.number()).optional(),
+    /** Параметр, по которому выбирается ставка `baseRates` (`resolution`). */
+    baseBy: z.string().optional(),
+    /** Параметр-множитель количества (`duration`). */
+    unitParam: z.string().optional(),
+    /** Ставки `per_resolution` по значению `rateBy`. */
+    rates: z.record(z.string(), z.number()).optional(),
+    /** Параметр, по которому выбирается ставка `rates` (`resolution`). */
+    rateBy: z.string().optional(),
+    /** Ставки `expr` по значению `tierBy`. */
+    tierRates: z.record(z.string(), z.number()).optional(),
+    /** Параметр, по которому выбирается ставка `tierRates`. */
+    tierBy: z.string().optional(),
+    /**
+     * Единицы `expr`: что умножается на ставку. Обычно `['duration']`, но
+     * upstream отдаёт и объекты (`flux-2-pro`: `[{ key: 'width', scale }]`),
+     * поэтому тип свободный — интерпретирует его калькулятор.
+     */
+    units: z.array(z.unknown()).optional(),
+  })
+  .passthrough();
+
 /** Схема одной модели. */
 export const MediaModelSchema = z.object({
   id: z.string(),
@@ -72,6 +174,11 @@ export const MediaModelSchema = z.object({
   price_unit: z.string().optional(),
   price_input: z.number().nonnegative().optional(),
   price_input_unit: z.string().optional(),
+  /**
+   * Честный тариф upstream (KI-384). У части моделей (`sound-effect`) блока
+   * нет вовсе, поэтому поле необязательно; `null` тоже допустим.
+   */
+  pricing: MediaPricingSchema.nullish(),
   moderation: z.enum(['auto', 'strict']).default('auto'),
   prompt: z.enum(['required', 'optional', 'none']).default('required'),
   params: z.array(MediaParamSchema).default([]),

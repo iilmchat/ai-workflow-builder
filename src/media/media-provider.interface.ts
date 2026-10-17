@@ -119,6 +119,98 @@ export interface MediaRule {
 }
 
 /**
+ * Условие тарифа матрицы: значения параметров вызова, при которых он действует.
+ *
+ * Например, `{ resolution: '720p', variant: 'base' }`. Значения приходят из
+ * jsonb/каталога, поэтому не типизированы уже — сравнение идёт по строковому
+ * представлению (`'720p'` и `720` различаются, как и в upstream).
+ */
+export interface MediaPricingCondition {
+  /** Параметр вызова → ожидаемое значение. */
+  [key: string]: unknown;
+}
+
+/** Один тариф матрицы `pricing.matrix`/`pricing.tiers` (KI-384). */
+export interface MediaPricingTier {
+  /** Стоимость по тарифу, ₽ (за вызов либо за единицу — см. `unitParam`). */
+  cost: number;
+  /** Условия применения; без условия тариф считается default-ом. */
+  condition?: MediaPricingCondition;
+  /** Прочие поля тарифа от upstream. */
+  [key: string]: unknown;
+}
+
+/**
+ * Доплата матрицы `pricing.plus` (например, за дополнительные референсы).
+ *
+ * `rate`/`param` необязательны: upstream кладёт в `plus` и составные доплаты
+ * (`base`/`unitsSum`/`tierRates`), которые бюджет пока не интерпретирует —
+ * калькулятор пропускает их, а не падает.
+ */
+export interface MediaPricingPlus {
+  /** Цена за единицу сверх `free`, ₽. */
+  rate?: number;
+  /** Параметр вызова, задающий количество. */
+  param?: string;
+  /** Сколько единиц входит в базовый тариф бесплатно. */
+  free?: number;
+  /** Прочие поля доплаты от upstream. */
+  [key: string]: unknown;
+}
+
+/**
+ * Блок тарификации модели из каталога (KI-384).
+ *
+ * До R7.2b `pricing` не читался вовсе, а бюджет (KI-048) оценивался по полю
+ * `price`, которое расходится с фактическим списанием (`glabs-veo-3`: 480 vs
+ * 960; `tts2`: 0 vs 2.04 ₽). Поля повторяют ответ upstream: часть из них
+ * приходит в camelCase (`baseRates`, `ratePer1K`, `unitParam`), поэтому
+ * маппер их не переименовывает. Все поля необязательны — набор зависит от
+ * `type`.
+ */
+export interface MediaPricing {
+  /** Вид тарификации (`fixed`, `per_second`, `per_character`, `matrix`, ...). */
+  type?: string;
+  /** Фиксированная цена вызова, ₽ (упрощённая форма). */
+  fixed?: number;
+  /** Фиксированная цена вызова, ₽ (форма upstream `type: 'fixed'`). */
+  cost?: number;
+  /** Цена за секунду, ₽ (упрощённая форма). */
+  per_second?: number;
+  /** Цена за 1000 символов текста (`tts2`, вложенная форма). */
+  per_character?: { ratePer1K: number; [key: string]: unknown };
+  /**
+   * Цена за 1000 символов текста в реальном ответе upstream (`tts2`:
+   * `{ type: 'per_character', ratePer1K: 60 }`). Поддерживаются обе формы.
+   */
+  ratePer1K?: number;
+  /** Таблица тарифов. */
+  matrix?: MediaPricingTier[];
+  /** Таблица тарифов (синоним `matrix`). */
+  tiers?: MediaPricingTier[];
+  /** Доплаты к тарифу. */
+  plus?: MediaPricingPlus[];
+  /** Базовые ставки per_second по значению `baseBy` (`{ '': 32 }`). */
+  baseRates?: Record<string, number>;
+  /** Параметр, по которому выбирается ставка `baseRates`. */
+  baseBy?: string;
+  /** Параметр-множитель количества (`duration`). */
+  unitParam?: string;
+  /** Ставки `per_resolution` по значению `rateBy`. */
+  rates?: Record<string, number>;
+  /** Параметр, по которому выбирается ставка `rates`. */
+  rateBy?: string;
+  /** Ставки `expr` по значению `tierBy`. */
+  tierRates?: Record<string, number>;
+  /** Параметр, по которому выбирается ставка `tierRates`. */
+  tierBy?: string;
+  /** Единицы `expr`: строка `'duration'` либо объект `{ key, scale }`. */
+  units?: unknown[];
+  /** Прочие поля тарифа от upstream. */
+  [key: string]: unknown;
+}
+
+/**
  * Публичное описание media-модели для UI.
  *
  * Имена полей — camelCase (RULES 4.23): snake_case остаётся только в DTO
@@ -149,7 +241,15 @@ export interface MediaModelInfo {
   /** Ставка за вход (например, per_character); null — тариф за генерацию. */
   priceInput: number | null;
   /** За что берётся priceInput («per_character», «per_1k_tokens»); null — не применимо. */
-  priceInputUnit: string | null;  
+  priceInputUnit: string | null;
+  /**
+   * Честный тариф upstream (KI-384); `undefined`, если блока нет.
+   *
+   * Нужен бюджету запуска: `price` — устаревшая оценка, а фактическое списание
+   * считается по `pricing` и параметрам вызова
+   * (`calculateMediaCostEstimate`).
+   */
+  pricing?: MediaPricing;
   /** Режим модерации промпта. */
   moderation: 'auto' | 'strict';
   /** Обязательность промпта. */

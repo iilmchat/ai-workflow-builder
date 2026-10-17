@@ -15,6 +15,9 @@ describe('WorkerEnvSchema (KI-065, KI-032)', () => {
       WORKFLOW_RUNS_LOCK_DURATION_MS: 300_000,
       WORKFLOW_RUNS_MAX_STALLED_COUNT: 2,
       WORKFLOW_RUNS_STALE_THRESHOLD_MS: 300_000,
+      // KI-387: изоляция очередей между инстансами.
+      BULLMQ_PREFIX: 'workflow-runs',
+      REDIS_QUEUE_DB: 0,
     });
   });
 
@@ -31,6 +34,8 @@ describe('WorkerEnvSchema (KI-065, KI-032)', () => {
       WORKFLOW_RUNS_LOCK_DURATION_MS: 60_000,
       WORKFLOW_RUNS_MAX_STALLED_COUNT: 0,
       WORKFLOW_RUNS_STALE_THRESHOLD_MS: 120_000,
+      BULLMQ_PREFIX: 'workflow-runs',
+      REDIS_QUEUE_DB: 0,
     });
   });
 
@@ -56,6 +61,48 @@ describe('WorkerEnvSchema (KI-065, KI-032)', () => {
     expect(
       WorkerEnvSchema.safeParse({ WORKFLOW_RUNS_STALE_THRESHOLD_MS: '5000' }).success,
     ).toBe(false);
+  });
+});
+
+describe('изоляция очередей BullMQ (R7.2b, KI-387)', () => {
+  it('BULLMQ_PREFIX по умолчанию и из окружения', () => {
+    expect(WorkerEnvSchema.parse({}).BULLMQ_PREFIX).toBe('workflow-runs');
+    expect(
+      WorkerEnvSchema.parse({ BULLMQ_PREFIX: 'workflow-runs-dev' }).BULLMQ_PREFIX,
+    ).toBe('workflow-runs-dev');
+  });
+
+  it('пустой BULLMQ_PREFIX уходит в дефолт (KI-084)', () => {
+    expect(WorkerEnvSchema.parse({ BULLMQ_PREFIX: '' }).BULLMQ_PREFIX).toBe(
+      'workflow-runs',
+    );
+  });
+
+  it('REDIS_QUEUE_DB парсится в число и ограничен 0..15', () => {
+    expect(WorkerEnvSchema.parse({}).REDIS_QUEUE_DB).toBe(0);
+    expect(WorkerEnvSchema.parse({ REDIS_QUEUE_DB: '3' }).REDIS_QUEUE_DB).toBe(3);
+    expect(WorkerEnvSchema.safeParse({ REDIS_QUEUE_DB: '16' }).success).toBe(false);
+    expect(WorkerEnvSchema.safeParse({ REDIS_QUEUE_DB: '-1' }).success).toBe(false);
+    expect(WorkerEnvSchema.safeParse({ REDIS_QUEUE_DB: 'abc' }).success).toBe(false);
+  });
+
+  it('INSTANCE_ID опционален, пустая строка — «не задан»', () => {
+    expect(WorkerEnvSchema.parse({}).INSTANCE_ID).toBeUndefined();
+    expect(WorkerEnvSchema.parse({ INSTANCE_ID: '' }).INSTANCE_ID).toBeUndefined();
+    expect(WorkerEnvSchema.parse({ INSTANCE_ID: 'dev' }).INSTANCE_ID).toBe('dev');
+  });
+
+  it('переменные попадают в общее окружение EnvSchema', () => {
+    const parsed = EnvSchema.parse({
+      ...baseEnv,
+      BULLMQ_PREFIX: 'workflow-runs-smoke',
+      REDIS_QUEUE_DB: '2',
+      INSTANCE_ID: 'smoke',
+    });
+
+    expect(parsed.BULLMQ_PREFIX).toBe('workflow-runs-smoke');
+    expect(parsed.REDIS_QUEUE_DB).toBe(2);
+    expect(parsed.INSTANCE_ID).toBe('smoke');
   });
 });
 
