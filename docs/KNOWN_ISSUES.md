@@ -6218,6 +6218,52 @@ MediaModelInfo, engine-DTO
 - **Связанные:** KI-264, KI-275, R7.5.
 
 ---
+
+### KI-397 — Viewer-UI не скрывает Save/Run
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `web/src/components/TopBar.tsx`, `web/src/stores/workflow.ts`
+- **Описание:** Backend корректно блокирует PATCH/POST run для viewer (404),
+  но в `TopBar` остаются активными кнопки «Сохранить» и «Запустить».
+- **Решение:** добавить признак роли в стор (из `CollaboratorResponse` или
+  `GET /workflow/:id.accessRole`), скрывать/disable действия для viewer.
+- **Связанные:** KI-197.
+
+---
+
+### KI-398 — `GET /workflow` не включает collaborative workflows
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `src/workflow/workflow.service.ts` (`findAllAsync`)
+- **Описание:** Пользователь видит в списке только свои workflow. Чтобы
+  открыть чужой workflow как участник — только прямая ссылка `?workflowId=`.
+- **Решение:** расширить `findAllAsync` через `OR EXISTS` (как в
+  `buildAccessFilter`); отдавать `accessRole` в ответе.
+- **Связанные:** KI-197, KI-397.
+
+---
+
+### KI-399 — Collaborators-ответ без владельца
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `src/workflow/workflow.service.ts`,
+  `src/workflow/dto/collaborator.dto.ts`
+- **Описание:** DESIGN § 3.6 обещает «owner + participants», API отдаёт
+  только участников (`workflow_collaborators`). UI определяет owner по
+  `workflow.userId`.
+- **Решение:** добавить owner-строку с `role='owner'` (расширить enum) или
+  зафиксировать в DESIGN, что owner приходит из `workflow.userId`.
+- **Связанные:** DESIGN v0.9 § 3.6.
+
+---
+
+### KI-400 — Гонка duplicate-invite → 500
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `src/workflow/workflow.service.ts` (`inviteCollaboratorAsync`)
+- **Описание:** Проверка «уже участвует» и INSERT не в транзакции. Два
+  параллельных запроса могут оба пройти pre-check, второй упадёт на PK
+  constraint (500) вместо 409.
+- **Решение:** ловить unique_violation (23505) → throw `ConflictException`.
+- **Связанные:** KI-197.
+
+---
 ## Сводка по статусам
 
 | Статус | Кол-во |
@@ -6227,9 +6273,9 @@ MediaModelInfo, engine-DTO
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 238 |
+| Open | 242 |
 | Won't Fix | 1 |
-| **Всего** | **384** |
+| **Всего** | **388** |
 
 ---
 
