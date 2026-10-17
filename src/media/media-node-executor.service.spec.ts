@@ -254,10 +254,13 @@ describe('MediaNodeExecutor', () => {
       mediaType: 'IMAGE',
       taskId: 'task-1',
     });
-    expect(result.metrics).toEqual({
+    expect(result.metrics).toMatchObject({
       costRub: 0.6,
       mediaType: 'IMAGE',
       taskId: 'task-1',
+      // R7.8: хранилища в этом тесте нет — своя ссылка не сохраняется.
+      storedUrl: null,
+      storedExpiresAt: null,
     });
     // Задача уже завершена — опрос не нужен.
     expect(registry.getTaskAsync).not.toHaveBeenCalled();

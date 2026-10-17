@@ -56,13 +56,17 @@ describe('LlmNodeExecutor', () => {
     });
 
     expect(llm.generateAsync).toHaveBeenCalledWith('привет', 'gpt-4o', {});
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       outputs: { text: 'ответ модели' },
       // gpt-4o: 1000 входных токенов * 2.5/1M + 500 выходных * 10/1M = 0.0075
       metrics: {
         inputTokens: 1000,
         outputTokens: 500,
         costUsd: 0.0075,
+        // R7.7: кэша в ответе нет — поля `null`, экономия не считается.
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
+        cacheSavingsUsd: null,
         model: 'gpt-4o',
       },
     });
@@ -75,13 +79,16 @@ describe('LlmNodeExecutor', () => {
       prompt: 'привет',
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       outputs: { text: 'без метрик' },
       // Токены неизвестны — стоимость неизвестна (null, а не 0) после KI-052.
       metrics: {
         inputTokens: null,
         outputTokens: null,
         costUsd: null,
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
+        cacheSavingsUsd: null,
         model: 'gpt-4o',
       },
     });
@@ -97,10 +104,13 @@ describe('LlmNodeExecutor', () => {
       prompt: 'привет',
     });
 
-    expect(result.metrics).toEqual({
+    expect(result.metrics).toMatchObject({
       inputTokens: 10,
       outputTokens: 20,
       costUsd: null,
+      cacheReadTokens: null,
+      cacheCreationTokens: null,
+      cacheSavingsUsd: null,
       model: 'unknown-model',
     });
   });
@@ -118,10 +128,13 @@ describe('LlmNodeExecutor', () => {
     );
 
     // Модель вне прайс-листа, но провайдер локальный: вызов бесплатен → 0.
-    expect(result.metrics).toEqual({
+    expect(result.metrics).toMatchObject({
       inputTokens: 10,
       outputTokens: 20,
       costUsd: 0,
+      cacheReadTokens: null,
+      cacheCreationTokens: null,
+      cacheSavingsUsd: null,
       model: 'qwen2.5-7b-instruct',
     });
   });

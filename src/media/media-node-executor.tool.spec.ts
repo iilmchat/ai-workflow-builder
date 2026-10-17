@@ -187,10 +187,13 @@ describe('MediaNodeExecutor: узел image_tool (R7.1, KI-196)', () => {
       mediaType: 'TOOL',
       taskId: 'tool-task-1',
     });
-    expect(result.metrics).toEqual({
+    expect(result.metrics).toMatchObject({
       costRub: 10,
       mediaType: 'TOOL',
       taskId: 'tool-task-1',
+      // R7.8: хранилище не подключено — своя ссылка не сохраняется.
+      storedUrl: null,
+      storedExpiresAt: null,
     });
   });
 

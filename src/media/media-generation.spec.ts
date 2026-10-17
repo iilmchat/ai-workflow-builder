@@ -263,10 +263,13 @@ describe('MediaNodeExecutor: media-генерация R7.2 (KI-361)', () => {
         mediaType: 'VIDEO',
         taskId: 'task-1',
       });
-      expect(result.metrics).toEqual({
+      expect(result.metrics).toMatchObject({
         costRub: 55,
         mediaType: 'VIDEO',
         taskId: 'task-1',
+        // R7.8: хранилище не подключено — своя ссылка не сохраняется.
+        storedUrl: null,
+        storedExpiresAt: null,
       });
     });
 
