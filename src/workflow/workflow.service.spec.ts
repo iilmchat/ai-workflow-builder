@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { Param } from 'drizzle-orm';
+import { Param, SQL } from 'drizzle-orm';
 import type { Database } from '../db/db.module.js';
 import { DRIZZLE } from '../db/db.module.js';
 import { workflows, type Workflow } from '../db/schema.js';
@@ -93,11 +93,30 @@ function renderSQL(node: unknown): string {
     return String(node);
   }
 
-  const wrapper = node as { name?: unknown; table?: unknown; queryChunks?: unknown[] };
+  const wrapper = node as {
+    name?: unknown;
+    table?: unknown;
+    queryChunks?: unknown[];
+    getSQL?: () => unknown;
+  };
 
   // Колонка: у чанка есть имя и таблица.
   if (typeof wrapper.name === 'string' && wrapper.table) {
     return `"${tableName(wrapper.table)}"."${wrapper.name}"`;
+  }
+
+  // Подзапрос (PgSelectBase) в `exists(...)`/`inArray(...)`: у него нет
+  // `queryChunks`, зато есть `getSQL()`. Отличаем его по имени конструктора:
+  // у `SQL`/`StringChunk`/колонок `getSQL()` возвращает `this` или обёртку над
+  // собой — общий признак `getSQL` дал бы бесконечную рекурсию.
+  const constructorName = (node as { constructor?: { name?: string } }).constructor?.name ?? '';
+
+  if (
+    !(node instanceof SQL) &&
+    constructorName.startsWith('PgSelect') &&
+    typeof wrapper.getSQL === 'function'
+  ) {
+    return renderSQL(wrapper.getSQL());
   }
 
   // Param оборачивает значение параметра запроса.
@@ -138,18 +157,28 @@ function paramsOf(node: unknown): unknown[] {
     return [node.value];
   }
 
-  const chunks = (node as { queryChunks?: unknown[] }).queryChunks;
+  const wrapper = node as { queryChunks?: unknown[]; getSQL?: () => unknown };
 
-  return Array.isArray(chunks) ? chunks.flatMap(paramsOf) : [];
+  const constructorName = (node as { constructor?: { name?: string } }).constructor?.name ?? '';
+
+  if (
+    !(node instanceof SQL) &&
+    constructorName.startsWith('PgSelect') &&
+    typeof wrapper.getSQL === 'function'
+  ) {
+    return paramsOf(wrapper.getSQL());
+  }
+
+  return Array.isArray(wrapper.queryChunks) ? wrapper.queryChunks.flatMap(paramsOf) : [];
 }
 
-/** Возвращает SQL-строку условия WHERE, переданного в мок. */
-function whereSQL(spy: ReturnType<typeof vi.fn>, call = 0): string {
+/** Возвращает SQL-строку последнего условия WHERE, переданного в мок. */
+function whereSQL(spy: ReturnType<typeof vi.fn>, call = spy.mock.calls.length - 1): string {
   return renderSQL(spy.mock.calls[call][0]).trim();
 }
 
-/** Возвращает значения параметров условия WHERE, переданного в мок. */
-function whereParams(spy: ReturnType<typeof vi.fn>, call = 0): unknown[] {
+/** Возвращает значения параметров последнего условия WHERE, переданного в мок. */
+function whereParams(spy: ReturnType<typeof vi.fn>, call = spy.mock.calls.length - 1): unknown[] {
   return paramsOf(spy.mock.calls[call][0]);
 }
 
@@ -289,11 +318,18 @@ describe('WorkflowService', () => {
       expect(result).toBeNull();
     });
 
-    it('с userId добавляет проверку принадлежности', async () => {
+    it('с userId учитывает владельца и участников (R7.6)', async () => {
       await service.findOneAsync(WORKFLOW_ID, 'user-1');
 
-      expect(whereSQL(selectChain.where)).toContain(`"workflows"."id" = ${WORKFLOW_ID}`);
-      expect(whereSQL(selectChain.where)).toContain('"workflows"."user_id" = user-1');
+      const sql = whereSQL(selectChain.where);
+
+      expect(sql).toContain(`"workflows"."id" = ${WORKFLOW_ID}`);
+      expect(sql).toContain('"workflows"."user_id" = user-1');
+      // R7.6: доступ даёт и строка участия — EXISTS по workflow_collaborators.
+      // Сам подзапрос в мок-цепочке не рендерится (её строит фейковый select),
+      // поэтому его состав проверяет workflow-access.spec.ts на реальном
+      // Drizzle-билдере.
+      expect(sql).toContain('exists');
       expect(whereParams(selectChain.where)).toEqual([WORKFLOW_ID, 'user-1']);
     });
   });
@@ -327,6 +363,17 @@ describe('WorkflowService', () => {
       await service.updateAsync(WORKFLOW_ID, { name: 'Updated' }, 'user-1');
 
       expect(whereSQL(updateChain.where)).toContain('"workflows"."user_id" = user-1');
+    });
+
+    it('PATCH с userId требует роль editor (R7.6)', async () => {
+      await service.updateAsync(WORKFLOW_ID, { name: 'Updated' }, 'user-1');
+
+      const sql = whereSQL(updateChain.where);
+
+      // Владелец проходит по user_id, участник — только с ролью editor.
+      // Состав EXISTS-условия проверяет workflow-access.spec.ts.
+      expect(sql).toContain('exists');
+      expect(sql).toContain('"workflows"."user_id" = user-1');
     });
 
     it('PATCH только с name не инкрементирует version (метаданные)', async () => {
@@ -432,6 +479,14 @@ describe('WorkflowService', () => {
 
       expect(whereSQL(deleteChain.where)).toContain('"workflows"."user_id" = user-1');
       expect(whereParams(deleteChain.where)).toEqual([WORKFLOW_ID, 'user-1']);
+    });
+
+    it('DELETE остаётся только у владельца: участники не учитываются (R7.6)', async () => {
+      await service.removeAsync(WORKFLOW_ID, 'user-1');
+
+      // Даже editor не удаляет workflow, поэтому EXISTS-подзапроса здесь нет.
+      expect(whereSQL(deleteChain.where)).not.toContain('workflow_collaborators');
+      expect(whereSQL(deleteChain.where)).not.toContain('exists');
     });
 
     it('возвращает false, если ничего не удалено', async () => {

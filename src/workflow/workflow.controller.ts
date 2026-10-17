@@ -20,14 +20,19 @@ import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import type { Workflow } from '../db/schema.js';
 import {
   CreateWorkflowSchema,
+  InviteCollaboratorSchema,
   ListWorkflowsQuerySchema,
+  UpdateCollaboratorRoleSchema,
   UpdateWorkflowSchema,
   ImportWorkflowSchema,
+  type CollaboratorResponse,
   type CreateWorkflowDto,
   type ExportWorkflowDto,
   type ImportWorkflowDto,
+  type InviteCollaboratorDto,
   type ListWorkflowsQueryDto,
   type ShareTokenDto,
+  type UpdateCollaboratorRoleDto,
   type UpdateWorkflowDto,
 } from './dto/index.js';
 import { WorkflowService } from './workflow.service.js';
@@ -39,6 +44,15 @@ const UuidParamSchema = z.object({
 
 /** Валидированный path-параметр `:id`. */
 type UuidParamDto = z.infer<typeof UuidParamSchema>;
+
+/** Zod-схема path-параметров `:id` + `:userId` (участники, R7.6). */
+const CollaboratorParamSchema = z.object({
+  id: z.uuid('id должен быть валидным UUID'),
+  userId: z.uuid('userId должен быть валидным UUID'),
+});
+
+/** Валидированные path-параметры `:id` + `:userId`. */
+type CollaboratorParamDto = z.infer<typeof CollaboratorParamSchema>;
 
 /**
  * HTTP-контроллер CRUD-операций над workflow.
@@ -136,6 +150,95 @@ export class WorkflowController {
     @CurrentUser() user: JwtPayload,
   ): Promise<ExportWorkflowDto> {
     return this.workflowService.exportAsync(params.id, user.sub);
+  }
+
+  /**
+   * `GET /workflow/:id/collaborators` — участники workflow (R7.6).
+   *
+   * Список доступен владельцу и любому участнику: это чтение, viewer его тоже
+   * видит. Чужой или несуществующий workflow — 404 (KI-202).
+   *
+   * @param params - path-параметр `id` (uuid)
+   * @param user - пользователь из access-токена
+   * @returns участники, отсортированные по дате приглашения
+   * @throws NotFoundException если workflow недоступен
+   */
+  @Get(':id/collaborators')
+  async getCollaborators(
+    @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<CollaboratorResponse[]> {
+    return this.workflowService.getCollaboratorsAsync(params.id, user.sub);
+  }
+
+  /**
+   * `POST /workflow/:id/collaborators` — пригласить участника по uuid (R7.6).
+   *
+   * Только владелец: участник с ролью `editor` не может приглашать других
+   * (DESIGN v0.9 § 3.6). Владелец берётся из токена, `invitedBy` клиентом не
+   * задаётся.
+   *
+   * @param params - path-параметр `id` (uuid)
+   * @param dto - тело `{ userId, role }`, валидированное Zod
+   * @param user - пользователь из access-токена (должен быть владельцем)
+   * @returns созданное участие со статусом 201
+   * @throws NotFoundException если workflow чужой или пользователь не найден
+   * @throws BadRequestException если приглашают владельца
+   * @throws ConflictException если пользователь уже участвует
+   */
+  @Post(':id/collaborators')
+  @HttpCode(HttpStatus.CREATED)
+  async inviteCollaborator(
+    @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
+    @Body(ZodValidationPipe.create(InviteCollaboratorSchema)) dto: InviteCollaboratorDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<CollaboratorResponse> {
+    return this.workflowService.inviteCollaboratorAsync(params.id, user.sub, dto);
+  }
+
+  /**
+   * `PATCH /workflow/:id/collaborators/:userId` — сменить роль участника (R7.6).
+   *
+   * Только владелец. `userId` — из path, роль — из body.
+   *
+   * @param params - path-параметры `id` и `userId` (uuid)
+   * @param dto - тело `{ role }`, валидированное Zod
+   * @param user - пользователь из access-токена (должен быть владельцем)
+   * @returns обновлённое участие
+   * @throws NotFoundException если workflow чужой или участник не найден
+   */
+  @Patch(':id/collaborators/:userId')
+  async updateCollaboratorRole(
+    @Param(ZodValidationPipe.create(CollaboratorParamSchema)) params: CollaboratorParamDto,
+    @Body(ZodValidationPipe.create(UpdateCollaboratorRoleSchema)) dto: UpdateCollaboratorRoleDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<CollaboratorResponse> {
+    return this.workflowService.updateCollaboratorRoleAsync(
+      params.id,
+      user.sub,
+      params.userId,
+      dto,
+    );
+  }
+
+  /**
+   * `DELETE /workflow/:id/collaborators/:userId` — убрать участника (R7.6).
+   *
+   * Только владелец. Удаление участия не удаляет запуски workflow: они
+   * принадлежат графу, а не участнику.
+   *
+   * @param params - path-параметры `id` и `userId` (uuid)
+   * @param user - пользователь из access-токена (должен быть владельцем)
+   * @returns пустой ответ со статусом 204
+   * @throws NotFoundException если workflow чужой или участник не найден
+   */
+  @Delete(':id/collaborators/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeCollaborator(
+    @Param(ZodValidationPipe.create(CollaboratorParamSchema)) params: CollaboratorParamDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<void> {
+    await this.workflowService.removeCollaboratorAsync(params.id, user.sub, params.userId);
   }
 
   /**

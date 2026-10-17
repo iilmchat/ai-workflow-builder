@@ -181,6 +181,35 @@ describe('RunsService', () => {
       );
       expect(updateChain.where).toHaveBeenCalled();
     });
+
+    it('editor запускает чужой workflow (R7.6)', async () => {
+      // Фильтр доступа нашёл workflow: владелец или участник с ролью editor.
+      selectChain.limit.mockImplementation(() => [baseWorkflow]);
+
+      const result = await service.createRunAsync(
+        { workflowId: WORKFLOW_ID },
+        '33333333-3333-4333-8333-333333333333',
+      );
+
+      expect(result.workflowId).toBe(WORKFLOW_ID);
+      expect(queue.add).toHaveBeenCalled();
+    });
+
+    it('viewer не запускает workflow: фильтр editor не находит строку (R7.6)', async () => {
+      // SQL-условие роли проверяет workflow-access.spec.ts; здесь — поведение
+      // сервиса, когда фильтр не вернул ни одной строки.
+      selectChain.limit.mockImplementation(() => []);
+
+      await expect(
+        service.createRunAsync(
+          { workflowId: WORKFLOW_ID },
+          '33333333-3333-4333-8333-333333333333',
+        ),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(db.insert).not.toHaveBeenCalled();
+      expect(queue.add).not.toHaveBeenCalled();
+    });
   });
 
   describe('getRunAsync', () => {

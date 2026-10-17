@@ -127,6 +127,14 @@ export function TopBar() {
   const user = useAuthStore((state) => state.user);
   // R6.2.2: поделиться можно только сохранённым workflow.
   const currentWorkflowId = useWorkflowStore((state) => state.currentWorkflowId);
+  // R7.6: управление участниками видит только владелец. Backend всё равно
+  // отклонит инвайт от участника (404), но UI не должен предлагать действие,
+  // которое гарантированно не сработает.
+  const currentWorkflowOwnerId = useWorkflowStore(
+    (state) => state.currentWorkflowOwnerId,
+  );
+  const isWorkflowOwner =
+    user !== null && currentWorkflowOwnerId !== null && user.id === currentWorkflowOwnerId;
   // KI-195: «грязный» граф — если хэш текущего состояния не совпадает с хэшем
   // последнего сохранения/загрузки.
   const isDirty = useWorkflowStore(
@@ -707,6 +715,7 @@ export function TopBar() {
       {isShareOpen && currentWorkflowId !== null && (
         <ShareModal
           workflowId={currentWorkflowId}
+          isOwner={isWorkflowOwner}
           onClose={() => setIsShareOpen(false)}
         />
       )}

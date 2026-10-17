@@ -33,6 +33,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { ApiRunBudgetSchema, ApiRunSchema } from './api';
+import { CollaboratorSchema } from './collaborators-api';
 import { ExportWorkflowSchema } from './export-import-api';
 import { ShareTokenSchema, SharedWorkflowSchema } from './share-api';
 
@@ -65,6 +66,8 @@ interface MirrorSchema {
  * `src/llm/**` и `src/media/**` — вне scope KI-352, KI-357).
  */
 const MIRROR_SCHEMAS: Record<string, MirrorSchema> = {
+  // R7.6 (KI-197): участники workflow — новое зеркало REST-ответа.
+  CollaboratorResponse: CollaboratorSchema,
   ExportWorkflowDto: ExportWorkflowSchema,
   RunResponse: ApiRunSchema,
   // R7.1 (KI-048): бюджет запуска — новое зеркало REST-ответа.

@@ -1,9 +1,11 @@
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
+  check,
   integer,
   jsonb,
   numeric,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -121,6 +123,59 @@ export const workflows = pgTable('workflows', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Роли участников workflow (R7.6, DESIGN v0.9 § 3.6, KI-197).
+ *
+ * `viewer` — только чтение (аналог share-ссылки, но по id пользователя);
+ * `editor` — чтение + правка графа + запуск. Удаление workflow и управление
+ * участниками остаются у владельца (`workflows.user_id`), поэтому роли
+ * `owner` в таблице нет — владелец определяется по самой строке workflow.
+ */
+export const WORKFLOW_COLLABORATOR_ROLES = ['viewer', 'editor'] as const;
+
+/** Роль участника workflow (R7.6). */
+export type WorkflowCollaboratorRole = (typeof WORKFLOW_COLLABORATOR_ROLES)[number];
+
+/**
+ * workflow_collaborators — участники workflow по id пользователя (R7.6).
+ *
+ * Составной первичный ключ `(workflow_id, user_id)` не даёт пригласить одного
+ * пользователя дважды. Оба `ON DELETE CASCADE` — удаление workflow или
+ * пользователя не оставляет висячих строк. `invited_by` намеренно без
+ * каскада: пригласивший обязан существовать (в текущем продукте пользователи
+ * не удаляются, а каскад удалил бы запись участника вместе с пригласившим).
+ * CHECK на роль продублирован в БД, потому что Zod валидирует только вход
+ * API, а не прямые записи (RULES 1.17).
+ */
+export const workflowCollaborators = pgTable(
+  'workflow_collaborators',
+  {
+    workflowId: uuid('workflow_id')
+      .notNull()
+      .references(() => workflows.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    role: text('role').$type<WorkflowCollaboratorRole>().notNull(),
+    invitedAt: timestamp('invited_at', { withTimezone: true }).notNull().defaultNow(),
+    invitedBy: uuid('invited_by')
+      .notNull()
+      .references(() => users.id),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workflowId, table.userId] }),
+    check(
+      'workflow_collaborators_role_check',
+      sql`${table.role} in ('viewer', 'editor')`,
+    ),
+  ],
+);
+
+/** Строка таблицы `workflow_collaborators`. */
+export type WorkflowCollaborator = typeof workflowCollaborators.$inferSelect;
+/** Значения для INSERT в `workflow_collaborators`. */
+export type NewWorkflowCollaborator = typeof workflowCollaborators.$inferInsert;
 
 /**
  * workflow_runs — один запуск workflow. snapshot хранит копию nodes+edges

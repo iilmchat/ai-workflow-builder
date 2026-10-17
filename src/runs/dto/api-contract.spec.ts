@@ -64,6 +64,16 @@ const RUNS_SERVICE_PATH = join(SPEC_DIR, '..', 'runs.service.ts');
 /** Файл с `ShareTokenDto` и `SharedWorkflow` (`/workflow/:id/share`, `/workflow/share/:token`). */
 const SHARE_DTO_PATH = join(SPEC_DIR, '..', '..', 'workflow', 'dto', 'share-workflow.dto.ts');
 
+/** Файл с `CollaboratorResponse` (`/workflow/:id/collaborators`, R7.6). */
+const COLLABORATOR_DTO_PATH = join(
+  SPEC_DIR,
+  '..',
+  '..',
+  'workflow',
+  'dto',
+  'collaborator.dto.ts',
+);
+
 /** Файл с `RunBudgetResponse` (`GET /runs/:id/budget`, R7.1). */
 const RUN_BUDGET_DTO_PATH = join(SPEC_DIR, 'run-budget.dto.ts');
 
@@ -112,6 +122,13 @@ type DtoSource =
     kind: 'interface',
     path: SHARE_DTO_PATH,
     label: 'src/workflow/dto/share-workflow.dto.ts',
+  },
+  // R7.6 (KI-197): участник workflow — новый REST-ответ, зеркало в web —
+  // `CollaboratorSchema` (`web/src/types/collaborator.ts`).
+  CollaboratorResponse: {
+    kind: 'interface',
+    path: COLLABORATOR_DTO_PATH,
+    label: 'src/workflow/dto/collaborator.dto.ts',
   },
   ExportWorkflowDto: {
     kind: 'zod',

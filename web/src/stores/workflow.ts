@@ -462,6 +462,15 @@ export interface WorkflowState extends HistorySlice {
 
   /** id текущего workflow (null — ещё не сохранён). */
   currentWorkflowId: string | null;
+  /**
+   * id владельца текущего workflow (R7.6).
+   *
+   * Нужен ShareModal, чтобы показать управление участниками только владельцу:
+   * backend всё равно отклонит инвайт от участника (404), но UI не должен
+   * предлагать действие, которое гарантированно не сработает. `null` — workflow
+   * не сохранён или владелец ещё не пришёл в ответе API.
+   */
+  currentWorkflowOwnerId: string | null;
   /** Название текущего workflow, редактируется в верхней панели. */
   currentWorkflowName: string;
 
@@ -1558,6 +1567,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   canRedo: () => get().future.length > 0,
 
   currentWorkflowId: null,
+  currentWorkflowOwnerId: null,
   currentWorkflowName: DEFAULT_WORKFLOW_NAME,
 
   executionLevels: {},
@@ -1723,6 +1733,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       past: [],
       future: [],
       currentWorkflowId: null,
+      currentWorkflowOwnerId: null,
       currentWorkflowName: DEFAULT_WORKFLOW_NAME,
       executionLevels: {},
       selectedNodeId: null,
@@ -1899,6 +1910,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
       set({
         currentWorkflowId: saved.id,
+        currentWorkflowOwnerId: saved.userId,
         currentWorkflowName: saved.name,
         // KI-195: запомнили «чистое» состояние — индикатор в TopBar погаснет.
         lastSavedHash: computeGraphHash(nodes, edges),
@@ -1936,6 +1948,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         nodes,
         edges,
         currentWorkflowId: workflow.id,
+        currentWorkflowOwnerId: workflow.userId,
         currentWorkflowName: workflow.name,
         // KI-195: только что загруженный граф — «чистый» (иначе после F5
         // индикатор показывал бы «есть изменения»).

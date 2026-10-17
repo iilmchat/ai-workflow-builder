@@ -16,6 +16,10 @@ import {
   type WorkflowRun,
 } from '../db/schema.js';
 import type { CreateRunDto, ExecuteRunJobDto } from './dto/index.js';
+import {
+  accessibleWorkflowIdsSubquery,
+  workflowAccessFilter,
+} from '../workflow/workflow-access.js';
 import { EXECUTE_RUN_JOB, WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 import { RUNS_INSTANCE_ID } from './runs.worker-options.js';
 
@@ -57,10 +61,11 @@ export class RunsService {
    * упала, запуск компенсируется статусом `failed`, а клиент получает 500.
    *
    * @param dto - валидированный DTO с идентификатором workflow
-   * @param userId - владелец из access-токена (R6.1a): если передан, чужой
+   * @param userId - пользователь из access-токена (R6.1a): если передан, чужой
    *   workflow не запускается (404, чтобы не раскрывать существование)
    * @returns публичное представление созданного запуска
-   * @throws NotFoundException если workflow с таким id не найден или принадлежит другому пользователю
+   * @throws NotFoundException если workflow с таким id не найден, принадлежит другому пользователю
+   *   либо доступен только с ролью viewer (R7.6: запуск — право editor)
    * @throws InternalServerErrorException если не удалось поставить задание в очередь
    */
   async createRunAsync(dto: CreateRunDto, userId?: string): Promise<RunResponse> {
@@ -69,7 +74,9 @@ export class RunsService {
       .from(workflows)
       .where(
         userId
-          ? and(eq(workflows.id, dto.workflowId), eq(workflows.userId, userId))
+          // R7.6: запускать может владелец или участник с ролью editor.
+          // Viewer получает пустую выборку → 404, как чужой workflow.
+          ? workflowAccessFilter(this.db, dto.workflowId, userId, 'editor')
           : eq(workflows.id, dto.workflowId),
       )
       .limit(1);
@@ -155,13 +162,12 @@ export class RunsService {
           ? eq(workflowRuns.id, id)
           : and(
               eq(workflowRuns.id, id),
-              // Владелец запуска — владелец его workflow.
+              // Владелец запуска — владелец его workflow. R7.6: участник
+              // workflow тоже видит запуски (иначе SSE-поток editor'а,
+              // который сам же запустил граф, отвечал бы 404).
               inArray(
                 workflowRuns.workflowId,
-                this.db
-                  .select({ id: workflows.id })
-                  .from(workflows)
-                  .where(eq(workflows.userId, userId)),
+                accessibleWorkflowIdsSubquery(this.db, userId),
               ),
             ),
       )
