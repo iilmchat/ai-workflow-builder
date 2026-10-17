@@ -6264,6 +6264,68 @@ MediaModelInfo, engine-DTO
 - **Связанные:** KI-197.
 
 ---
+
+### KI-401 — `vector_upsert` неидемпотентен
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `src/vector/vector-store.service.ts`,
+  `src/engine/node-executors.ts`
+- **Описание:** Повторный Run добавляет новую строку в ту же коллекцию.
+  Дедупликации по content-hash нет — дубли чанков в `workflow_vectors`.
+- **Решение:** `content_hash` + unique partial index ИЛИ режим
+  replace-by-collection (TRUNCATE + INSERT).
+- **Связанные:** KI-128, R7.4a.
+
+---
+
+### KI-402 — каталог embedding-моделей не формализован
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `src/llm/llm-provider.factory.ts`,
+  `src/llm/llm-registry.service.ts`
+- **Описание:** `text-embedding-3-small` с префиксом `openai/` у RouterAI,
+  но другие провайдеры (GPTunnel, DeepSeek, Yandex) не проверялись.
+  `resolveEmbeddingModel` знает только RouterAI.
+- **Решение:** таблица embedding-моделей с alias по провайдеру.
+- **Связанные:** KI-128, KI-174.
+
+---
+
+### KI-403 — фильтрованный HNSW recall на масштабе
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `src/db/schema.ts`, `src/vector/vector-store.service.ts`
+- **Описание:** HNSW-индекс работает, но фильтр (`workflow_id`,
+  `collection`) уходит в btree+Sort при малом количестве строк. На масштабе
+  (KI-360) — риск низкого recall, нужен `hnsw.ef_search` tuning
+  или частичные индексы.
+- **Решение:** мониторинг `EXPLAIN` + метрики recall при росте.
+- **Связанные:** KI-360, R7.4a.
+
+---
+
+### KI-404 — семантика VectorUpsert → VectorQuery
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `src/engine/node-executors.ts`
+- **Описание:** `VectorQuery` получает `inputs.prompt = {result:{id,
+  collection}}` от `VectorUpsert` → эмбеддит JSON вместо исходного текста
+  (score 0.33). Механика верна, но семантика цепочки нелогична.
+- **Решение:** `VectorUpsert` должен отдавать
+  `output: {collection, id, text}` (или не соединять его напрямую
+  с `VectorQuery` в типовом шаблоне).
+- **Связанные:** KI-128, DESIGN v0.9 § 3.4.
+
+---
+
+### KI-405 — компонентные тесты фронтенда без DOM
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `web/src/lib/vector-memory-nodes.spec.ts`,
+  `web/src/lib/node-registry.spec.ts` (компонентных `*.spec.ts`
+  в `web/src/components/nodes/` нет)
+- **Описание:** нет jsdom/@testing-library (KI-155) — тесты проверяют
+  контракт (регистрация, handles, валидаторы), а не `render()`.
+  Отличие от буквальной формулировки задания.
+- **Решение:** jsdom при следующем апгрейде фронтенд-инфраструктуры.
+- **Связанные:** KI-155, KI-364.
+
+---
 ## Сводка по статусам
 
 | Статус | Кол-во |
@@ -6273,9 +6335,9 @@ MediaModelInfo, engine-DTO
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 242 |
+| Open | 247 |
 | Won't Fix | 1 |
-| **Всего** | **388** |
+| **Всего** | **393** |
 
 ---
 
