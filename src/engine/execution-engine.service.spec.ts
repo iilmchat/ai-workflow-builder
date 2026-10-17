@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Param } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { workflowRuns, type RunStatus } from '../db/schema.js';
+import { AgentService } from '../agent/agent.service.js';
 import type { RunEventDto } from '../runs/dto/index.js';
 import { RunEventsService } from '../runs/run-events.service.js';
 import type { EdgeDto, GraphDto, NodeDto } from './dto/index.js';
@@ -468,6 +469,16 @@ describe('ExecutionEngineService', () => {
             queryVectorsAsync: vi.fn(),
             readMemoryAsync: vi.fn(),
             writeMemoryAsync: vi.fn(),
+          },
+        },
+        // R7.4b: цикл agent-узла. В этом спеке узел `agent` не выполняется —
+        // заглушка нужна только чтобы Nest собрал граф зависимостей.
+        {
+          provide: AgentService,
+          useValue: {
+            runAgentAsync: vi.fn(() =>
+              Promise.reject(new Error('агент не вызывается в этом спеке')),
+            ),
           },
         },
         // R7.5 (KI-364): режим `sandbox` узла condition. Здесь — настоящий

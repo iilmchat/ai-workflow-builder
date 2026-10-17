@@ -14,6 +14,7 @@ import {
   type NodeRunStatus,
 } from '../db/schema.js';
 import { RunEventsService } from '../runs/run-events.service.js';
+import { AgentService } from '../agent/agent.service.js';
 import { LlmNodeExecutor, type LlmNodeMetrics } from '../llm/llm-node-executor.service.js';
 import { LlmProviderException } from '../llm/llm-provider.interface.js';
 import { LlmRegistryService } from '../llm/llm-registry.service.js';
@@ -30,6 +31,7 @@ import {
   UnsupportedNodeTypeException,
   executeCompareNode,
   executeConditionNode,
+  executeAgentNodeAsync,
   executeHttpNode,
   executeMemoryReadNodeAsync,
   executeMemoryWriteNodeAsync,
@@ -149,7 +151,7 @@ function sleep(ms: number): Promise<void> {
  * Валюты не смешиваются: при записи в `node_runs` заполняется либо `cost_usd`,
  * либо `cost_rub` (RULES 4.23).
  */
-type NodeStepResult =
+type NodeStepResult = (
   | {
       kind: 'plain';
       outputs: Record<string, unknown>;
@@ -164,7 +166,18 @@ type NodeStepResult =
       kind: 'media';
       outputs: Record<string, unknown>;
       metrics: MediaNodeMetrics;
-    };
+    }
+) & {
+  /**
+   * Дополнительные строки в `node_runs.logs` (R7.4b).
+   *
+   * Агент пишет сюда JSON-шаги цикла (`llm`/`tool`/`final`): они нужны
+   * панели результата и разбору «почему модель ответила именно так», но не
+   * являются метриками, поэтому живут отдельным полем, а не в `metrics`.
+   * Остальные типы узлов поле не задают — массив остаётся пустым.
+   */
+  logs?: readonly string[];
+};
 
 /** Итог выполнения запуска. */
 export interface ExecutionResult {
@@ -206,6 +219,8 @@ export class ExecutionEngineService {
     // эмбеддингов, хранилище — единственное место с SQL к pgvector.
     private readonly llmRegistry: LlmRegistryService,
     private readonly vectorStore: VectorStoreService,
+    // R7.4b (DESIGN v0.9 § 3.4): цикл agent-узла (LLM → tools → final).
+    private readonly agentService: AgentService,
   ) {}
 
   /**
@@ -703,6 +718,12 @@ export class ExecutionEngineService {
           const step = await this.runNodeAsync(node, inputs, runId, subContext);
           const durationMs = Date.now() - startedAt;
 
+          // R7.4b: агент отдаёт шаги цикла — они дописываются к логам узла
+          // до UPDATE, поэтому попадают и в снимок, и в событие node_completed.
+          if (step.logs !== undefined) {
+            logs.push(...step.logs);
+          }
+
           await this.db
             .update(nodeRuns)
             .set({
@@ -841,7 +862,8 @@ export class ExecutionEngineService {
    * `audio_generation`, `music_generation`) — через {@link MediaNodeExecutor} с
    * метриками в рублях, `http` (R6.5.1) — сетевой запрос, `vector_upsert`,
    * `vector_query`, `memory_read`, `memory_write` (R7.4a) — через
-   * {@link VectorStoreService} и провайдера эмбеддингов, остальные (`text`,
+   * {@link VectorStoreService} и провайдера эмбеддингов, `agent` (R7.4b) —
+   * через {@link AgentService} (цикл LLM → tools → final), остальные (`text`,
    * `condition`, `output`, `compare`) — чистые преобразования без метрик.
    *
    * `runId` передаётся и LLM-исполнителю: там он нужен предохранителю по
@@ -942,6 +964,26 @@ export class ExecutionEngineService {
         const outputs = await executeMemoryWriteNodeAsync(node.data, inputs, vectorContext);
 
         return { kind: 'plain', outputs, metrics: null };
+      }
+      // R7.4b (DESIGN v0.9 § 3.4): агент. Сам цикл живёт в AgentService
+      // (DI: LLM, эмбеддинги, хранилище, песочница); исполнитель узла только
+      // валидирует `data` и раскладывает результат по выходам. Шаги цикла
+      // уходят и в `outputs.steps` (timeline в панели), и в `node_runs.logs`
+      // JSON-строками — по одной на шаг.
+      case 'agent': {
+        const { outputs, steps } = await executeAgentNodeAsync(
+          node,
+          inputs,
+          runId,
+          this.agentService,
+        );
+
+        return {
+          kind: 'plain',
+          outputs,
+          metrics: null,
+          logs: steps.map((step) => JSON.stringify(step)),
+        };
       }
       case 'llm': {
         const result = await this.llmExecutor.executeAsync(node, inputs, runId);

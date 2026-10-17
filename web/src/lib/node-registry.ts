@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react';
 import type { NodeProps, NodeTypes } from '@xyflow/react';
+import { AgentNode } from '@/components/nodes/AgentNode';
 import { CommentNode } from '@/components/nodes/CommentNode';
 import { CompareNode } from '@/components/nodes/CompareNode';
 import { ConditionNode } from '@/components/nodes/ConditionNode';
@@ -19,6 +20,7 @@ import { VectorUpsertNode } from '@/components/nodes/VectorUpsertNode';
 import { VideoGenNode } from '@/components/nodes/VideoGenNode';
 import i18n from '@/i18n';
 import type {
+  AgentFlowNode,
   AppNode,
   AudioGenFlowNode,
   CommentFlowNode,
@@ -66,7 +68,8 @@ export type NodeComponent =
   | ComponentType<NodeProps<VectorUpsertFlowNode>>
   | ComponentType<NodeProps<VectorQueryFlowNode>>
   | ComponentType<NodeProps<MemoryReadFlowNode>>
-  | ComponentType<NodeProps<MemoryWriteFlowNode>>;
+  | ComponentType<NodeProps<MemoryWriteFlowNode>>
+  | ComponentType<NodeProps<AgentFlowNode>>;
 
 /**
  * Описание узла в реестре: единый источник правды.
@@ -293,6 +296,21 @@ export const NODE_REGISTRY = {
     icon: '💾',
     category: 'state',
     component: MemoryWriteNode,
+    canBeInsertedOnEdge: true,
+    capabilities: { externalState: true, userConfig: true },
+  },
+  // R7.4b (DESIGN v0.9 § 3.4): агент с собственным циклом LLM → tools → final.
+  //
+  // `externalState: true` — инструменты читают и пишут векторы/память, а
+  // `http_request` ходит во внешний мир: узел действительно держит состояние
+  // вне графа. `userConfig: true` — модель, инструкция, инструменты и лимит
+  // итераций выбираются до запуска. `canBeInsertedOnEdge: true` — есть
+  // target-хендл `text-input`.
+  agent: {
+    labelKey: 'node.agent.label',
+    icon: '🧠',
+    category: 'ai',
+    component: AgentNode,
     canBeInsertedOnEdge: true,
     capabilities: { externalState: true, userConfig: true },
   },

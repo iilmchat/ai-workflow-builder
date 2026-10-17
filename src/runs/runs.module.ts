@@ -2,6 +2,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthModule } from '../auth/auth.module.js';
+import { AgentService } from '../agent/agent.service.js';
 import { EngineModule } from '../engine/engine.module.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import { LlmModule } from '../llm/llm.module.js';
@@ -79,6 +80,11 @@ import { RUNS_QUEUE_DB, RUNS_QUEUE_PREFIX } from './runs.worker-options.js';
     ExecutionEngineService,
     // R7.4a (KI-128): SQL к pgvector для узлов vector_*/memory_*.
     VectorStoreService,
+    // R7.4b (DESIGN v0.9 § 3.4): цикл agent-узла. Отдельного Nest-модуля нет
+    // осознанно: все зависимости (LlmService, LlmRegistryService, песочница,
+    // VectorStoreService) уже в этом графе, а модуль потребовал бы вынести
+    // VectorStoreService в экспортируемый модуль — правка R7.4a вне среза.
+    AgentService,
   ],
   exports: [RunsService, RunEventsService],
 })

@@ -44,10 +44,12 @@ import {
   DEFAULT_CONDITION_OPERATOR,
   DEFAULT_EMBEDDING_MODEL,
   DEFAULT_LLM_MODEL_ID,
+  DEFAULT_AGENT_TOOLS,
   DEFAULT_OUTPUT_NAME,
   DEFAULT_VECTOR_SCORE_THRESHOLD,
   DEFAULT_VECTOR_TOPK,
   IMAGE_TOOL_OPERATIONS,
+  type AgentNodeData,
   type AppNode,
   type AudioGenNodeData,
   type CommentNodeData,
@@ -89,6 +91,11 @@ import {
   validateScoreThreshold,
   validateTopK,
 } from '@/lib/vector-memory-node-fields';
+import {
+  validateAgentTools,
+  validateMaxIterations,
+  validateMaxTokensPerStep,
+} from '@/lib/agent-node-fields';
 import {
   cloneNodesForDuplicate,
   insertPositionOnEdge,
@@ -1051,6 +1058,20 @@ function createNode(
         type: 'memory_write',
         data: { kind: 'memory_write', key: '' },
       };
+    // R7.4b (DESIGN v0.9 § 3.4): агент. Инструменты — минимальный рабочий
+    // набор (`http_request`), остальные включаются осознанно: vector- и
+    // memory-инструменты требуют настроенной коллекции/ключа. Лимит итераций
+    // не задаём — backend применит дефолт (5) из env.
+    case 'agent':
+      return {
+        ...shared,
+        type: 'agent',
+        data: {
+          kind: 'agent',
+          model: defaultModelId ?? DEFAULT_LLM_MODEL_ID,
+          tools: [...DEFAULT_AGENT_TOOLS],
+        },
+      };
     // Нет default: — новый NodeType поймает tsc (KI-129).
   }
 }
@@ -1470,6 +1491,38 @@ function nodeDataFromApi(type: NodeType, data: Record<string, unknown>): NodeDat
 
       if (typeof data.value === 'string') {
         result.value = data.value;
+      }
+
+      return result;
+    }
+    // R7.4b (DESIGN v0.9 § 3.4): агент. Список инструментов нормализуется
+    // (неизвестные имена отбрасываются, пустой список → дефолт), лимиты —
+    // только валидные, чтобы мусор из jsonb не менял поведение Run.
+    case 'agent': {
+      const result: AgentNodeData = {
+        kind: 'agent',
+        // Модель не подменяем (KI-069): неизвестный id селект покажет как
+        // «(недоступно)», а сохранённый выбор не потеряется.
+        model: typeof data.model === 'string' ? data.model : '',
+        tools: validateAgentTools(data.tools),
+      };
+
+      if (typeof data.systemPrompt === 'string') {
+        result.systemPrompt = data.systemPrompt;
+      }
+
+      const maxIterations = validateMaxIterations(data.maxIterations);
+
+      if (maxIterations !== undefined) {
+        result.maxIterations = maxIterations;
+      }
+
+      // Поля нет в UI, но значение могло быть задано через API: переносим,
+      // чтобы Load + Save не затирали настройку (KI-122/KI-129).
+      const maxTokensPerStep = validateMaxTokensPerStep(data.maxTokensPerStep);
+
+      if (maxTokensPerStep !== undefined) {
+        result.maxTokensPerStep = maxTokensPerStep;
       }
 
       return result;
@@ -2282,25 +2335,37 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         return;
 
       case 'node_completed':
-        set((state) => ({
-          ...withNodeStatus(state, event.nodeId, 'completed'),
-          nodeOutputs: { ...state.nodeOutputs, [event.nodeId]: event.outputs },
-          // KI-149 (KI-075): метрики есть и в событии — панель показывает
-          // стоимость и токены сразу после Run, а не только после F5.
-          // Значения события свежее snapshot, поэтому перекрывают известные.
-          nodeMetrics: {
-            ...state.nodeMetrics,
-            [event.nodeId]: {
-              ...(state.nodeMetrics[event.nodeId] ?? EMPTY_METRICS),
-              durationMs: event.durationMs,
-              costRub: event.costRub ?? null,
-              tokensIn: event.tokensIn ?? null,
-              tokensOut: event.tokensOut ?? null,
-              costUsd: event.costUsd ?? null,
+        set((state) => {
+          // Узел мог упасть в предыдущей попытке job'а и успешно завершиться
+          // в следующей (BullMQ attempts, KI-070). Событие `node_failed` той
+          // попытки уже положило текст в `nodeErrors`, и без очистки панель
+          // показывала «ОШИБКА» рядом со статусом `completed` (смоук R7.4b:
+          // агент исчерпал итерации, retry завершился успешно).
+          const nodeErrors = { ...state.nodeErrors };
+
+          delete nodeErrors[event.nodeId];
+
+          return {
+            ...withNodeStatus(state, event.nodeId, 'completed'),
+            nodeErrors,
+            nodeOutputs: { ...state.nodeOutputs, [event.nodeId]: event.outputs },
+            // KI-149 (KI-075): метрики есть и в событии — панель показывает
+            // стоимость и токены сразу после Run, а не только после F5.
+            // Значения события свежее snapshot, поэтому перекрывают известные.
+            nodeMetrics: {
+              ...state.nodeMetrics,
+              [event.nodeId]: {
+                ...(state.nodeMetrics[event.nodeId] ?? EMPTY_METRICS),
+                durationMs: event.durationMs,
+                costRub: event.costRub ?? null,
+                tokensIn: event.tokensIn ?? null,
+                tokensOut: event.tokensOut ?? null,
+                costUsd: event.costUsd ?? null,
+              },
             },
-          },
-          ...withNodeLogs(state, event.nodeId, event.logs),
-        }));
+            ...withNodeLogs(state, event.nodeId, event.logs),
+          };
+        });
 
         return;
 

@@ -41,6 +41,9 @@ const VECTOR_MEMORY_TYPES = [
   'memory_write',
 ] as const;
 
+/** Тип, добавленный в R7.4b (DESIGN v0.9 § 3.4): агент с циклом LLM → tools. */
+const AGENT_TYPE = 'agent' as const;
+
 /** Все типы реестра — для проверки labelKey в обоих i18n-файлах. */
 const ALL_TYPES: readonly NodeType[] = [...NODE_TYPES];
 
@@ -48,8 +51,9 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
   it('все четыре типа зарегистрированы, реестр покрывает NodeType целиком', () => {
     // R6.7: типов стало девять (+sub_workflow); R7.1 — десять (+image_tool);
     // R7.2 — тринадцать (+video/audio/music_generation); R7.4a — семнадцать
-    // (+vector_upsert/vector_query/memory_read/memory_write).
-    expect(ALL_TYPES).toHaveLength(17);
+    // (+vector_upsert/vector_query/memory_read/memory_write); R7.4b —
+    // восемнадцать (+agent).
+    expect(ALL_TYPES).toHaveLength(18);
     expect(ALL_TYPES).toEqual(
       expect.arrayContaining([
         'text',
@@ -233,5 +237,25 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
       expect(ru, `ru: ${entry.labelKey}`).toHaveProperty([entry.labelKey]);
       expect(en, `en: ${entry.labelKey}`).toHaveProperty([entry.labelKey]);
     }
+  });
+
+  it('R7.4b: agent — категория ai, externalState и ключи i18n', () => {
+    const entry = NODE_REGISTRY[AGENT_TYPE];
+
+    expect(entry.category).toBe('ai');
+    expect(entry.icon).not.toBe('');
+    expect(typeof entry.component).toBe('function');
+    expect(canInsertOnEdge(AGENT_TYPE)).toBe(true);
+    expect(isNodeType(AGENT_TYPE)).toBe(true);
+    // Инструменты ходят в БД и внешний мир: состояние вне графа есть.
+    expect(entry.capabilities).toEqual({
+      externalState: true,
+      userConfig: true,
+    });
+    expect(ru, `ru: ${entry.labelKey}`).toHaveProperty([entry.labelKey]);
+    expect(en, `en: ${entry.labelKey}`).toHaveProperty([entry.labelKey]);
+    // Подпись категории уже есть (agent — в секции AI).
+    expect(ru).toHaveProperty(['catalog.category.ai']);
+    expect(en).toHaveProperty(['catalog.category.ai']);
   });
 });

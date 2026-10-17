@@ -1,0 +1,662 @@
+/**
+ * Цикл агента: LLM → (tool → LLM)* → final (R7.4b, DESIGN v0.9 § 3.4).
+ *
+ * Свой цикл (~300 строк с инструментами) вместо LangChain/LangGraph: в проекте
+ * уже есть `LlmService`, `VectorStoreService` и QuickJS-песочница, а внешний
+ * фреймворк принёс бы вторую модель сообщений, свои ретраи и свою стоимость
+ * поддержки (DESIGN § 2.4, § 3.4).
+ *
+ * **Как общается с моделью.** `ILlmProvider.generateAsync` принимает
+ * `prompt: string` и не знает нативных `tools` (ни OpenAI `tools`, ни Anthropic
+ * `tool_use`). Поэтому транскрипт ведётся в OpenAI-форме
+ * ({@link AgentMessage}: `role` / `content` / `tool_calls` / `tool_call_id`),
+ * сериализуется в текст и уходит одним промптом, а ответ модели
+ * разбирается как JSON-протокол (`{"tool": …, "input": …}` либо
+ * `{"final": …}`). Форма выбрана как де-факто стандарт: при появлении
+ * нативного tool-calling в провайдерах её можно передать без переписывания
+ * цикла.
+ *
+ * **Ошибки инструмента не роняют запуск.** Сбой `http_request` (сеть),
+ * `code_eval` (песочница выключена) или невалидные аргументы превращаются в
+ * tool-шаг с `error` и сообщение `role: 'tool'` в транскрипте. Модель видит
+ * ошибку и может сменить стратегию или ответить; запуск падает только по
+ * исчерпанию итераций ({@link AgentIterationLimitException}) или если упал
+ * сам вызов LLM.
+ */
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { LlmUsage } from '../llm/llm-provider.interface.js';
+import { LlmRegistryService } from '../llm/llm-registry.service.js';
+import { LlmService } from '../llm/llm.service.js';
+import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
+import { VectorStoreService } from '../vector/vector-store.service.js';
+import { TOOL_REGISTRY, isAgentToolName } from './agent-tools.js';
+import {
+  AGENT_DEFAULT_MAX_ITERATIONS,
+  AGENT_DEFAULT_MAX_TOKENS_PER_STEP,
+  AGENT_MAX_ITERATIONS_LIMIT,
+  AGENT_MAX_TOKENS_PER_STEP_LIMIT,
+  AgentIterationLimitException,
+  type AgentMessage,
+  type AgentNodeData,
+  type AgentRunResult,
+  type AgentStep,
+  type AgentTool,
+  type AgentToolCall,
+  type AgentToolContext,
+  type AgentToolName,
+} from './agent.types.js';
+
+/**
+ * Максимум символов результата инструмента в транскрипте.
+ *
+ * `vector_query` с `topK` до 100 может вернуть сотни КБ JSON; без обрезки
+ * следующая итерация стоила бы дороже ответа, а модель всё равно не читает
+ * такой объём. Полный результат при этом остаётся в шаге (`steps`), поэтому
+ * диагностика не теряется.
+ */
+export const AGENT_TOOL_RESULT_MAX_CHARS = 4_000;
+
+/**
+ * Инструменты, которым нужен `workflow_id` (владелец векторов и памяти).
+ *
+ * `http_request`, `code_eval` и `llm_call` работают без БД, поэтому запрос
+ * «какой workflow у запуска» делается только при наличии одного из этих имён:
+ * лишний SELECT на каждый запуск агента не нужен.
+ */
+const WORKFLOW_SCOPED_TOOLS: ReadonlySet<AgentToolName> = new Set([
+  'vector_query',
+  'vector_upsert',
+  'memory_read',
+  'memory_write',
+]);
+
+/**
+ * Формат ответа, который обязан соблюдать агент.
+ *
+ * Текст протокола — английский: это инструкция для модели, а не UI-строка
+ * (UI-подписи живут в i18n). Примеры с фигурными скобками даны дословно —
+ * модели лучше следуют формату, когда видят готовый образец.
+ */
+const REPLY_PROTOCOL = [
+  'You are an autonomous agent inside a workflow builder.',
+  'You receive the node inputs as JSON and must reach a final answer,',
+  'optionally calling tools one at a time.',
+  '',
+  'Reply with a SINGLE JSON object and nothing else (no markdown, no prose):',
+  '1) To call a tool: {"tool": "<tool name>", "input": { ... }}',
+  '2) To finish: {"final": "<answer for the user>"}',
+  '',
+  'Rules:',
+  '- One tool call per reply.',
+  '- Use only the tools listed above.',
+  '- If a tool returns an error, adapt: retry with different arguments or finish.',
+  '- The final answer must be self-contained and written in the user language.',
+].join('\n');
+
+/**
+ * Приводит неизвестную ошибку к тексту для шага и транскрипта.
+ *
+ * @param error - значение из `catch` (тип `unknown`)
+ * @returns текст ошибки
+ */
+function toMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Приводит значение к целому числу в заданных границах.
+ *
+ * `ConfigService` может отдать строку (если env пришёл не через Zod-схему),
+ * а `data.maxIterations` — любое число из jsonb, поэтому границы проверяются
+ * ещё раз на месте использования.
+ *
+ * @param value - сырое значение
+ * @param fallback - значение по умолчанию
+ * @param min - нижняя граница
+ * @param max - верхняя граница
+ * @returns целое число в диапазоне
+ */
+function clampInteger(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim().length > 0
+        ? Number(value)
+        : Number.NaN;
+
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(Math.trunc(numeric), min), max);
+}
+
+/**
+ * Проверяет, что значение — обычный объект (не массив/`null`).
+ *
+ * @param value - значение типа `unknown`
+ * @returns `true`, если значение читается как `Record<string, unknown>`
+ */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Проверяет, что строка — сбалансированный JSON-объект (с учётом строк).
+ *
+ * Нужно для ответов вида «```json {…} ```» или «Вот вызов: {…}»: модель не
+ * всегда отдаёт чистый JSON, но объект внутри текста распознать можно.
+ *
+ * @param text - строка ответа модели
+ * @returns подстрока от первой `{` до парной `}` либо `null`
+ */
+function extractJsonObject(text: string): string | null {
+  const start = text.indexOf('{');
+
+  if (start < 0) {
+    return null;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+    } else if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+
+      if (depth === 0) {
+        return text.slice(start, index + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Разбирает ответ модели как вызов инструмента или финальный ответ.
+ *
+ * Протокол (см. {@link REPLY_PROTOCOL}) не единственный допустимый вход:
+ * сначала пробуется весь текст как JSON, затем — первый сбалансированный
+ * объект внутри текста (markdown-обёртки, пояснения).
+ *
+ * @param text - сырой ответ модели
+ * @returns разобранный ответ либо `null`, если JSON-протокола нет
+ */
+export function parseAgentReply(
+  text: string,
+): { kind: 'tool'; name: string; input: unknown } | { kind: 'final'; answer: string } | null {
+  const candidates: string[] = [text.trim()];
+  const extracted = extractJsonObject(text);
+
+  if (extracted !== null && extracted !== candidates[0]) {
+    candidates.push(extracted);
+  }
+
+  for (const candidate of candidates) {
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      continue;
+    }
+
+    if (!isPlainRecord(parsed)) {
+      continue;
+    }
+
+    // `answer` принимается как синоним `final`: часть моделей отвечает
+    // «ответом», а не «финалом», и терять из-за этого шаг незачем.
+    if (typeof parsed.final === 'string') {
+      return { kind: 'final', answer: parsed.final };
+    }
+
+    if (typeof parsed.answer === 'string') {
+      return { kind: 'final', answer: parsed.answer };
+    }
+
+    if (typeof parsed.tool === 'string' && parsed.tool.length > 0) {
+      return {
+        kind: 'tool',
+        name: parsed.tool,
+        // Отсутствующий `input` — валидный вызов без аргументов: Zod-схема
+        // инструмента всё равно проверит обязательные поля и вернёт понятную
+        // ошибку в tool-шаг.
+        input: parsed.input ?? {},
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Сериализует транскрипт в один текстовый промпт.
+ *
+ * Роли выделены заголовками `### ROLE`: провайдеры без нативного chat-формата
+ * получают тот же текст, а модель видит, где её реплики, а где результаты
+ * инструментов. `### YOUR TURN` в конце — явный маркер хода.
+ *
+ * @param messages - накопленный транскрипт агента
+ * @returns текст промпта для `generateAsync`
+ */
+function renderTranscript(messages: readonly AgentMessage[]): string {
+  const blocks = messages.map((message) => {
+    if (message.role === 'system') {
+      return `### SYSTEM\n${message.content}`;
+    }
+
+    if (message.role === 'user') {
+      return `### USER\n${message.content}`;
+    }
+
+    if (message.role === 'assistant') {
+      const calls = message.tool_calls ?? [];
+      const callText =
+        calls.length > 0
+          ? calls
+              .map((call) =>
+                JSON.stringify({ tool: call.name, input: call.input }),
+              )
+              .join('\n')
+          : '';
+
+      return `### ASSISTANT\n${message.content ?? callText}`;
+    }
+
+    return `### TOOL RESULT (${message.tool_call_id})\n${message.content}`;
+  });
+
+  return `${blocks.join('\n\n')}\n\n### YOUR TURN\n`;
+}
+
+/**
+ * Собирает системный промпт: инструкция пользователя + протокол + инструменты.
+ *
+ * @param systemPrompt - системная инструкция из `data.systemPrompt`
+ * @param tools - включённые инструменты узла
+ * @returns текст `system`-сообщения
+ */
+function buildSystemPrompt(
+  systemPrompt: string | undefined,
+  tools: readonly AgentTool[],
+): string {
+  const toolLines = tools.map(
+    (tool) => `- ${tool.name}: ${tool.description}`,
+  );
+  const parts = [
+    systemPrompt !== undefined && systemPrompt.trim().length > 0
+      ? systemPrompt.trim()
+      : null,
+    REPLY_PROTOCOL,
+    `Available tools:\n${toolLines.join('\n')}`,
+  ].filter((part): part is string => part !== null);
+
+  return parts.join('\n\n');
+}
+
+/**
+ * Сервис цикла агента (R7.4b).
+ *
+ * Живёт в `RunsModule` рядом с `ExecutionEngineService`: все зависимости
+ * (`LlmService`, реестр эмбеддингов, `VectorStoreService`, песочница) уже
+ * зарегистрированы там, а отдельный Nest-модуль потребовал бы вынести
+ * `VectorStoreService` из R7.4a в экспортируемый модуль.
+ */
+@Injectable()
+export class AgentService {
+  private readonly logger = new Logger(AgentService.name);
+
+  /** Лимит итераций по умолчанию (env `AGENT_MAX_ITERATIONS_DEFAULT`). */
+  private readonly defaultMaxIterations: number;
+
+  /** Лимит токенов на шаг по умолчанию (env `AGENT_MAX_TOKENS_PER_STEP_DEFAULT`). */
+  private readonly defaultMaxTokensPerStep: number;
+
+  /**
+   * @param llm - вызов модели по id (провайдер резолвится внутри)
+   * @param registry - выбор провайдера эмбеддингов для vector-инструментов
+   * @param vectorStore - хранилище векторов и памяти (R7.4a)
+   * @param sandbox - QuickJS-WASM для инструмента `code_eval` (R7.5)
+   * @param config - конфигурация приложения (RULES 4.6: env только через DI)
+   */
+  constructor(
+    private readonly llm: LlmService,
+    private readonly registry: LlmRegistryService,
+    private readonly vectorStore: VectorStoreService,
+    private readonly sandbox: QuickJsRunnerService,
+    private readonly config: ConfigService,
+  ) {
+    this.defaultMaxIterations = clampInteger(
+      config.get<unknown>('AGENT_MAX_ITERATIONS_DEFAULT'),
+      AGENT_DEFAULT_MAX_ITERATIONS,
+      1,
+      AGENT_MAX_ITERATIONS_LIMIT,
+    );
+    this.defaultMaxTokensPerStep = clampInteger(
+      config.get<unknown>('AGENT_MAX_TOKENS_PER_STEP_DEFAULT'),
+      AGENT_DEFAULT_MAX_TOKENS_PER_STEP,
+      1,
+      AGENT_MAX_TOKENS_PER_STEP_LIMIT,
+    );
+  }
+
+  /**
+   * Выполняет агента: цикл LLM → tool → … → final.
+   *
+   * @param node - валидированные данные узла (`model`, `tools`, лимиты)
+   * @param inputs - собранные входы узла (уходят в первое user-сообщение JSON)
+   * @param runId - uuid запуска: нужен для `workflow_id` и логов
+   * @param nodeId - id узла в графе (для логов и контекста инструментов)
+   * @returns финальный ответ, шаги и суммарный usage
+   * @throws AgentIterationLimitException если лимит итераций исчерпан
+   * @throws Error если в узле нет ни одного известного инструмента
+   * @throws LlmProviderException если вызов модели упал (ошибка провайдера)
+   */
+  async runAgentAsync(
+    node: AgentNodeData,
+    inputs: unknown,
+    runId: string,
+    nodeId = '',
+  ): Promise<AgentRunResult> {
+    const maxIterations = clampInteger(
+      node.maxIterations,
+      this.defaultMaxIterations,
+      1,
+      AGENT_MAX_ITERATIONS_LIMIT,
+    );
+    const maxTokens = clampInteger(
+      node.maxTokensPerStep,
+      this.defaultMaxTokensPerStep,
+      1,
+      AGENT_MAX_TOKENS_PER_STEP_LIMIT,
+    );
+    const tools = this.resolveTools(node.tools);
+    const context = await this.createToolContextAsync(node, runId, nodeId);
+    const messages: AgentMessage[] = [
+      { role: 'system', content: buildSystemPrompt(node.systemPrompt, tools) },
+      { role: 'user', content: JSON.stringify(inputs ?? null) },
+    ];
+    const steps: AgentStep[] = [];
+    const usage: { inputTokens: number | null; outputTokens: number | null } = {
+      inputTokens: null,
+      outputTokens: null,
+    };
+
+    this.logger.log(
+      `Агент ${nodeId || '(без id)'}: model=${node.model}, ` +
+        `tools=${tools.map((tool) => tool.name).join(',')}, ` +
+        `maxIterations=${maxIterations}, maxTokens=${maxTokens}`,
+    );
+
+    for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
+      const prompt = renderTranscript(messages);
+      const response = await this.llm.generateAsync(prompt, node.model, {
+        maxTokens,
+      });
+      // usage может отсутствовать (часть прокси не отдаёт токены): шаг всё
+      // равно должен быть валидным `LlmUsage`, иначе ломается timeline.
+      const stepUsage: LlmUsage = response.usage ?? {
+        inputTokens: null,
+        outputTokens: null,
+        model: node.model,
+      };
+
+      this.addUsage(usage, stepUsage);
+      steps.push({ kind: 'llm', prompt, usage: stepUsage });
+
+      // RULES 5.9: в Pino — только модель, длины и итерация, без текстов.
+      this.logger.log(
+        `Агент ${nodeId || '(без id)'}: итерация ${iteration}/${maxIterations}, ` +
+          `promptLen=${prompt.length}, answerLen=${response.text.length}, ` +
+          `tokens=${stepUsage.inputTokens ?? '?'}/${stepUsage.outputTokens ?? '?'}`,
+      );
+
+      const reply = parseAgentReply(response.text);
+
+      // Модель проигнорировала протокол — это не сбой: считаем её текст
+      // финальным ответом. Иначе любой провайдер, не любящий JSON-инструкции,
+      // делал бы узел незапускаемым.
+      if (reply === null) {
+        const answer = response.text.trim();
+
+        steps.push({ kind: 'final', answer });
+
+        return { answer, steps, iterations: iteration, usage };
+      }
+
+      if (reply.kind === 'final') {
+        steps.push({ kind: 'final', answer: reply.answer });
+
+        return {
+          answer: reply.answer,
+          steps,
+          iterations: iteration,
+          usage,
+        };
+      }
+
+      const call: AgentToolCall = {
+        id: `call_${iteration}`,
+        name: reply.name,
+        input: reply.input,
+      };
+      const enabled = tools.find((tool) => tool.name === reply.name);
+
+      if (enabled === undefined) {
+        // Модель попросила инструмент, которого нет в узле (или его вовсе нет
+        // в реестре). Возвращаем ошибку в транскрипт: модель сможет выбрать
+        // разрешённый инструмент, а не оборвать запуск.
+        const error = `Инструмент '${reply.name}' не подключён к узлу агента`;
+
+        steps.push({
+          kind: 'tool',
+          name: reply.name,
+          input: reply.input,
+          output: null,
+          error,
+        });
+        messages.push({ role: 'assistant', content: null, tool_calls: [call] });
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: JSON.stringify({ error }),
+        });
+
+        continue;
+      }
+
+      const { output, error } = await this.executeToolAsync(enabled, call, context);
+
+      steps.push({
+        kind: 'tool',
+        name: enabled.name,
+        input: call.input,
+        output,
+        ...(error === undefined ? {} : { error }),
+      });
+      messages.push({ role: 'assistant', content: null, tool_calls: [call] });
+      messages.push({
+        role: 'tool',
+        tool_call_id: call.id,
+        content: this.serializeToolResult(output, error),
+      });
+    }
+
+    throw new AgentIterationLimitException(maxIterations, steps);
+  }
+
+  /**
+   * Приводит список инструментов узла к реализациям реестра.
+   *
+   * @param names - имена из `data.tools` (уже проверены Zod-схемой узла)
+   * @returns инструменты в порядке объявления в узле
+   * @throws Error если ни одно имя не найдено в реестре
+   */
+  private resolveTools(names: readonly string[]): AgentTool[] {
+    const tools: AgentTool[] = [];
+
+    for (const name of names) {
+      if (!isAgentToolName(name) || tools.some((tool) => tool.name === name)) {
+        continue;
+      }
+
+      tools.push(TOOL_REGISTRY[name]);
+    }
+
+    if (tools.length === 0) {
+      throw new Error('Узел agent: не выбрано ни одного известного инструмента');
+    }
+
+    return tools;
+  }
+
+  /**
+   * Выполняет инструмент, превращая сбой в данные шага.
+   *
+   * @param tool - инструмент из реестра
+   * @param call - вызов модели (имя, вход, id)
+   * @param context - зависимости инструментов
+   * @returns результат инструмента и (при сбое) текст ошибки
+   */
+  private async executeToolAsync(
+    tool: AgentTool,
+    call: AgentToolCall,
+    context: AgentToolContext,
+  ): Promise<{ output: unknown; error: string | undefined }> {
+    const startedAt = Date.now();
+
+    try {
+      const output = await tool.executeAsync(call.input, context);
+
+      this.logger.log(
+        `Агент: инструмент ${tool.name} выполнен за ${Date.now() - startedAt} мс`,
+      );
+
+      return { output, error: undefined };
+    } catch (error: unknown) {
+      const message = toMessage(error);
+
+      // RULES 5.9: в лог — только имя инструмента и текст ошибки, без
+      // аргументов (там могут быть пользовательские данные).
+      this.logger.warn(
+        `Агент: инструмент ${tool.name} упал за ${Date.now() - startedAt} мс — ${message}`,
+      );
+
+      return { output: null, error: message };
+    }
+  }
+
+  /**
+   * Сериализует результат инструмента для транскрипта.
+   *
+   * @param output - результат инструмента (`null` при сбое)
+   * @param error - текст ошибки, если инструмент упал
+   * @returns JSON-строка (с обрезкой до {@link AGENT_TOOL_RESULT_MAX_CHARS})
+   */
+  private serializeToolResult(output: unknown, error: string | undefined): string {
+    const serialized =
+      error === undefined
+        ? (JSON.stringify(output) ?? 'null')
+        : JSON.stringify({ error });
+
+    return serialized.length <= AGENT_TOOL_RESULT_MAX_CHARS
+      ? serialized
+      : `${serialized.slice(0, AGENT_TOOL_RESULT_MAX_CHARS)}… (truncated)`;
+  }
+
+  /**
+   * Накапливает usage по шагам.
+   *
+   * @param total - аккумулятор (мутируется)
+   * @param usage - метрики одного шага
+   */
+  private addUsage(
+    total: { inputTokens: number | null; outputTokens: number | null },
+    usage: LlmUsage,
+  ): void {
+    total.inputTokens =
+      usage.inputTokens === null
+        ? total.inputTokens
+        : (total.inputTokens ?? 0) + usage.inputTokens;
+    total.outputTokens =
+      usage.outputTokens === null
+        ? total.outputTokens
+        : (total.outputTokens ?? 0) + usage.outputTokens;
+  }
+
+  /**
+   * Собирает контекст инструментов.
+   *
+   * `workflowId` читается только если среди включённых инструментов есть
+   * vector/memory: остальные работают без БД. Провайдер эмбеддингов
+   * резолвится лениво — внутри `embedAsync` (как у vector-узлов R7.4a).
+   *
+   * @param node - данные узла (модель и набор инструментов)
+   * @param runId - uuid запуска
+   * @param nodeId - id узла в графе
+   * @returns контекст для `AgentTool.executeAsync`
+   * @throws Error если строка запуска не найдена (для workflow-scoped tools)
+   */
+  private async createToolContextAsync(
+    node: AgentNodeData,
+    runId: string,
+    nodeId: string,
+  ): Promise<AgentToolContext> {
+    const needsWorkflow = node.tools.some((name) => WORKFLOW_SCOPED_TOOLS.has(name));
+    const workflowId = needsWorkflow
+      ? await this.vectorStore.findWorkflowIdByRunAsync(runId)
+      : '';
+
+    return {
+      runId,
+      nodeId,
+      workflowId,
+      model: node.model,
+      store: this.vectorStore,
+      embedAsync: async (texts, model): Promise<number[][]> => {
+        const provider = await this.registry.resolveEmbeddingProviderAsync();
+
+        return provider.embedAsync(texts, { model });
+      },
+      llmGenerateAsync: async (
+        prompt,
+        model,
+      ): Promise<{ text: string; usage: LlmUsage | null }> => {
+        const result = await this.llm.generateAsync(prompt, model);
+
+        return { text: result.text, usage: result.usage };
+      },
+      sandbox: this.sandbox,
+      // Глобальный fetch не привязан к `this`; обёртка нужна, чтобы контекст
+      // оставался сериализуемым контрактом и тесты могли подменить клиент.
+      fetchAsync: (url, init) => fetch(url, init),
+    };
+  }
+}

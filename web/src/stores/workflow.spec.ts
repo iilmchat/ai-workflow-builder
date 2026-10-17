@@ -383,6 +383,31 @@ describe('useWorkflowStore — SSE-события статуса узла (KI-28
     expect(state().nodeErrors.C).toBe(SKIP_REASON);
   });
 
+  it('node_completed очищает ошибку предыдущей попытки job (R7.4b)', () => {
+    // Сценарий смоука R7.4b: попытка 1 упала (агент исчерпал итерации),
+    // BullMQ перезапустил job, попытка 2 завершилась успешно. `node_failed`
+    // первой попытки не должен оставлять «ОШИБКА» у completed-узла.
+    state().applyEvent({
+      type: 'node_failed',
+      runId: 'run-1',
+      nodeId: 'B',
+      error: 'Агент исчерпал лимит итераций (4)',
+      finishedAt: ISO_AT,
+    });
+    state().applyEvent({
+      type: 'node_completed',
+      runId: 'run-1',
+      nodeId: 'B',
+      outputs: { result: 'готово', steps: [] },
+      durationMs: 12,
+      logs: [],
+      finishedAt: ISO_AT,
+    });
+
+    expect(state().nodeStatuses.B).toBe('completed');
+    expect(state().nodeErrors.B).toBeUndefined();
+  });
+
   it('снимок с skipped-узлом применяется целиком', () => {
     // Снимок завершённого запуска трогает `?runId=` (`window`), а тесты идут в
     // node-окружении (см. `vitest.config.ts`): подставляем минимальный window.

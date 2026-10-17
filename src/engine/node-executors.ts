@@ -25,6 +25,14 @@
 import { NotFoundException } from '@nestjs/common';
 import { z } from 'zod';
 import {
+  AGENT_MAX_ITERATIONS_LIMIT,
+  AGENT_MAX_TOKENS_PER_STEP_LIMIT,
+  AGENT_TOOL_NAMES,
+  type AgentNodeData,
+  type AgentRunResult,
+  type AgentStep,
+} from '../agent/agent.types.js';
+import {
   DEFAULT_EMBEDDING_DIMENSIONS,
   DEFAULT_EMBEDDING_MODEL,
 } from '../llm/llm-constants.js';
@@ -1564,6 +1572,111 @@ function pickMemoryValue(
   throw new Error(
     'Узел memory_write: не задано значение (ни во входах, ни в поле узла)',
   );
+}
+
+/* ────────────────────────────── Узел agent (R7.4b) ────────────────────────────── */
+
+/**
+ * Zod-схема данных узла `agent` (R7.4b, DESIGN v0.9 § 3.4).
+ *
+ * `tools` обязателен и непуст: агент без инструментов — это LLM-узел с лишним
+ * циклом. Дубли имён отсекаются refine'ом (повтор в чекбоксах не должен
+ * удваивать вызов), а порог `AGENT_TOOL_NAMES.length` соответствует UI (7).
+ */
+const AgentNodeDataSchema = z.object({
+  // `kind` обязателен (в отличие от старых узлов): agent появился в v0.9,
+  // графов без дискриминатора не существует, а совпадение с `AgentNodeData`
+  // проверяет tsc.
+  kind: z.literal('agent'),
+  model: z.string().trim().min(1, 'model обязателен'),
+  systemPrompt: z.string().optional(),
+  tools: z
+    .array(z.enum(AGENT_TOOL_NAMES))
+    .min(1, 'нужен хотя бы один инструмент')
+    .max(AGENT_TOOL_NAMES.length)
+    .refine(
+      (tools) => new Set(tools).size === tools.length,
+      'инструменты не должны повторяться',
+    ),
+  // Границы совпадают с UI и env-схемой (R7.4b): больше 10 итераций — это
+  // зацикливание модели, а не сценарий workflow.
+  maxIterations: z
+    .number()
+    .int()
+    .min(1)
+    .max(AGENT_MAX_ITERATIONS_LIMIT)
+    .optional(),
+  maxTokensPerStep: z
+    .number()
+    .int()
+    .min(1)
+    .max(AGENT_MAX_TOKENS_PER_STEP_LIMIT)
+    .optional(),
+});
+
+/**
+ * Исполнитель цикла агента (реализация — `AgentService`).
+ *
+ * Интерфейс объявлен здесь, а не в сервисе: исполнитель узла — чистая
+ * функция, и ему достаточно структурного контракта (тот же приём, что у
+ * `VectorMemoryContext` и `SubWorkflowLookup`). Благодаря этому юнит-тесты
+ * executor'а не поднимают Nest-модуль.
+ */
+export interface AgentRunner {
+  /**
+   * Выполняет агента до финального ответа.
+   *
+   * @param node - валидированные данные узла
+   * @param inputs - входы узла (уходят в первое user-сообщение)
+   * @param runId - uuid запуска (нужен для `workflow_id` и логов)
+   * @param nodeId - id узла в графе (для логов и контекста инструментов)
+   * @returns ответ, шаги, число итераций и usage
+   */
+  runAgentAsync(
+    node: AgentNodeData,
+    inputs: unknown,
+    runId: string,
+    nodeId?: string,
+  ): Promise<AgentRunResult>;
+}
+
+/** Результат исполнителя узла `agent`: выходы и шаги для timeline/логов. */
+export interface AgentNodeExecution {
+  /** Выходы узла: `{ result: answer, steps }` (DESIGN § 3.4). */
+  outputs: Record<string, unknown>;
+  /** Шаги в порядке выполнения — они же пишутся в `node_runs.logs`. */
+  steps: AgentStep[];
+}
+
+/**
+ * Исполнитель узла `agent` (R7.4b, DESIGN v0.9 § 3.4).
+ *
+ * Валидирует `data` Zod-схемой и делегирует цикл {@link AgentRunner}. Шаги
+ * возвращаются и в `outputs.steps` (для timeline в панели результата), и
+ * отдельным полем — движок пишет их в `node_runs.logs` как JSON-строки.
+ *
+ * @param node - узел графа типа `agent`
+ * @param inputs - нормализованные входы узла (после KI-034 ключ — `prompt`)
+ * @param runId - uuid запуска
+ * @param runner - цикл агента (`AgentService` в продакшене)
+ * @returns `{ outputs: { result, steps }, steps }`
+ * @throws NodeDataValidationException если `data` не проходят Zod-схему
+ * @throws AgentIterationLimitException если лимит итераций исчерпан
+ * @throws LlmProviderException если вызов модели упал
+ */
+export async function executeAgentNodeAsync(
+  node: NodeDto,
+  inputs: Record<string, unknown>,
+  runId: string,
+  runner: AgentRunner,
+): Promise<AgentNodeExecution> {
+  const data = parseNodeData('agent', AgentNodeDataSchema, node.data);
+  const result = await runner.runAgentAsync(data, inputs, runId, node.id);
+
+  return {
+    outputs: { result: result.answer, steps: result.steps },
+    steps: result.steps,
+  };
 }
 
 /* ─────────────────────────── Узел sub_workflow ─────────────────────────── */

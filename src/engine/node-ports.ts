@@ -181,6 +181,16 @@ export const NODE_PORT_CONTRACT: Record<string, NodePortContract> = {
     targetHandleId: 'text-input',
     inputPortName: 'prompt',
   },
+  // R7.4b (DESIGN v0.9 § 3.4): узел `agent`. Вход — текст задачи (`prompt`),
+  // выход — финальный ответ агента (`result`). Выходной хендл — `result-output`
+  // (как у `sub_workflow`): `text-output` переводится в порт `text` (KI-301) и
+  // не подошёл бы узлу, который пишет `outputs.result`.
+  agent: {
+    sourceHandleId: 'result-output',
+    outputPortName: 'result',
+    targetHandleId: 'text-input',
+    inputPortName: 'prompt',
+  },
   // `compare` сознательно БЕЗ контракта: `NodePortContract` описывает один
   // вход, а узлу нужны два (`a` и `b`). С контрактом обе связи свернулись бы
   // в один ключ (KI-035) и второй операнд потерялся бы. Без контракта работает

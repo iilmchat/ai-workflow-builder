@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
+import { parseAgentSteps } from '@/lib/agent-timeline';
 import { nodeLabelOf } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
 import type { NodeRunStatus } from '@/types/run-stream';
@@ -147,6 +148,9 @@ export function RunResultPanel() {
   const metrics = formatMetrics(
     selectedNodeId !== null ? nodeMetrics[selectedNodeId] : undefined,
   );
+  // R7.4b: агент кладёт в выходы `steps`. Парсер терпим к форме: если шагов
+  // нет или они не похожи на шаги агента, timeline просто не рисуется.
+  const agentSteps = parseAgentSteps(outputs?.steps);
 
   /** Заголовок: «Узел <label> · <status>» либо «Запуск · <status> (попытка N/M)». */
   const title =
@@ -231,6 +235,59 @@ export function RunResultPanel() {
               {error !== undefined && status !== 'skipped' ? (
                 <Section title={t('runResultPanel.section.error')}>
                   <p className="whitespace-pre-wrap text-xs text-red-700">{error}</p>
+                </Section>
+              ) : null}
+
+              {agentSteps.length > 0 ? (
+                <Section title={t('agent.timeline', { count: agentSteps.length })}>
+                  {/* R7.4b: timeline агента — LLM / Tool / Final. Атрибуты
+                      `data-agent-step` и `data-agent-tool` — контракт для
+                      CDP-смоука и e2e: тип шага виден без разбора текста. */}
+                  <ol data-agent-timeline="" className="space-y-1.5">
+                    {agentSteps.map((step, index) => (
+                      <li
+                        key={index}
+                        data-agent-step={step.kind}
+                        data-agent-tool={step.kind === 'tool' ? step.name : undefined}
+                        className="rounded-lg border border-border bg-background px-2 py-1.5"
+                      >
+                        <div className="flex items-center gap-1.5 text-[10px] font-semibold text-foreground">
+                          <span>{t(`agent.step.${step.kind}`)}</span>
+
+                          {step.kind === 'tool' ? (
+                            <span className="font-normal text-muted-foreground">
+                              {step.name}
+                            </span>
+                          ) : null}
+
+                          {step.kind === 'llm' &&
+                          (step.tokensIn !== null || step.tokensOut !== null) ? (
+                            <span className="font-normal text-muted-foreground">
+                              {t('runResultPanel.metrics.tokens', {
+                                input: step.tokensIn ?? '?',
+                                output: step.tokensOut ?? '?',
+                              })}
+                            </span>
+                          ) : null}
+                        </div>
+
+                        {step.detail.length > 0 ? (
+                          <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] text-foreground">
+                            {step.detail}
+                          </pre>
+                        ) : null}
+
+                        {step.kind === 'tool' && step.error !== null ? (
+                          <p
+                            data-agent-step-error=""
+                            className="mt-1 whitespace-pre-wrap text-[10px] text-red-700"
+                          >
+                            {t('agent.tool.error')}: {step.error}
+                          </p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ol>
                 </Section>
               ) : null}
 

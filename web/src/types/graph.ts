@@ -30,7 +30,8 @@ export type NodeData =
   | VectorUpsertNodeData
   | VectorQueryNodeData
   | MemoryReadNodeData
-  | MemoryWriteNodeData;
+  | MemoryWriteNodeData
+  | AgentNodeData;
 
 /** Узел графа — совместим с backend-DTO `NodeDto`. */
 export type GraphNode = {
@@ -97,7 +98,8 @@ export type NodeType =
   | 'vector_upsert'
   | 'vector_query'
   | 'memory_read'
-  | 'memory_write';
+  | 'memory_write'
+  | 'agent';
 
 /**
  * Категории узлов для каталога (KI-127, § 5.2 DESIGN v0.7).
@@ -634,6 +636,77 @@ export interface MemoryWriteNodeData extends Record<string, unknown> {
   value?: string;
 }
 
+/**
+ * Инструменты agent-узла (R7.4b, DESIGN v0.9 § 3.4).
+ *
+ * Список — зеркало backend `AGENT_TOOL_NAMES` (`src/agent/agent.types.ts`):
+ * значения уходят в граф как есть и проверяются Zod-схемой узла на backend,
+ * поэтому UI не должен предлагать инструмент, который executor отвергнет.
+ */
+export const AGENT_TOOLS = [
+  'http_request',
+  'vector_query',
+  'vector_upsert',
+  'memory_read',
+  'memory_write',
+  'code_eval',
+  'llm_call',
+] as const;
+
+/** Имя инструмента агента. */
+export type AgentToolName = (typeof AGENT_TOOLS)[number];
+
+/** Минимум инструментов: агент без инструментов — это LLM-узел с циклом. */
+export const AGENT_MIN_TOOLS = 1;
+
+/** Максимум инструментов (совпадает с backend-схемой). */
+export const AGENT_MAX_TOOLS = AGENT_TOOLS.length;
+
+/** Нижняя граница итераций (DESIGN § 3.4, UI-диапазон). */
+export const AGENT_MIN_ITERATIONS = 1;
+
+/** Верхняя граница итераций (совпадает с backend-схемой). */
+export const AGENT_MAX_ITERATIONS_LIMIT = 10;
+
+/** Лимит итераций по умолчанию (DESIGN § 3.4). */
+export const DEFAULT_AGENT_MAX_ITERATIONS = 5;
+
+/**
+ * Инструменты нового узла.
+ *
+ * Один `http_request` — минимальный рабочий набор: узел сразу запускаем, а
+ * остальные инструменты пользователь включает осознанно. Пул инструментов
+ * `vector_*`/`memory_*` требует настроенной коллекции/ключа, поэтому не
+ * включается молча (принцип KI-069).
+ */
+export const DEFAULT_AGENT_TOOLS: readonly AgentToolName[] = ['http_request'];
+
+/**
+ * Данные узла `agent` (R7.4b, DESIGN v0.9 § 3.4).
+ *
+ * Порты (`src/engine/node-ports.ts`): вход `text-input` → порт `prompt`
+ * (текст задачи), выход `result-output` → порт `result` (финальный ответ).
+ * Сам цикл (LLM → tools → final) исполняет backend `AgentService`; в `data`
+ * хранится только конфигурация.
+ */
+export interface AgentNodeData extends Record<string, unknown> {
+  kind: 'agent';
+  /** id модели, которая ведёт цикл (из `GET /llm/models`). */
+  model: string;
+  /** Системная инструкция; backend добавляет её перед протоколом агента. */
+  systemPrompt?: string;
+  /** Включённые инструменты: от {@link AGENT_MIN_TOOLS} до {@link AGENT_MAX_TOOLS}. */
+  tools: AgentToolName[];
+  /** Предел итераций 1–10; `undefined` — дефолт backend (5). */
+  maxIterations?: number;
+  /**
+   * Лимит токенов на шаг (DESIGN § 3.4). В UI поля нет — значение
+   * переносится между Load/Save, чтобы не терять настройку, заданную через
+   * API (KI-129: `undefined`-ключи не создаём).
+   */
+  maxTokensPerStep?: number;
+}
+
 /** Узел Text в терминах React Flow. */
 export type TextFlowNode = Node<TextNodeData, 'text'>;
 /** Узел LLM в терминах React Flow. */
@@ -668,6 +741,8 @@ export type VectorQueryFlowNode = Node<VectorQueryNodeData, 'vector_query'>;
 export type MemoryReadFlowNode = Node<MemoryReadNodeData, 'memory_read'>;
 /** Узел записи памяти workflow (R7.4a). */
 export type MemoryWriteFlowNode = Node<MemoryWriteNodeData, 'memory_write'>;
+/** Узел агента с циклом LLM → tools → final (R7.4b). */
+export type AgentFlowNode = Node<AgentNodeData, 'agent'>;
 
 /** Любой узел редактора. */
 export type AppNode =
@@ -687,5 +762,6 @@ export type AppNode =
   | VectorUpsertFlowNode
   | VectorQueryFlowNode
   | MemoryReadFlowNode
-  | MemoryWriteFlowNode;
+  | MemoryWriteFlowNode
+  | AgentFlowNode;
 

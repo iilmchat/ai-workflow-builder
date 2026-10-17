@@ -250,6 +250,38 @@ export const SandboxEnvSchema = z.object({
 export type SandboxEnv = z.infer<typeof SandboxEnvSchema>;
 
 /**
+ * Zod-схема лимитов agent-узла (R7.4b, DESIGN v0.9 § 3.4).
+ *
+ * Значения — **дефолты узла**, а не жёсткие лимиты запуска: `data.maxIterations`
+ * и `data.maxTokensPerStep` переопределяют их на конкретном узле. Схема
+ * ограничивает env теми же границами, что UI (1–10 итераций), чтобы опечатка
+ * в `.env` не превратила агента в бесконечный цикл платных вызовов.
+ */
+export const AgentEnvSchema = z.object({
+  /**
+   * Лимит итераций цикла агента по умолчанию (default 5, диапазон 1–10).
+   *
+   * При исчерпании узел падает `AgentIterationLimitException` — запуск не
+   * висит, а честно сообщает, что модель не дошла до финального ответа.
+   */
+  AGENT_MAX_ITERATIONS_DEFAULT: z
+    .preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(10).optional())
+    .default(5),
+  /**
+   * Лимит токенов ответа на одну итерацию (default 2048, до 8192).
+   *
+   * Каждый шаг — отдельный платный вызов, поэтому лимит ограничен сверху:
+   * агент не должен «думать» на 32k токенов в каждом шаге.
+   */
+  AGENT_MAX_TOKENS_PER_STEP_DEFAULT: z
+    .preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(8192).optional())
+    .default(2048),
+});
+
+/** Валидированные настройки agent-узла (R7.4b). */
+export type AgentEnv = z.infer<typeof AgentEnvSchema>;
+
+/**
  * Zod-схема переменных окружения, обязательных для запуска приложения.
  *
  * Проверяется ровно один раз при инициализации `ConfigModule` (fail-fast):
@@ -440,6 +472,8 @@ export const EnvSchema = z.object({
   ...MediaDirectEnvSchema.shape,
   // WASM-песочница QuickJS для condition `mode: 'sandbox'` (R7.5, KI-364).
   ...SandboxEnvSchema.shape,
+  // Лимиты agent-узла: итерации и токены на шаг (R7.4b, DESIGN § 3.4).
+  ...AgentEnvSchema.shape,
 })
   /**
    * Fail-fast: отказ старта при `AUTH_DISABLED=true` в production.
