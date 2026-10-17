@@ -205,6 +205,51 @@ export const MediaDirectEnvSchema = z.object({
 export type MediaDirectEnv = z.infer<typeof MediaDirectEnvSchema>;
 
 /**
+ * Zod-схема WASM-песочницы QuickJS (R7.5, KI-364).
+ *
+ * `SANDBOX_ENABLED` — аварийный выключатель: по умолчанию `false`, потому что
+ * режим `sandbox` исполняет пользовательский код (пусть и изолированный) и
+ * требует осознанного включения. При `false` узел `condition` с `mode:
+ * 'sandbox'` падает с понятной ошибкой, а режим `dsl` работает всегда.
+ *
+ * Вынесена отдельным объектом по той же причине, что {@link WorkerEnvSchema}:
+ * значения нужны и `ConfigModule` (DI, fail-fast), и тестам как единственный
+ * источник дефолтов.
+ */
+export const SandboxEnvSchema = z.object({
+  /**
+   * Включён ли режим `sandbox` (default false). Строка `'true'`/`'false'`
+   * (как в `.env`) или boolean (как после `validateEnv`).
+   */
+  SANDBOX_ENABLED: z
+    .preprocess(
+      emptyToUndefined,
+      z
+        .union([z.boolean(), z.enum(['true', 'false'])])
+        .transform((value) => value === true || value === 'true')
+        .optional(),
+    )
+    .default(false),
+  /**
+   * Таймаут вычисления в песочнице, мс (default 100). Значение меньше 1 или
+   * больше 5000 обрезается в коде-потребителе (защита от «вечного» узла).
+   */
+  SANDBOX_TIMEOUT_MS: z
+    .preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(5000).optional())
+    .default(100),
+  /**
+   * Лимит памяти песочницы, МБ (default 16). Верхняя граница 256 МБ — чтобы
+   * опечатка в `.env` не съела память процесса.
+   */
+  SANDBOX_MEMORY_MB: z
+    .preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(256).optional())
+    .default(16),
+});
+
+/** Валидированные настройки WASM-песочницы (R7.5). */
+export type SandboxEnv = z.infer<typeof SandboxEnvSchema>;
+
+/**
  * Zod-схема переменных окружения, обязательных для запуска приложения.
  *
  * Проверяется ровно один раз при инициализации `ConfigModule` (fail-fast):
@@ -393,6 +438,8 @@ export const EnvSchema = z.object({
   ...CostBudgetEnvSchema.shape,
   // Прямые image-провайдеры: Replicate / FAL / OpenAI Images (R7.3, KI-363).
   ...MediaDirectEnvSchema.shape,
+  // WASM-песочница QuickJS для condition `mode: 'sandbox'` (R7.5, KI-364).
+  ...SandboxEnvSchema.shape,
 })
   /**
    * Fail-fast: отказ старта при `AUTH_DISABLED=true` в production.

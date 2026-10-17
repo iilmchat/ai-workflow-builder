@@ -89,9 +89,10 @@ describe('createNode — дефолты узлов R6.5.2', () => {
     expect(Object.keys(data).sort()).toEqual(['kind', 'method', 'url']);
   });
 
-  it('condition: пустые операнды и === по умолчанию', () => {
+  it('condition: пустые операнды, === и DSL по умолчанию', () => {
     expect(dataOfNewNode('condition')).toEqual({
       kind: 'condition',
+      mode: 'dsl',
       left: '',
       operator: '===',
       right: '',
@@ -219,9 +220,45 @@ describe('nodeDataFromApi — Load узлов R6.5.2', () => {
 
     expect(state().nodes[0]?.data).toEqual({
       kind: 'condition',
+      mode: 'dsl',
       left: 'input.value',
       operator: '===',
       right: '10',
+    });
+  });
+
+  it('condition: mode=sandbox и expression переносятся (R7.5)', async () => {
+    vi.mocked(getWorkflowAsync).mockResolvedValue({
+      id: 'wf-3b',
+      userId: 'user-smoke',
+      name: 'condition-sandbox',
+      version: 1,
+      edges: [],
+      nodes: [
+        {
+          id: 'cond-2',
+          type: 'condition',
+          position: AT_ZERO,
+          data: {
+            mode: 'sandbox',
+            expression: 'input.length > 3',
+            left: '',
+            operator: '===',
+            right: '',
+          },
+        },
+      ],
+    });
+
+    await state().loadWorkflowAsync('wf-3b');
+
+    expect(state().nodes[0]?.data).toEqual({
+      kind: 'condition',
+      mode: 'sandbox',
+      left: '',
+      operator: '===',
+      right: '',
+      expression: 'input.length > 3',
     });
   });
 

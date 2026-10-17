@@ -20,6 +20,7 @@ import {
   MediaNodeExecutor,
   type MediaNodeMetrics,
 } from '../media/media-node-executor.service.js';
+import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
 import type { GraphDto, NodeDto } from './dto/index.js';
 import { EngineService, type ExecutionPlanDto } from './engine.service.js';
@@ -189,6 +190,8 @@ export class ExecutionEngineService {
     private readonly runEvents: RunEventsService,
     private readonly llmExecutor: LlmNodeExecutor,
     private readonly mediaExecutor: MediaNodeExecutor,
+    // R7.5 (KI-364): режим `sandbox` узла condition — QuickJS-WASM.
+    private readonly sandboxRunner: QuickJsRunnerService,
     // R6.7 (KI-200): узел sub_workflow загружает подграф — нужен доступ к
     // workflow того же владельца. WorkflowModule экспортирует сервис.
     private readonly workflowService: WorkflowService,
@@ -873,7 +876,11 @@ export class ExecutionEngineService {
         return { kind: 'plain', outputs, metrics: null };
       }
       case 'condition': {
-        const outputs = executeConditionNode(node.data, inputs);
+        const outputs = await executeConditionNode(
+          node.data,
+          inputs,
+          this.sandboxRunner,
+        );
 
         return { kind: 'plain', outputs, metrics: null };
       }

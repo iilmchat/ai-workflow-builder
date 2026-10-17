@@ -368,3 +368,36 @@ describe('staging / preprod считаются prod-подобными (KI-221)'
     expect(result.COOKIE_SECURE).toBe(true);
   });
 });
+
+describe('SANDBOX_* (R7.5, KI-364)', () => {
+  it('дефолты: выключено, таймаут 100 мс, память 16 МБ', () => {
+    const parsed = EnvSchema.parse(baseEnv);
+
+    expect(parsed.SANDBOX_ENABLED).toBe(false);
+    expect(parsed.SANDBOX_TIMEOUT_MS).toBe(100);
+    expect(parsed.SANDBOX_MEMORY_MB).toBe(16);
+  });
+
+  it("SANDBOX_ENABLED понимает 'true'/'false' из .env", () => {
+    expect(
+      EnvSchema.parse({ ...baseEnv, SANDBOX_ENABLED: 'true' }).SANDBOX_ENABLED,
+    ).toBe(true);
+    expect(
+      EnvSchema.parse({ ...baseEnv, SANDBOX_ENABLED: 'false' }).SANDBOX_ENABLED,
+    ).toBe(false);
+    // `.env.example` содержит `SANDBOX_ENABLED=false`, но пустая строка тоже
+    // должна трактоваться как «не задано» (KI-084).
+    expect(EnvSchema.parse({ ...baseEnv, SANDBOX_ENABLED: '' }).SANDBOX_ENABLED).toBe(
+      false,
+    );
+  });
+
+  it('отклоняет лимиты вне допустимых границ', () => {
+    expect(() =>
+      EnvSchema.parse({ ...baseEnv, SANDBOX_TIMEOUT_MS: '0' }),
+    ).toThrow();
+    expect(() =>
+      EnvSchema.parse({ ...baseEnv, SANDBOX_MEMORY_MB: '257' }),
+    ).toThrow();
+  });
+});

@@ -409,7 +409,23 @@ export type ConditionOperator = '>' | '<' | '>=' | '<=' | '===' | 'includes';
 export const DEFAULT_CONDITION_OPERATOR: ConditionOperator = '===';
 
 /**
- * Данные узла `condition` (R6.5.2, DESIGN v0.8 § 8.2).
+ * Режим вычисления условия (R7.5, KI-364, DESIGN v0.9 § 3.5).
+ *
+ * `dsl` — MVP-DSL (`left`/`operator`/`right`); `sandbox` — JS-выражение,
+ * исполняемое на сервере в QuickJS-WASM.
+ */
+export type ConditionMode = 'dsl' | 'sandbox';
+
+/**
+ * Режим условия по умолчанию.
+ *
+ * `dsl` — backward compat: старые workflow не имеют поля `mode` и должны
+ * открываться в прежнем режиме.
+ */
+export const DEFAULT_CONDITION_MODE: ConditionMode = 'dsl';
+
+/**
+ * Данные узла `condition` (R6.5.2, DESIGN v0.8 § 8.2; R7.5 — режим sandbox).
  *
  * Порты (`src/engine/node-ports.ts`, R6.5.1): вход `condition-input` → порт
  * `input`. Выходов у узла два (`true-output` / `false-output`), но
@@ -419,12 +435,19 @@ export const DEFAULT_CONDITION_OPERATOR: ConditionOperator = '===';
  */
 export interface ConditionNodeData extends Record<string, unknown> {
   kind: 'condition';
-  /** Левая часть: `input.X` либо литерал (`5`, `'abc'`, `true`). */
+  /** Режим вычисления (R7.5); отсутствует в старых графах → `dsl`. */
+  mode: ConditionMode;
+  /** Левая часть DSL: `input.X` либо литерал (`5`, `'abc'`, `true`). */
   left: string;
-  /** Операция сравнения. */
+  /** Операция сравнения DSL. */
   operator: ConditionOperator;
-  /** Правая часть: `input.X` либо литерал. */
+  /** Правая часть DSL: `input.X` либо литерал. */
   right: string;
+  /**
+   * JS-выражение для режима `sandbox` (R7.5). Пустая строка/`undefined` —
+   * поле не задано; сохраняется при переключении в DSL, чтобы не терять текст.
+   */
+  expression?: string;
 }
 
 /** Имя выхода узла `output` по умолчанию (как в `createNode`). */

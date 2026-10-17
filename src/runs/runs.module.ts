@@ -6,6 +6,8 @@ import { EngineModule } from '../engine/engine.module.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import { LlmModule } from '../llm/llm.module.js';
 import { MediaModule } from '../media/media.module.js';
+// R7.5 (KI-364): QuickJsRunnerService для режима `sandbox` узла condition.
+import { SandboxModule } from '../sandbox/sandbox.module.js';
 import { WorkflowModule } from '../workflow/workflow.module.js';
 import { RunEventsService } from './run-events.service.js';
 import { WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
@@ -40,6 +42,9 @@ import { RUNS_QUEUE_DB, RUNS_QUEUE_PREFIX } from './runs.worker-options.js';
     LlmModule,
     // ...а из него MediaNodeExecutor для узлов image_generation (v0.6.0b.2.2).
     MediaModule,
+    // R7.5 (KI-364): ExecutionEngineService получает QuickJsRunnerService
+    // для режима `sandbox` узла condition.
+    SandboxModule,
     // R6.7 (KI-200): ExecutionEngineService загружает подграфы узлов
     // sub_workflow через WorkflowService (проверка владельца — 404).
     WorkflowModule,

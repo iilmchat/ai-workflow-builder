@@ -3,8 +3,10 @@
  *
  * `llm` здесь нет — с R3 узел ходит во внешний провайдер, поэтому живёт
  * в `src/llm/llm-node-executor.service.ts` (DI + `LlmService`). Здесь остаются
- * чистые преобразования (`text`, `condition`, `output`, `compare`), сетевой
- * `http` (R6.5.1, KI-105) и заглушка `image_generation` (R4).
+ * преобразования (`text`, `condition`, `output`, `compare`), сетевой `http`
+ * (R6.5.1, KI-105) и заглушка `image_generation` (R4). С R7.5 (KI-364)
+ * `condition` в режиме `sandbox` — асинхронный: выражение исполняет
+ * QuickJS-WASM через переданный исполнитель.
  *
  * Правило для `data`: она приходит из jsonb-графа как `unknown` и валидируется
  * Zod'ом **внутри исполнителя**, а не в `NodeDto` (там `data` — свободный
@@ -19,6 +21,7 @@
  */
 import { NotFoundException } from '@nestjs/common';
 import { z } from 'zod';
+import type { SandboxEvaluation, SandboxOptions } from '../sandbox/quickjs-runner.service.js';
 import type { EdgeDto, GraphDto, NodeDto } from './dto/index.js';
 import { inferInputPortName } from './node-ports.js';
 
@@ -345,21 +348,78 @@ export async function executeHttpNode(
 /** Поддержанные операции MVP-DSL (DESIGN § 8.2, § 14 — решение 4). */
 export type ConditionOperator = '>' | '<' | '>=' | '<=' | '===' | 'includes';
 
-/** Данные узла `condition`. */
+/**
+ * Режим вычисления условия (R7.5, KI-364).
+ *
+ * `dsl` — прежний MVP-DSL (`left`/`operator`/`right`), работает всегда;
+ * `sandbox` — произвольное JS-выражение в QuickJS-WASM. Дефолт — `dsl`:
+ * старые графы не имеют поля `mode` и должны выполняться как раньше.
+ */
+export type ConditionMode = 'dsl' | 'sandbox';
+
+/** Данные узла `condition` (объединение двух режимов). */
 export interface ConditionNodeData {
-  /** Левая часть: `input.X` либо литерал. */
-  left: string;
+  /** Режим вычисления; отсутствует в старых графах → `dsl`. */
+  mode?: ConditionMode;
+  /** Левая часть DSL: `input.X` либо литерал. */
+  left?: string;
   /** Операция сравнения MVP-DSL. */
-  operator: ConditionOperator;
-  /** Правая часть: `input.X` либо литерал. */
-  right: string;
+  operator?: ConditionOperator;
+  /** Правая часть DSL: `input.X` либо литерал. */
+  right?: string;
+  /** JS-выражение для режима `sandbox`. */
+  expression?: string;
 }
 
-/** Zod-схема данных узла `condition`. */
+/**
+ * Структурный контракт песочницы, который нужен исполнителю условия.
+ *
+ * Нарочно не импортирует `QuickJsRunnerService` как значение: движок получает
+ * готовый экземпляр через DI, а сам модуль исполнителей остаётся свободным от
+ * runtime-зависимости на `quickjs-emscripten` (WASM грузится только когда
+ * реально запрошен режим `sandbox`).
+ */
+export interface ConditionSandboxEvaluator {
+  /**
+   * Вычисляет выражение в песочнице.
+   *
+   * @param expression - JS-выражение
+   * @param input - значение входа узла
+   * @param options - лимиты и allowlist
+   * @returns результат либо текст ошибки
+   */
+  evaluateSandboxedAsync(
+    expression: string,
+    input: unknown,
+    options?: SandboxOptions,
+  ): Promise<SandboxEvaluation>;
+}
+
+/** Результат вычисления условия. */
+export interface ConditionResult extends Record<string, unknown> {
+  /** Итог условия. */
+  result: boolean;
+  /**
+   * Разрешённые операнды DSL. В режиме `sandbox` отсутствует: выражение может
+   * обращаться к любым полям входа, и восстановить «левый/правый операнд»
+   * нельзя (KI-282).
+   */
+  evaluated?: { left: unknown; right: unknown };
+}
+
+/** Zod-схема данных узла `condition` в режиме DSL (R6.5.1). */
 const ConditionNodeDataSchema = z.object({
   left: z.string().min(1, 'left обязателен'),
   operator: z.enum(['>', '<', '>=', '<=', '===', 'includes']),
   right: z.string().min(1, 'right обязателен'),
+});
+
+/** Zod-схема данных узла `condition` в режиме `sandbox` (R7.5). */
+const ConditionSandboxDataSchema = z.object({
+  expression: z
+    .string({ error: 'expression обязателен' })
+    .trim()
+    .min(1, 'expression обязателен'),
 });
 
 /** Запасные ключи входов, среди которых ищется значение по умолчанию. */
@@ -513,23 +573,55 @@ function requireFiniteNumber(operand: ResolvedOperand, side: 'left' | 'right'): 
 }
 
 /**
- * Вычисляет условие узла `condition` (MVP, DESIGN § 14 — без sandbox).
+ * Вычисляет условие узла `condition` (R6.5.1 + R7.5, KI-364).
+ *
+ * Режим выбирается полем `data.mode`:
+ * - `dsl` (default) — прежняя логика MVP-DSL без исполнения кода;
+ * - `sandbox` — JS-выражение в QuickJS-WASM через переданный
+ *   {@link ConditionSandboxEvaluator}. Вход узла кладётся в единственную
+ *   переменную `input`; значение из `inputs.input` (порт узла) имеет
+ *   приоритет, затем `prompt`/`text`/`value` — та же эвристика, что у DSL
+ *   (KI-283).
  *
  * Маршрутизация веток в этом подшаге **не** реализуется: узел просто отдаёт
  * `outputs = { result }`, а обе ветки продолжают выполняться на уровне движка.
- * Пропуск узлов непройденной ветки — отдельная задача v0.8.x (требует правок
- * `buildExecutionPlanAsync` + `executeAsync`).
+ *
+ * @param data - данные узла (`mode`, `left`/`operator`/`right` либо `expression`)
+ * @param inputs - собранные входы узла (`inputs.input`, `inputs.text`, …)
+ * @param sandbox - исполнитель песочницы (обязателен для `mode='sandbox'`)
+ * @returns `{ result, evaluated? }`; `evaluated` есть только у DSL
+ * @throws NodeDataValidationException если данные не проходят Zod-схему
+ * @throws Error если операция неприменима к типам операндов
+ * @throws SandboxUnavailableException если `mode='sandbox'`, а песочница
+ *   выключена/не загрузилась (пробрасывается из исполнителя песочницы)
+ */
+export async function executeConditionNode(
+  data: unknown,
+  inputs: Record<string, unknown> = {},
+  sandbox?: ConditionSandboxEvaluator,
+): Promise<ConditionResult> {
+  const mode = readConditionMode(data);
+
+  if (mode === 'sandbox') {
+    return executeSandboxConditionAsync(data, inputs, sandbox);
+  }
+
+  return executeDslCondition(data, inputs);
+}
+
+/**
+ * Вычисляет условие в режиме `dsl` (прежняя логика MVP-DSL).
  *
  * @param data - данные узла (`left`/`operator`/`right`)
- * @param inputs - собранные входы узла (`inputs.prompt`, `inputs.text`, …)
- * @returns `{ result, evaluated }`, где `evaluated` — разрешённые операнды
+ * @param inputs - собранные входы узла
+ * @returns `{ result, evaluated }`
  * @throws NodeDataValidationException если данные не проходят Zod-схему
  * @throws Error если операция неприменима к типам операндов
  */
-export function executeConditionNode(
+function executeDslCondition(
   data: unknown,
-  inputs: Record<string, unknown> = {},
-): { result: boolean; evaluated: { left: unknown; right: unknown } } {
+  inputs: Record<string, unknown>,
+): ConditionResult & { evaluated: { left: unknown; right: unknown } } {
   const parsed = parseNodeData('condition', ConditionNodeDataSchema, data);
   const resolvedLeft = resolveConditionOperand(parsed.left, inputs, 'condition', 'left');
   const resolvedRight = resolveConditionOperand(parsed.right, inputs, 'condition', 'right');
@@ -588,6 +680,101 @@ export function executeConditionNode(
   }
 
   return { result, evaluated };
+}
+
+/**
+ * Читает режим условия из недоверенных `data`.
+ *
+ * Отсутствующее/пустое поле — `dsl` (обратная совместимость со старыми
+ * графами). Неизвестное значение — ошибка, а не молчаливый откат в DSL: иначе
+ * опечатка в `mode` исполняла бы выражение не тем способом, чем ожидал автор.
+ *
+ * @param data - сырые данные узла
+ * @returns режим вычисления
+ * @throws NodeDataValidationException если `mode` — неизвестная строка
+ */
+function readConditionMode(data: unknown): ConditionMode {
+  if (typeof data !== 'object' || data === null) {
+    return 'dsl';
+  }
+
+  const mode = (data as Record<string, unknown>).mode;
+
+  if (mode === undefined || mode === null || mode === '') {
+    return 'dsl';
+  }
+
+  if (mode === 'dsl' || mode === 'sandbox') {
+    return mode;
+  }
+
+  const description =
+    typeof mode === 'string' ? `'${mode}'` : (JSON.stringify(mode) ?? 'undefined');
+
+  throw new NodeDataValidationException(
+    'condition',
+    `mode: неизвестный режим ${description}`,
+  );
+}
+
+/**
+ * Вычисляет условие в режиме `sandbox` (R7.5).
+ *
+ * Ошибка песочницы (timeout/OOM/исключение выражения) превращается в обычный
+ * `Error` с её текстом: движок ловит исключение исполнителя и пишет
+ * `node_runs.error`, то есть узел становится `failed` ровно с этим текстом.
+ *
+ * @param data - данные узла (`expression`)
+ * @param inputs - собранные входы узла
+ * @param sandbox - исполнитель песочницы
+ * @returns `{ result }` — результат выражения, приведённый к boolean
+ * @throws NodeDataValidationException если `expression` пуст/не строка
+ * @throws Error если песочница вернула ошибку либо исполнитель не передан
+ */
+async function executeSandboxConditionAsync(
+  data: unknown,
+  inputs: Record<string, unknown>,
+  sandbox: ConditionSandboxEvaluator | undefined,
+): Promise<ConditionResult> {
+  const parsed = parseNodeData('condition', ConditionSandboxDataSchema, data);
+
+  if (sandbox === undefined) {
+    throw new Error('Sandbox unavailable: evaluator is not configured');
+  }
+
+  const evaluation = await sandbox.evaluateSandboxedAsync(
+    parsed.expression,
+    pickPrimaryInput(inputs),
+  );
+
+  if (evaluation.error !== undefined) {
+    throw new Error(evaluation.error);
+  }
+
+  // Приведение к boolean — семантика условия: `input.length` (число) или
+  // `input.text` (непустая строка) тоже осмысленны как «истина/ложь».
+  return { result: Boolean(evaluation.result) };
+}
+
+/**
+ * Выбирает «главный» вход узла для переменной `input` в песочнице.
+ *
+ * Порядок ключей совпадает с {@link fallbackInputKeys}: сначала
+ * нормализованный порт узла (`input`), затем `prompt`/`text`/`value`. Это та же
+ * эвристика, что у DSL (KI-283), поэтому переключение режима не меняет смысл
+ * входа для типового графа `text → condition`.
+ *
+ * @param inputs - собранные входы узла
+ * @returns значение первого найденного входа либо `null`
+ */
+function pickPrimaryInput(inputs: Record<string, unknown>): unknown {
+  for (const key of fallbackInputKeys('condition')) {
+    if (Object.hasOwn(inputs, key)) {
+      return inputs[key] ?? null;
+    }
+  }
+
+  return null;
 }
 
 /**

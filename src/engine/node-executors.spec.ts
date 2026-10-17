@@ -24,7 +24,10 @@ import {
   type SubWorkflowRecord,
 } from './node-executors.js';
 import { NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Test } from '@nestjs/testing';
 import type { GraphDto } from './dto/index.js';
+import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 
 /** Предельный размер тела ответа, байт (совпадает с константой исполнителя). */
 const MAX_BODY_BYTES = 1_000_000;
@@ -297,8 +300,35 @@ describe('node-executors', () => {
   });
 
   describe('executeConditionNode', () => {
-    it('> сравнивает числа', () => {
-      const result = executeConditionNode(
+    /** Песочница с включённым режимом (R7.5): реальный QuickJS-WASM. */
+    let sandboxRunner: QuickJsRunnerService;
+
+    beforeAll(async () => {
+      const moduleRef = await Test.createTestingModule({
+        providers: [
+          QuickJsRunnerService,
+          {
+            provide: ConfigService,
+            useValue: {
+              get: (key: string): unknown => {
+                const config: Record<string, unknown> = {
+                  SANDBOX_ENABLED: true,
+                  SANDBOX_TIMEOUT_MS: 100,
+                  SANDBOX_MEMORY_MB: 16,
+                };
+
+                return config[key];
+              },
+            },
+          },
+        ],
+      }).compile();
+
+      sandboxRunner = moduleRef.get(QuickJsRunnerService);
+    });
+
+    it('> сравнивает числа', async () => {
+      const result = await executeConditionNode(
         { left: 'input.value', operator: '>', right: '3' },
         { value: 5 },
       );
@@ -306,102 +336,187 @@ describe('node-executors', () => {
       expect(result).toEqual({ result: true, evaluated: { left: 5, right: 3 } });
     });
 
-    it('> возвращает false, когда условие не выполнено', () => {
+    it('> возвращает false, когда условие не выполнено', async () => {
       expect(
-        executeConditionNode(
-          { left: 'input.value', operator: '>', right: '10' },
-          { value: 5 },
+        (
+          await executeConditionNode(
+            { left: 'input.value', operator: '>', right: '10' },
+            { value: 5 },
+          )
         ).result,
       ).toBe(false);
     });
 
-    it('=== сравнивает строки', () => {
+    it('=== сравнивает строки', async () => {
       expect(
-        executeConditionNode(
+        await executeConditionNode(
           { left: 'input.text', operator: '===', right: "'готово'" },
           { text: 'готово' },
         ),
       ).toEqual({ result: true, evaluated: { left: 'готово', right: 'готово' } });
     });
 
-    it('includes работает для массива', () => {
+    it('includes работает для массива', async () => {
       expect(
-        executeConditionNode(
-          { left: 'input.value', operator: 'includes', right: "'b'" },
-          { value: ['a', 'b', 'c'] },
+        (
+          await executeConditionNode(
+            { left: 'input.value', operator: 'includes', right: "'b'" },
+            { value: ['a', 'b', 'c'] },
+          )
         ).result,
       ).toBe(true);
     });
 
-    it('includes работает для строки', () => {
+    it('includes работает для строки', async () => {
       expect(
-        executeConditionNode(
-          { left: 'input.text', operator: 'includes', right: 'тек' },
-          { text: 'текст ответа' },
+        (
+          await executeConditionNode(
+            { left: 'input.text', operator: 'includes', right: 'тек' },
+            { text: 'текст ответа' },
+          )
         ).result,
       ).toBe(true);
     });
 
-    it('берёт первый непустой вход, если input.X не найден', () => {
+    it('берёт первый непустой вход, если input.X не найден', async () => {
       expect(
-        executeConditionNode(
+        await executeConditionNode(
           { left: 'input.value', operator: '===', right: "'привет'" },
           { text: 'привет' },
         ),
       ).toEqual({ result: true, evaluated: { left: 'привет', right: 'привет' } });
     });
 
-    it('падает на невалидном операторе (валидация Zod)', () => {
-      expect(() =>
+    it('падает на невалидном операторе (валидация Zod)', async () => {
+      await expect(
         executeConditionNode(
           { left: 'input.value', operator: '!=', right: '1' },
           { value: 1 },
         ),
-      ).toThrow(NodeDataValidationException);
+      ).rejects.toThrow(NodeDataValidationException);
     });
 
-    it('падает на includes для числа', () => {
-      expect(() =>
+    it('падает на includes для числа', async () => {
+      await expect(
         executeConditionNode(
           { left: 'input.value', operator: 'includes', right: '1' },
           { value: 42 },
         ),
-      ).toThrow("includes не поддерживает тип 'number'");
+      ).rejects.toThrow("includes не поддерживает тип 'number'");
     });
 
-    it('падает на === для объекта', () => {
-      expect(() =>
+    it('падает на === для объекта', async () => {
+      await expect(
         executeConditionNode(
           { left: 'input.value', operator: '===', right: '1' },
           { value: { a: 1 } },
         ),
-      ).toThrow('только для примитивов');
+      ).rejects.toThrow('только для примитивов');
     });
 
-    it('падает, если операнд не число для >', () => {
-      expect(() =>
+    it('падает, если операнд не число для >', async () => {
+      await expect(
         executeConditionNode(
           { left: 'input.text', operator: '>', right: '3' },
           { text: 'не число' },
         ),
-      ).toThrow('не является числом');
+      ).rejects.toThrow('не является числом');
     });
 
-    it('падает, если операнд не найден во входах', () => {
-      expect(() =>
+    it('падает, если операнд не найден во входах', async () => {
+      await expect(
         executeConditionNode({ left: 'input.value', operator: '>', right: '3' }, {}),
-      ).toThrow("вход 'value' не найден, а запасных входов (input/prompt/text/value) нет");
+      ).rejects.toThrow(
+        "вход 'value' не найден, а запасных входов (input/prompt/text/value) нет",
+      );
     });
 
-    it('читает вход из порта узла (input), а не только из prompt/text', () => {
+    it('читает вход из порта узла (input), а не только из prompt/text', async () => {
       // Движок кладёт выход text-предшественника под ключом входного порта
       // `condition` — это `input` (KI-034). Без него узел не увидел бы данные.
       expect(
-        executeConditionNode(
+        await executeConditionNode(
           { left: 'input.value', operator: '===', right: "'готово'" },
           { input: 'готово' },
         ),
       ).toEqual({ result: true, evaluated: { left: 'готово', right: 'готово' } });
+    });
+
+    it('R7.5: mode=dsl — явный режим работает как прежний DSL', async () => {
+      expect(
+        await executeConditionNode(
+          { mode: 'dsl', left: 'input.value', operator: '>', right: '3' },
+          { value: 5 },
+        ),
+      ).toEqual({ result: true, evaluated: { left: 5, right: 3 } });
+    });
+
+    it('R7.5: mode=sandbox — вычисляет JS-выражение в QuickJS', async () => {
+      // Вход узла приходит из text-предшественника строкой под портом `input`
+      // (KI-034), поэтому в песочнице это ровно переменная `input`.
+      expect(
+        await executeConditionNode(
+          { mode: 'sandbox', expression: "input.length > 3 && input.includes('foo')" },
+          { input: 'foobar' },
+          sandboxRunner,
+        ),
+      ).toEqual({ result: true });
+    });
+
+    it('R7.5: mode=sandbox — объект входа доступен по полям', async () => {
+      expect(
+        await executeConditionNode(
+          { mode: 'sandbox', expression: 'input.value > 100' },
+          { input: { value: 150 } },
+          sandboxRunner,
+        ),
+      ).toEqual({ result: true });
+    });
+
+    it('R7.5: mode=sandbox + timeout → узел падает с текстом ошибки', async () => {
+      await expect(
+        executeConditionNode(
+          { mode: 'sandbox', expression: 'while (true) {}' },
+          { input: 'x' },
+          sandboxRunner,
+        ),
+      ).rejects.toThrow('Timeout exceeded');
+    });
+
+    it('R7.5: mode=sandbox при SANDBOX_ENABLED=false → понятная ошибка', async () => {
+      const moduleRef = await Test.createTestingModule({
+        providers: [
+          QuickJsRunnerService,
+          {
+            provide: ConfigService,
+            useValue: { get: (): unknown => false },
+          },
+        ],
+      }).compile();
+      const disabledRunner = moduleRef.get(QuickJsRunnerService);
+
+      await expect(
+        executeConditionNode(
+          { mode: 'sandbox', expression: 'true' },
+          {},
+          disabledRunner,
+        ),
+      ).rejects.toThrow('Sandbox disabled in env');
+    });
+
+    it('R7.5: mode=sandbox без expression → ошибка валидации', async () => {
+      await expect(
+        executeConditionNode({ mode: 'sandbox' }, {}, sandboxRunner),
+      ).rejects.toThrow('expression обязателен');
+    });
+
+    it('R7.5: неизвестный mode → ошибка, а не молчаливый DSL', async () => {
+      await expect(
+        executeConditionNode(
+          { mode: 'wasm', left: 'input.value', operator: '>', right: '3' },
+          { value: 5 },
+        ),
+      ).rejects.toThrow("mode: неизвестный режим 'wasm'");
     });
   });
 

@@ -40,6 +40,7 @@ import {
 import { canInsertOnEdge, isNodeType, nodeLabelOf } from '@/lib/node-registry';
 import type { MediaModelInfo } from '@/types/media';
 import {
+  DEFAULT_CONDITION_MODE,
   DEFAULT_CONDITION_OPERATOR,
   DEFAULT_LLM_MODEL_ID,
   DEFAULT_OUTPUT_NAME,
@@ -67,7 +68,7 @@ import {
   validateHttpMethod,
   validateTimeoutMs,
 } from '@/lib/http-node-fields';
-import { validateConditionOperator } from '@/lib/condition-node-fields';
+import { validateConditionMode, validateConditionOperator } from '@/lib/condition-node-fields';
 import {
   validateInputsMap,
   validateWorkflowVersion,
@@ -957,8 +958,15 @@ function createNode(
         ...shared,
         type: 'condition',
         // Оператор по умолчанию — строгое равенство: самый предсказуемый
-        // вариант для строкового входа от Text-узла.
-        data: { kind: 'condition', left: '', operator: DEFAULT_CONDITION_OPERATOR, right: '' },
+        // вариант для строкового входа от Text-узла. Режим — DSL (R7.5):
+        // sandbox включается осознанно, т.к. исполняет JS на сервере.
+        data: {
+          kind: 'condition',
+          mode: DEFAULT_CONDITION_MODE,
+          left: '',
+          operator: DEFAULT_CONDITION_OPERATOR,
+          right: '',
+        },
       };
     case 'output':
       return {
@@ -1271,10 +1279,19 @@ function nodeDataFromApi(type: NodeType, data: Record<string, unknown>): NodeDat
       // принимает ровно шесть операций MVP-DSL.
       const result: ConditionNodeData = {
         kind: 'condition',
+        // R7.5 (KI-364): старые графы без `mode` открываются в DSL.
+        mode: validateConditionMode(data.mode),
         left: typeof data.left === 'string' ? data.left : '',
         operator: validateConditionOperator(data.operator),
         right: typeof data.right === 'string' ? data.right : '',
       };
+
+      // Пустой `expression` не создаём (KI-129): лишний ключ в jsonb.
+      // Непустой сохраняем всегда, чтобы переключение DSL ↔ JS не теряло
+      // введённый текст.
+      if (typeof data.expression === 'string' && data.expression.length > 0) {
+        result.expression = data.expression;
+      }
 
       return result;
     }

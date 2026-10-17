@@ -5,7 +5,9 @@ import { BaseNode } from '@/components/nodes/BaseNode';
 import { useNodeDataHistory } from '@/hooks/use-node-data-history';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import {
+  CONDITION_MODES,
   CONDITION_OPERATORS,
+  validateConditionMode,
   validateConditionOperator,
 } from '@/lib/condition-node-fields';
 import { NODE_REGISTRY } from '@/lib/node-registry';
@@ -26,7 +28,7 @@ const TRUE_HANDLE_TOP = '30%';
 const FALSE_HANDLE_TOP = '70%';
 
 /**
- * Узел условия (R6.5.2, DESIGN v0.8 § 8.2).
+ * Узел условия (R6.5.2, DESIGN v0.8 § 8.2; R7.5 — режим sandbox).
  *
  * Вход — `condition-input` из backend-контракта (`src/engine/node-ports.ts`,
  * R6.5.1), нормализуется в порт `input`. Выходов визуально **два**
@@ -36,9 +38,12 @@ const FALSE_HANDLE_TOP = '70%';
  * выводит порт из типа узла (`inferDefaultOutputPort('condition')` → `result`) —
  * то есть обе ветки читаются зависимыми узлами одинаково (KI-278).
  *
- * Поля `left`/`right` — MVP-DSL из DESIGN § 8.2: `input.X`, число, `true`/`false`
- * или строка в кавычках. Пользовательский код не исполняется (никакого
- * `eval`), поэтому в подсказках полей стоят именно формы DSL.
+ * Два режима (R7.5, KI-364):
+ * - `dsl` (default) — MVP-DSL `left`/`operator`/`right` (DESIGN § 8.2):
+ *   `input.X`, число, `true`/`false` или строка в кавычках;
+ * - `sandbox` — произвольное JS-выражение, которое сервер исполняет в
+ *   QuickJS-WASM. Предупреждение в карточке честно говорит, что режим должен
+ *   быть включён администратором (`SANDBOX_ENABLED`).
  */
 export function ConditionNode({ id, data }: NodeProps<ConditionFlowNode>) {
   // R6.4b.2b: правки полей узла проходят через историю графа.
@@ -50,12 +55,21 @@ export function ConditionNode({ id, data }: NodeProps<ConditionFlowNode>) {
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const removeNode = useWorkflowStore((state) => state.removeNode);
 
+  // Неизвестное значение из старого/битого графа → DSL (backward compat).
+  const mode = validateConditionMode(data.mode);
+
   // KI-157: операнды пишутся в стор на каждый символ — сохраняем курсор.
   const handleLeftChange = usePreserveCursor<HTMLInputElement>(
     useCallback((value: string) => updateNodeData(id, { left: value }), [id, updateNodeData]),
   );
   const handleRightChange = usePreserveCursor<HTMLInputElement>(
     useCallback((value: string) => updateNodeData(id, { right: value }), [id, updateNodeData]),
+  );
+  const handleExpressionChange = usePreserveCursor<HTMLInputElement>(
+    useCallback(
+      (value: string) => updateNodeData(id, { expression: value }),
+      [id, updateNodeData],
+    ),
   );
 
   return (
@@ -82,45 +96,86 @@ export function ConditionNode({ id, data }: NodeProps<ConditionFlowNode>) {
         dataNodeAttr={{ name: 'data-condition-node', value: id }}
         onDelete={() => removeNode(id)}
       >
-        <div className="flex items-center gap-1">
-          <input
-            type="text"
-            value={data.left}
-            placeholder={t('node.condition.left.placeholder')}
-            aria-label={t('node.condition.left')}
-            data-condition-left=""
-            // nodrag: иначе протяжка мышью по полю тащит ноду.
-            className="nodrag min-w-0 flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
-            onChange={handleLeftChange}
-          />
+        <div className="flex flex-col gap-1.5">
+          {/* R7.5 (KI-364): выбор режима. В sandbox выражение исполняет сервер. */}
+          <div className="flex items-center gap-1">
+            <span className="shrink-0 text-[10px] text-muted-foreground">
+              {t('node.condition.mode')}
+            </span>
+            <select
+              value={mode}
+              aria-label={t('node.condition.mode')}
+              data-condition-mode=""
+              className="nodrag min-w-0 flex-1 rounded-lg border border-border bg-background px-1 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              onChange={(event) =>
+                updateNodeData(id, { mode: validateConditionMode(event.target.value) })
+              }
+            >
+              {CONDITION_MODES.map((conditionMode) => (
+                <option key={conditionMode} value={conditionMode}>
+                  {t(`node.condition.mode.${conditionMode}`)}
+                </option>
+              ))}
+            </select>
+          </div>
 
-          <select
-            value={data.operator}
-            aria-label={t('node.condition.operator')}
-            data-condition-operator=""
-            className="nodrag w-20 rounded-lg border border-border bg-background px-1 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-            onChange={(event) =>
-              updateNodeData(id, {
-                operator: validateConditionOperator(event.target.value),
-              })
-            }
-          >
-            {CONDITION_OPERATORS.map((operator) => (
-              <option key={operator} value={operator}>
-                {operator}
-              </option>
-            ))}
-          </select>
+          {mode === 'dsl' ? (
+            <div className="flex items-center gap-1">
+              <input
+                type="text"
+                value={data.left}
+                placeholder={t('node.condition.left.placeholder')}
+                aria-label={t('node.condition.left')}
+                data-condition-left=""
+                // nodrag: иначе протяжка мышью по полю тащит ноду.
+                className="nodrag min-w-0 flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+                onChange={handleLeftChange}
+              />
 
-          <input
-            type="text"
-            value={data.right}
-            placeholder={t('node.condition.right.placeholder')}
-            aria-label={t('node.condition.right')}
-            data-condition-right=""
-            className="nodrag min-w-0 flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
-            onChange={handleRightChange}
-          />
+              <select
+                value={data.operator}
+                aria-label={t('node.condition.operator')}
+                data-condition-operator=""
+                className="nodrag w-20 rounded-lg border border-border bg-background px-1 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                onChange={(event) =>
+                  updateNodeData(id, {
+                    operator: validateConditionOperator(event.target.value),
+                  })
+                }
+              >
+                {CONDITION_OPERATORS.map((operator) => (
+                  <option key={operator} value={operator}>
+                    {operator}
+                  </option>
+                ))}
+              </select>
+
+              <input
+                type="text"
+                value={data.right}
+                placeholder={t('node.condition.right.placeholder')}
+                aria-label={t('node.condition.right')}
+                data-condition-right=""
+                className="nodrag min-w-0 flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+                onChange={handleRightChange}
+              />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1">
+              <input
+                type="text"
+                value={data.expression ?? ''}
+                placeholder={t('node.condition.expression.placeholder')}
+                aria-label={t('node.condition.expression')}
+                data-condition-expression=""
+                className="nodrag w-full rounded-lg border border-border bg-background px-2 py-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+                onChange={handleExpressionChange}
+              />
+              <p className="text-[10px] leading-tight text-muted-foreground">
+                {t('node.condition.mode.sandbox_warning')}
+              </p>
+            </div>
+          )}
         </div>
       </BaseNode>
 

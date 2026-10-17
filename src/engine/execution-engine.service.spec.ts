@@ -1,4 +1,5 @@
 import { Test } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { Param } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { workflowRuns, type RunStatus } from '../db/schema.js';
@@ -10,6 +11,7 @@ import { ExecutionEngineService } from './execution-engine.service.js';
 import { LlmNodeExecutor } from '../llm/llm-node-executor.service.js';
 import { MediaNodeExecutor } from '../media/media-node-executor.service.js';
 import { LlmProviderException } from '../llm/llm-provider.interface.js';
+import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
 import { UnsupportedNodeTypeException, type SubWorkflowRecord } from './node-executors.js';
 
@@ -445,6 +447,23 @@ describe('ExecutionEngineService', () => {
         },
         // R6.7 (KI-200): источник подграфов для узла sub_workflow.
         { provide: WorkflowService, useValue: { findOneAsync: findWorkflow } },
+        // R7.5 (KI-364): режим `sandbox` узла condition. Здесь — настоящий
+        // QuickJS-WASM (не мок): проверяем сквозной путь движок → песочница.
+        QuickJsRunnerService,
+        {
+          provide: ConfigService,
+          useValue: {
+            get: (key: string): unknown => {
+              const config: Record<string, unknown> = {
+                SANDBOX_ENABLED: true,
+                SANDBOX_TIMEOUT_MS: 100,
+                SANDBOX_MEMORY_MB: 16,
+              };
+
+              return config[key];
+            },
+          },
+        },
       ],
     }).compile();
 
@@ -1181,6 +1200,54 @@ describe('ExecutionEngineService', () => {
       result: true,
       evaluated: { left: 5, right: 3 },
     });
+  });
+
+  it('R7.5: condition mode=sandbox исполняется через движок (QuickJS-WASM)', async () => {
+    const graph: GraphDto = {
+      nodes: [
+        node('A', 'text', { value: 'foobar' }),
+        node('B', 'condition', {
+          mode: 'sandbox',
+          expression: "input.length > 3 && input.includes('foo')",
+        }),
+      ],
+      edges: [edge('e1', 'A', 'B', 'text-output', 'input')],
+    };
+
+    const result = await service.executeAsync(RUN_ID, graph);
+
+    expect(result.status).toBe('completed');
+
+    const conditionRow = fake.rows.find((row) => row.nodeId === 'B');
+
+    // В sandbox `evaluated` нет: выражение может читать любые поля входа,
+    // восстановить «левый/правый операнд» нельзя (KI-282).
+    expect(conditionRow?.inputs).toEqual({ input: 'foobar' });
+    expect(conditionRow?.outputs).toEqual({ result: true });
+  });
+
+  it('R7.5: condition mode=sandbox + timeout → узел failed с текстом ошибки', async () => {
+    const graph: GraphDto = {
+      nodes: [
+        node('A', 'text', { value: 'x' }),
+        node('B', 'condition', {
+          mode: 'sandbox',
+          expression: 'while (true) {}',
+        }),
+      ],
+      edges: [edge('e1', 'A', 'B', 'text-output', 'input')],
+    };
+
+    // Движок пробрасывает ошибку узла наружу (BullMQ должен увидеть провал
+    // job'а), поэтому проверяем и rejects, и записанную строку node_runs.
+    await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow('Timeout exceeded');
+
+    expect(fake.run.status).toBe('failed');
+
+    const conditionRow = fake.rows.find((row) => row.nodeId === 'B');
+
+    expect(conditionRow?.status).toBe('failed');
+    expect(conditionRow?.error).toBe('Timeout exceeded');
   });
 
   it('R6.5.1: output подписывает вход именем из data.name', async () => {
