@@ -6141,6 +6141,55 @@ MediaModelInfo, engine-DTO
 - **Связанные:** KI-008, KI-373.
 
 ---
+
+### KI-391 — Рестарт без `INSTANCE_ID` оставляет run в `pending`
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `src/runs/runs.worker-options.ts`, `src/runs/runs.processor.ts`
+- **Описание:** `INSTANCE_ID` по умолчанию — `randomUUID()` на процесс. После
+  рестарта без явного `INSTANCE_ID` задания от прежнего процесса попадают к
+  новому воркеру, не проходят instanceId-check и пропускаются; run остаётся
+  `pending` навсегда.
+- **Решение:** стабильный дефолт (`hostname:PORT`), либо персист instance-id в
+  Redis, либо adoption «pending + старый job».
+- **Связанные:** KI-387.
+
+---
+
+### KI-392 — `matrix.unitParam='duration'` семантика не документирована
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `src/runs/cost-budget.service.ts`, `src/media/dto/media-model.dto.ts`
+- **Описание:** `matrix.unitParam='duration'` трактуется как «цена за секунду»
+  (5 с × 30 = 150 для `wan-3.0`). Для `minimax-h3-max` (10/с → 50) и
+  `minimax-hailuo-03` (12/с → 60) может расходиться с биллингом upstream.
+- **Решение:** сверка с upstream-документацией; при необходимости — отдельный
+  тариф на модель.
+- **Связанные:** KI-384.
+
+---
+
+### KI-393 — `pricing.plus` и `expr.units`-объекты не учитываются
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `src/runs/cost-budget.service.ts`
+- **Описание:** составные доплаты (`base`/`unitsSum`/`tierRates`) у `krea-3`,
+  `minimax-h3-max`, `seedance-2-5` и `expr.units`-объекты у `flux-2-pro` не
+  считаются → недооценка бюджета.
+- **Решение:** парсить `plus` и `expr`-объекты (или фолбэк на `price` +
+  `margin`).
+- **Связанные:** KI-384, KI-392.
+
+---
+
+### KI-394 — Миграция `BULLMQ_PREFIX` `bull` → `workflow-runs` (операционное)
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `.env.example`, `src/runs/runs.worker-options.ts`
+- **Описание:** смена дефолтного префикса BullMQ (`bull` → `workflow-runs`)
+  делает старые задания в Redis невидимыми для нового воркера. При выкатке без
+  опустошения очереди — потерянные запуски.
+- **Решение:** процедура миграции в `RELEASES.md` (опустошить очередь / указать
+  `BULLMQ_PREFIX=bull` в env при апгрейде).
+- **Связанные:** KI-387.
+
+---
 ## Сводка по статусам
 
 | Статус | Кол-во |
@@ -6150,9 +6199,9 @@ MediaModelInfo, engine-DTO
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 232 |
+| Open | 236 |
 | Won't Fix | 1 |
-| **Всего** | **378** |
+| **Всего** | **382** |
 
 ---
 
