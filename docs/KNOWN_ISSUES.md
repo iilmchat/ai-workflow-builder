@@ -6326,18 +6326,83 @@ MediaModelInfo, engine-DTO
 - **Связанные:** KI-155, KI-364.
 
 ---
+
+### KI-406 — RouterAI: `DEFAULT_EMBEDDING_MODEL` не существует у провайдера
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/llm/llm-provider.factory.ts`,
+  `src/llm/llm-registry.service.ts`
+- **Описание:** RouterAI отвергает `text-embedding-3-small` (400) — нужен
+  `openai/text-embedding-3-small`. При RouterAI первым в очереди провайдеров
+  все vector-узлы (R7.4a) и agent-tools (R7.4b) падают.
+- **Решение:** `resolveEmbeddingModel` по провайдеру.
+- **Связанные:** KI-402, KI-128.
+
+---
+
+### KI-407 — Agent и `llm_call` обходят `CostBudgetService`
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/agent/agent.service.ts`
+- **Описание:** `LlmNodeExecutor` пишет `cost_usd` в `node_runs`, а
+  `AgentService` вызывает `LlmService.generateAsync` напрямую.
+  `tokens_in` / `tokens_out` / `cost_usd` у агента остаются `NULL`. Бюджет
+  KI-048 не учитывает циклы агента.
+- **Решение:** передавать usage шагов в движок для учёта.
+- **Связанные:** KI-048, KI-384, KI-406.
+
+---
+
+### KI-408 — `node_runs.logs` агента дублирует транскрипт
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/agent/agent.service.ts`
+- **Описание:** каждый шаг LLM пишет полный `system` + всю историю в `logs`.
+  Рост JSONB квадратичный.
+- **Решение:** писать только дельту (аргументы tool / финальный ответ).
+- **Связанные:** KI-043, R7.4b.
+
+---
+
+### KI-409 — `http_request` без SSRF-защиты
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/agent/agent-tools.ts`
+- **Описание:** нет allowlist / запрета приватных IP. Можно дернуть
+  `http://127.0.0.1:3000` и внутренние сервисы.
+- **Решение:** zod-url + проверка на private IP.
+- **Связанные:** R7.4b.
+
+---
+
+### KI-410 — устаревшая `nodeErrors` после job-retry
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.9-R7.4b (коммит `8e1e89a`)
+- **Файлы:** `web/src/stores/workflow.ts`
+- **Описание:** `node_completed` не очищал `nodeErrors[nodeId]`. Панель
+  показывала «Ошибка» после успешного retry.
+- **Fix:** очистка при `node_completed` (в коммите `8e1e89a`).
+- **Связанные:** KI-070.
+
+---
+
+### KI-411 — `runError` не сбрасывается при успешном retry
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `web/src/stores/workflow.ts`
+- **Описание:** `runError` остаётся текстом прошлой попытки (панель не рисует
+  его при `completed`, но поле stale).
+- **Решение:** очищать `runError` при `run_started`.
+- **Связанные:** KI-410.
+
+---
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 137 |
+| Fixed | 138 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 247 |
+| Open | 252 |
 | Won't Fix | 1 |
-| **Всего** | **393** |
+| **Всего** | **399** |
 
 ---
 
