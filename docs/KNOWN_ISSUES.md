@@ -6190,6 +6190,34 @@ MediaModelInfo, engine-DTO
 - **Связанные:** KI-387.
 
 ---
+
+### KI-395 — allowlist sandbox расширен сверх DESIGN § 3.5
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `src/sandbox/quickjs-runner.service.ts`,
+  `docs/development/v0.9/DESIGN_V09_FEATURES.md` § 3.5
+- **Описание:** DESIGN § 3.5 ограничивал allowlist 8 именами (`Math`, `JSON`,
+  `Date`, `String`, `Number`, `Array`, `Object`, `Boolean`). Из-за этого
+  `throw new Error('x')` падал с `TypeError`, `input.match(/foo/)` не
+  работал. Добавлены `Error`, `RegExp`, `Map`, `Set`, `Promise`, `Symbol` —
+  безопасны в QuickJS-реалме (нет `process`/`require`/`fetch`). Тесты 26/26.
+- **Решение:** DESIGN § 3.5 обновить до 14 имён + `input`; либо оставить как
+  есть, зафиксировав расхождение DESIGN ↔ код.
+- **Связанные:** KI-364, DESIGN v0.9 § 3.5.
+
+---
+
+### KI-396 — CDP-смоук невоспроизводим без Docker (инфраструктурный)
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Файлы:** `.smoke/**` (скрипты), `docs/development/` (SMOKE_CDP.md)
+- **Описание:** на 3-м компе (`K:\`) нет Docker/WSL, Postgres 5433, Redis
+  6379. Backend стартует, SandboxModule инициализируется, но `/runs`
+  невозможен (BullMQ `ECONNREFUSED`). Не дефект кода, но блокирует приёмочный
+  смоук.
+- **Решение:** документация «минимум для CDP — Docker/Postgres/Redis»; либо
+  graceful-режим backend при отсутствии Redis.
+- **Связанные:** KI-264, KI-275, R7.5.
+
+---
 ## Сводка по статусам
 
 | Статус | Кол-во |
@@ -6199,9 +6227,9 @@ MediaModelInfo, engine-DTO
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 236 |
+| Open | 238 |
 | Won't Fix | 1 |
-| **Всего** | **382** |
+| **Всего** | **384** |
 
 ---
 
