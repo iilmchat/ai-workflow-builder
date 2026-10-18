@@ -26,6 +26,9 @@ import { RedisModule } from './redis/redis.module.js';
 import { CostBudgetModule } from './runs/cost-budget.module.js';
 import { RunsModule } from './runs/runs.module.js';
 import { TemplatesModule } from './templates/templates.module.js';
+// v0.10 S1: web-search-провайдер (Tavily) — модуль без HTTP-ручек, отдаёт
+// WEB_SEARCH_PROVIDER исполнителю узла web_search (S2).
+import { WebSearchModule } from './web-search/web-search.module.js';
 
 @Module({
   imports: [
@@ -60,6 +63,7 @@ import { TemplatesModule } from './templates/templates.module.js';
     ObservabilityModule,
     AuthModule,
     LlmModule,
+    WebSearchModule,
     MediaModule,
     WorkflowModule,
     EngineModule,

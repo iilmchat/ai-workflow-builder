@@ -1,6 +1,7 @@
 import {
   EnvSchema,
   VectorEnvSchema,
+  WebSearchEnvSchema,
   WorkerEnvSchema,
   validateEnv,
 } from './env.schema.js';
@@ -36,6 +37,37 @@ describe('PGVECTOR_ENABLED (v0.10 S0, KI-455)', () => {
   it('отклоняет мусор, а не включает/выключает флаг молча', () => {
     expect(VectorEnvSchema.safeParse({ PGVECTOR_ENABLED: 'yes' }).success).toBe(false);
     expect(VectorEnvSchema.safeParse({ PGVECTOR_ENABLED: '1' }).success).toBe(false);
+  });
+});
+
+describe('web-search env (v0.10 S1)', () => {
+  it('дефолты: провайдер tavily, ключ не задан', () => {
+    expect(WebSearchEnvSchema.parse({})).toEqual({
+      WEB_SEARCH_PROVIDER: 'tavily',
+    });
+
+    const parsed = EnvSchema.parse(baseEnv);
+
+    expect(parsed.WEB_SEARCH_PROVIDER).toBe('tavily');
+    expect(parsed.TAVILY_API_KEY).toBeUndefined();
+  });
+
+  it('пустой TAVILY_API_KEY — «не задан» (KI-084), ключ читается как есть', () => {
+    expect(
+      WebSearchEnvSchema.parse({ TAVILY_API_KEY: '' }).TAVILY_API_KEY,
+    ).toBeUndefined();
+    expect(
+      WebSearchEnvSchema.parse({ TAVILY_API_KEY: 'tvly-test' }).TAVILY_API_KEY,
+    ).toBe('tvly-test');
+  });
+
+  it('отклоняет неизвестного провайдера, а не фолбэчит молча', () => {
+    expect(
+      WebSearchEnvSchema.safeParse({ WEB_SEARCH_PROVIDER: 'bing' }).success,
+    ).toBe(false);
+    expect(() =>
+      validateEnv({ ...baseEnv, WEB_SEARCH_PROVIDER: 'bing' }),
+    ).toThrow('Некорректная конфигурация окружения');
   });
 });
 

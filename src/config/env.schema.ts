@@ -462,6 +462,28 @@ export const VectorEnvSchema = z.object({
 export type VectorEnv = z.infer<typeof VectorEnvSchema>;
 
 /**
+ * Zod-схема web-search-провайдера (v0.10 S1, DESIGN v0.10 § 3.1.4).
+ *
+ * Ключ Tavily опционален: без него приложение поднимается, провайдер отдаёт
+ * `isConfigured === false`, а узел `web_search` падает понятной ошибкой. Такой
+ * же контракт у LLM/media-провайдеров (KI-039, KI-084).
+ *
+ * `WEB_SEARCH_PROVIDER` — enum, а не свободная строка: в v0.10 реализован
+ * только `tavily`, но контракт фиксирует точку расширения (Bing/Google/Brave —
+ * v0.11, DESIGN § 2.2). Неизвестное значение — ошибка старта, а не тихий
+ * фолбэк: иначе окружение «настроено», а поиск идёт не тем провайдером.
+ */
+export const WebSearchEnvSchema = z.object({
+  /** API-ключ Tavily. Обязателен для `isConfigured`; пустое значение → undefined. */
+  TAVILY_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Провайдер веб-поиска. v0.10 — только `tavily` (дефолт). */
+  WEB_SEARCH_PROVIDER: z.enum(['tavily']).default('tavily'),
+});
+
+/** Валидированные настройки web-search-провайдера (v0.10 S1). */
+export type WebSearchEnv = z.infer<typeof WebSearchEnvSchema>;
+
+/**
  * Zod-схема переменных окружения, обязательных для запуска приложения.
  *
  * Проверяется ровно один раз при инициализации `ConfigModule` (fail-fast):
@@ -683,6 +705,8 @@ export const EnvSchema = z.object({
   ...ProviderConcurrencyEnvSchema.shape,
   // Аварийный выключатель vector/memory-узлов (v0.10 S0, KI-455).
   ...VectorEnvSchema.shape,
+  // Web-search-провайдер: ключ Tavily и выбор провайдера (v0.10 S1).
+  ...WebSearchEnvSchema.shape,
 })
   /**
    * Fail-fast: отказ старта при `AUTH_DISABLED=true` в production.
