@@ -35,6 +35,8 @@ S3 presigned/streaming, enum-домены в API-контракте.**
 - **S3:** Presigned URL для приватных бакетов и переподпись в SSE при истечении (KI-443, 444).
 - **S3:** Потоковая загрузка с ретраями и multipart через `@aws-sdk/lib-storage` (KI-442).
 - **UI:** Копирайт и версия в шапке (KI-446).
+- **Docs:** Руководство пользователя — `docs/user_guide/USER_GUIDE.md` (быстрый старт, обзор интерфейса, 18 узлов с бизнес-кейсами, Share/роли, бюджет, ограничения v0.9.1).
+- **Docs:** Гайд по ручному тестированию — `docs/qa/MANUAL_TESTING_GUIDE.md` (116 кейсов: Auth, Canvas, Engine, LLM/Media, Vector/Agent, Share/Access, S3/Storage, Edge Cases, регресс контрактов, чек-лист приёмки).
 
 ### Fixed
 - **Share:** `GET /workflow` возвращает collaborative workflows с `accessRole` (owner/editor/viewer). Список участников включает владельца первой строкой (KI-397, 398, 399).
