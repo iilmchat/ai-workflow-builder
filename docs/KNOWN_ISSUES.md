@@ -21,7 +21,7 @@
   решения, оценку, связанные KI.
 - **Формат полей:**
   - **Приоритет:** 🔴 Critical / 🟠 High / 🟡 Medium / 🟢 Low
-  - **Статус:** Open / In Progress / Fixed / Documented / Deferred / Won't Fix / Resolved
+  - **Допустимые статусы:** Open / In Progress / Fixed / Documented / Deferred / Won't Fix / Resolved
   - **Исправлено в:** vX.Y.Z (для Fixed)
   - **Запланировано:** vX.Y.Z (для Planned / Deferred)
 - **Связанные:** —
@@ -1342,7 +1342,8 @@
 - **Решение:** `GET /runs/:id/nodes` (или расширение ответа
   запуска).
 - **Когда чинить:** R4.4.
-- **Связанные:** KI-061.
+- **Дубль-учёт:** KI-450 — историческая запись; статус и исправление ведутся здесь.
+- **Связанные:** KI-061, KI-450.
 
 ---
 
@@ -1875,14 +1876,22 @@
 ---
 
 ### KI-118 — Результат media-генерации — внешняя ссылка 48 ч
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
-- **Файлы:** `web/src/components/nodes/ImageGenNode.tsx`
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.9.0 (R7.8, коммит `3e2844a`); уточнено в v0.9.1/v0.9.4
+- **Fix:** это дубль KI-362. Результат media сохраняется в `IMediaStorage`
+  (local/S3), в `node_runs` есть `stored_url`/`stored_expires_at`, а UI
+  выбирает `storedUrl` и показывает `ExpiredMediaPlaceholder` вместо
+  битой ссылки провайдера.
+- **Файлы:** `src/media/media-storage.service.ts`, `src/db/schema.ts`
+  (`node_runs.stored_url`, `stored_expires_at`), `web/src/lib/media-source.ts`,
+  `web/src/components/ExpiredMediaPlaceholder.tsx`,
+  `web/src/components/nodes/ImageGenNode.tsx`
 - **Описание:** `mediaUrl` живёт 48 часов и не кэшируется у нас. При
   повторном открытии старого run `<img>` будет битым, а определить
   «ссылка истекла» по ответу `<img>` нельзя.
 - **Решение:** скачивать результат к себе (S3/local) либо
   плейсхолдер «ссылка истекла» в UI.
-- **Связанные:** KI-105.
+- **Связанные:** KI-105, KI-362.
 
 ---
 
@@ -3335,21 +3344,20 @@
 ---
 
 ### KI-196 — Медиа-инструменты (upscale, bg-removal, lipsync, 3D, motion)
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
-- **Остаток (v0.9.0):** R7.1 выпустил узел `image_tool` с операциями
-  upscale / bg-removal / chromakey / trim / lipsync, но KI **не закрыт**
-  (DESIGN v0.9 § 6): 3D-сцена и motion-ролик перенесены в v0.10; у
-  upscale/chromakey/trim нет дефолтных моделей (KI-367), lipsync без поля
-  `audioUrl` в UI (KI-369), `bgremover` требует лишний prompt (KI-374).
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.9.0 (R7.1) — пять операций `image_tool`:
+  upscale / bg-removal / chromakey / trim / lipsync.
+- **Fix:** узел `image_tool` реализован, операции имеют Zod-схемы,
+  маршрутизацию и UI (`ImageToolNode`). Остаток — 3D-сцена и
+  motion-ролик — не входил в R7.1 и вынесен в отдельный KI-475.
 - **Файлы:** `src/media/image-tool.ts`,
   `web/src/components/nodes/ImageToolNode.tsx`
-- **Описание:** GPTunnel: Photoshop / Видеоредактор / 3D-сцена /
-  Моушн-ролик / Удалить фон / Липсинк / Апскейл / Хромакей / Обрезка.
-  У нас — только генерация (text-to-image).
+- **Историческое описание:** GPTunnel: Photoshop / Видеоредактор /
+  3D-сцена / Моушн-ролик / Удалить фон / Липсинк / Апскейл / Хромакей /
+  Обрезка. В v0.9.0 закрыты пять операций, 3D/Motion остались за срезом.
 - **Решение:** отдельные узлы-инструменты под каждый тип (для каждого
   — свой payload, могут использовать image-input).
-- **Когда чинить:** v0.9.
-- **Связанные:** KI-128, KI-105, KI-181.
+- **Связанные:** KI-128, KI-105, KI-181, KI-475.
 
 ---
 
@@ -3944,9 +3952,12 @@
 ---
 
 ### KI-233 — Публичный share отдаёт nodes/edges целиком
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟡 Medium | **Статус:** Won't Fix | **Обнаружено:** 2026-10-15
+- **Причина (Won't Fix):** принятый риск R6.2.2: граф целиком — объект
+  шаринга. Санитизация/whitelist отклонена, чтобы не терять UI-поля
+  React Flow; в `ShareModal` добавлено предупреждение `share.warning`.
 - **Файлы:** `src/workflow/workflow.service.ts` (`findSharedAsync`),
-  `src/workflow/workflow-share.controller.ts`
+  `src/workflow/workflow-share.controller.ts`, `web/src/components/ShareModal.tsx`
 - **Описание:** Публичный `GET /workflow/share/:token` отдаёт
   `nodes`/`edges` целиком. Если в `data` узлов лежат промпты, тексты
   или (теоретически) ключи/URL с токенами — всё уедет наружу.
@@ -3954,8 +3965,7 @@
   UI-полей React Flow), либо явное решение «граф целиком — объект
   шаринга» + предупреждение в UI. **Принято: второе** (решение R6.2.2, в DESIGN § 4 явно не зафиксировано);
   в R6.2.2 добавлено предупреждение в модалку.
-- **Когда чинить:** v0.8.x — если появятся узлы с секретами
-  (`http` с API-key, KI-105).
+- **Когда чинить:** — (решение принято, не планируется).
 - **Связанные:** KI-197, KI-105.
 
 ---
@@ -4026,8 +4036,14 @@
 ---
 
 ### KI-238 — В проде reverse-proxy должен отдавать SPA для /workflow/share/*
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-15
-- **Файлы:** `web/vite.config.ts` (dev), прод-reverse-proxy/ingress
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.10.0 (Docker/ServeStatic, KI-468)
+- **Fix:** NestJS `ServeStaticModule` + SPA-middleware в `src/app.module.ts`
+  сами отдают `index.html` для `/` и `/workflow/share/*` при
+  `Accept: text/html`; Docker-образ собирает `web/dist` и отдаёт SPA тем же
+  процессом. Отдельный SPA-fallback в nginx/Caddy больше не обязателен.
+- **Файлы:** `src/app.module.ts` (`ServeStaticModule`, middleware),
+  `Dockerfile`, `web/vite.config.ts` (dev-bypass)
 - **Описание:** В dev-режиме Vite proxy `/workflow` перехватывал
   навигацию на `/workflow/share/:token` и возвращал JSON API вместо
   SPA. Обойдено `bypass` в `vite.config.ts`. **В проде** то же правило
@@ -4036,11 +4052,11 @@
   на backend. Иначе публичная ссылка вернёт JSON.
 - **Решение:** правило в nginx/Caddy/ingress; задокументировать в `docs/development/GETTING_STARTED.md` (файла
 `DEPLOYMENT.md` в репозитории нет — завести при подготовке прода).
-- **Когда чинить:** до прод-развёртывания.
-- **Примечание (v0.10.0 Docker):** NestJS `ServeStaticModule` + SPA-middleware
-  сами отдают `index.html` для `/workflow/share/*` при `Accept: text/html`;
-  отдельный SPA-fallback в nginx/Caddy/ingress больше не обязателен (KI-468).
-  Статус оставлен `Open` до проверки на конкретном ingress.
+- **Когда чинить:** — для self-hosted Docker закрыто в v0.10.0.
+- **Примечание:** для **не-Docker ingress** (отдельный nginx/Caddy/static
+  hosting) правило всё ещё может понадобиться: если внешний слой
+  перехватывает `/workflow/share/*` и не проксирует запрос в Nest,
+  нужен SPA-fallback на его стороне.
 - **Связанные:** KI-197, KI-072 (единый /api-префикс), KI-468.
 
 ---
@@ -4873,15 +4889,21 @@
 ---
 
 ### KI-292 — `nest build` не копирует `src/templates/*.json` в dist
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
-- **Файлы:** `nest-cli.json`, `src/templates/template-loader.service.ts`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Файлы:** `nest-cli.json`, `src/templates/template-loader.service.ts`,
+  `Dockerfile`
 - **Описание:** `nest build` копирует только `.js`/`.d.ts`; ассеты не
   объявлены. Загрузчик находит шаблоны **фолбэком** на
   `<корень>/src/templates`. В Docker-образе (без `src/`) `GET /templates`
   вернёт пустой список + warning.
+- **Примечание (v0.10.0 Docker):** в контейнере проблема снята —
+  `Dockerfile` копирует `src/templates` (KI-470), поэтому `GET /templates`
+  работает. Для не-Docker `node dist/main` остаётся фолбэк на
+  репозиторный `src/templates`; `assets` в `nest-cli.json` всё ещё не
+  объявлены. Приоритет понижен до Low.
 - **Решение:** `"assets": [{"include": "templates/*.json", "outDir": "dist"}]`
   в `nest-cli.json`.
-- **Связанные:** KI-108.
+- **Связанные:** KI-108, KI-470.
 
 ---
 
@@ -5831,17 +5853,24 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-361 — Video / Audio / Music узлы (media-generation)
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.9.0 (R7.2)
+- **Fix:** зарегистрированы три типа узлов — `video_generation`,
+  `audio_generation`, `music_generation`; добавлены компоненты
+  `VideoGenNode`/`AudioGenNode`/`MusicGenNode`, Zod-схемы и маршрутизация
+  в `MediaNodeExecutor` (`executeVideoAsync`/`executeAudioAsync`/
+  `executeMusicAsync`).
 - **Файлы:** `src/media/media-node-executor.service.ts`,
-  `src/media/media-provider.interface.ts`, `web/src/components/nodes/*`,
-  `web/src/types/graph.ts`, `web/src/lib/node-registry.ts`
-- **Описание:** Продукт умеет только text-to-image (CreativeLab). Узлов
-  video_generation / audio_generation / music_generation нет. CreativeLab
-  API предоставляет VIDEO/AUDIO/MUSIC через тот же endpoint
-  `/api/v2/media`. Дополнительные провайдеры: ElevenLabs (TTS), Suno
-  (music).
+  `src/media/media-generation.ts`, `web/src/lib/node-registry.ts`,
+  `web/src/components/nodes/VideoGenNode.tsx`,
+  `web/src/components/nodes/AudioGenNode.tsx`,
+  `web/src/components/nodes/MusicGenNode.tsx`
+- **Описание (историческое):** Продукт умел только text-to-image
+  (CreativeLab). Узлов video_generation / audio_generation /
+  music_generation не было. CreativeLab API предоставляет VIDEO/AUDIO/MUSIC
+  через тот же endpoint `/api/v2/media`.
 - **Решение:** 3 новых узла, реализация — DESIGN v0.9 § 3.2 (R7.2).
-- **Связанные:** KI-196, DESIGN v0.9 § 3.2.
+- **Связанные:** KI-196, KI-475, DESIGN v0.9 § 3.2.
 
 ---
 
@@ -5876,17 +5905,24 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-363 — Image providers напрямую (Replicate / FAL / OpenAI Images)
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
-- **Файлы:** `src/media/media-registry.service.ts`, `src/media/providers/*`,
-  `src/config/env.schema.ts`, `.env.example`, `web/src/components/nodes/ImageGenNode.tsx`
-- **Описание:** Сейчас media-провайдер один — CreativeLab (GPTunnel).
-  Replicate / FAL / OpenAI Images — крупнейшие вендоры image/video-моделей;
-  без них недоступны flux-pro-1.1-ultra, SDXL, Kling, gpt-image-1.
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.9.0 (R7.3)
+- **Fix:** `MediaModule` регистрирует CreativeLab, Replicate, FAL и
+  OpenAI Images; `MediaRegistryService.resolveByModelAsync` ищет модель по
+  каталогам всех сконфигурированных провайдеров, порядок задаёт
+  `MEDIA_PROVIDER_PRIORITY`.
+- **Файлы:** `src/media/media-registry.service.ts`, `src/media/media.module.ts`,
+  `src/media/providers/*`, `src/config/env.schema.ts`, `.env.example`,
+  `web/src/components/nodes/ImageGenNode.tsx`
+- **Описание (историческое):** media-провайдер был один — CreativeLab
+  (GPTunnel). Replicate / FAL / OpenAI Images — крупнейшие вендоры
+  image/video-моделей; без них недоступны flux-pro-1.1-ultra, SDXL, Kling,
+  gpt-image-1.
 - **Решение:** расширить `MediaRegistryService` — несколько `IMediaProvider`
   подряд; `resolveByModelAsync` ищет по всем; приоритет через env
   `MEDIA_PROVIDER_PRIORITY`. Env: `REPLICATE_API_TOKEN`, `FAL_KEY`,
   `OPENAI_IMAGES_API_KEY`. Реализация — DESIGN v0.9 § 3.3 (R7.3).
-- **Связанные:** KI-196, DESIGN v0.9 § 3.3.
+- **Связанные:** KI-196, KI-370, KI-379, DESIGN v0.9 § 3.3.
 
 ---
 
@@ -5937,16 +5973,23 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-366 — `type: 'TOOL'` у upstream не существует
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-16
-- **Файлы:** `src/media/image-tool.ts`, `web/src/lib/media.ts`
-- **Описание:** DESIGN § 2.4/3.1 предполагает `type: 'TOOL'`, но
-  `GET /api/v2/media/models?type=TOOL` → `{ code: 0, models: [] }`.
-  Инструменты CreativeLab — обычные IMAGE/VIDEO-модели с обязательным
-  входным слотом (bgremover, faceswap, kling-lipsync, @VideoEdit).
-  Смягчено фолбэком (`toolModels` = TOOL ∪ модели с обязательным входом).
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.9.0 (docs, DESIGN v0.9 § 2.4/§ 3.1)
+- **Fix:** DESIGN обновлён: `TOOL` — семантический маркер, upstream его не
+  отдаёт; инструменты резолвятся model-first через IMAGE/VIDEO-модели с
+  обязательным входным слотом. Код сохраняет `TOOL` только как внутренний
+  тип, что соответствует обновлённому контракту.
+- **Файлы:** `docs/development/v0.9/DESIGN_V09_FEATURES.md` (§ 2.4, § 3.1),
+  `src/media/image-tool.ts`, `web/src/lib/media.ts`
+- **Описание (историческое):** DESIGN § 2.4/3.1 предполагал
+  `type: 'TOOL'`, но `GET /api/v2/media/models?type=TOOL` →
+  `{ code: 0, models: [] }`. Инструменты CreativeLab — обычные
+  IMAGE/VIDEO-модели с обязательным входным слотом (bgremover, faceswap,
+  kling-lipsync, @VideoEdit). Смягчено фолбэком (`toolModels` = TOOL ∪
+  модели с обязательным входом).
 - **Решение:** обновить DESIGN v0.9 § 2.4/3.1 — заменить `type: 'TOOL'`
   на «model-first, роль инструмента задаёт operation».
-- **Связанные:** KI-367, DESIGN v0.9 § 2.4, § 3.1.
+- **Связанные:** KI-367, KI-382, DESIGN v0.9 § 2.4, § 3.1.
 
 ---
 
@@ -6010,14 +6053,21 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-371 — `applyToolAsync` обязателен для `IMediaProvider`
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
-- **Файлы:** `src/media/media-provider.interface.ts`
-- **Описание:** `IMediaProvider.applyToolAsync` обязателен → провайдеры
-  R7.3 (Replicate / FAL / OpenAI Images) обязаны реализовать, иначе `tsc`
-  упадёт.
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.9.0 (R7.3)
+- **Fix:** обязательство выполнено: `applyToolAsync` реализован во всех
+  трёх провайдерах R7.3 — Replicate, FAL и OpenAI Images; `tsc` не падает,
+  optional/fallback не понадобился.
+- **Файлы:** `src/media/media-provider.interface.ts`,
+  `src/media/providers/replicate.provider.ts`,
+  `src/media/providers/fal.provider.ts`,
+  `src/media/providers/openai-images.provider.ts`
+- **Описание (историческое):** `IMediaProvider.applyToolAsync` обязателен →
+  провайдеры R7.3 (Replicate / FAL / OpenAI Images) обязаны реализовать,
+  иначе `tsc` упадёт.
 - **Решение:** в R7.3 — реализация в каждом провайдере; либо сделать
   метод optional (`applyToolAsync?: ...`) с default fallback.
-- **Связанные:** KI-363, R7.3.
+- **Связанные:** KI-363, KI-380, R7.3.
 
 ---
 
@@ -6036,10 +6086,15 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-373 — бандл web 711 kB → порог Vite 710 → 730 kB
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.9.3
+- **Fix:** выполнен code-split (ленивые компоненты узлов + группы
+  `react`/`reactflow`/`i18n`/`vendor`); `chunkSizeWarningLimit` снижен до
+  500 kB. В `web/dist/assets` крупнейшие чанки — `react` ~219 kB,
+  `reactflow` ~178 kB, `index` ~150 kB; единого бандла 711 kB больше нет.
 - **Файлы:** `web/vite.config.ts`
-- **Описание:** системное решение — code-split (KI-008).
-- **Связанные:** KI-334, KI-008.
+- **Описание (историческое):** системное решение — code-split (KI-008).
+- **Связанные:** KI-334, KI-008, KI-390.
 
 ---
 
@@ -6130,13 +6185,19 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-382 — коллизия gpt-image-1/dall-e-3 с CreativeLab
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
-- **Файлы:** `src/media/media-provider-priority.ts`
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.9.0 (R7.3)
+- **Fix:** коллизия разрешается детерминированно — `orderMediaProviders`
+  сортирует провайдеров по `MEDIA_PROVIDER_PRIORITY`, `deduplicate` оставляет
+  первого и пишет warning. Прямой OpenAI Images доступен, если поставить
+  `openai_images` раньше CreativeLab в env; дефолт CreativeLab сохранён.
+- **Файлы:** `src/media/media-provider-priority.ts`,
+  `src/media/media.module.ts`, `src/config/env.schema.ts`, `.env.example`
 - **Описание:** id `gpt-image-1` объявлен и CreativeLab, и прямым OpenAI
   Images. Дедупликация отдаёт CreativeLab (приоритет выше) → прямой
-  провайдер для этих id недоступен.
+  провайдер для этих id недоступен без переопределения приоритета.
 - **Решение:** задокументировать; либо env-переопределение приоритета.
-- **Связанные:** KI-366.
+- **Связанные:** KI-366, KI-363.
 
 ---
 
@@ -6403,13 +6464,18 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-401 — `vector_upsert` неидемпотентен
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Приоритет:** 🟡 Medium | **Статус:** Won't Fix | **Обнаружено:** 2026-10-17
+- **Причина (Won't Fix):** append-only — осознанная семантика R7.4a: один Run
+  добавляет новый набор чанков, ключа идемпотентности у коллекции нет
+  (решение обосновано в отчёте R7.4a). Дедупликация по `content_hash` —
+  новая фича, а не исправление текущего контракта.
 - **Файлы:** `src/vector/vector-store.service.ts`,
   `src/engine/node-executors.ts`
 - **Описание:** Повторный Run добавляет новую строку в ту же коллекцию.
   Дедупликации по content-hash нет — дубли чанков в `workflow_vectors`.
 - **Решение:** `content_hash` + unique partial index ИЛИ режим
   replace-by-collection (TRUNCATE + INSERT).
+- **Когда чинить:** — (by design; при необходимости — отдельная фича v0.11+).
 - **Связанные:** KI-128, R7.4a.
 
 ---
@@ -7069,8 +7135,10 @@ MediaModelInfo, engine-DTO
 
 ---
 
-### KI-450 — `GET /runs/:id` не отдаёт `node_runs`
+### KI-450 — `GET /runs/:id` не отдаёт `node_runs` (дубль KI-077)
 - **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Дубль:** KI-077 — та же проблема; отдельная запись не ведётся, статус и
+  исправление отслеживаются в KI-077. Запись сохранена для истории и ссылок.
 - **Файлы:** `src/runs/runs.controller.ts`, `src/runs/runs.service.ts`
 - **Описание:** дубль KI-077. `RunResponse` содержит только `id`,
   `workflowId`, `status`, `createdAt`; строки `node_runs` (включая
@@ -7168,26 +7236,35 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-456 — `read_file` в S0 помечен как вставляемый в связь (Medium)
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
-- **Запланировано:** v0.10 S8
-- **Файлы:** `web/src/lib/node-registry.ts`, `web/src/types/graph.ts`
-- **Описание:** по заданию S0 у всех четырёх каркасных узлов стоит
-  `canBeInsertedOnEdge: true`, включая `read_file`. DESIGN v0.10 § 3.3.4
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.0 (S8)
+- **Fix:** в `NODE_REGISTRY` выставлено `read_file.canBeInsertedOnEdge:
+  false`, target-хендл в `ReadFileNode` не рисуется, исполнитель берёт путь
+  только из `data.path`; связь не может подменить путь.
+- **Файлы:** `web/src/lib/node-registry.ts`,
+  `web/src/components/nodes/ReadFileNode.tsx`,
+  `src/engine/node-executors.ts`, `src/engine/node-ports.ts`
+- **Описание (историческое):** по заданию S0 у всех четырёх каркасных узлов
+  стоял `canBeInsertedOnEdge: true`, включая `read_file`. DESIGN v0.10 § 3.3.4
   требует обратного: `read_file` — source-only (`false`), потому что путь
   читается только из `data.path`, а вход `prompt` дал бы LLM управлять путём
   (prompt injection / path traversal).
 - **Решение:** в S8 при добавлении компонента и `NODE_PORT_CONTRACT` выставить
   `read_file.canBeInsertedOnEdge = false` и не рисовать target-хендл; закрыть
   security-тестами на попытку подать путь через вход.
-- **Связанные:** KI-455, DESIGN v0.10 § 3.3.
+- **Связанные:** KI-455, KI-477, DESIGN v0.10 § 3.3.
 
 ---
 
 ### KI-457 — тип `document_gen` расходится с DESIGN `document_generation` (Medium)
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
-- **Запланировано:** v0.10 S6
+- **Приоритет:** 🟡 Medium | **Статус:** Won't Fix | **Обнаружено:** 2026-10-18
+- **Причина (Won't Fix):** v0.10 S6 осознанно оставил `document_gen`/`output`:
+  задача S6 и существующие графы используют это имя, а переименование типа
+  затронуло бы API/БД и не входило в срез. Это design decision, а не
+  незакрытый баг; DESIGN нужно обновить под фактический тип.
 - **Файлы:** `web/src/types/graph.ts`, `web/src/lib/node-registry.ts`,
-  `web/src/i18n/ru.json`, `web/src/i18n/en.json`
+  `web/src/i18n/ru.json`, `web/src/i18n/en.json`,
+  `docs/development/v0.10/DESIGN_V010_FEATURES.md`
 - **Описание:** S0 зарегистрировал тип и i18n-ключи как `document_gen`
   (`node.document_gen.*`). DESIGN v0.10 § 3.2/§ 4.6 называет тип
   `document_generation`, а категории — `documents`. Пока UI/исполнителя нет,
@@ -7198,8 +7275,7 @@ MediaModelInfo, engine-DTO
   `documents` добавить вместе с ключами `catalog.category.*`.
 - **Прогресс v0.10 S6:** контракт осознанно оставлен `document_gen`/`output`:
   задача S6 и существующие графы используют это имя, а переименование типа
-  затронуло бы API/БД и не входило в срез. Категория `documents` не добавлена;
-  запись остаётся Open.
+  затронуло бы API/БД и не входило в срез. Категория `documents` не добавлена.
 - **Связанные:** KI-455, KI-462, DESIGN v0.10 § 3.2/§ 4.6.
 
 ---
@@ -7482,18 +7558,66 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-475 — 3D/Motion узлы не реализованы (перенесено из KI-196)
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `web/src/lib/node-registry.ts`,
+  `docs/development/v0.9/DESIGN_V09_FEATURES.md`,
+  `docs/development/v0.10/DESIGN_V010_FEATURES.md`
+- **Описание:** KI-196 фиксировал перенос 3D-сцены и motion-ролика в v0.10,
+  но v0.10.0 выпущен с 22 типами узлов без `3d`/`motion`; DESIGN v0.10 § 6
+  уже переносит их в v0.11+ («нет провайдера/спроса»). Это остаток KI-196,
+  вынесенный отдельно, чтобы не держать закрытыми пять реализованных
+  операций `image_tool`.
+- **Решение:** отдельные узлы 3D/Motion в v0.11+ после появления
+  провайдера/спроса; до этого не обещать их в UI и роадмапе.
+- **Связанные:** KI-196, KI-128, DESIGN v0.10 § 6.
+
+---
+
+### KI-476 — Реестр KI: KI-001 ломает счётчики статусов
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `docs/KNOWN_ISSUES.md` (KI-001, сводка)
+- **Описание:** KI-001 — шаблон, но его строка «формата полей» была
+  оформлена как поле статуса со значением `Open / ...`, поэтому grep и
+  парсеры считали шаблон ещё одной Open-записью: 259 вместо 258. После
+  переименования строки в «Допустимые статусы» KI-001 учитывается только
+  как `Documented`.
+- **Решение:** в KI-001 оставлен только реальный статус `Documented`;
+  для предотвращения регресса проверять
+  `count("### KI-") == summary.total` и не использовать `**Статус:**`
+  в описании формата.
+- **Связанные:** KI-001, KI-473, KI-474.
+
+---
+
+### KI-477 — `read_file` в `NODE_PORT_CONTRACT` имеет target-хендл
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/engine/node-ports.ts`,
+  `web/src/components/nodes/ReadFileNode.tsx`,
+  `web/src/lib/node-registry.ts`
+- **Описание:** `read_file` — source-only (`canBeInsertedOnEdge: false`,
+  target-хендла в компоненте нет), но `NODE_PORT_CONTRACT.read_file` всё ещё
+  объявляет `targetHandleId: 'text-input'` и `inputPortName: 'prompt'`.
+  Исполнитель входы игнорирует, поэтому уязвимости нет, но контракт вводит
+  в заблуждение будущий type-aware резолвер/валидатор.
+- **Решение:** убрать target-поля у `read_file` либо ввести явный
+  source-only вариант контракта; добавить тест, что у узла нет входного порта.
+- **Связанные:** KI-456, KI-301.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 195 |
+| Fixed | 205 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 1 |
 | Documented | 6 |
-| Open | 258 |
-| Won't Fix | 1 |
-| **Всего** | **462** |
+| Open | 248 |
+| Won't Fix | 4 |
+| **Всего** | **465** |
 
 ---
 
