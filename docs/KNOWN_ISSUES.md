@@ -7096,18 +7096,130 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-452 — удаление workflow без подтверждения (High)
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.0 (S0)
+- **Файлы:** `web/src/components/LoadModal.tsx`, `web/src/i18n/ru.json`,
+  `web/src/i18n/en.json`
+- **Описание:** кнопка «Удалить» в списке сохранённых workflow сразу вызывала
+  `deleteWorkflowAsync`. Случайный клик необратимо удалял граф, а отмены в UI
+  не было.
+- **Решение:** перед запросом — `window.confirm` с именем workflow и явным
+  предупреждением о необратимости; отмена не трогает список. Текст вынесен в
+  оба i18n-файла (`loadModal.delete_confirm`). Вложенный `alertdialog` —
+  отдельная задача DESIGN v0.10 § 3.4.3.
+- **QA:** `MANUAL_TESTING_GUIDE.md`, кейс CANVAS-18 (ожидаемое поведение
+  изменилось: удаление требует подтверждения).
+
+---
+
+### KI-453 — устаревший комментарий про `Ctrl+S` (Low)
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.0 (S0)
+- **Файлы:** `web/src/stores/workflow.ts`
+- **Описание:** комментарий в `saveWorkflowAsync` утверждал, что `Ctrl+S`
+  «живёт в Canvas» и вызывает стор, но биндинга в `Canvas` не было.
+- **Решение:** комментарий приведён к факту: сохранение вызывается из TopBar
+  и автосохранением, а `Ctrl+S` пока не привязан — хоткей вынесен в v0.10 S10
+  (DESIGN v0.10 § 3.5.1).
+- **Связанные:** KI-273.
+
+---
+
+### KI-454 — мёртвый `runPlanAsync` и бейдж уровня (Medium)
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.0 (S0)
+- **Файлы:** `web/src/stores/workflow.ts`,
+  `web/src/components/nodes/BaseNode.tsx`,
+  `web/src/components/nodes/*.tsx`
+- **Описание:** `runPlanAsync` не вызывался ни из одного места, поэтому
+  `executionLevels` всегда оставался пустым, а бейдж уровня в `BaseNode` —
+  недостижимым. Плюс `setExecutionLevels`/`clearExecutionLevels` и
+  `node.levels.title` поддерживали мёртвую ветку.
+- **Решение:** удалены `runPlanAsync`, `executionLevels`, `setExecutionLevels`,
+  `clearExecutionLevels`, импорт `planWorkflowAsync`/`levelsToMap` и бейдж из
+  `BaseNode`; у всех узлов убран проп `executionLevel`. Планирование как
+  вспомогательный запрос — задача S10 (DESIGN v0.10 § 3.5.2).
+- **Тесты:** из `workflow.spec.ts` удалён тест про сброс `executionLevels`.
+
+---
+
+### KI-455 — `PGVECTOR_ENABLED` отсутствовал в env (Medium)
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.0 (S0)
+- **Файлы:** `src/config/env.schema.ts`, `.env.example`,
+  `src/engine/execution-engine.service.ts`, `src/engine/errors.ts`
+- **Описание:** флаг `PGVECTOR_ENABLED` был только в DESIGN v0.9/v0.10, но не
+  в `EnvSchema`: выключить vector/memory-узлы без отката релиза было нельзя.
+- **Решение:** добавлена `VectorEnvSchema` с default `true` и строгим разбором
+  (`'false'` — это `false`, а не непустая строка), переменная внесена в
+  `.env.example`. `ExecutionEngineService` читает флаг через `ConfigService` и
+  при `false` бросает `VectorDisabledException` до обращения к pgvector.
+- **Тесты:** `env.schema.spec.ts` (default/строки/мусор), `errors.spec.ts`,
+  `execution-engine.service.spec.ts` (disabled-путь).
+
+---
+
+### KI-456 — `read_file` в S0 помечен как вставляемый в связь (Medium)
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Запланировано:** v0.10 S8
+- **Файлы:** `web/src/lib/node-registry.ts`, `web/src/types/graph.ts`
+- **Описание:** по заданию S0 у всех четырёх каркасных узлов стоит
+  `canBeInsertedOnEdge: true`, включая `read_file`. DESIGN v0.10 § 3.3.4
+  требует обратного: `read_file` — source-only (`false`), потому что путь
+  читается только из `data.path`, а вход `prompt` дал бы LLM управлять путём
+  (prompt injection / path traversal).
+- **Решение:** в S8 при добавлении компонента и `NODE_PORT_CONTRACT` выставить
+  `read_file.canBeInsertedOnEdge = false` и не рисовать target-хендл; закрыть
+  security-тестами на попытку подать путь через вход.
+- **Связанные:** KI-455, DESIGN v0.10 § 3.3.
+
+---
+
+### KI-457 — тип `document_gen` расходится с DESIGN `document_generation` (Medium)
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Запланировано:** v0.10 S6
+- **Файлы:** `web/src/types/graph.ts`, `web/src/lib/node-registry.ts`,
+  `web/src/i18n/ru.json`, `web/src/i18n/en.json`
+- **Описание:** S0 зарегистрировал тип и i18n-ключи как `document_gen`
+  (`node.document_gen.*`). DESIGN v0.10 § 3.2/§ 4.6 называет тип
+  `document_generation`, а категории — `documents`. Пока UI/исполнителя нет,
+  расхождение не проявляется, но S6 должен выбрать один контракт до записи
+  узлов в БД.
+- **Решение:** привести S6 к `document_generation` (с миграцией/алиасом для
+  `document_gen` в `nodeDataFromApi`) либо обновить DESIGN; категорию
+  `documents` добавить вместе с ключами `catalog.category.*`.
+- **Связанные:** KI-455, DESIGN v0.10 § 4.6.
+
+---
+
+### KI-458 — `PGVECTOR_ENABLED=false` не отключает vector-инструменты агента (Low)
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Запланировано:** v0.10 S10
+- **Файлы:** `src/agent/agent-tools.ts`, `src/vector/vector-store.service.ts`
+- **Описание:** флаг `PGVECTOR_ENABLED` проверяется в
+  `ExecutionEngineService` для узлов `vector_*`/`memory_*`, но agent-узел
+  вызывает `VectorStoreService` через свои инструменты напрямую. При
+  `false` агент всё ещё сможет читать/писать векторы и память.
+- **Решение:** проверять флаг в `WireVectorTools`/`AgentService` (или в
+  `VectorStoreService`) и возвращать инструменту понятное «disabled»-сообщение;
+  добавить тест агента с `PGVECTOR_ENABLED=false`.
+- **Связанные:** KI-455, DESIGN v0.10 § 3.5.3.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 184 |
+| Fixed | 188 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 6 |
-| Open | 247 |
+| Open | 250 |
 | Won't Fix | 1 |
-| **Всего** | **439** |
+| **Всего** | **446** |
 
 ---
 

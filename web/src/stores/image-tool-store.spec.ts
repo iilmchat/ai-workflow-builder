@@ -77,7 +77,6 @@ describe('useWorkflowStore — узел image_tool (R7.1, KI-196)', () => {
       past: [],
       future: [],
       selectedNodeId: null,
-      executionLevels: {},
       toolModels: [],
       toolModelsLoaded: false,
     });
@@ -198,7 +197,6 @@ describe('useWorkflowStore — бюджет запуска (R7.1, KI-048)', () =
       past: [],
       future: [],
       selectedNodeId: null,
-      executionLevels: {},
       runId: RUN_ID,
       runStatus: 'running',
       runBudget: null,

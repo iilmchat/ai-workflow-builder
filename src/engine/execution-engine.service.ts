@@ -4,6 +4,7 @@ import {
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { and, eq } from 'drizzle-orm';
 import { isDeepStrictEqual } from 'node:util';
 import { DRIZZLE, type Database } from '../db/db.module.js';
@@ -28,19 +29,24 @@ import { VectorStoreService } from '../vector/vector-store.service.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
 import type { GraphDto, NodeDto } from './dto/index.js';
 import { EngineService, type ExecutionPlanDto } from './engine.service.js';
+import { RetryableNodeException, VectorDisabledException } from './errors.js';
 import {
   UnsupportedNodeTypeException,
   executeCompareNode,
   executeConditionNode,
   executeAgentNodeAsync,
+  executeDocumentGenNodeStub,
   executeHttpNode,
   executeMemoryReadNodeAsync,
   executeMemoryWriteNodeAsync,
   executeOutputNode,
+  executeReadFileNodeStub,
   executeSubWorkflowNode,
   executeTextNode,
   executeVectorQueryNodeAsync,
   executeVectorUpsertNodeAsync,
+  executeWebSearchNodeStub,
+  executeWriteFileNodeStub,
   prefixSubWorkflowGraph,
   type SubWorkflowContext,
   type VectorMemoryContext,
@@ -222,6 +228,9 @@ export class ExecutionEngineService {
     private readonly vectorStore: VectorStoreService,
     // R7.4b (DESIGN v0.9 § 3.4): цикл agent-узла (LLM → tools → final).
     private readonly agentService: AgentService,
+    // v0.10 S0 (KI-455): аварийный выключатель vector/memory-узлов.
+    // ConfigModule глобальный, поэтому сервис резолвится в любом модуле.
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -883,7 +892,13 @@ export class ExecutionEngineService {
 
           // KI-036: повторяем только «временные» ошибки провайдера
           // (429/5xx/таймаут/сеть) и только пока не исчерпаны попытки.
-          const retryable = error instanceof LlmProviderException && error.retryable;
+          // v0.10 S0: `RetryableNodeException` — тот же контракт для узлов,
+          // которые не ходят через LLM-провайдера (`web_search`,
+          // `document_gen`): маркер `retryable` больше не привязан к
+          // `LlmProviderException`.
+          const retryable =
+            (error instanceof LlmProviderException && error.retryable) ||
+            error instanceof RetryableNodeException;
 
           if (!retryable || attempt === NODE_MAX_ATTEMPTS) {
             break;
@@ -1048,6 +1063,7 @@ export class ExecutionEngineService {
       // эмбеддингов резолвится лениво (в графе может не быть vector-узлов, и
       // тогда реестр embeddings вообще не нужен).
       case 'vector_upsert': {
+        this.assertPgvectorEnabled(node.type);
         const vectorContext = await this.createVectorMemoryContextAsync(runId);
         const outputs = await executeVectorUpsertNodeAsync(
           node.data,
@@ -1058,6 +1074,7 @@ export class ExecutionEngineService {
         return { kind: 'plain', outputs, metrics: null };
       }
       case 'vector_query': {
+        this.assertPgvectorEnabled(node.type);
         const vectorContext = await this.createVectorMemoryContextAsync(runId);
         const outputs = await executeVectorQueryNodeAsync(
           node.data,
@@ -1068,17 +1085,30 @@ export class ExecutionEngineService {
         return { kind: 'plain', outputs, metrics: null };
       }
       case 'memory_read': {
+        this.assertPgvectorEnabled(node.type);
         const vectorContext = await this.createVectorMemoryContextAsync(runId);
         const outputs = await executeMemoryReadNodeAsync(node.data, inputs, vectorContext);
 
         return { kind: 'plain', outputs, metrics: null };
       }
       case 'memory_write': {
+        this.assertPgvectorEnabled(node.type);
         const vectorContext = await this.createVectorMemoryContextAsync(runId);
         const outputs = await executeMemoryWriteNodeAsync(node.data, inputs, vectorContext);
 
         return { kind: 'plain', outputs, metrics: null };
       }
+      // v0.10 S0 (Foundation): новые типы зарегистрированы, но исполнители
+      // появятся в S2/S6/S8. Заглушки падают понятной ошибкой конкретного
+      // типа, а не «неизвестный тип»: план и граф остаются валидными.
+      case 'web_search':
+        return executeWebSearchNodeStub(node);
+      case 'document_gen':
+        return executeDocumentGenNodeStub(node);
+      case 'read_file':
+        return executeReadFileNodeStub(node);
+      case 'write_file':
+        return executeWriteFileNodeStub(node);
       // R7.4b (DESIGN v0.9 § 3.4): агент. Сам цикл живёт в AgentService
       // (DI: LLM, эмбеддинги, хранилище, песочница); исполнитель узла только
       // валидирует `data` и раскладывает результат по выходам. Шаги цикла
@@ -1161,6 +1191,29 @@ export class ExecutionEngineService {
       }
       default:
         throw new UnsupportedNodeTypeException(node.type);
+    }
+  }
+
+  /**
+   * Проверяет аварийный выключатель vector/memory-узлов (v0.10 S0, KI-455).
+   *
+   * `PGVECTOR_ENABLED=false` — администратор выключил vector-функции без
+   * отката релиза. Узел падает `VectorDisabledException` до обращения к
+   * `VectorStoreService`: понятная ошибка вместо SQL к выключенному pgvector.
+   *
+   * Значение читается через `ConfigService`, а не из `process.env`: так
+   * действуют дефолты `EnvSchema` (`undefined` → `true`), и строка `'false'`
+   * (если сервис получил сырое окружение) трактуется как выключенное
+   * состояние, а не как непустая истина.
+   *
+   * @param nodeType - тип узла для текста ошибки (`vector_upsert`, …)
+   * @throws VectorDisabledException если `PGVECTOR_ENABLED=false`
+   */
+  private assertPgvectorEnabled(nodeType: string): void {
+    const value = this.config.get<unknown>('PGVECTOR_ENABLED');
+
+    if (value === false || value === 'false') {
+      throw new VectorDisabledException(nodeType);
     }
   }
 

@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import en from '@/i18n/en.json';
 import ru from '@/i18n/ru.json';
-import { canInsertOnEdge, isNodeType, NODE_REGISTRY, NODE_TYPES } from './node-registry';
+import {
+  canInsertOnEdge,
+  isNodeType,
+  NODE_REGISTRY,
+  NODE_TYPES,
+  nodeTypes,
+} from './node-registry';
 import { NODE_CATEGORIES, type NodeType } from '@/types/graph';
 
 /**
@@ -58,6 +64,20 @@ const VECTOR_MEMORY_TYPES = [
 /** Тип, добавленный в R7.4b (DESIGN v0.9 § 3.4): агент с циклом LLM → tools. */
 const AGENT_TYPE = 'agent' as const;
 
+/**
+ * Типы, добавленные в v0.10 S0 (Foundation).
+ *
+ * Компонентов у них пока нет (`component: undefined`): это каркас для узлов
+ * Web Search / Document Generation / Safe Filesystem. S1+ заменит значения,
+ * поэтому проверять `lazy` у них нельзя — только регистрацию и i18n.
+ */
+const V010_TYPES = [
+  'web_search',
+  'document_gen',
+  'read_file',
+  'write_file',
+] as const;
+
 /** Все типы реестра — для проверки labelKey в обоих i18n-файлах. */
 const ALL_TYPES: readonly NodeType[] = [...NODE_TYPES];
 
@@ -66,8 +86,9 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
     // R6.7: типов стало девять (+sub_workflow); R7.1 — десять (+image_tool);
     // R7.2 — тринадцать (+video/audio/music_generation); R7.4a — семнадцать
     // (+vector_upsert/vector_query/memory_read/memory_write); R7.4b —
-    // восемнадцать (+agent).
-    expect(ALL_TYPES).toHaveLength(18);
+    // восемнадцать (+agent); v0.10 S0 — двадцать два (+web_search/document_gen/
+    // read_file/write_file).
+    expect(ALL_TYPES).toHaveLength(22);
     expect(ALL_TYPES).toEqual(
       expect.arrayContaining([
         'text',
@@ -253,6 +274,33 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
 
       expect(ru, `ru: ${entry.labelKey}`).toHaveProperty([entry.labelKey]);
       expect(en, `en: ${entry.labelKey}`).toHaveProperty([entry.labelKey]);
+    }
+  });
+
+  it('v0.10 S0: четыре каркасных типа, i18n и вставка в связь', () => {
+    for (const type of V010_TYPES) {
+      const entry = NODE_REGISTRY[type];
+
+      // S0 регистрирует тип, но компонент появится в S1+ — иначе каталог
+      // попытался бы отрисовать узел `undefined`-компонентом.
+      expect(entry.component, `компонент ${type}`).toBeUndefined();
+      expect(entry.icon, `иконка ${type}`).not.toBe('');
+      expect(entry.canBeInsertedOnEdge, type).toBe(true);
+      expect(canInsertOnEdge(type), type).toBe(true);
+      expect(isNodeType(type), type).toBe(true);
+      // Категории S0 ограничены существующими секциями каталога.
+      expect(['tools', 'output']).toContain(entry.category);
+
+      expect(ru, `ru: ${entry.labelKey}`).toHaveProperty([entry.labelKey]);
+      expect(en, `en: ${entry.labelKey}`).toHaveProperty([entry.labelKey]);
+    }
+
+    // Каркасные типы не попадают в `nodeTypes` React Flow (см. реестр):
+    // иначе React Flow получил бы `undefined` вместо компонента.
+    expect(NODE_TYPES).toHaveLength(22);
+
+    for (const type of V010_TYPES) {
+      expect(nodeTypes, type).not.toHaveProperty(type);
     }
   });
 

@@ -44,8 +44,6 @@ export function HttpNode({ id, data }: NodeProps<HttpFlowNode>) {
   // по времени, селект — отдельным шагом).
   const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
-  // Уровень выполнения появляется после Run (/engine/plan).
-  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   // Статус выполнения приходит из SSE-потока (R4.2).
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const removeNode = useWorkflowStore((state) => state.removeNode);
@@ -94,7 +92,6 @@ export function HttpNode({ id, data }: NodeProps<HttpFlowNode>) {
       <BaseNode
         icon={NODE_REGISTRY.http.icon}
         title={t(NODE_REGISTRY.http.labelKey)}
-        executionLevel={executionLevel}
         status={status}
         dataNodeAttr={{ name: 'data-http-node', value: id }}
         onDelete={() => removeNode(id)}

@@ -70,8 +70,6 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
   // по времени, селекты — отдельными шагами).
   const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
-  // Уровень выполнения появляется после Run (/engine/plan).
-  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   // Статус выполнения приходит из SSE-потока (R4.2).
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const mediaModels = useWorkflowStore((state) => state.mediaModels);
@@ -141,7 +139,6 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
       <BaseNode
         icon={NODE_REGISTRY.image_generation.icon}
         title={t(NODE_REGISTRY.image_generation.labelKey)}
-        executionLevel={executionLevel}
         status={status}
         onDelete={() => removeNode(id)}
       >

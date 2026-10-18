@@ -31,7 +31,12 @@ export type NodeData =
   | VectorQueryNodeData
   | MemoryReadNodeData
   | MemoryWriteNodeData
-  | AgentNodeData;
+  | AgentNodeData
+  // v0.10 S0: каркас новых узлов (исполнители и компоненты — S1+).
+  | WebSearchNodeData
+  | DocumentGenNodeData
+  | ReadFileNodeData
+  | WriteFileNodeData;
 
 /** Узел графа — совместим с backend-DTO `NodeDto`. */
 export type GraphNode = {
@@ -99,7 +104,13 @@ export type NodeType =
   | 'vector_query'
   | 'memory_read'
   | 'memory_write'
-  | 'agent';
+  | 'agent'
+  // v0.10 S0 (Foundation): четыре новых типа. Компоненты появятся в S1+,
+  // поэтому в реестре у них пока `component: undefined`.
+  | 'web_search'
+  | 'document_gen'
+  | 'read_file'
+  | 'write_file';
 
 /**
  * Категории узлов для каталога (KI-127, § 5.2 DESIGN v0.7).
@@ -368,8 +379,8 @@ export interface MusicGenNodeData extends Record<string, unknown> {
 
 /**
  * Данные узла-комментария (KI-187).
- * Стикер без портов: в потоке данных не участвует, в `executionLevels` не
- * попадает — backend исключает аннотации из плана выполнения (KI-266).
+ * Стикер без портов: в потоке данных не участвует, в план выполнения не
+ * попадает — backend исключает аннотации из плана (KI-266).
  */
 export interface CommentNodeData extends Record<string, unknown> {
   kind: 'comment';
@@ -713,6 +724,85 @@ export interface AgentNodeData extends Record<string, unknown> {
   maxTokensPerStep?: number;
 }
 
+/* ──────────────── Новые узлы v0.10 S0 (Foundation) ──────────────── */
+
+/**
+ * Данные узла `web_search` (v0.10 S0, DESIGN v0.10 § 3.1).
+ *
+ * Поля повторяют будущую backend-схему `WebSearchNodeDataSchema` (S2), но UI
+ * пока не существует: на S0 достаточно дискриминатора `kind` и формы данных,
+ * чтобы Save/Load не теряли настройки, заданные через API.
+ *
+ * Запрос приоритетно берётся из входа `prompt`; `query` — fallback для узла,
+ * к которому не подключён Text/LLM.
+ */
+export interface WebSearchNodeData extends Record<string, unknown> {
+  kind: 'web_search';
+  /** Запрос, если он не пришёл по связи `inputs.prompt`. */
+  query?: string;
+  /** Сколько результатов вернуть (1–10; дефолт backend — 5). */
+  maxResults?: number;
+  /** Глубина поиска Tavily. */
+  searchDepth?: 'basic' | 'advanced';
+  /** Просить ли у провайдера готовый ответ. */
+  includeAnswer?: boolean;
+  /** Тема поиска (`news` включает фильтр по дням). */
+  topic?: 'general' | 'news';
+  /** Только для `topic='news'`: окно в днях. */
+  days?: number;
+}
+
+/**
+ * Данные узла `document_gen` (v0.10 S0, DESIGN v0.10 § 3.2).
+ *
+ * Имя типа сокращено до `document_gen` (контракт S0); сам конвейер
+ * Markdown/JSON → DOCX/PDF появится в S6.
+ */
+export interface DocumentGenNodeData extends Record<string, unknown> {
+  kind: 'document_gen';
+  /** Выходной формат документа. */
+  format?: 'docx' | 'pdf';
+  /** Интерпретация входного содержимого. */
+  source?: 'markdown' | 'json';
+  /** Заголовок документа (необязательно). */
+  title?: string;
+  /** Содержимое, если оно не пришло по связи `inputs.prompt`. */
+  content?: string;
+  /** Имя файла без пути (необязательно). */
+  fileName?: string;
+}
+
+/**
+ * Данные узла `read_file` (v0.10 S0, DESIGN v0.10 § 3.3).
+ *
+ * Путь читается **только** из `data.path`, не из входа: иначе prompt injection
+ * смог бы вычитать чужой файл внутри workspace (S8).
+ */
+export interface ReadFileNodeData extends Record<string, unknown> {
+  kind: 'read_file';
+  /** Относительный путь внутри workspace workflow. */
+  path: string;
+  /** Формат чтения; `auto` — по расширению. */
+  format?: 'auto' | 'txt' | 'csv' | 'json';
+}
+
+/**
+ * Данные узла `write_file` (v0.10 S0, DESIGN v0.10 § 3.3).
+ *
+ * Контент — из входа `prompt` или `data.content`; путь — только из `data.path`.
+ */
+export interface WriteFileNodeData extends Record<string, unknown> {
+  kind: 'write_file';
+  /** Относительный путь внутри workspace workflow. */
+  path: string;
+  /** Формат записи. */
+  format?: 'txt' | 'csv' | 'json';
+  /** Разрешить перезапись существующего файла (дефолт false). */
+  overwrite?: boolean;
+  /** Содержимое, если оно не пришло по связи `inputs.prompt`. */
+  content?: string;
+}
+
 /** Узел Text в терминах React Flow. */
 export type TextFlowNode = Node<TextNodeData, 'text'>;
 /** Узел LLM в терминах React Flow. */
@@ -749,6 +839,14 @@ export type MemoryReadFlowNode = Node<MemoryReadNodeData, 'memory_read'>;
 export type MemoryWriteFlowNode = Node<MemoryWriteNodeData, 'memory_write'>;
 /** Узел агента с циклом LLM → tools → final (R7.4b). */
 export type AgentFlowNode = Node<AgentNodeData, 'agent'>;
+/** Узел веб-поиска (v0.10 S0; компонент — S2). */
+export type WebSearchFlowNode = Node<WebSearchNodeData, 'web_search'>;
+/** Узел генерации документа (v0.10 S0; компонент — S6). */
+export type DocumentGenFlowNode = Node<DocumentGenNodeData, 'document_gen'>;
+/** Узел чтения файла из workspace (v0.10 S0; компонент — S8). */
+export type ReadFileFlowNode = Node<ReadFileNodeData, 'read_file'>;
+/** Узел записи файла в workspace (v0.10 S0; компонент — S8). */
+export type WriteFileFlowNode = Node<WriteFileNodeData, 'write_file'>;
 
 /** Любой узел редактора. */
 export type AppNode =
@@ -769,5 +867,9 @@ export type AppNode =
   | VectorQueryFlowNode
   | MemoryReadFlowNode
   | MemoryWriteFlowNode
-  | AgentFlowNode;
+  | AgentFlowNode
+  | WebSearchFlowNode
+  | DocumentGenFlowNode
+  | ReadFileFlowNode
+  | WriteFileFlowNode;
 

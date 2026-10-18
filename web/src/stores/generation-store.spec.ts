@@ -92,7 +92,6 @@ describe('useWorkflowStore — узлы media-генерации (R7.2, KI-361)'
       past: [],
       future: [],
       selectedNodeId: null,
-      executionLevels: {},
       generationModels: { VIDEO: [], AUDIO: [], MUSIC: [] },
       generationModelsLoaded: { VIDEO: false, AUDIO: false, MUSIC: false },
     });

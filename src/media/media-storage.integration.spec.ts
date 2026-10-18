@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { Test } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { and, eq } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -215,6 +216,11 @@ describe.skipIf(!process.env.DATABASE_URL)(
           {
             provide: AgentService,
             useValue: { runAgentAsync: vi.fn() },
+          },
+          // v0.10 S0 (KI-455): движок читает PGVECTOR_ENABLED через ConfigService.
+          {
+            provide: ConfigService,
+            useValue: { get: (): unknown => undefined },
           },
         ],
       }).compile();

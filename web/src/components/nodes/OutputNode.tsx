@@ -23,8 +23,6 @@ export function OutputNode({ id, data }: NodeProps<OutputFlowNode>) {
   // R6.4b.2b: правки поля проходят через историю графа (склейка по времени).
   const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
-  // Уровень выполнения появляется после Run (/engine/plan).
-  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   // Статус выполнения приходит из SSE-потока (R4.2).
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const removeNode = useWorkflowStore((state) => state.removeNode);
@@ -53,7 +51,6 @@ export function OutputNode({ id, data }: NodeProps<OutputFlowNode>) {
       <BaseNode
         icon={NODE_REGISTRY.output.icon}
         title={t(NODE_REGISTRY.output.labelKey)}
-        executionLevel={executionLevel}
         status={status}
         dataNodeAttr={{ name: 'data-output-node', value: id }}
         onDelete={() => removeNode(id)}

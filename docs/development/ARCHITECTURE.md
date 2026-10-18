@@ -526,7 +526,7 @@ pnpm --dir web dev            # Vite :5173
 
 ---
 
-## 8. Известные ограничения (на v0.9.5)
+## 8. Известные ограничения (на v0.10.0 S0)
 
 | Ограничение | Влияние | Ссылка |
 |---|---|---|
@@ -534,9 +534,9 @@ pnpm --dir web dev            # Vite :5173
 | Local media не shared | Multi-instance теряет файлы | KI-362, § 7.3 |
 | `storage_key` не хранится | Presigned refresh ломается на virtual-hosted/external URL | KI-451 |
 | Публичный `/media/file` | Нет signed URL для local-файлов | KI-415 |
-| Retry только LLM | Media/HTTP ошибки не повторяются | KI-104 |
-| `runPlanAsync` не вызывается | Бейдж уровня узла не заполняется | KI-454 |
-| `PGVECTOR_ENABLED` только в DESIGN | Нет фактического feature-флага | KI-455 |
+| Retry только LLM и `RetryableNodeException` | Media/HTTP ошибки не повторяются | KI-104 |
+| План не обновляется автоматически | Бейджа уровней нет (удалён в S0); планирование — S10 | KI-454 |
+| `PGVECTOR_ENABLED` проверяется движком | Agent-инструменты `vector_*`/`memory_*` флаг не видят | KI-455, KI-458 |
 | Нет глобального `HttpExceptionFilter` | Формат ошибок не гарантирован на всех ручках | KI-012 |
 | Нет отмены запуска из UI | `cancelled`-статус недостижим | — |
 

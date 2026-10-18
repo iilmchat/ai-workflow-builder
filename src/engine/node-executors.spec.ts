@@ -13,12 +13,17 @@ import {
   SUB_WORKFLOW_MAX_DEPTH,
   SubWorkflowDepthException,
   SubWorkflowRecursionException,
+  UnsupportedNodeTypeException,
   executeCompareNode,
   executeConditionNode,
+  executeDocumentGenNodeStub,
   executeHttpNode,
   executeOutputNode,
+  executeReadFileNodeStub,
   executeSubWorkflowNode,
   executeTextNode,
+  executeWebSearchNodeStub,
+  executeWriteFileNodeStub,
   prefixSubWorkflowGraph,
   type SubWorkflowContext,
   type SubWorkflowRecord,
@@ -732,6 +737,33 @@ describe('node-executors', () => {
       await expect(
         executeSubWorkflowNode({ kind: 'sub_workflow', workflowId: SUB_WORKFLOW_ID }, context),
       ).resolves.toMatchObject({ workflowId: SUB_WORKFLOW_ID });
+    });
+  });
+
+  describe('заглушки узлов v0.10 S0', () => {
+    /** Ожидаемые пары «заглушка → тип» для табличной проверки. */
+    const stubs = [
+      { type: 'web_search', execute: executeWebSearchNodeStub },
+      { type: 'document_gen', execute: executeDocumentGenNodeStub },
+      { type: 'read_file', execute: executeReadFileNodeStub },
+      { type: 'write_file', execute: executeWriteFileNodeStub },
+    ] as const;
+
+    it('падают UnsupportedNodeTypeException с типом узла, а не неизвестным типом', () => {
+      for (const { type, execute } of stubs) {
+        const node = { id: 'A', type, data: {} };
+        let caught: unknown;
+
+        try {
+          execute(node);
+        } catch (error: unknown) {
+          caught = error;
+        }
+
+        expect(caught, type).toBeInstanceOf(UnsupportedNodeTypeException);
+        expect((caught as Error).message, type).toContain(type);
+        expect((caught as Error).message, type).toContain('v0.10 S0');
+      }
     });
   });
 

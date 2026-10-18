@@ -70,7 +70,6 @@ function formatPrice(model: MediaModelInfo): string | null {
 export function MusicGenNode({ id, data }: NodeProps<MusicGenFlowNode>) {
   const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
-  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const generationModels = useWorkflowStore((state) => state.generationModels.MUSIC);
   const loadGenerationModels = useWorkflowStore(
@@ -126,7 +125,6 @@ export function MusicGenNode({ id, data }: NodeProps<MusicGenFlowNode>) {
       <BaseNode
         icon={NODE_REGISTRY.music_generation.icon}
         title={t(NODE_REGISTRY.music_generation.labelKey)}
-        executionLevel={executionLevel}
         status={status}
         dataNodeAttr={{ name: 'data-music-gen-node', value: id }}
         onDelete={() => removeNode(id)}

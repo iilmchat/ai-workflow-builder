@@ -64,6 +64,70 @@ export function executeImageGenNodeStub(_node: NodeDto): Record<string, unknown>
   return { url: null };
 }
 
+/* ──────────────── Заглушки узлов v0.10 S0 (Foundation) ──────────────── */
+
+/**
+ * ЗАГЛУШКА исполнителя узла `web_search` (v0.10 S0).
+ *
+ * Сам поиск (Tavily) появится в срезе S2. До этого узел должен падать
+ * **понятной** ошибкой исполнителя, а не неизвестным типом: граф с новым узлом
+ * остаётся валидным, а `node_runs.error` называет конкретный тип.
+ *
+ * @param _node - узел графа типа `web_search` (в заглушке не используется)
+ * @throws UnsupportedNodeTypeException всегда: исполнитель ещё не реализован
+ */
+export function executeWebSearchNodeStub(_node: NodeDto): never {
+  throw new UnsupportedNodeTypeException(
+    'web_search',
+    'Узел web_search ещё не реализован (v0.10 S0)',
+  );
+}
+
+/**
+ * ЗАГЛУШКА исполнителя узла `document_gen` (v0.10 S0).
+ *
+ * Генерация DOCX/PDF появится в срезе S6.
+ *
+ * @param _node - узел графа типа `document_gen` (в заглушке не используется)
+ * @throws UnsupportedNodeTypeException всегда: исполнитель ещё не реализован
+ */
+export function executeDocumentGenNodeStub(_node: NodeDto): never {
+  throw new UnsupportedNodeTypeException(
+    'document_gen',
+    'Узел document_gen ещё не реализован (v0.10 S0)',
+  );
+}
+
+/**
+ * ЗАГЛУШКА исполнителя узла `read_file` (v0.10 S0).
+ *
+ * Безопасное чтение из workspace появится в срезе S8.
+ *
+ * @param _node - узел графа типа `read_file` (в заглушке не используется)
+ * @throws UnsupportedNodeTypeException всегда: исполнитель ещё не реализован
+ */
+export function executeReadFileNodeStub(_node: NodeDto): never {
+  throw new UnsupportedNodeTypeException(
+    'read_file',
+    'Узел read_file ещё не реализован (v0.10 S0)',
+  );
+}
+
+/**
+ * ЗАГЛУШКА исполнителя узла `write_file` (v0.10 S0).
+ *
+ * Безопасная запись в workspace появится в срезе S8.
+ *
+ * @param _node - узел графа типа `write_file` (в заглушке не используется)
+ * @throws UnsupportedNodeTypeException всегда: исполнитель ещё не реализован
+ */
+export function executeWriteFileNodeStub(_node: NodeDto): never {
+  throw new UnsupportedNodeTypeException(
+    'write_file',
+    'Узел write_file ещё не реализован (v0.10 S0)',
+  );
+}
+
 /**
  * Типы узлов-аннотаций (комментарии/стикеры, KI-266).
  *

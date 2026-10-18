@@ -27,7 +27,6 @@ const FIELD_CLASS =
 export function MemoryWriteNode({ id, data }: NodeProps<MemoryWriteFlowNode>) {
   const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
-  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const removeNode = useWorkflowStore((state) => state.removeNode);
 
@@ -75,7 +74,6 @@ export function MemoryWriteNode({ id, data }: NodeProps<MemoryWriteFlowNode>) {
       <BaseNode
         icon={NODE_REGISTRY.memory_write.icon}
         title={t(NODE_REGISTRY.memory_write.labelKey)}
-        executionLevel={executionLevel}
         status={status}
         dataNodeAttr={{ name: 'data-memory-write-node', value: id }}
         onDelete={() => removeNode(id)}

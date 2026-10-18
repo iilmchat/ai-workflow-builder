@@ -114,7 +114,6 @@ beforeEach(() => {
     nodeStatuses: {},
     nodeOutputs: {},
     nodeMetrics: {},
-    executionLevels: {},
     llmModels: [],
     llmModelsLoaded: true,
     pushHistoryCoalesced: () => undefined,

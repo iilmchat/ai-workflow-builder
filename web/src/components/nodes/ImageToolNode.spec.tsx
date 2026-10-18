@@ -83,7 +83,6 @@ beforeEach(() => {
     nodeStatuses: {},
     nodeOutputs: {},
     nodeMetrics: {},
-    executionLevels: {},
     toolModels: [],
     toolModelsLoaded: true,
     loadToolModelsAsync: async () => undefined,

@@ -53,7 +53,6 @@ export function ImageToolNode({ id, data }: NodeProps<ImageToolFlowNode>) {
   // R6.4b.2b: правки полей узла проходят через историю графа.
   const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
-  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const toolModels = useWorkflowStore((state) => state.toolModels);
   const loadToolModels = useWorkflowStore((state) => state.loadToolModelsAsync);
@@ -133,7 +132,6 @@ export function ImageToolNode({ id, data }: NodeProps<ImageToolFlowNode>) {
       <BaseNode
         icon={NODE_REGISTRY.image_tool.icon}
         title={t(NODE_REGISTRY.image_tool.labelKey)}
-        executionLevel={executionLevel}
         status={status}
         dataNodeAttr={{ name: 'data-image-tool-node', value: id }}
         onDelete={() => removeNode(id)}

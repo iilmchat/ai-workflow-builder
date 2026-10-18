@@ -433,6 +433,33 @@ export const ProviderConcurrencyEnvSchema = z.object({
 /** Валидированные лимиты одновременных вызовов на провайдера (R7.7). */
 export type ProviderConcurrencyEnv = z.infer<typeof ProviderConcurrencyEnvSchema>;
 
+/**
+ * Zod-схема аварийного выключателя vector/memory-узлов (v0.10 S0, KI-455).
+ *
+ * `PGVECTOR_ENABLED` по умолчанию `true` — сохраняет текущее поведение:
+ * vector- и memory-узлы работают. `false` — аварийное отключение без отката
+ * релиза: `ExecutionEngineService` падает понятной ошибкой конфигурации, а не
+ * пытается ходить в pgvector с выключенным индексом.
+ *
+ * Разбор строгий, как у `SANDBOX_ENABLED`/`OTEL_ENABLED`: `z.coerce.boolean()`
+ * превращает непустую строку `'false'` в `true`, и выключатель не сработал бы
+ * (это же ограничение зафиксировано в DESIGN v0.10 § 3.5.3).
+ */
+export const VectorEnvSchema = z.object({
+  /** Включены ли vector/memory-узлы (default true). */
+  PGVECTOR_ENABLED: z
+    .preprocess(
+      emptyToUndefined,
+      z
+        .union([z.boolean(), z.enum(['true', 'false'])])
+        .transform((value) => value === true || value === 'true')
+        .optional(),
+    )
+    .default(true),
+});
+
+/** Валидированные настройки vector-узлов (v0.10 S0). */
+export type VectorEnv = z.infer<typeof VectorEnvSchema>;
 
 /**
  * Zod-схема переменных окружения, обязательных для запуска приложения.
@@ -654,6 +681,8 @@ export const EnvSchema = z.object({
   ...MediaStorageEnvSchema.shape,
   // Лимиты одновременных вызовов на провайдера LLM (R7.7, KI-067).
   ...ProviderConcurrencyEnvSchema.shape,
+  // Аварийный выключатель vector/memory-узлов (v0.10 S0, KI-455).
+  ...VectorEnvSchema.shape,
 })
   /**
    * Fail-fast: отказ старта при `AUTH_DISABLED=true` в production.

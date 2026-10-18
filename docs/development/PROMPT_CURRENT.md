@@ -100,14 +100,15 @@
 - **KI-450** 🟢 — `GET /runs/:id` не отдаёт `node_runs`.
 - **KI-451** 🟢 — ключ объекта S3 не хранится в `node_runs`.
 
-**🆕 Кандидаты в реестр (найдены 2026-10-18, ещё не записаны):**
+**✅ Зарегистрированы и закрыты в v0.10.0 S0 (2026-10-18):**
 
-- **KI-452** 🟠 — удаление workflow без подтверждения (риск потери данных).
-- **KI-453** 🟢 — устаревший комментарий про `Ctrl+S` в `saveWorkflowAsync`.
-- **KI-454** 🟡 — мёртвый `runPlanAsync`: `executionLevels` не заполняется,
-  бейдж уровня на узлах не работает.
-- **KI-455** 🟡 — `PGVECTOR_ENABLED` отсутствует в `EnvSchema` / `.env.example`
-  при наличии в DESIGN v0.9 (design drift).
+- **KI-452** 🟠 — `window.confirm` с именем workflow перед удалением
+  (`LoadModal`, оба i18n).
+- **KI-453** 🟢 — комментарий про `Ctrl+S` приведён к факту (хоткей — S10).
+- **KI-454** 🟡 — удалены мёртвые `runPlanAsync`/`executionLevels` и бейдж
+  уровня из `BaseNode`; планирование — S10.
+- **KI-455** 🟡 — `PGVECTOR_ENABLED` в `VectorEnvSchema`/`.env.example`,
+  проверяется `ExecutionEngineService` (default `true`).
 
 ---
 
@@ -115,7 +116,7 @@
 
 **Вариант A (рекомендуемый) — `v0.9.5` (cleanup / hardening):**
 
-1. Зарегистрировать и закрыть KI-452…455.
+1. ✅ Зарегистрировать и закрыть KI-452…455 (v0.10.0 S0).
 2. SSRF: redirect и DNS rebinding (KI-434, KI-435).
 3. Метрики Agent в `node_runs` (KI-433).
 4. Хранение `storage_key` (KI-451) и отдача `node_runs` в `GET /runs/:id`

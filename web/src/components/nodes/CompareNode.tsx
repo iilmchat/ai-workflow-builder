@@ -38,8 +38,6 @@ export function CompareNode({ id, data }: NodeProps<CompareFlowNode>) {
   // вместе с `llm-judge`, и тогда история правок уже будет на месте.
   useNodeDataHistory();
   const { t } = useTranslation();
-  // Уровень выполнения появляется после Run (/engine/plan).
-  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   // Статус выполнения приходит из SSE-потока (R4.2).
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const removeNode = useWorkflowStore((state) => state.removeNode);
@@ -77,7 +75,6 @@ export function CompareNode({ id, data }: NodeProps<CompareFlowNode>) {
       <BaseNode
         icon={NODE_REGISTRY.compare.icon}
         title={t(NODE_REGISTRY.compare.labelKey)}
-        executionLevel={executionLevel}
         status={status}
         dataNodeAttr={{ name: 'data-compare-node', value: id }}
         onDelete={() => removeNode(id)}

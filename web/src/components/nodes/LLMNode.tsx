@@ -75,8 +75,6 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
   // по времени, селекты — отдельными шагами).
   const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
-  // Уровень выполнения появляется после Run (/engine/plan).
-  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   // Статус выполнения приходит из SSE-потока (R4.2).
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const llmModels = useWorkflowStore((state) => state.llmModels);
@@ -149,7 +147,6 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
       <BaseNode
         icon={NODE_REGISTRY.llm.icon}
         title={t(NODE_REGISTRY.llm.labelKey)}
-        executionLevel={executionLevel}
         status={status}
         badges={badgesForModel(selected)}
         onDelete={() => removeNode(id)}

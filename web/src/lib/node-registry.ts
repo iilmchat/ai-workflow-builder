@@ -8,6 +8,7 @@ import type {
   CommentFlowNode,
   CompareFlowNode,
   ConditionFlowNode,
+  DocumentGenFlowNode,
   HttpFlowNode,
   ImageGenFlowNode,
   ImageToolFlowNode,
@@ -18,11 +19,14 @@ import type {
   NodeCategory,
   NodeType,
   OutputFlowNode,
+  ReadFileFlowNode,
   SubWorkflowFlowNode,
   TextFlowNode,
   VectorQueryFlowNode,
   VectorUpsertFlowNode,
   VideoGenFlowNode,
+  WebSearchFlowNode,
+  WriteFileFlowNode,
 } from '@/types/graph';
 
 /**
@@ -186,7 +190,13 @@ export type NodeComponent =
   | NodeComponentOf<VectorQueryFlowNode>
   | NodeComponentOf<MemoryReadFlowNode>
   | NodeComponentOf<MemoryWriteFlowNode>
-  | NodeComponentOf<AgentFlowNode>;
+  | NodeComponentOf<AgentFlowNode>
+  // v0.10 S0: типы зарегистрированы без компонентов; объединение расширено,
+  // чтобы S1+ добавил ленивые компоненты без переделки типа реестра.
+  | NodeComponentOf<WebSearchFlowNode>
+  | NodeComponentOf<DocumentGenFlowNode>
+  | NodeComponentOf<ReadFileFlowNode>
+  | NodeComponentOf<WriteFileFlowNode>;
 
 /**
  * Описание узла в реестре: единый источник правды.
@@ -201,8 +211,14 @@ export interface NodeRegistryEntry {
   readonly icon: string;
   /** Категория для каталога (§ 5.2 DESIGN v0.7). */
   readonly category: NodeCategory;
-  /** Ленивый React-компонент узла (KI-008). */
-  readonly component: NodeComponent;
+  /**
+   * Ленивый React-компонент узла (KI-008).
+   *
+   * `undefined` — тип зарегистрирован как каркас (v0.10 S0), но компонента
+   * ещё нет. Такие записи не попадают в `nodeTypes`/каталог: React Flow не
+   * должен получать `undefined` вместо компонента. S1+ заменит значения.
+   */
+  readonly component: NodeComponent | undefined;
   /**
    * Можно ли вставить узел этого типа в существующую связь (KI-259).
    *
@@ -431,6 +447,47 @@ export const NODE_REGISTRY = {
     canBeInsertedOnEdge: true,
     capabilities: { externalState: true, userConfig: true },
   },
+  // v0.10 S0 (Foundation): четыре новых типа. Компоненты появятся в S1+
+  // (`web_search` — S2, `document_gen` — S6, `read_file`/`write_file` — S8),
+  // поэтому `component` пока `undefined`: каталог и `nodeTypes` такие записи
+  // отфильтровывают. `canBeInsertedOnEdge: true` — у всех четырёх по контракту
+  // есть входной порт (`text-input`), даже если он появится вместе с UI.
+  //
+  // Категории ограничены существующими секциями `tools`/`output` (S0 не
+  // добавляет `web`/`documents`/`files`): новые ключи `catalog.category.*`
+  // потребовали бы правки обоих i18n-файлов сверх среза.
+  web_search: {
+    labelKey: 'node.web_search.label',
+    icon: '🔍',
+    category: 'tools',
+    component: undefined,
+    canBeInsertedOnEdge: true,
+    capabilities: { externalState: true, userConfig: true },
+  },
+  document_gen: {
+    labelKey: 'node.document_gen.label',
+    icon: '📄',
+    category: 'output',
+    component: undefined,
+    canBeInsertedOnEdge: true,
+    capabilities: { externalState: true, userConfig: true },
+  },
+  read_file: {
+    labelKey: 'node.read_file.label',
+    icon: '📂',
+    category: 'tools',
+    component: undefined,
+    canBeInsertedOnEdge: true,
+    capabilities: { externalState: true, userConfig: true },
+  },
+  write_file: {
+    labelKey: 'node.write_file.label',
+    icon: '📥',
+    category: 'tools',
+    component: undefined,
+    canBeInsertedOnEdge: true,
+    capabilities: { externalState: true, userConfig: true },
+  },
 } as const satisfies Record<NodeType, NodeRegistryEntry>;
 
 /** Список всех типов (для валидации и обхода) — выводится из реестра. */
@@ -476,7 +533,14 @@ export function canInsertOnEdge(type: NodeType): boolean {
  * Во время выполнения React Flow передаёт компоненту props именно его узла.
  */
 export const nodeTypes = Object.fromEntries(
-  NODE_TYPES.map((type) => [type, NODE_REGISTRY[type].component]),
+  // v0.10 S0: у каркасных типов (`web_search`, …) компонента ещё нет.
+  // `undefined` в `nodeTypes` недопустим — React Flow попытался бы отрисовать
+  // узел таким «компонентом»; такие типы просто не регистрируем до S1+.
+  NODE_TYPES.flatMap((type) => {
+    const component = NODE_REGISTRY[type].component;
+
+    return component === undefined ? [] : [[type, component] as const];
+  }),
 ) as unknown as NodeTypes;
 
 /**

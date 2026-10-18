@@ -48,7 +48,6 @@ export function AgentNode({ id, data }: NodeProps<AgentFlowNode>) {
   // R6.4b.2b: правки полей идут через историю графа.
   const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
-  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const llmModels = useWorkflowStore((state) => state.llmModels);
   const loadLlmModels = useWorkflowStore((state) => state.loadLlmModelsAsync);
@@ -98,7 +97,6 @@ export function AgentNode({ id, data }: NodeProps<AgentFlowNode>) {
       <BaseNode
         icon={NODE_REGISTRY.agent.icon}
         title={t(NODE_REGISTRY.agent.labelKey)}
-        executionLevel={executionLevel}
         status={status}
         dataNodeAttr={{ name: 'data-agent-node', value: id }}
         onDelete={() => removeNode(id)}

@@ -17,6 +17,7 @@ import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
 import { UnsupportedNodeTypeException, type SubWorkflowRecord } from './node-executors.js';
+import { RetryableNodeException, VectorDisabledException } from './errors.js';
 
 /** Стабильный uuid запуска. */
 const RUN_ID = '22222222-2222-4222-8222-222222222222';
@@ -317,6 +318,8 @@ describe('ExecutionEngineService', () => {
   let mediaMusicExecute: ReturnType<typeof vi.fn>;
   let findWorkflow: ReturnType<typeof vi.fn>;
   let fake: ReturnType<typeof createFakeDb>;
+  /** Окружение для `ConfigService`-заглушки (изменяется в отдельных тестах). */
+  let envConfig: Record<string, unknown>;
 
   /** Типы опубликованных событий в порядке публикации. */
   const eventTypes = (): string[] => publish.mock.calls.map(([, event]) => event.type);
@@ -428,6 +431,11 @@ describe('ExecutionEngineService', () => {
       Promise.resolve(null as SubWorkflowRecord | null),
     );
     fake = createFakeDb(RUN_ID);
+    envConfig = {
+      SANDBOX_ENABLED: true,
+      SANDBOX_TIMEOUT_MS: 100,
+      SANDBOX_MEMORY_MB: 16,
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -487,15 +495,7 @@ describe('ExecutionEngineService', () => {
         {
           provide: ConfigService,
           useValue: {
-            get: (key: string): unknown => {
-              const config: Record<string, unknown> = {
-                SANDBOX_ENABLED: true,
-                SANDBOX_TIMEOUT_MS: 100,
-                SANDBOX_MEMORY_MB: 16,
-              };
-
-              return config[key];
-            },
+            get: (key: string): unknown => envConfig[key],
           },
         },
       ],
@@ -1407,6 +1407,72 @@ describe('ExecutionEngineService', () => {
     expect(calls).toBe(1);
     expect(fake.rows[0].status).toBe('failed');
     expect(fake.rows[0].logs).toEqual([]);
+  });
+
+  it('v0.10 S0: RetryableNodeException повторяется как временная ошибка', async () => {
+    const graph: GraphDto = { nodes: [node('A', 'llm')], edges: [] };
+    let calls = 0;
+
+    spyRunNode(async () => {
+      calls += 1;
+
+      if (calls < 3) {
+        throw new RetryableNodeException('web_search', '429 от поисковика');
+      }
+
+      return { outputs: { text: 'ответ после повтора' }, metrics: null };
+    });
+
+    vi.useFakeTimers();
+
+    try {
+      const promise = service.executeAsync(RUN_ID, graph);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      await expect(promise).resolves.toEqual(
+        expect.objectContaining({ status: 'completed', executedNodes: 1 }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(calls).toBe(3);
+    expect(fake.rows[0].status).toBe('completed');
+    expect(fake.rows[0].logs).toHaveLength(2);
+  });
+
+  it('v0.10 S0: PGVECTOR_ENABLED=false не пускает vector-узел к хранилищу', async () => {
+    envConfig.PGVECTOR_ENABLED = false;
+
+    const graph: GraphDto = {
+      nodes: [
+        node('A', 'vector_query', {
+          collection: 'docs',
+          embeddingModel: 'text-embedding-3-small',
+        }),
+      ],
+      edges: [],
+    };
+
+    await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow(
+      VectorDisabledException,
+    );
+
+    expect(fake.rows[0].status).toBe('failed');
+    expect(fake.rows[0].error).toContain('PGVECTOR_ENABLED=false');
+    expect(fake.rows[0].error).toContain('vector_query');
+  });
+
+  it('v0.10 S0: заглушка web_search падает понятной ошибкой, а не «неизвестным типом»', async () => {
+    const graph: GraphDto = { nodes: [node('A', 'web_search')], edges: [] };
+
+    await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow(
+      UnsupportedNodeTypeException,
+    );
+
+    expect(fake.rows[0].error).toContain('web_search');
+    expect(fake.rows[0].error).toContain('v0.10 S0');
   });
 
   it('KI-031: повторный прогон графа не создаёт дубли node_runs (upsert)', async () => {

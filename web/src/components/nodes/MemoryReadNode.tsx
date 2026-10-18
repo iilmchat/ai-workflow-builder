@@ -22,7 +22,6 @@ import { DATA_TYPE_COLORS, DATA_TYPE_LABELS, type MemoryReadFlowNode } from '@/t
 export function MemoryReadNode({ id, data }: NodeProps<MemoryReadFlowNode>) {
   const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
-  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const removeNode = useWorkflowStore((state) => state.removeNode);
 
@@ -53,7 +52,6 @@ export function MemoryReadNode({ id, data }: NodeProps<MemoryReadFlowNode>) {
       <BaseNode
         icon={NODE_REGISTRY.memory_read.icon}
         title={t(NODE_REGISTRY.memory_read.labelKey)}
-        executionLevel={executionLevel}
         status={status}
         dataNodeAttr={{ name: 'data-memory-read-node', value: id }}
         onDelete={() => removeNode(id)}

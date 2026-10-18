@@ -41,7 +41,6 @@ const FIELD_CLASS =
 export function VectorQueryNode({ id, data }: NodeProps<VectorQueryFlowNode>) {
   const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
-  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const removeNode = useWorkflowStore((state) => state.removeNode);
 
@@ -83,7 +82,6 @@ export function VectorQueryNode({ id, data }: NodeProps<VectorQueryFlowNode>) {
       <BaseNode
         icon={NODE_REGISTRY.vector_query.icon}
         title={t(NODE_REGISTRY.vector_query.labelKey)}
-        executionLevel={executionLevel}
         status={status}
         dataNodeAttr={{ name: 'data-vector-query-node', value: id }}
         onDelete={() => removeNode(id)}

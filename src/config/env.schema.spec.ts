@@ -1,4 +1,9 @@
-import { EnvSchema, WorkerEnvSchema, validateEnv } from './env.schema.js';
+import {
+  EnvSchema,
+  VectorEnvSchema,
+  WorkerEnvSchema,
+  validateEnv,
+} from './env.schema.js';
 
 /** Минимально валидное окружение (обязательные URL и секрет подписи). */
 const baseEnv = {
@@ -7,6 +12,32 @@ const baseEnv = {
   // R6.1a: JWT_SECRET обязателен (min 32 символа).
   JWT_SECRET: 'test-secret-at-least-32-characters-long',
 };
+
+describe('PGVECTOR_ENABLED (v0.10 S0, KI-455)', () => {
+  it('по умолчанию включён — обратная совместимость', () => {
+    expect(VectorEnvSchema.parse({}).PGVECTOR_ENABLED).toBe(true);
+    expect(EnvSchema.parse(baseEnv).PGVECTOR_ENABLED).toBe(true);
+  });
+
+  it('строго разбирает true/false и пустую строку', () => {
+    expect(VectorEnvSchema.parse({ PGVECTOR_ENABLED: 'false' }).PGVECTOR_ENABLED).toBe(
+      false,
+    );
+    expect(VectorEnvSchema.parse({ PGVECTOR_ENABLED: 'true' }).PGVECTOR_ENABLED).toBe(
+      true,
+    );
+    expect(VectorEnvSchema.parse({ PGVECTOR_ENABLED: false }).PGVECTOR_ENABLED).toBe(
+      false,
+    );
+    // KI-084: пустая переменная в .env — «не задана», а не ошибка.
+    expect(VectorEnvSchema.parse({ PGVECTOR_ENABLED: '' }).PGVECTOR_ENABLED).toBe(true);
+  });
+
+  it('отклоняет мусор, а не включает/выключает флаг молча', () => {
+    expect(VectorEnvSchema.safeParse({ PGVECTOR_ENABLED: 'yes' }).success).toBe(false);
+    expect(VectorEnvSchema.safeParse({ PGVECTOR_ENABLED: '1' }).success).toBe(false);
+  });
+});
 
 describe('WorkerEnvSchema (KI-065, KI-032)', () => {
   it('применяет дефолты, когда переменные не заданы', () => {

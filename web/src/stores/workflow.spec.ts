@@ -33,7 +33,6 @@ const EMPTY_STATE = {
   past: [] as GraphSnapshot[],
   future: [] as GraphSnapshot[],
   selectedNodeId: null,
-  executionLevels: {} as Record<string, number>,
 };
 
 /** Позиция узла для тестов (на графе она не важна). */
@@ -203,20 +202,6 @@ describe('useWorkflowStore — история правок (R6.4b.2b)', () => {
     state().undo();
     expect(state().nodes).toHaveLength(1);
     expect(state().selectedNodeId).toBeNull();
-  });
-
-  it('undo сбрасывает план выполнения (executionLevels устарели)', () => {
-    state().addNode('text', AT_ZERO);
-    state().addNode('llm', { x: 100, y: 0 });
-    state().addNode('comment', { x: 200, y: 0 });
-
-    const first = state().nodes[0]?.id ?? '';
-    state().setExecutionLevels([[first]]);
-    expect(Object.keys(state().executionLevels)).toEqual([first]);
-
-    state().undo();
-
-    expect(state().executionLevels).toEqual({});
   });
 
   it('поток позиций от перетаскивания не создаёт шагов истории', () => {

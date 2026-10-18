@@ -35,7 +35,6 @@ const FIELD_CLASS =
 export function VectorUpsertNode({ id, data }: NodeProps<VectorUpsertFlowNode>) {
   const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
-  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const removeNode = useWorkflowStore((state) => state.removeNode);
 
@@ -83,7 +82,6 @@ export function VectorUpsertNode({ id, data }: NodeProps<VectorUpsertFlowNode>) 
       <BaseNode
         icon={NODE_REGISTRY.vector_upsert.icon}
         title={t(NODE_REGISTRY.vector_upsert.labelKey)}
-        executionLevel={executionLevel}
         status={status}
         dataNodeAttr={{ name: 'data-vector-upsert-node', value: id }}
         onDelete={() => removeNode(id)}

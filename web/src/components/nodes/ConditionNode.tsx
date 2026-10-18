@@ -49,8 +49,6 @@ export function ConditionNode({ id, data }: NodeProps<ConditionFlowNode>) {
   // R6.4b.2b: правки полей узла проходят через историю графа.
   const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
-  // Уровень выполнения появляется после Run (/engine/plan).
-  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   // Статус выполнения приходит из SSE-потока (R4.2).
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const removeNode = useWorkflowStore((state) => state.removeNode);
@@ -91,7 +89,6 @@ export function ConditionNode({ id, data }: NodeProps<ConditionFlowNode>) {
       <BaseNode
         icon={NODE_REGISTRY.condition.icon}
         title={t(NODE_REGISTRY.condition.labelKey)}
-        executionLevel={executionLevel}
         status={status}
         dataNodeAttr={{ name: 'data-condition-node', value: id }}
         onDelete={() => removeNode(id)}

@@ -70,7 +70,6 @@ function formatPrice(model: MediaModelInfo): string | null {
 export function VideoGenNode({ id, data }: NodeProps<VideoGenFlowNode>) {
   const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
-  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const generationModels = useWorkflowStore((state) => state.generationModels.VIDEO);
   const loadGenerationModels = useWorkflowStore(
@@ -137,7 +136,6 @@ export function VideoGenNode({ id, data }: NodeProps<VideoGenFlowNode>) {
       <BaseNode
         icon={NODE_REGISTRY.video_generation.icon}
         title={t(NODE_REGISTRY.video_generation.labelKey)}
-        executionLevel={executionLevel}
         status={status}
         dataNodeAttr={{ name: 'data-video-gen-node', value: id }}
         onDelete={() => removeNode(id)}

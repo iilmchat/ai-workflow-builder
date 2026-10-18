@@ -107,7 +107,6 @@ beforeEach(() => {
     nodeStatuses: {},
     nodeOutputs: {},
     nodeMetrics: {},
-    executionLevels: {},
     llmModels: [],
     llmModelsLoaded: true,
     loadLlmModelsAsync: async () => undefined,

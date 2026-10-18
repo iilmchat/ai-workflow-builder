@@ -79,9 +79,12 @@ export function NodeCatalogPopover({
 
     return NODE_CATEGORIES.map((category) => ({
       category,
-      nodes: NODE_TYPES.filter(
-        (type) => NODE_REGISTRY[type].category === category,
-      )
+      nodes: NODE_TYPES
+        // v0.10 S0: каркасные типы без компонента не предлагаем добавлять —
+        // S1+ заменит `component: undefined` на ленивый компонент, и они
+        // появятся в каталоге автоматически.
+        .filter((type) => NODE_REGISTRY[type].component !== undefined)
+        .filter((type) => NODE_REGISTRY[type].category === category)
         .filter((type) => filter === undefined || filter(type))
         .map((type) => ({
           type,

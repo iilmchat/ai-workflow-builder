@@ -203,8 +203,28 @@ export function LoadModal({ onClose }: LoadModalProps) {
     }
   };
 
-  /** Удаляет workflow и обновляет список. */
-  const handleDelete = async (id: string) => {
+  /**
+   * Удаляет workflow после подтверждения и обновляет список.
+   *
+   * KI-452: удаление необратимо, поэтому перед запросом спрашиваем
+   * подтверждение с именем workflow. `window.confirm` выбран сознательно:
+   * модалка внутри модалки (alertdialog) — отдельная задача DESIGN v0.10
+   * § 3.4.3; для S0 достаточно нативного диалога, который нельзя случайно
+   * «проскочить» кликом по кнопке удаления.
+   *
+   * @param workflow - удаляемый workflow (id и имя для подтверждения)
+   */
+  const handleDelete = async (workflow: ApiWorkflow) => {
+    const confirmed = window.confirm(
+      t('loadModal.delete_confirm', { name: workflow.name }),
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    const id = workflow.id;
+
     try {
       await deleteWorkflowAsync(id);
       // KI-302: удалённый workflow не должен остаться в селекте узла
@@ -323,7 +343,7 @@ export function LoadModal({ onClose }: LoadModalProps) {
                       </button>
                       <button
                         type="button"
-                        onClick={() => void handleDelete(workflow.id)}
+                        onClick={() => void handleDelete(workflow)}
                         className="cursor-pointer rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
                       >
                         {t('common.delete')}

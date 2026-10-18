@@ -22,8 +22,6 @@ export function TextNode({ id, data }: NodeProps<TextFlowNode>) {
   // R6.4b.2b: правка поля проходит через историю графа (склейка по времени).
   const updateNodeData = useNodeDataHistory();
   const { t } = useTranslation();
-  // Уровень выполнения появляется после Run (/engine/plan).
-  const executionLevel = useWorkflowStore((state) => state.executionLevels[id]);
   // Статус выполнения приходит из SSE-потока (R4.2).
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const removeNode = useWorkflowStore((state) => state.removeNode);
@@ -44,7 +42,6 @@ export function TextNode({ id, data }: NodeProps<TextFlowNode>) {
       <BaseNode
         icon={NODE_REGISTRY.text.icon}
         title={t(NODE_REGISTRY.text.labelKey)}
-        executionLevel={executionLevel}
         status={status}
         onDelete={() => removeNode(id)}
       >

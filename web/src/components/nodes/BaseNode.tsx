@@ -43,8 +43,6 @@ interface BaseNodeProps {
   icon: string;
   /** Название узла в шапке. */
   title: string;
-  /** Номер уровня выполнения из `/engine/plan` (нумерация с 1). */
-  executionLevel?: number;
   /** Статус выполнения узла из SSE (`undefined` — запуск не идёт). */
   status?: NodeRunStatus;
   /** Дополнительные бейджи (capabilities модели, v0.6.0a). */
@@ -67,10 +65,10 @@ interface BaseNodeProps {
  * Базовая карточка узла: скруглённая рамка, компактная шапка и тело.
  *
  * Используется всеми кастомными узлами, чтобы визуально они были одинаковыми.
- * Если передан `executionLevel`, в правом верхнем углу показывается бейдж
- * с номером уровня — узлы одного уровня можно запускать параллельно.
- * `badges` рисуются там же, левее уровня: так видно, что модель умеет
- * (например, `V` — понимает картинки на входе).
+ * `badges` рисуются в правом верхнем углу: так видно, что модель умеет
+ * (например, `V` — понимает картинки на входе). Бейдж уровня выполнения
+ * удалён в v0.10 S0 (KI-454): план не запрашивался, и номер уровня никогда
+ * не отображался.
  *
  * Рамка и фон зависят от `status` (R4.2): серый — узел не выполнялся, синий —
  * выполняется, зелёный — успех, красный — ошибка, серый пунктир — узел пропущен
@@ -79,7 +77,6 @@ interface BaseNodeProps {
 export function BaseNode({
   icon,
   title,
-  executionLevel,
   status,
   badges,
   dataNodeAttr,
@@ -113,15 +110,6 @@ export function BaseNode({
               {badge.text}
             </span>
           ))}
-        </span>
-      )}
-
-      {executionLevel !== undefined && (
-        <span
-          className="absolute -right-2 -top-2 flex size-5 items-center justify-center rounded-full bg-slate-500 text-[10px] font-semibold text-white shadow-sm"
-          title={t('node.levels.title', { level: executionLevel })}
-        >
-          {executionLevel}
         </span>
       )}
 

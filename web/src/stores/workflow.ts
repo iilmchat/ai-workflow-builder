@@ -16,7 +16,6 @@ import {
   fetchMediaModelsAsync,
   fetchRunBudgetAsync,
   getWorkflowAsync,
-  planWorkflowAsync,
   updateWorkflowAsync,
   type ApiGraphEdge,
   type ApiGraphNode,
@@ -25,7 +24,6 @@ import {
 } from '@/lib/api';
 import { subscribeToRunStream, RunStreamUnavailableError } from '@/lib/run-stream';
 import type { RunStreamHandlers } from '@/lib/run-stream';
-import { levelsToMap } from '@/lib/plan';
 import {
   pickDefaultMediaModel,
   pickDefaultToolModel,
@@ -37,7 +35,7 @@ import {
   pickGenerationModels,
   type GenerationMediaType,
 } from '@/lib/generation-node';
-import { canInsertOnEdge, isNodeType, nodeLabelOf } from '@/lib/node-registry';
+import { canInsertOnEdge, isNodeType } from '@/lib/node-registry';
 import type { MediaModelInfo } from '@/types/media';
 import {
   DEFAULT_CONDITION_MODE,
@@ -55,6 +53,7 @@ import {
   type CommentNodeData,
   type CompareNodeData,
   type ConditionNodeData,
+  type DocumentGenNodeData,
   type HttpNodeData,
   type ImageGenNodeData,
   type ImageToolNodeData,
@@ -66,10 +65,13 @@ import {
   type NodeData,
   type NodeType,
   type OutputNodeData,
+  type ReadFileNodeData,
   type SubWorkflowNodeData,
   type VectorQueryNodeData,
   type VectorUpsertNodeData,
   type VideoGenNodeData,
+  type WebSearchNodeData,
+  type WriteFileNodeData,
 } from '@/types/graph';
 import {
   DEFAULT_HTTP_METHOD,
@@ -549,9 +551,6 @@ export interface WorkflowState extends HistorySlice {
   /** Название текущего workflow, редактируется в верхней панели. */
   currentWorkflowName: string;
 
-  /** id узла → номер уровня выполнения из `/engine/plan`. */
-  executionLevels: Record<string, number>;
-
   /** id текущего запуска (`null` — запусков ещё не было). */
   runId: string | null;
   /** Статус запуска из SSE (`null` — запуск не стартовал). */
@@ -716,8 +715,6 @@ export interface WorkflowState extends HistorySlice {
   saveWorkflowAsync: () => Promise<void>;
   /** Загружает workflow по id и заменяет текущий граф. */
   loadWorkflowAsync: (id: string) => Promise<void>;
-  /** Строит план выполнения и раскладывает уровни по узлам. */
-  runPlanAsync: () => Promise<void>;
 
   /**
    * Запускает workflow: `POST /runs` + подписка на SSE-поток прогресса.
@@ -762,8 +759,6 @@ export interface WorkflowState extends HistorySlice {
 
   setCurrentWorkflowId: (id: string | null, name?: string) => void;
   setCurrentWorkflowName: (name: string) => void;
-  setExecutionLevels: (levels: string[][]) => void;
-  clearExecutionLevels: () => void;
   setNotice: (notice: Notice | null) => void;
 
   /** Canvas регистрирует здесь функцию поиска центра вьюпорта. */
@@ -903,6 +898,35 @@ function validateSpeechSpeed(value: unknown): number | undefined {
         : Number.NaN;
 
   return Number.isFinite(parsed) && parsed >= 0.5 && parsed <= 2
+    ? parsed
+    : undefined;
+}
+
+/**
+ * Проверяет целое число из jsonb в заданном диапазоне (v0.10 S0).
+ *
+ * Нужен новым узлам (`web_search.maxResults`/`days`): значение приходит без
+ * типа, а backend-схема S2 ограничит его диапазоном. Мусор и дробное число
+ * отбрасываются — поле просто не создаётся (KI-129).
+ *
+ * @param value - значение из `data` узла
+ * @param min - нижняя граница включительно
+ * @param max - верхняя граница включительно
+ * @returns целое число в диапазоне либо `undefined`
+ */
+function validateIntegerInRange(
+  value: unknown,
+  min: number,
+  max: number,
+): number | undefined {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim().length > 0
+        ? Number(value)
+        : Number.NaN;
+
+  return Number.isInteger(parsed) && parsed >= min && parsed <= max
     ? parsed
     : undefined;
 }
@@ -1123,6 +1147,38 @@ function createNode(
           kind: 'agent',
           model: defaultModelId ?? DEFAULT_LLM_MODEL_ID,
           tools: [...DEFAULT_AGENT_TOOLS],
+        },
+      };
+    // v0.10 S0 (Foundation): каркас новых узлов. Компонентов ещё нет, поэтому
+    // пользователь не добавит их из каталога, но программное создание и
+    // round-trip Save/Load уже работают. Поля без значения не создаём (KI-129).
+    case 'web_search':
+      return {
+        ...shared,
+        type: 'web_search',
+        data: { kind: 'web_search' },
+      };
+    case 'document_gen':
+      return {
+        ...shared,
+        type: 'document_gen',
+        data: { kind: 'document_gen', format: 'docx', source: 'markdown' },
+      };
+    case 'read_file':
+      return {
+        ...shared,
+        type: 'read_file',
+        data: { kind: 'read_file', path: '' },
+      };
+    case 'write_file':
+      return {
+        ...shared,
+        type: 'write_file',
+        data: {
+          kind: 'write_file',
+          path: '',
+          format: 'txt',
+          overwrite: false,
         },
       };
     // Нет default: — новый NodeType поймает tsc (KI-129).
@@ -1580,6 +1636,105 @@ function nodeDataFromApi(type: NodeType, data: Record<string, unknown>): NodeDat
 
       return result;
     }
+    // v0.10 S0 (Foundation): новые узлы. Данные из jsonb проверяются на
+    // границе (RULES 1.17), поля без значения не создаются (KI-129). Схемы
+    // совпадают с будущими backend-исполнителями S2/S6/S8, поэтому Save/Load
+    // не теряет настройки, даже если они заданы через API до появления UI.
+    case 'web_search': {
+      const result: WebSearchNodeData = { kind: 'web_search' };
+
+      if (typeof data.query === 'string') {
+        result.query = data.query;
+      }
+
+      const maxResults = validateIntegerInRange(data.maxResults, 1, 10);
+
+      if (maxResults !== undefined) {
+        result.maxResults = maxResults;
+      }
+
+      if (data.searchDepth === 'basic' || data.searchDepth === 'advanced') {
+        result.searchDepth = data.searchDepth;
+      }
+
+      if (typeof data.includeAnswer === 'boolean') {
+        result.includeAnswer = data.includeAnswer;
+      }
+
+      if (data.topic === 'general' || data.topic === 'news') {
+        result.topic = data.topic;
+      }
+
+      const days = validateIntegerInRange(data.days, 1, 365);
+
+      if (days !== undefined) {
+        result.days = days;
+      }
+
+      return result;
+    }
+    case 'document_gen': {
+      const result: DocumentGenNodeData = { kind: 'document_gen' };
+
+      if (data.format === 'docx' || data.format === 'pdf') {
+        result.format = data.format;
+      }
+
+      if (data.source === 'markdown' || data.source === 'json') {
+        result.source = data.source;
+      }
+
+      if (typeof data.title === 'string') {
+        result.title = data.title;
+      }
+
+      if (typeof data.content === 'string') {
+        result.content = data.content;
+      }
+
+      if (typeof data.fileName === 'string') {
+        result.fileName = data.fileName;
+      }
+
+      return result;
+    }
+    case 'read_file': {
+      const result: ReadFileNodeData = {
+        kind: 'read_file',
+        path: typeof data.path === 'string' ? data.path : '',
+      };
+
+      if (
+        data.format === 'auto' ||
+        data.format === 'txt' ||
+        data.format === 'csv' ||
+        data.format === 'json'
+      ) {
+        result.format = data.format;
+      }
+
+      return result;
+    }
+    case 'write_file': {
+      const result: WriteFileNodeData = {
+        kind: 'write_file',
+        path: typeof data.path === 'string' ? data.path : '',
+      };
+
+      if (data.format === 'txt' || data.format === 'csv' || data.format === 'json') {
+        result.format = data.format;
+      }
+
+      if (typeof data.overwrite === 'boolean') {
+        result.overwrite = data.overwrite;
+      }
+
+      if (typeof data.content === 'string') {
+        result.content = data.content;
+      }
+
+      return result;
+    }
     // Нет default: — новый NodeType поймает tsc (KI-129).
   }
 }
@@ -1673,29 +1828,25 @@ function snapshotOf(nodes: AppNode[], edges: Edge[]): GraphSnapshot {
 /**
  * Восстанавливает снимок графа после undo/redo (DESIGN v0.8 § 7.2).
  *
- * Помимо самих `nodes`/`edges` сбрасывается `executionLevels`: план
- * выполнения описывает прежний граф, и подсветка уровней после отката
- * указывала бы на несуществующие узлы. Выделенные узлы восстанавливаются
- * вместе с графом (`selected` — часть React Flow-состояния узла), а
- * `selectedNodeId` правит вызывающий: снимок его не хранит.
+ * Выделенные узлы восстанавливаются вместе с графом (`selected` — часть
+ * React Flow-состояния узла), а `selectedNodeId` правит вызывающий: снимок его
+ * не хранит.
  *
  * @param snapshot - снимок, который становится текущим графом
- * @returns поля состояния для `set` (граф + сброшенный план)
+ * @returns поля состояния для `set`
  */
 function restorePatch(snapshot: GraphSnapshot): {
   nodes: AppNode[];
   edges: Edge[];
-  executionLevels: Record<string, number>;
 } {
   return {
     nodes: [...snapshot.nodes],
     edges: [...snapshot.edges],
-    executionLevels: {},
   };
 }
 
 /**
- * Стор редактора workflow: состояние графа, сохранение и план выполнения.
+ * Стор редактора workflow: состояние графа, сохранение и состояние запуска.
  */
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   nodes: [],
@@ -1803,8 +1954,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   accessRole: null,
   currentWorkflowName: DEFAULT_WORKFLOW_NAME,
 
-  executionLevels: {},
-
   runId: null,
   runStatus: null,
   runError: null,
@@ -1880,8 +2029,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           ...state.nodes.map((existing) => ({ ...existing, selected: false })),
           { ...node, selected: true },
         ],
-        // После правки графа прежний план выполнения уже неактуален.
-        executionLevels: {},
       };
     });
   },
@@ -1917,7 +2064,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           : edge,
       );
 
-      return { edges: nextEdges, executionLevels: {} };
+      return { edges: nextEdges };
     });
   },
 
@@ -1937,8 +2084,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         edges,
         // Панель результата не должна показывать данные удалённого узла.
         selectedNodeId: state.selectedNodeId === nodeId ? null : state.selectedNodeId,
-        // План выполнения после правки графа неактуален.
-        executionLevels: {},
       };
     });
   },
@@ -1949,7 +2094,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
     return set((state) => ({
       edges: state.edges.filter((edge) => edge.id !== edgeId),
-      executionLevels: {},
     }));
   },
 
@@ -1969,7 +2113,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       currentWorkflowOwnerId: null,
       accessRole: null,
       currentWorkflowName: DEFAULT_WORKFLOW_NAME,
-      executionLevels: {},
       selectedNodeId: null,
       runId: null,
       runStatus: null,
@@ -2085,7 +2228,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         },
       ],
       selectedNodeId: node.id,
-      executionLevels: {},
     });
 
     return true;
@@ -2116,7 +2258,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           ...copies,
         ],
         selectedNodeId: copies[0]?.id ?? state.selectedNodeId,
-        executionLevels: {},
       };
     }),
 
@@ -2130,9 +2271,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   setEdges: (edges) => set({ edges }),
 
   saveWorkflowAsync: async () => {
-    // KI-397: viewer не может сохранять. Кнопка в TopBar скрыта, но Ctrl+S
-    // живёт в Canvas и вызывает стор напрямую — без guard'а запрос всё равно
-    // ушёл бы на backend (и вернул 404).
+    // KI-397: viewer не может сохранять. Кнопка в TopBar скрыта, но стор
+    // вызывают и другие пути (автосохранение в Canvas) — без guard'а запрос
+    // всё равно ушёл бы на backend (и вернул 404).
+    // KI-453: Ctrl+S пока не привязан к холсту — хоткей вынесен в v0.10 S10.
+    // Комментарий раньше утверждал обратное, хотя биндинга в Canvas не было.
     if (get().accessRole === 'viewer') {
       set({
         notice: { kind: 'error', text: i18n.t('topbar.viewer_readonly') },
@@ -2212,9 +2355,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         // индикатор показывал бы «есть изменения»).
         lastSavedHash: computeGraphHash(nodes, edges),
         isLoading: false,
-        // Прежний план относился к другому графу.
-        executionLevels: {},
-        // Выбранная нода тоже относилась к другому графу.
+        // Выбранная нода относилась к другому графу.
         selectedNodeId: null,
         notice: warning
           ? { kind: 'error', text: warning }
@@ -2235,55 +2376,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           buildRunStreamHandlers(set, get),
         );
       }
-    } catch (error) {
-      const message = messageOf(error);
-      set({ isLoading: false, error: message, notice: { kind: 'error', text: message } });
-    }
-  },
-
-  runPlanAsync: async () => {
-    const { nodes, edges } = get();
-    // KI-266: комментарии отправляем как есть — backend сам исключает
-    // аннотации из плана (`ANNOTATION_NODE_TYPES`), поэтому в `order`/`levels`
-    // их не будет и попытки выполнить стикер не возникнет.
-    const backendNodes = toBackendNodes(nodes);
-
-    // Граф без узлов выполнения (только комментарии) планировать нечего:
-    // backend ответил бы «Граф содержит только аннотации, нечего выполнять»
-    // (RULES 1.6: понятный UI-текст).
-    if (nodes.filter((node) => node.type !== 'comment').length === 0) {
-      set({ notice: { kind: 'error', text: i18n.t('toast.graph_empty') } });
-      return;
-    }
-
-    set({ isLoading: true, error: null });
-
-    try {
-      const plan = await planWorkflowAsync(
-        backendNodes.map(toApiNode),
-        toBackendEdges(edges, backendNodes).map(toApiEdge),
-      );
-
-      const levels = levelsToMap(plan.levels);
-      // В сообщении показываем подписи типов узлов из реестра, а не uuid.
-      // Ищем по всем узлам графа: в `plan.order` аннотаций нет (KI-266).
-      const order = plan.order
-        .map((nodeId) =>
-          nodeLabelOf(
-            nodes.find((item) => item.id === nodeId),
-            nodeId,
-          ),
-        )
-        .join(' → ');
-
-      set({
-        executionLevels: levels,
-        isLoading: false,
-        notice: {
-          kind: 'success',
-            text: i18n.t('toast.plan', { levels: plan.levels.length, order }),
-        },
-      });
     } catch (error) {
       const message = messageOf(error);
       set({ isLoading: false, error: message, notice: { kind: 'error', text: message } });
@@ -2714,10 +2806,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       currentWorkflowName: name ?? state.currentWorkflowName,
     })),
   setCurrentWorkflowName: (name) => set({ currentWorkflowName: name }),
-
-  setExecutionLevels: (levels) => set({ executionLevels: levelsToMap(levels) }),
-
-  clearExecutionLevels: () => set({ executionLevels: {} }),
 
   setNotice: (notice) => set({ notice }),
 
