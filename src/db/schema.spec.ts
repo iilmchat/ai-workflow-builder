@@ -56,6 +56,16 @@ describe('Drizzle schema (KI-014, KI-015)', () => {
     expect(columns.durationMs.name).toBe('duration_ms');
   });
 
+  it('KI-451: storage_key — nullable text без default', () => {
+    const columns = getTableColumns(nodeRuns);
+
+    expect(columns.storageKey.name).toBe('storage_key');
+    expect(columns.storageKey.columnType).toBe('PgText');
+    expect(columns.storageKey.notNull).toBe(false);
+    expect(columns.storageKey.hasDefault).toBe(false);
+    expectTypeOf<NodeRun['storageKey']>().toEqualTypeOf<string | null>();
+  });
+
   it('выводит TS-типы jsonb-колонок из $type<T>()', () => {
     expectTypeOf<Workflow['nodes']>().toEqualTypeOf<NodeDto[]>();
     expectTypeOf<Workflow['edges']>().toEqualTypeOf<EdgeDto[]>();

@@ -3,9 +3,10 @@ import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, stat, unlink } from 'node:fs/promises';
-import { extname, resolve, sep } from 'node:path';
+import { mkdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { dirname, extname, resolve, sep } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import { pipeline } from 'node:stream/promises';
@@ -32,6 +33,11 @@ import { pipeline } from 'node:stream/promises';
  *   загрузка в S3 возвращает `null` — узел остаётся на ссылке провайдера.
  *
  * `none` — сохранение выключено (прежнее поведение).
+ *
+ * **v0.10 S5.** Кроме файлов, скачанных по ссылке провайдера, хранилище умеет
+ * сохранять сгенерированные приложением документы (`saveGeneratedAsync`):
+ * источник — `Buffer` (DOCX/PDF), а не URL. Ключ и ссылка возвращаются
+ * вызывающему коду, который пишет ключ в `node_runs.storage_key` (KI-451).
  */
 
 /** Инъекционный токен хранилища. */
@@ -82,6 +88,23 @@ export interface MediaReadResult {
   bytes: number;
 }
 
+/**
+ * Результат сохранения файла, сгенерированного приложением (v0.10 S5).
+ *
+ * В отличие от {@link MediaStoredFile}, здесь нет TTL и размера: документ
+ * создаётся в памяти и сохраняется сразу, а вызывающий код (исполнитель
+ * `document_generation`, S6) знает и байты, и формат. `null` в обоих полях
+ * означает «бэкенд не сохраняет файлы» (`MEDIA_STORAGE_BACKEND=none`) либо
+ * необязательный S3 недоступен — вызывающий код сам решает, показывать
+ * ошибку или отдать буфер иначе.
+ */
+export interface MediaGeneratedFile {
+  /** Ссылка для UI (`/media/file/...`, presigned или прямой S3 URL). */
+  url: string | null;
+  /** Ключ объекта в хранилище (`<runId>/generated-<nodeId>.<ext>`). */
+  key: string | null;
+}
+
 /** Интерфейс хранилища: реализации взаимозаменяемы. */
 export interface IMediaStorage {
   /** Бэкенд хранилища (для логов и диагностики). */
@@ -95,6 +118,31 @@ export interface IMediaStorage {
    * @throws Error при сетевом сбое, превышении лимита размера или ошибке записи
    */
   uploadAsync(input: MediaUploadInput): Promise<MediaStoredFile | null>;
+
+  /**
+   * Сохраняет файл, сгенерированный приложением (v0.10 S5).
+   *
+   * В отличие от {@link uploadAsync}, источник — не URL провайдера, а готовый
+   * буфер в памяти: DOCX/PDF рендерер отдаёт `Packer.toBuffer`, и скачивать
+   * нечего. Ключ строится по тому же принципу, что у media-результатов
+   * (`<runId>/<файл>`), но имя фиксировано префиксом `generated-`, чтобы не
+   * столкнуться с файлом, скачанным по `nodeId.<ext>`.
+   *
+   * @param buffer - содержимое файла
+   * @param extension - расширение без точки (`docx`, `pdf`); приводится к
+   *   нижнему регистру, недопустимое значение заменяется на `bin`
+   * @param runId - uuid запуска (первый сегмент ключа)
+   * @param nodeId - id узла графа (часть имени файла; санитизируется)
+   * @returns ссылка и ключ объекта; `{ url: null, key: null }`, если бэкенд
+   *   не сохраняет файлы либо S3 не настроен/недоступен
+   * @throws Error если локальная запись не удалась (диск, права)
+   */
+  saveGeneratedAsync(
+    buffer: Buffer,
+    extension: string,
+    runId: string,
+    nodeId: string,
+  ): Promise<MediaGeneratedFile>;
 
   /**
    * Открывает сохранённый файл для отдачи.
@@ -195,6 +243,9 @@ const CONTENT_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
   wav: 'audio/wav',
   ogg: 'audio/ogg',
   aac: 'audio/aac',
+  // v0.10 S5: документы отдаются той же ручкой `GET /media/file/...`.
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  pdf: 'application/pdf',
 };
 
 /**
@@ -246,6 +297,44 @@ export function resolveFileExtension(
 }
 
 /**
+ * Нормализует расширение сгенерированного файла (v0.10 S5).
+ *
+ * Расширение приходит из кода, но проходит через те же границы, что и
+ * пользовательские данные: `extension` попадает в имя файла и S3-ключ.
+ * Поэтому ведущие точки срезаются, регистр приводится к нижнему, а всё, кроме
+ * `[a-z0-9]`, отбрасывается заменой на `bin`. Так `../../evil` не станет
+ * частью пути, а `docx` и `.DOCX` дадут один и тот же ключ.
+ *
+ * @param extension - расширение с точкой или без
+ * @returns безопасное расширение без точки (непустое)
+ */
+export function normalizeGeneratedExtension(extension: string): string {
+  const cleaned = extension.trim().replace(/^\.+/, '').toLowerCase();
+
+  return /^[a-z0-9]{1,12}$/.test(cleaned) ? cleaned : 'bin';
+}
+
+/**
+ * Строит ключ сгенерированного файла: `<runId>/generated-<nodeId>.<ext>`.
+ *
+ * @param runId - uuid запуска
+ * @param nodeId - id узла графа
+ * @param extension - расширение (нормализуется внутри)
+ * @returns безопасный ключ объекта для local и S3
+ */
+export function buildGeneratedStorageKey(
+  runId: string,
+  nodeId: string,
+  extension: string,
+): string {
+  const fileName = `generated-${sanitizeStorageSegment(nodeId)}.${normalizeGeneratedExtension(
+    extension,
+  )}`;
+
+  return `${sanitizeStorageSegment(runId)}/${fileName}`;
+}
+
+/**
  * Проверяет, что ключ не выводит за пределы каталога хранилища.
  *
  * @param baseDir - корневой каталог (абсолютный)
@@ -271,6 +360,9 @@ function resolveInsideBase(baseDir: string, storageKey: string): string {
  * Каталог создаётся при загрузке; TTL считается от момента записи и только
  * записывается в `stored_expires_at` — физическое удаление файлов по TTL в
  * этом срезе не выполняется (см. отчёт R7.8; отдельная задача — cron).
+ *
+ * Сгенерированные документы (`saveGeneratedAsync`, v0.10 S5) лежат в том же
+ * каталоге с префиксом `generated-` и отдаются той же HTTP-ручкой.
  */
 @Injectable()
 export class LocalMediaStorage implements IMediaStorage {
@@ -380,6 +472,55 @@ export class LocalMediaStorage implements IMediaStorage {
       storedExpiresAt,
       storageKey,
       bytes,
+    };
+  }
+
+  /**
+   * Сохраняет сгенерированный документ на диск (v0.10 S5).
+   *
+   * Запись атомарная: буфер пишется во временный файл рядом с целевым и
+   * переименовывается. Читатель (HTTP-ручка) не увидит половину DOCX, если
+   * процесс упадёт посреди записи; при ошибке временный файл удаляется.
+   *
+   * @param buffer - содержимое файла
+   * @param extension - расширение без точки
+   * @param runId - uuid запуска
+   * @param nodeId - id узла графа
+   * @returns ключ и относительная ссылка `/media/file/...`
+   * @throws Error если каталог создать или файл записать не удалось
+   */
+  async saveGeneratedAsync(
+    buffer: Buffer,
+    extension: string,
+    runId: string,
+    nodeId: string,
+  ): Promise<MediaGeneratedFile> {
+    const storageKey = buildGeneratedStorageKey(runId, nodeId, extension);
+    const target = resolveInsideBase(this.baseDir, storageKey);
+    const tempTarget = resolveInsideBase(
+      this.baseDir,
+      `${storageKey}.${randomUUID()}.tmp`,
+    );
+
+    await mkdir(dirname(target), { recursive: true });
+
+    try {
+      await writeFile(tempTarget, buffer);
+      await rename(tempTarget, target);
+    } catch (error: unknown) {
+      // Частично записанный .tmp не должен остаться мусором в хранилище.
+      await unlink(tempTarget).catch(() => undefined);
+      throw error;
+    }
+
+    this.logger.log(
+      `Сгенерированный файл сохранён локально: ${storageKey} ` +
+        `(${buffer.byteLength} байт)`,
+    );
+
+    return {
+      url: `${this.publicPrefix}/${storageKey}`,
+      key: storageKey,
     };
   }
 
@@ -501,7 +642,10 @@ interface ResolvedS3Config {
  * повторяется только упавшая часть. Память при этом ограничена размером
  * чанка (и очередью из четырёх), а не всем 200-мегабайтным видео (KI-427).
  * Ключ объекта — тот же, что у локального слоя: `<runId>/<fileName>`, поэтому
- * `stored_url` и TTL считаются одинаково для обоих бэкендов.
+ * `stored_url` и TTL считаются одинаково для обоих бэкендов. Документы,
+ * сгенерированные приложением, кладутся тем же `Upload` через
+ * `saveGeneratedAsync` (v0.10 S5): для них известен точный `ContentLength`, а
+ * `Body` — готовый `Buffer`.
  *
  * **Ссылка.** Для приватного бакета (норма для прода) прямой URL даёт 403,
  * поэтому `storedUrl` — presigned GET на {@link S3_SIGNED_URL_TTL_SECONDS}
@@ -687,28 +831,12 @@ export class S3MediaStorage implements IMediaStorage {
       }
 
       const ttlDays = this.options.ttlDays ?? 0;
-      const publicBucket = this.options.publicBucket === true;
-      let signed = !publicBucket;
-      let storedUrl: string;
-
-      if (publicBucket) {
-        storedUrl = this.buildDirectUrl(config, storageKey);
-      } else {
-        try {
-          storedUrl = await this.signGetUrlAsync(config, storageKey);
-        } catch (error: unknown) {
-          // Объект уже в бакете: без ссылки результат генерации потерян.
-          // Прямой URL — единственный запасной вариант (для публичного
-          // бакета он рабочий, для приватного вернёт 403).
-          signed = false;
-          storedUrl = this.buildDirectUrl(config, storageKey);
-
-          this.logger.warn(
-            `Не удалось построить presigned URL для ${storageKey} ` +
-              `(${toErrorMessage(error)}) — используется прямой URL`,
-          );
-        }
-      }
+      // Ссылка строится по ключу (KI-451): `storage_key` сохраняется явно,
+      // поэтому переподпись не зависит от формата URL.
+      const { url: storedUrl, signed } = await this.resolveStoredUrlAsync(
+        config,
+        storageKey,
+      );
 
       // Срок жизни ссылки: у signed URL он свой (час), у прямого — TTL бакета.
       const storedExpiresAt = signed
@@ -740,6 +868,81 @@ export class S3MediaStorage implements IMediaStorage {
       );
 
       return null;
+    }
+  }
+
+  /**
+   * Сохраняет сгенерированный документ в S3 (v0.10 S5).
+   *
+   * Буфер уже в памяти, поэтому `Upload` получает его как `Body` и для
+   * маленького DOCX отправляет один `PutObject`, а для файла больше 5 МБ —
+   * multipart. `ContentLength` известен точно (`buffer.byteLength`), так что
+   * SDK не угадывает размер и может повторить запрос теми же байтами
+   * (RULES 4.34).
+   *
+   * S3 — необязательный слой (как и у `uploadAsync`): при отсутствии
+   * настроек или ошибке загрузки возвращаются `null`-поля, а не исключение.
+   * Исполнитель S6 сам решит, считать ли документ несохранённым.
+   *
+   * @param buffer - содержимое файла
+   * @param extension - расширение без точки (`docx`, `pdf`)
+   * @param runId - uuid запуска
+   * @param nodeId - id узла графа
+   * @returns ключ и ссылка (presigned для приватного бакета, прямая для
+   *   публичного) либо `{ url: null, key: null }`
+   */
+  async saveGeneratedAsync(
+    buffer: Buffer,
+    extension: string,
+    runId: string,
+    nodeId: string,
+  ): Promise<MediaGeneratedFile> {
+    const config = this.resolveConfig();
+
+    if (config === null) {
+      this.logger.warn(
+        'MEDIA_STORAGE_BACKEND=s3, но S3 не настроен — сгенерированный ' +
+          'документ не сохранён',
+      );
+
+      return { url: null, key: null };
+    }
+
+    const storageKey = buildGeneratedStorageKey(runId, nodeId, extension);
+    const normalizedExtension = normalizeGeneratedExtension(extension);
+    const contentType =
+      CONTENT_TYPE_BY_EXTENSION[normalizedExtension] ?? 'application/octet-stream';
+
+    try {
+      const upload = new Upload({
+        client: this.getClient(config) as unknown as S3Client,
+        params: {
+          Bucket: config.bucket,
+          Key: storageKey,
+          Body: buffer,
+          ContentType: contentType,
+          ContentLength: buffer.byteLength,
+        },
+        leavePartsOnError: false,
+      });
+
+      await upload.done();
+
+      const { url } = await this.resolveStoredUrlAsync(config, storageKey);
+
+      this.logger.log(
+        `Сгенерированный документ сохранён в S3: ${storageKey} ` +
+          `(${buffer.byteLength} байт, ${contentType})`,
+      );
+
+      return { url, key: storageKey };
+    } catch (error: unknown) {
+      this.logger.warn(
+        `S3-загрузка сгенерированного документа не удалась ` +
+          `(${toErrorMessage(error)}): ${storageKey}`,
+      );
+
+      return { url: null, key: null };
     }
   }
 
@@ -895,6 +1098,43 @@ export class S3MediaStorage implements IMediaStorage {
   }
 
   /**
+   * Строит ссылку на объект по ключу: presigned или прямую.
+   *
+   * Общая точка для `uploadAsync` (media-результаты) и
+   * `saveGeneratedAsync` (документы). Для публичного бакета прямой URL
+   * рабочий; для приватного — только presigned. Если подпись не удалась,
+   * объект уже лежит в бакете, поэтому возвращается прямой URL: это лучше,
+   * чем потерять ссылку совсем (для приватного бакета он ответит 403).
+   *
+   * @param config - проверенные параметры подключения
+   * @param storageKey - ключ объекта
+   * @returns URL и признак `signed` (для расчёта срока жизни ссылки)
+   */
+  private async resolveStoredUrlAsync(
+    config: ResolvedS3Config,
+    storageKey: string,
+  ): Promise<{ url: string; signed: boolean }> {
+    if (this.options.publicBucket === true) {
+      return { url: this.buildDirectUrl(config, storageKey), signed: false };
+    }
+
+    try {
+      return {
+        url: await this.signGetUrlAsync(config, storageKey),
+        signed: true,
+      };
+    } catch (error: unknown) {
+      // Объект уже в бакете: без ссылки результат генерации потерян.
+      this.logger.warn(
+        `Не удалось построить presigned URL для ${storageKey} ` +
+          `(${toErrorMessage(error)}) — используется прямой URL`,
+      );
+
+      return { url: this.buildDirectUrl(config, storageKey), signed: false };
+    }
+  }
+
+  /**
    * Подписывает `GetObject` тем же набором параметров, что и загрузку.
    *
    * @param config - проверенные параметры подключения
@@ -1022,6 +1262,24 @@ export class NoopMediaStorage implements IMediaStorage {
    */
   async uploadAsync(_input: MediaUploadInput): Promise<MediaStoredFile | null> {
     return null;
+  }
+
+  /**
+   * Ничего не сохраняет: хранилище выключено.
+   *
+   * @param _buffer - содержимое файла (не используется)
+   * @param _extension - расширение (не используется)
+   * @param _runId - uuid запуска (не используется)
+   * @param _nodeId - id узла (не используется)
+   * @returns `{ url: null, key: null }`
+   */
+  async saveGeneratedAsync(
+    _buffer: Buffer,
+    _extension: string,
+    _runId: string,
+    _nodeId: string,
+  ): Promise<MediaGeneratedFile> {
+    return { url: null, key: null };
   }
 
   /**

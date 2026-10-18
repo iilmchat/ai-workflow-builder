@@ -68,6 +68,8 @@ function nodeRun(overrides: Partial<NodeRun> = {}): NodeRun {
     cacheCreationTokens: overrides.cacheCreationTokens ?? null,
     storedUrl: overrides.storedUrl ?? null,
     storedExpiresAt: overrides.storedExpiresAt ?? null,
+    // KI-451: ключ хранилища — новая nullable-колонка; у старых строк его нет.
+    storageKey: overrides.storageKey ?? null,
   };
 }
 

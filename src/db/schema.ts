@@ -338,6 +338,21 @@ export const nodeRuns = pgTable(
      * полю показывает плейсхолдер «ссылка истекла».
      */
     storedExpiresAt: timestamp('stored_expires_at', { withTimezone: true }),
+    /**
+     * Ключ объекта в хранилище (KI-451, v0.10 S5).
+     *
+     * До этой колонки ключ S3 восстанавливался из `stored_url` парсингом
+     * path-style URL (`<endpoint>/<bucket>/<key>`). Для virtual-hosted style
+     * (`<bucket>.endpoint/<key>`), endpoint'а с префиксом пути или внешнего
+     * URL-rewrite такой разбор не работает, и просроченный presigned URL
+     * остаётся нерабочим (KI-443). Здесь ключ хранится явно: переподпись и
+     * удаление файла идут по нему, а не по ссылке.
+     *
+     * `NULL` — запись сделана до v0.10 либо бэкенд не сохранял файл
+     * (`MEDIA_STORAGE_BACKEND=none`); для документов ключ заполняется
+     * `saveGeneratedAsync`.
+     */
+    storageKey: text('storage_key'),
     durationMs: integer('duration_ms'),
     startedAt: timestamp('started_at', { withTimezone: true }),
     finishedAt: timestamp('finished_at', { withTimezone: true }),

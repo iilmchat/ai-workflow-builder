@@ -17,7 +17,9 @@ import {
   LocalMediaStorage,
   NoopMediaStorage,
   S3MediaStorage,
+  buildGeneratedStorageKey,
   createMediaStorage,
+  normalizeGeneratedExtension,
   resolveFileExtension,
   sanitizeStorageSegment,
   type S3ClientLike,
@@ -677,5 +679,192 @@ describe('S3MediaStorage: загрузка в бакет (R7.8, KI-412)', () => 
     expect(saved?.storedExpiresAt).toBeNull();
     // Без content-type и расширения в URL — `.bin`.
     expect(saved?.storageKey).toBe('run-5/node-e.bin');
+  });
+});
+
+/** MIME-тип DOCX — его отдаёт `openAsync` и получает S3 (v0.10 S5). */
+const DOCX_MIME =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+/** Минимальный «DOCX»: важен только ZIP-заголовок `PK\x03\x04`. */
+const DOCX_BYTES = Buffer.from([0x50, 0x4b, 0x03, 0x04, 20, 0, 0, 0]);
+
+describe('saveGeneratedAsync: документы (v0.10 S5)', () => {
+  it('local: пишет generated-<nodeId>.<ext> и возвращает ключ и URL', async () => {
+    const storage = new LocalMediaStorage(baseDir, 30);
+    const saved = await storage.saveGeneratedAsync(
+      DOCX_BYTES,
+      'docx',
+      'run-1',
+      'node-a',
+    );
+
+    expect(saved).toEqual({
+      url: '/media/file/run-1/generated-node-a.docx',
+      key: 'run-1/generated-node-a.docx',
+    });
+
+    const onDisk = await readFile(
+      join(baseDir, 'run-1', 'generated-node-a.docx'),
+    );
+
+    expect(onDisk.equals(DOCX_BYTES)).toBe(true);
+
+    // Документ отдаётся той же ручкой `GET /media/file/...`, что и media.
+    const opened = await storage.openAsync(saved.key ?? '');
+
+    expect(opened?.contentType).toBe(DOCX_MIME);
+    expect(opened?.bytes).toBe(DOCX_BYTES.byteLength);
+  });
+
+  it('local: нормализует расширение и санитизирует сегменты ключа', async () => {
+    const storage = new LocalMediaStorage(baseDir, 30);
+    const saved = await storage.saveGeneratedAsync(
+      Buffer.from([1, 2, 3]),
+      '.DOCX',
+      'run/../1',
+      '../node',
+    );
+
+    // `..` вырезается, `/` заменяется на `_` — за пределы каталога не выйти.
+    expect(saved.key).toBe('run___1/generated-node.docx');
+    expect(saved.url).toBe('/media/file/run___1/generated-node.docx');
+  });
+
+  it('local: недопустимое расширение заменяется на bin', async () => {
+    const storage = new LocalMediaStorage(baseDir, 30);
+    const saved = await storage.saveGeneratedAsync(
+      Buffer.from([1]),
+      'tar.gz',
+      'run-1',
+      'node-a',
+    );
+
+    expect(saved.key).toBe('run-1/generated-node-a.bin');
+  });
+
+  it('noop: хранилище выключено — null-поля без исключения', async () => {
+    const storage = new NoopMediaStorage();
+
+    await expect(
+      storage.saveGeneratedAsync(DOCX_BYTES, 'docx', 'run-1', 'node-a'),
+    ).resolves.toEqual({ url: null, key: null });
+  });
+});
+
+describe('S3MediaStorage: saveGeneratedAsync (v0.10 S5)', () => {
+  /**
+   * Собирает S3-хранилище с подставным `send`.
+   *
+   * @param send - заглушка отправки команд (вместо сети)
+   * @param options - переопределения (публичный бакет, отсутствие ключей)
+   * @returns хранилище для теста
+   */
+  function createStorage(
+    send: ReturnType<typeof vi.fn>,
+    options: Partial<S3MediaStorageOptions> = {},
+  ): S3MediaStorage {
+    return new S3MediaStorage({
+      endpoint: 'https://s3.test/',
+      bucket: 'documents',
+      accessKeyId: 'access',
+      secretAccessKey: 'secret',
+      region: 'us-east-1',
+      ttlDays: 30,
+      client: { send, config: REAL_S3_CONFIG } as unknown as S3ClientLike,
+      ...options,
+    });
+  }
+
+  it('кладёт буфер одним PutObject и отдаёт presigned URL', async () => {
+    let uploaded: Buffer | undefined;
+    const send = vi.fn(async (command: PutObjectCommand) => {
+      uploaded = await readCommandBodyAsync(command.input.Body);
+
+      return {};
+    });
+    const storage = createStorage(send);
+
+    const saved = await storage.saveGeneratedAsync(
+      DOCX_BYTES,
+      'docx',
+      'run-1',
+      'node-a',
+    );
+
+    expect(send).toHaveBeenCalledTimes(1);
+
+    const command = send.mock.calls[0]?.[0];
+
+    expect(command).toBeInstanceOf(PutObjectCommand);
+    expect(command.input).toMatchObject({
+      Bucket: 'documents',
+      Key: 'run-1/generated-node-a.docx',
+      ContentType: DOCX_MIME,
+      ContentLength: DOCX_BYTES.byteLength,
+    });
+    // `Upload` получает готовый буфер: повтор запроса не теряет данные.
+    expect(uploaded?.equals(DOCX_BYTES)).toBe(true);
+
+    expect(saved.key).toBe('run-1/generated-node-a.docx');
+    // Публичность не задана — безопасный дефолт: presigned GET.
+    expect(saved.url).toContain(
+      'https://s3.test/documents/run-1/generated-node-a.docx?',
+    );
+    expect(saved.url).toContain('X-Amz-Signature=');
+  });
+
+  it('публичный бакет — прямой URL без подписи', async () => {
+    const send = vi.fn((_command: PutObjectCommand) => Promise.resolve({}));
+    const storage = createStorage(send, { publicBucket: true });
+
+    const saved = await storage.saveGeneratedAsync(
+      DOCX_BYTES,
+      'docx',
+      'run-1',
+      'node-a',
+    );
+
+    expect(saved).toEqual({
+      key: 'run-1/generated-node-a.docx',
+      url: 'https://s3.test/documents/run-1/generated-node-a.docx',
+    });
+  });
+
+  it('S3 не настроен — null-поля и ни одного вызова клиента', async () => {
+    const send = vi.fn(() => Promise.resolve({}));
+    const storage = createStorage(send, {
+      accessKeyId: undefined,
+      secretAccessKey: undefined,
+    });
+
+    await expect(
+      storage.saveGeneratedAsync(DOCX_BYTES, 'docx', 'run-1', 'node-a'),
+    ).resolves.toEqual({ url: null, key: null });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('S3 недоступен — null-поля, исключения нет', async () => {
+    const send = vi.fn(() => Promise.reject(new Error('S3 connection refused')));
+    const storage = createStorage(send);
+
+    await expect(
+      storage.saveGeneratedAsync(DOCX_BYTES, 'docx', 'run-1', 'node-a'),
+    ).resolves.toEqual({ url: null, key: null });
+  });
+});
+
+describe('Нормализация ключа сгенерированного файла (v0.10 S5)', () => {
+  it('normalizeGeneratedExtension приводит регистр и отбрасывает опасные значения', () => {
+    expect(normalizeGeneratedExtension('DOCX')).toBe('docx');
+    expect(normalizeGeneratedExtension('.pdf')).toBe('pdf');
+    expect(normalizeGeneratedExtension('../../evil')).toBe('bin');
+    expect(normalizeGeneratedExtension('')).toBe('bin');
+  });
+
+  it('buildGeneratedStorageKey использует префикс generated-', () => {
+    expect(buildGeneratedStorageKey('run-1', 'node-a', 'docx')).toBe(
+      'run-1/generated-node-a.docx',
+    );
   });
 });
