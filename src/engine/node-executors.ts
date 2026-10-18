@@ -677,34 +677,178 @@ export async function executeDocumentGenerationNodeAsync(
   };
 }
 
+/* ──────────────────── Узлы read_file / write_file (v0.10 S8) ──────────────────── */
+
 /**
- * ЗАГЛУШКА исполнителя узла `read_file` (v0.10 S0).
+ * Структурный контракт файлового workspace, нужный исполнителям S8.
  *
- * Безопасное чтение из workspace появится в срезе S8.
- *
- * @param _node - узел графа типа `read_file` (в заглушке не используется)
- * @throws UnsupportedNodeTypeException всегда: исполнитель ещё не реализован
+ * Нарочно не импортирует `FilesystemService` как значение: исполнитель
+ * остаётся тестируемым без Nest-DI и без реального диска. Настоящий сервис
+ * подходит на эту роль структурно — так же, как `DocumentGenerator` и
+ * `VectorMemoryStore` в этом файле.
  */
-export function executeReadFileNodeStub(_node: NodeDto): never {
-  throw new UnsupportedNodeTypeException(
-    'read_file',
-    'Узел read_file ещё не реализован (v0.10 S0)',
+export interface FilesystemAccess {
+  /**
+   * Читает файл workspace workflow.
+   *
+   * @param workflowId - uuid workflow (корень workspace)
+   * @param filePath - относительный путь внутри workspace
+   * @returns содержимое в UTF-8
+   */
+  readFileAsync(workflowId: string, filePath: string): Promise<string>;
+
+  /**
+   * Пишет файл workspace workflow, создавая недостающие каталоги.
+   *
+   * @param workflowId - uuid workflow (корень workspace)
+   * @param filePath - относительный путь внутри workspace
+   * @param content - текст в UTF-8
+   */
+  writeFileAsync(
+    workflowId: string,
+    filePath: string,
+    content: string,
+  ): Promise<void>;
+}
+
+/**
+ * Zod-схема `data` узла `read_file`.
+ *
+ * `path` — единственный обязательный источник пути (DESIGN v0.10 § 3.3.2):
+ * входа у узла нет, иначе LLM/prompt injection мог бы управлять чтением.
+ * Лимит 255 символов — защита от раздутого `data` в jsonb; фактическую
+ * безопасность пути обеспечивает `FilesystemService`.
+ */
+const ReadFileNodeDataSchema = z.object({
+  path: z
+    .string({ error: 'path обязателен' })
+    .trim()
+    .min(1, 'path обязателен')
+    .max(255, 'path должен быть не длиннее 255 символов'),
+  format: z.enum(['auto', 'txt', 'csv', 'json']).optional(),
+});
+
+/**
+ * Zod-схема `data` узла `write_file`.
+ *
+ * `content` необязателен: он может прийти по связи (`inputs.text`), а поле
+ * узла — запасной источник. Неизвестные ключи (`overwrite`, UI-служебные)
+ * Zod отбрасывает — граф остаётся forward-compatible (RULES 1.17).
+ */
+const WriteFileNodeDataSchema = z.object({
+  path: z
+    .string({ error: 'path обязателен' })
+    .trim()
+    .min(1, 'path обязателен')
+    .max(255, 'path должен быть не длиннее 255 символов'),
+  content: z.string({ error: 'content должен быть строкой' }).optional(),
+  // `format`/`overwrite` принимаются ради forward-compat с UI (DESIGN v0.10
+  // § 3.3.4), но S8 их не применяет: сервис всегда пишет UTF-8 и перезаписывает
+  // файл. Поведение `overwrite=false` и CSV-сериализация — v0.11.
+  format: z.enum(['txt', 'csv', 'json']).optional(),
+  overwrite: z.boolean().optional(),
+});
+
+/**
+ * Исполнитель узла `read_file` (v0.10 S8, DESIGN v0.10 § 3.3).
+ *
+ * Путь берётся **только** из `data.path`: у узла нет входного порта, поэтому
+ * содержимое предыдущего узла (в том числе ответ LLM) не может подменить
+ * путь чтения. Результат — `{ text }`: текст файла без разбора формата; JSON/
+ * CSV-разбор в S8 не входит (оставлен на v0.11, KI-467).
+ *
+ * @param data - сырые `data` узла из jsonb-графа
+ * @param workflowId - uuid workflow из `workflow_runs` (корень workspace)
+ * @param filesystem - доступ к workspace (`FilesystemService` в продакшене)
+ * @returns `{ text }` — содержимое файла
+ * @throws NodeDataValidationException если `path` пуст/длиннее 255 символов
+ * @throws PathTraversalException если путь выходит за workspace
+ * @throws FileTooLargeException если файл больше 5 МБ
+ */
+export async function executeReadFileNodeAsync(
+  data: unknown,
+  workflowId: string,
+  filesystem: FilesystemAccess,
+): Promise<{ text: string }> {
+  const parsed = parseNodeData('read_file', ReadFileNodeDataSchema, data);
+  const text = await filesystem.readFileAsync(workflowId, parsed.path);
+
+  return { text };
+}
+
+/**
+ * Выбирает контент для записи: вход связи важнее поля узла.
+ *
+ * Приоритет — `inputs.text` (контракт S8), затем `inputs.prompt` (так вход
+ * нормализует `NODE_PORT_CONTRACT.write_file`, DESIGN v0.10 § 3.3.4), затем
+ * `data.content`. Нестроковый вход — ошибка валидации, а не молчаливое
+ * приведение: `[object Object]` в файле был бы неотлаживаемым сюрпризом.
+ *
+ * @param inputs - нормализованные входы узла
+ * @param fallback - `data.content` после Zod-валидации
+ * @returns текст для записи
+ * @throws NodeDataValidationException если контента нет или он не строка
+ */
+function pickWriteFileContent(
+  inputs: Record<string, unknown>,
+  fallback: string | undefined,
+): string {
+  for (const key of ['text', 'prompt'] as const) {
+    const value = inputs[key];
+
+    if (value === undefined || value === null) {
+      continue;
+    }
+
+    if (typeof value !== 'string') {
+      throw new NodeDataValidationException(
+        'write_file',
+        `inputs.${key} должен быть строкой`,
+      );
+    }
+
+    return value;
+  }
+
+  if (fallback !== undefined) {
+    return fallback;
+  }
+
+  throw new NodeDataValidationException(
+    'write_file',
+    'не задан контент: inputs.text пуст и data.content не заполнен',
   );
 }
 
 /**
- * ЗАГЛУШКА исполнителя узла `write_file` (v0.10 S0).
+ * Исполнитель узла `write_file` (v0.10 S8, DESIGN v0.10 § 3.3).
  *
- * Безопасная запись в workspace появится в срезе S8.
+ * Путь берётся **только** из `data.path` — LLM не должен управлять местом
+ * записи. Контент — `inputs.text` → `inputs.prompt` → `data.content`.
+ * Директории создаёт `FilesystemService` (`mkdir recursive`), лимит 5 МБ
+ * проверяется до записи.
  *
- * @param _node - узел графа типа `write_file` (в заглушке не используется)
- * @throws UnsupportedNodeTypeException всегда: исполнитель ещё не реализован
+ * @param data - сырые `data` узла из jsonb-графа
+ * @param inputs - нормализованные входы узла (`text`/`prompt`)
+ * @param workflowId - uuid workflow из `workflow_runs` (корень workspace)
+ * @param filesystem - доступ к workspace (`FilesystemService` в продакшене)
+ * @returns `{ success: true, path }` — подтверждение записи
+ * @throws NodeDataValidationException если `path`/`content` не проходят схему
+ * @throws PathTraversalException если путь выходит за workspace
+ * @throws FileTooLargeException если контент больше 5 МБ
  */
-export function executeWriteFileNodeStub(_node: NodeDto): never {
-  throw new UnsupportedNodeTypeException(
-    'write_file',
-    'Узел write_file ещё не реализован (v0.10 S0)',
-  );
+export async function executeWriteFileNodeAsync(
+  data: unknown,
+  inputs: Record<string, unknown>,
+  workflowId: string,
+  filesystem: FilesystemAccess,
+): Promise<{ success: true; path: string }> {
+  const parsed = parseNodeData('write_file', WriteFileNodeDataSchema, data);
+  const content = pickWriteFileContent(inputs, parsed.content);
+
+  await filesystem.writeFileAsync(workflowId, parsed.path, content);
+
+  return { success: true, path: parsed.path };
 }
 
 /**

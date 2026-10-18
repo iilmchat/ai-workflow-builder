@@ -65,12 +65,12 @@ const VECTOR_MEMORY_TYPES = [
 const AGENT_TYPE = 'agent' as const;
 
 /**
- * Типы, добавленные в v0.10 S0 (Foundation) и ещё не получившие компонент.
+ * Типы файлового workspace, добавленные в v0.10 S0 и получившие компоненты в S8.
  *
  * `web_search` вышел из этого списка в S2, `document_gen` — в S6: у них уже
  * есть ленивые компоненты и React Flow-регистрация.
  */
-const V010_STUB_TYPES = ['read_file', 'write_file'] as const;
+const FILE_TYPES = ['read_file', 'write_file'] as const;
 
 /** Тип, реализованный в v0.10 S2: узел веб-поиска. */
 const WEB_SEARCH_TYPE = 'web_search' as const;
@@ -277,16 +277,13 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
     }
   });
 
-  it('v0.10 S0: каркасные типы, i18n и вставка в связь', () => {
-    for (const type of V010_STUB_TYPES) {
+  it('v0.10 S8: read_file/write_file — компоненты, i18n и source-only read', () => {
+    for (const type of FILE_TYPES) {
       const entry = NODE_REGISTRY[type];
 
-      // S0 регистрирует тип, но компонент появится в S6/S8 — иначе каталог
-      // попытался бы отрисовать узел `undefined`-компонентом.
-      expect(entry.component, `компонент ${type}`).toBeUndefined();
+      // S8 зарегистрировал ленивые компоненты — каталог и React Flow их видят.
+      expectLazyComponent(entry.component, `компонент ${type}`);
       expect(entry.icon, `иконка ${type}`).not.toBe('');
-      expect(entry.canBeInsertedOnEdge, type).toBe(true);
-      expect(canInsertOnEdge(type), type).toBe(true);
       expect(isNodeType(type), type).toBe(true);
       // Категории S0 ограничены существующими секциями каталога.
       expect(['tools', 'output']).toContain(entry.category);
@@ -295,12 +292,15 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
       expect(en, `en: ${entry.labelKey}`).toHaveProperty([entry.labelKey]);
     }
 
-    // Каркасные типы не попадают в `nodeTypes` React Flow (см. реестр):
-    // иначе React Flow получил бы `undefined` вместо компонента.
+    // KI-456: read_file — source-only, write_file можно вставить в связь.
+    expect(canInsertOnEdge('read_file')).toBe(false);
+    expect(canInsertOnEdge('write_file')).toBe(true);
+
+    // Все 22 типа остаются зарегистрированными, оба файловых — в nodeTypes.
     expect(NODE_TYPES).toHaveLength(22);
 
-    for (const type of V010_STUB_TYPES) {
-      expect(nodeTypes, type).not.toHaveProperty(type);
+    for (const type of FILE_TYPES) {
+      expect(nodeTypes, type).toHaveProperty(type);
     }
   });
 

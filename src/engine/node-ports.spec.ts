@@ -161,4 +161,37 @@ describe('node-ports', () => {
       expect(inferInputPortName('document_gen')).toBe('prompt');
     });
   });
+
+  describe('read_file (v0.10 S8, KI-456)', () => {
+    it('выход — file-output → text: содержимое файла для downstream', () => {
+      expect(NODE_PORT_CONTRACT.read_file.sourceHandleId).toBe('file-output');
+      expect(NODE_PORT_CONTRACT.read_file.outputPortName).toBe('text');
+      expect(inferDefaultOutputPort('read_file')).toBe('text');
+      expect(handleIdToOutputPort('file-output', 'read_file')).toBe('text');
+      // Чужой хендл не подставляет порт read_file.
+      expect(handleIdToOutputPort('text-output', 'read_file')).toBeNull();
+    });
+
+    it('source-only: входной хендл в UI не рисуется, путь — только data.path', () => {
+      // Контракт хранит fallback target-порт (нужен EngineService для
+      // type-aware резолвера), но `read_file.canBeInsertedOnEdge = false`
+      // и компонент не рендерит Handle type="target" (KI-456).
+      expect(NODE_PORT_CONTRACT.read_file.targetHandleId).toBe('text-input');
+    });
+  });
+
+  describe('write_file (v0.10 S8)', () => {
+    it('выход — file-output → result: подтверждение записи', () => {
+      expect(NODE_PORT_CONTRACT.write_file.sourceHandleId).toBe('file-output');
+      expect(NODE_PORT_CONTRACT.write_file.outputPortName).toBe('result');
+      expect(inferDefaultOutputPort('write_file')).toBe('result');
+      expect(handleIdToOutputPort('file-output', 'write_file')).toBe('result');
+      expect(handleIdToOutputPort('text-output', 'write_file')).toBeNull();
+    });
+
+    it('вход — text-input → prompt: текст для записи приходит от Text/LLM', () => {
+      expect(NODE_PORT_CONTRACT.write_file.targetHandleId).toBe('text-input');
+      expect(inferInputPortName('write_file')).toBe('prompt');
+    });
+  });
 });

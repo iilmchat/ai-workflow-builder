@@ -14,6 +14,8 @@ import { validateEnv } from './config/env.schema.js';
 import { DbModule } from './db/db.module.js';
 // v0.10 S6: генерация документов (DocumentService).
 import { DocumentsModule } from './documents/documents.module.js';
+// v0.10 S7: безопасный файловый workspace (FilesystemService).
+import { FilesystemModule } from './filesystem/filesystem.module.js';
 import { LlmModule } from './llm/llm.module.js';
 import { MediaModule } from './media/media.module.js';
 import { WorkflowModule } from './workflow/workflow.module.js';
@@ -67,6 +69,7 @@ import { WebSearchModule } from './web-search/web-search.module.js';
     LlmModule,
     WebSearchModule,
     DocumentsModule,
+    FilesystemModule,
     MediaModule,
     WorkflowModule,
     EngineModule,

@@ -76,6 +76,19 @@ const DocumentGenNode = lazy(() =>
   })),
 );
 
+// v0.10 S8: узлы безопасного файлового workspace.
+const ReadFileNode = lazy(() =>
+  import('@/components/nodes/ReadFileNode').then((module) => ({
+    default: module.ReadFileNode,
+  })),
+);
+
+const WriteFileNode = lazy(() =>
+  import('@/components/nodes/WriteFileNode').then((module) => ({
+    default: module.WriteFileNode,
+  })),
+);
+
 const HttpNode = lazy(() =>
   import('@/components/nodes/HttpNode').then((module) => ({
     default: module.HttpNode,
@@ -461,14 +474,12 @@ export const NODE_REGISTRY = {
     capabilities: { externalState: true, userConfig: true },
   },
   // v0.10 S0 (Foundation): четыре новых типа. Компоненты появляются по срезам
-  // (`web_search` — S2, `document_gen` — S6, `read_file`/`write_file` — S8);
-  // у типов без компонента `component: undefined`, такие записи каталог и
-  // `nodeTypes` отфильтровывают. `canBeInsertedOnEdge: true` — у всех четырёх
-  // по контракту есть входной порт (`text-input`), даже если он появится
-  // вместе с UI.
-  // Категории ограничены существующими секциями `tools`/`output` (S0 не
-  // добавляет `web`/`documents`/`files`): новые ключи `catalog.category.*`
-  // потребовали бы правки обоих i18n-файлов сверх среза.
+  // (`web_search` — S2, `document_gen` — S6, `read_file`/`write_file` — S8).
+  // `canBeInsertedOnEdge` больше не одинаков: `read_file` — source-only
+  // (KI-456), у `write_file` входной порт есть. Категории ограничены
+  // существующими секциями `tools`/`output` (S0 не добавляет
+  // `web`/`documents`/`files`): новые ключи `catalog.category.*` потребовали бы
+  // правки обоих i18n-файлов сверх среза.
   web_search: {
     labelKey: 'node.web_search.label',
     icon: '🔍',
@@ -491,15 +502,20 @@ export const NODE_REGISTRY = {
     labelKey: 'node.read_file.label',
     icon: '📂',
     category: 'tools',
-    component: undefined,
-    canBeInsertedOnEdge: true,
+    // v0.10 S8: компонент с полем пути, форматом и превью содержимого.
+    component: ReadFileNode,
+    // KI-456: source-only. Входного хендла нет — путь читается только из
+    // `data.path`, иначе LLM управлял бы путём (prompt injection / traversal).
+    canBeInsertedOnEdge: false,
     capabilities: { externalState: true, userConfig: true },
   },
   write_file: {
     labelKey: 'node.write_file.label',
     icon: '📥',
     category: 'tools',
-    component: undefined,
+    // v0.10 S8: компонент с полем пути, textarea контента и статусом записи.
+    component: WriteFileNode,
+    // Вход `text-input` (порт `prompt`) — текст для записи от Text/LLM.
     canBeInsertedOnEdge: true,
     capabilities: { externalState: true, userConfig: true },
   },

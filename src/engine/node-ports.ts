@@ -214,6 +214,27 @@ export const NODE_PORT_CONTRACT: Record<string, NodePortContract> = {
     targetHandleId: 'text-input',
     inputPortName: 'prompt',
   },
+  // v0.10 S8 (DESIGN v0.10 § 3.3.4, KI-456): узел `read_file` — source-only.
+  // Входного хендла нет вовсе: путь читается только из `data.path`, а связь
+  // дала бы LLM возможность подменить путь (prompt injection / traversal).
+  // Контракт всё же объявлен — ради выходного порта `text` и type-aware
+  // резолвера (KI-301); `canBeInsertedOnEdge` в реестре выставлен в `false`.
+  read_file: {
+    sourceHandleId: 'file-output',
+    outputPortName: 'text',
+    targetHandleId: 'text-input',
+    inputPortName: 'prompt',
+  },
+  // v0.10 S8 (DESIGN v0.10 § 3.3.4): узел `write_file`. Вход — текст для
+  // записи (`text` приходит от Text/LLM), выход — `result` — подтверждение
+  // записи `{ success, path }`. Отдельный source-хендл `file-output` не даёт
+  // спутать этот поток с `text-output`/`result-output` других узлов.
+  write_file: {
+    sourceHandleId: 'file-output',
+    outputPortName: 'result',
+    targetHandleId: 'text-input',
+    inputPortName: 'prompt',
+  },
   // `compare` сознательно БЕЗ контракта: `NodePortContract` описывает один
   // вход, а узлу нужны два (`a` и `b`). С контрактом обе связи свернулись бы
   // в один ключ (KI-035) и второй операнд потерялся бы. Без контракта работает

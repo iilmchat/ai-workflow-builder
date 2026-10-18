@@ -15,6 +15,8 @@ import {
   type NodeRunStatus,
 } from '../db/schema.js';
 import { DocumentService } from '../documents/document.service.js';
+// v0.10 S7/S8: безопасный файловый workspace узлов read_file/write_file.
+import { FilesystemService } from '../filesystem/filesystem.service.js';
 import {
   MEDIA_STORAGE,
   type IMediaStorage,
@@ -47,13 +49,13 @@ import {
   executeMemoryReadNodeAsync,
   executeMemoryWriteNodeAsync,
   executeOutputNode,
-  executeReadFileNodeStub,
+  executeReadFileNodeAsync,
   executeSubWorkflowNode,
   executeTextNode,
   executeVectorQueryNodeAsync,
   executeVectorUpsertNodeAsync,
   executeWebSearchNodeAsync,
-  executeWriteFileNodeStub,
+  executeWriteFileNodeAsync,
   prefixSubWorkflowGraph,
   type SubWorkflowContext,
   type VectorMemoryContext,
@@ -256,6 +258,10 @@ export class ExecutionEngineService {
     // MEDIA_STORAGE — из MediaModule; один экземпляр хранилища на приложение.
     private readonly documentService: DocumentService,
     @Inject(MEDIA_STORAGE) private readonly mediaStorage: IMediaStorage,
+    // v0.10 S7/S8 (DESIGN v0.10 § 3.3): единственная точка доступа к
+    // workspace workflow. Узлы получают только относительный путь, сервис
+    // проверяет path traversal и лимит 5 МБ (RULES 4.38).
+    private readonly filesystemService: FilesystemService,
   ) {}
 
   /**
@@ -1161,10 +1167,32 @@ export class ExecutionEngineService {
           storageKey: result.storageKey,
         };
       }
-      case 'read_file':
-        return executeReadFileNodeStub(node);
-      case 'write_file':
-        return executeWriteFileNodeStub(node);
+      // v0.10 S8 (DESIGN v0.10 § 3.3): безопасная работа с workspace.
+      // workflowId читается из workflow_runs (узел не знает своего workflow),
+      // путь берётся только из `data.path`, а не из входов — LLM не должен
+      // управлять чтением/записью (RULES 4.38). Контент write_file приходит
+      // из `inputs.text` (fallback — `data.content`).
+      case 'read_file': {
+        const workflowId = await this.vectorStore.findWorkflowIdByRunAsync(runId);
+        const outputs = await executeReadFileNodeAsync(
+          node.data,
+          workflowId,
+          this.filesystemService,
+        );
+
+        return { kind: 'plain', outputs, metrics: null };
+      }
+      case 'write_file': {
+        const workflowId = await this.vectorStore.findWorkflowIdByRunAsync(runId);
+        const outputs = await executeWriteFileNodeAsync(
+          node.data,
+          inputs,
+          workflowId,
+          this.filesystemService,
+        );
+
+        return { kind: 'plain', outputs, metrics: null };
+      }
       // R7.4b (DESIGN v0.9 § 3.4): агент. Сам цикл живёт в AgentService
       // (DI: LLM, эмбеддинги, хранилище, песочница); исполнитель узла только
       // валидирует `data` и раскладывает результат по выходам. Шаги цикла

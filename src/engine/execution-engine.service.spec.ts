@@ -5,6 +5,8 @@ import { DRIZZLE, type Database } from '../db/db.module.js';
 import { workflowRuns, type RunStatus } from '../db/schema.js';
 import { AgentService } from '../agent/agent.service.js';
 import { DocumentService } from '../documents/document.service.js';
+// v0.10 S7/S8: сервис workspace для узлов read_file/write_file.
+import { FilesystemService } from '../filesystem/filesystem.service.js';
 import { MEDIA_STORAGE } from '../media/media-storage.service.js';
 import type { RunEventDto } from '../runs/dto/index.js';
 import { RunEventsService } from '../runs/run-events.service.js';
@@ -517,6 +519,15 @@ describe('ExecutionEngineService', () => {
           useValue: {
             backend: 'local',
             saveGeneratedAsync: saveGenerated,
+          },
+        },
+        // v0.10 S8: узлы read_file/write_file в этом спеке не выполняются —
+        // заглушка нужна только чтобы Nest собрал граф зависимостей.
+        {
+          provide: FilesystemService,
+          useValue: {
+            readFileAsync: vi.fn(),
+            writeFileAsync: vi.fn(),
           },
         },
         // R6.7 (KI-200): источник подграфов для узла sub_workflow.

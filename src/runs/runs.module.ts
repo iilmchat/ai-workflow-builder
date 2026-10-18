@@ -5,6 +5,8 @@ import { AuthModule } from '../auth/auth.module.js';
 import { AgentService } from '../agent/agent.service.js';
 // v0.10 S6: DocumentService для исполнителя узла document_gen.
 import { DocumentsModule } from '../documents/documents.module.js';
+// v0.10 S7: FilesystemService для исполнителей read_file/write_file (S8).
+import { FilesystemModule } from '../filesystem/filesystem.module.js';
 import { EngineModule } from '../engine/engine.module.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import { LlmModule } from '../llm/llm.module.js';
@@ -57,6 +59,8 @@ import { RUNS_QUEUE_DB, RUNS_QUEUE_PREFIX } from './runs.worker-options.js';
     WebSearchModule,
     // v0.10 S6: DocumentService для исполнителя узла document_gen.
     DocumentsModule,
+    // v0.10 S7: FilesystemService для узлов read_file/write_file (S8).
+    FilesystemModule,
     // R6.7 (KI-200): ExecutionEngineService загружает подграфы узлов
     // sub_workflow через WorkflowService (проверка владельца — 404).
     WorkflowModule,
