@@ -153,15 +153,34 @@ export const ImageToolOutputsSchema = z
 export type ImageToolOutputs = z.infer<typeof ImageToolOutputsSchema>;
 
 /**
+ * Разрешённые `data:`-URI изображений (KI-378).
+ *
+ * `gpt-image-1` (OpenAI Images) отдаёт результат как
+ * `data:image/png;base64,...`, поэтому такие ссылки нужно пускать в `<img>`.
+ * Список MIME-типов намеренно закрыт растровыми форматами: SVG остаётся
+ * запрещённым — только он способен нести исполняемую разметку (KI-006).
+ *
+ * Регистр не важен: схема и медиатип в data-URI по RFC 2397
+ * регистронезависимы, а `javascript:` и `data:image/svg+xml` под шаблон всё
+ * равно не попадают.
+ */
+const DATA_IMAGE_URL_PREFIX = /^data:image\/(?:png|jpeg|webp|gif);base64,/i;
+
+/**
  * Проверяет, что URL безопасно подставлять в `<img src>`.
  *
  * Backend отдаёт ссылку от внешнего провайдера, поэтому перед рендером
- * ограничиваем схему: `javascript:`/`data:` в `<img>` недопустимы (KI-006 —
- * раньше `imageUrl` вообще не валидировался).
+ * ограничиваем схему: `javascript:` недопустим, а из `data:` разрешены только
+ * растровые изображения (KI-378). SVG и прочие `data:`-URI по-прежнему
+ * запрещены (KI-006 — раньше `imageUrl` вообще не валидировался).
  *
  * @param url - URL из outputs media-узла
- * @returns `true`, если схема `http` или `https`
+ * @returns `true`, если это `http(s)`-ссылка или разрешённый `data:image`
  */
 export function isRenderableMediaUrl(url: string): boolean {
-  return url.startsWith('https://') || url.startsWith('http://');
+  return (
+    url.startsWith('https://') ||
+    url.startsWith('http://') ||
+    DATA_IMAGE_URL_PREFIX.test(url)
+  );
 }

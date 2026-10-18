@@ -5,6 +5,24 @@ import { NODE_WIDTH } from './graph-guides';
 export const DUPLICATE_OFFSET = 30;
 
 /**
+ * Зазор между вставленным узлом и линией связи (KI-263), px.
+ *
+ * Складывается с половиной габарита нового узла: именно на столько его центр
+ * уходит в сторону от середины связи, чтобы карточка не легла поверх соседей.
+ */
+export const INSERT_PERPENDICULAR_GAP = 40;
+
+/**
+ * Порог «тесной» раскладки (KI-263), px.
+ *
+ * Если центры источника и приёмника ближе этого расстояния, карточка нового
+ * узла физически не помещается между ними (ширина карточки — 240 px, а шаг
+ * раскладки Toolbar — 280 px). В таком случае вставка сдвигается
+ * перпендикулярно связи; на просторной раскладке узел остаётся на её центре.
+ */
+export const TIGHT_EDGE_DISTANCE = 300;
+
+/**
  * Ширина узла по умолчанию, px (KI-260).
  *
  * Берётся из `graph-guides`, где та же константа задаёт fallback для
@@ -37,12 +55,20 @@ export interface NodeAnchor {
 }
 
 /**
- * Позиция нового узла по центру связи (KI-260).
+ * Позиция нового узла по центру связи (KI-260) со сдвигом в тесной раскладке
+ * (KI-263).
  *
  * Середина связи считается по граням портов: по X — между правой гранью
  * источника и левой гранью приёмника (связи в редакторе идут слева направо),
  * по Y — между вертикальными центрами узлов. Новый узел ставится так, чтобы
  * его центр совпал с этой точкой.
+ *
+ * Если центры источника и приёмника ближе {@link TIGHT_EDGE_DISTANCE}, карточка
+ * (240 px) не помещается в зазор между ними и накрыла бы соседей. Тогда центр
+ * сдвигается перпендикулярно связи: для горизонтальной — вниз по Y, для
+ * вертикальной — вправо по X. Величина сдвига — половина габарита нового узла
+ * плюс {@link INSERT_PERPENDICULAR_GAP}; направление всегда положительное,
+ * чтобы узел не уезжал в отрицательные координаты холста.
  *
  * Прежний расчёт использовал среднее `top-left` углов источника и приёмника,
  * поэтому узел «съезжал» вправо-вниз от линии связи и накрывал соседей.
@@ -59,6 +85,7 @@ export function insertPositionOnEdge(
 ): { x: number; y: number } {
   const sourceWidth = source.width ?? NODE_DEFAULT_WIDTH;
   const sourceHeight = source.height ?? NODE_DEFAULT_HEIGHT;
+  const targetWidth = target.width ?? NODE_DEFAULT_WIDTH;
   const targetHeight = target.height ?? NODE_DEFAULT_HEIGHT;
 
   const centerX =
@@ -70,7 +97,33 @@ export function insertPositionOnEdge(
       targetHeight / 2) /
     2;
 
-  return { x: centerX - size.width / 2, y: centerY - size.height / 2 };
+  // Вектор между центрами узлов задаёт ориентацию связи и её длину. Считаем по
+  // центрам, а не по граням портов: сдвигать нужно относительно карточек,
+  // которые могут быть разной ширины.
+  const deltaX =
+    target.position.x + targetWidth / 2 - (source.position.x + sourceWidth / 2);
+  const deltaY =
+    target.position.y +
+    targetHeight / 2 -
+    (source.position.y + sourceHeight / 2);
+
+  let offsetX = 0;
+  let offsetY = 0;
+
+  if (Math.hypot(deltaX, deltaY) < TIGHT_EDGE_DISTANCE) {
+    if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+      // Горизонтальная связь: уходим вниз, под линию.
+      offsetY = size.height / 2 + INSERT_PERPENDICULAR_GAP;
+    } else {
+      // Вертикальная связь: уходим вправо, в сторону от линии.
+      offsetX = size.width / 2 + INSERT_PERPENDICULAR_GAP;
+    }
+  }
+
+  return {
+    x: centerX - size.width / 2 + offsetX,
+    y: centerY - size.height / 2 + offsetY,
+  };
 }
 
 /**

@@ -39,7 +39,7 @@ describe('image_tool: превью входа (R7.1)', () => {
   });
 
   it('отбрасывает небезопасные и нестроковые значения (KI-006)', () => {
-    // `javascript:`/`data:` в <img src> недопустимы, объект — не ссылка.
+    // `javascript:` и SVG-`data:` в <img src> недопустимы, объект — не ссылка.
     expect(inputUrlFromOutputs({ url: 'javascript:alert(1)' })).toBeNull();
     expect(inputUrlFromOutputs({ text: 'просто текст' })).toBeNull();
     expect(inputUrlFromOutputs({ url: { href: 'https://cdn/img.png' } })).toBeNull();

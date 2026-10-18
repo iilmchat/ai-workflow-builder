@@ -3,8 +3,10 @@ import {
   cloneNodesForDuplicate,
   insertPositionOnEdge,
   DUPLICATE_OFFSET,
+  INSERT_PERPENDICULAR_GAP,
   NODE_DEFAULT_HEIGHT,
   NODE_DEFAULT_WIDTH,
+  TIGHT_EDGE_DISTANCE,
 } from './graph-edit';
 import type { AppNode } from '@/types/graph';
 
@@ -110,5 +112,49 @@ describe('insertPositionOnEdge (KI-260)', () => {
     // Прежняя формула давала y = 0 (среднее top-left) — узел уезжал вверх от линии.
     expect(position.y).toBeGreaterThan(0);
     expect(position.y).toBe((50 + 150) / 2 - 50);
+  });
+});
+
+describe('insertPositionOnEdge: сдвиг в тесной раскладке (KI-263)', () => {
+  it('горизонтальная связь: узел уходит вниз на половину высоты + зазор', () => {
+    // Шаг раскладки Toolbar — 280 px при ширине карточки 240 px (KI-263).
+    const position = insertPositionOnEdge(
+      { position: { x: 0, y: 0 }, width: 240, height: 100 },
+      { position: { x: 280, y: 0 }, width: 240, height: 100 },
+      { width: 240, height: 100 },
+    );
+
+    // Центр связи: x = (240 + 280) / 2 = 260, y = 50.
+    // Сдвиг по Y = 100 / 2 + 40 = 90.
+    expect(position).toEqual({
+      x: 260 - 120,
+      y: 50 - 50 + 100 / 2 + INSERT_PERPENDICULAR_GAP,
+    });
+  });
+
+  it('вертикальная связь: узел уходит вправо на половину ширины + зазор', () => {
+    const position = insertPositionOnEdge(
+      { position: { x: 0, y: 0 }, width: 240, height: 100 },
+      { position: { x: 0, y: 200 }, width: 240, height: 100 },
+      { width: 240, height: 100 },
+    );
+
+    // Центр связи: x = 120, y = (50 + 250) / 2 = 150.
+    // Сдвиг по X = 240 / 2 + 40 = 160.
+    expect(position).toEqual({
+      x: 120 - 120 + 240 / 2 + INSERT_PERPENDICULAR_GAP,
+      y: 150 - 50,
+    });
+  });
+
+  it('на пороге тесной раскладки сдвига ещё нет', () => {
+    const position = insertPositionOnEdge(
+      { position: { x: 0, y: 0 }, width: 240, height: 100 },
+      { position: { x: TIGHT_EDGE_DISTANCE, y: 0 }, width: 240, height: 100 },
+      { width: 240, height: 100 },
+    );
+
+    // Расстояние между центрами ровно 300 px — узел остаётся на линии.
+    expect(position).toEqual({ x: 150, y: 0 });
   });
 });

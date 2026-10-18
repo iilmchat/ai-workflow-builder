@@ -15,11 +15,12 @@ import { isRenderableMediaUrl } from '@/types/media';
  * Источником может быть `image_generation` (порт `url`), другой `image_tool`
  * (порт `resultUrls`) или текстовый узел, отдавший ссылку текстом — поэтому
  * проверяются все известные ключи, а не только `url`. Схема ссылки
- * ограничивается `http(s)`: `javascript:`/`data:` в `<img src>` недопустимы
- * (KI-006).
+ * ограничивается `http(s)` и растровыми `data:image` (KI-378):
+ * `javascript:` и SVG-`data:` в `<img src>` недопустимы (KI-006).
  *
  * @param outputs - outputs узла-источника из стора (`nodeOutputs[sourceId]`)
- * @returns `http(s)`-ссылку либо `null`, если картинки во входах нет
+ * @returns безопасную для `<img>` ссылку (`http(s)` или `data:image`) либо
+ *   `null`, если картинки во входах нет
  */
 export function inputUrlFromOutputs(
   outputs: Record<string, unknown> | undefined,

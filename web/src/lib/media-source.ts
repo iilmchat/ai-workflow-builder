@@ -22,7 +22,7 @@ export interface MediaSource {
   src: string | null;
   /** Своя ссылка истекла — нужен плейсхолдер «ссылка истекла». */
   expired: boolean;
-  /** Ссылка есть, но схема не http(s) — нужен маркер «некорректный URL». */
+  /** Ссылка есть, но она небезопасна для разметки — нужен маркер «некорректный URL». */
   invalid: boolean;
 }
 
@@ -80,10 +80,11 @@ export function providerMediaUrlOf(outputs: MediaOutputsLike): string | null {
  * Проверяет, что своя ссылка безопасна для `<img src>` (R7.8).
  *
  * `storedUrl` строит backend (`LocalMediaStorage`) как относительный путь
- * `/media/file/...` — это same-origin URL, и `isRenderableMediaUrl` (только
- * `http(s)`) его бы отверг. При этом `javascript:`/`data:` недопустимы, как и
- * для ссылки провайдера (KI-006), поэтому относительный путь принимается
- * только с известным префиксом; абсолютный — по общей проверке схемы.
+ * `/media/file/...` — это same-origin URL, и `isRenderableMediaUrl` (`http(s)`
+ * и разрешённые `data:image`, KI-378) его бы отверг. При этом `javascript:` и
+ * нерастровые `data:` недопустимы, как и для ссылки провайдера (KI-006),
+ * поэтому относительный путь принимается только с известным префиксом;
+ * абсолютный — по общей проверке схемы.
  *
  * @param url - своя ссылка из `node_runs.stored_url`
  * @returns `true`, если URL можно подставлять в разметку

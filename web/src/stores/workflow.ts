@@ -1992,6 +1992,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       width: sample?.measured?.width ?? NODE_DEFAULT_WIDTH,
       height: sample?.measured?.height ?? NODE_DEFAULT_HEIGHT,
     };
+    // KI-263: `insertPositionOnEdge` центрирует узел на связи, а в тесной
+    // раскладке (центры ближе 300 px) дополнительно сдвигает его перпендикулярно
+    // связи — иначе карточка 240 px накрыла бы источник и приёмник.
     const position = insertPositionOnEdge(
       {
         position: source?.position ?? { x: 0, y: 0 },

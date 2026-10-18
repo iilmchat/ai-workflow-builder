@@ -1,14 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router-dom';
-import { ReactFlow, ReactFlowProvider } from '@xyflow/react';
+import {
+  Controls,
+  ReactFlow,
+  ReactFlowProvider,
+  type Edge,
+  type NodeChange,
+  type NodeSelectionChange,
+} from '@xyflow/react';
 import { nodeTypes } from '@/components/nodes';
 import { ApiError } from '@/lib/api';
 import { FIT_VIEW_OPTIONS } from '@/lib/fit-view-options';
 import { fetchSharedWorkflowAsync, type SharedWorkflow } from '@/lib/share-api';
 import { isValidShareToken } from '@/lib/share-url';
 import type { AppNode } from '@/types/graph';
-import type { Edge } from '@xyflow/react';
 
 /**
  * Публичная страница просмотра графа по share-ссылке (R6.2.2).
@@ -17,8 +23,9 @@ import type { Edge } from '@xyflow/react';
  * доступ даёт сам токен. Редактор не переиспользуется — правки и запуски в
  * read-only режиме запрещены, поэтому граф рендерится «сырым» React Flow с
  * отключёнными правками (узлы не двигаются и не соединяются), а поверх стоит
- * баннер. Навигация по холсту (wheel-zoom, pan) при этом работает: без неё
- * граф с большим разбросом невозможно рассмотреть (KI-329).
+ * баннер. Навигация по холсту (wheel-zoom, pan и кнопки `<Controls>`) при этом
+ * работает: без неё граф с большим разбросом невозможно рассмотреть (KI-329,
+ * KI-331), а выбор узла нужен для осмотра карточки (KI-330).
  *
  * @returns разметка страницы просмотра
  */
@@ -68,8 +75,69 @@ export function ShareViewPage() {
 
   // Данные пришли из БД владельца в форме узлов графа: форма та же, что у
   // AppNode (валидация графа живёт в движке), поэтому приведение безопасно.
-  const nodes = useMemo(() => (workflow?.nodes ?? []) as unknown as AppNode[], [workflow]);
+  // Выбор храним отдельно от `workflow`: `selected` — состояние просмотра, а
+  // не данные графа. `useMemo` (а не `useState` + эффект) важен: ReactFlow
+  // монтируется в том же рендере, где появился `workflow`, и должен сразу
+  // получить узлы, иначе `fitView` отработает на пустом графе.
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+
+  const nodes = useMemo(
+    () =>
+      ((workflow?.nodes ?? []) as unknown as AppNode[]).map((node) => ({
+        ...node,
+        selected: selectedIds.has(node.id),
+      })),
+    [workflow, selectedIds],
+  );
+
+  /**
+   * Применяет выбор узлов от React Flow (KI-330).
+   *
+   * Публичная страница read-only, поэтому из всех изменений обрабатывается
+   * только `select`: клик по карточке подсвечивает её, клик по пустому месту
+   * снимает выбор. `remove`/`position`/`add` игнорируются — даже Delete или
+   * будущий хоткей не должны менять чужой граф.
+   */
+  const onNodesChange = useCallback((changes: NodeChange<AppNode>[]) => {
+    const selectionChanges = changes.filter(
+      (change): change is NodeSelectionChange => change.type === 'select',
+    );
+
+    if (selectionChanges.length === 0) {
+      return;
+    }
+
+    setSelectedIds((current) => {
+      const next = new Set(current);
+
+      for (const change of selectionChanges) {
+        if (change.selected) {
+          next.add(change.id);
+        } else {
+          next.delete(change.id);
+        }
+      }
+
+      return next;
+    });
+  }, []);
+
   const edges = useMemo(() => (workflow?.edges ?? []) as unknown as Edge[], [workflow]);
+
+  // KI-167: встроенные кнопки Zoom/Fit берут подписи из `ariaLabelConfig`.
+  // Своих строк у share-страницы нет — переиспользуем ключи холста, чтобы
+  // подсказки не оставались английскими в русском UI.
+  const ariaLabelConfig = useMemo(
+    () => ({
+      'controls.ariaLabel': t('canvas.controls.title'),
+      'controls.zoomIn.ariaLabel': t('canvas.controls.zoom_in'),
+      'controls.zoomOut.ariaLabel': t('canvas.controls.zoom_out'),
+      'controls.fitView.ariaLabel': t('canvas.controls.fit_view'),
+    }),
+    [t],
+  );
 
   return (
     <div className="flex h-screen w-screen flex-col bg-background">
@@ -127,22 +195,38 @@ export function ShareViewPage() {
                   store, которого у публичной страницы нет, — опции приходят
                   из общего модуля (`minZoom: 0.005`, KI-314), иначе граф с
                   большим разбросом остаётся за кадром (store-дефолт 0.5).
-                  `<Controls>` здесь не рендерится: просмотр read-only. */}
+                  KI-331: `<Controls>` возвращает кнопку Fit после wheel-zoom;
+                  `fitViewOptions` передаём и ему — иначе кнопка замолчала бы
+                  store-дефолт `minZoom` 0.5 (KI-306). Кнопка интерактивности
+                  скрыта: на read-only странице переключать нечего. */}
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
                 nodeTypes={nodeTypes}
+                // KI-330: controlled-граф применяет выбор через `onNodesChange`;
+                // из всех изменений обрабатывается только `select` (см. выше).
+                onNodesChange={onNodesChange}
                 // KI-329: просмотр без правок, но с навигацией по холсту.
                 // `elementsSelectable` оставлен включённым: клик по узлу — способ
                 // осмотреть карточку, а не изменить граф.
                 nodesDraggable={false}
                 nodesConnectable={false}
+                // Удаление с клавиатуры в публичном просмотре недопустимо даже
+                // локально: граф принадлежит владельцу.
+                deleteKeyCode={null}
                 elementsSelectable
                 panOnDrag
                 zoomOnScroll
+                // KI-167: подсказки Zoom/Fit на языке UI.
+                ariaLabelConfig={ariaLabelConfig}
                 fitViewOptions={FIT_VIEW_OPTIONS}
                 fitView
-              />
+              >
+                <Controls
+                  fitViewOptions={FIT_VIEW_OPTIONS}
+                  showInteractive={false}
+                />
+              </ReactFlow>
             </ReactFlowProvider>
           </div>
         )}

@@ -5,6 +5,7 @@ import {
   DEFAULT_MEDIA_PROVIDER,
   filterModelsByProvider,
   groupModelsByProvider,
+  isRenderableMediaUrl,
   pickDefaultMediaModel,
   pickDefaultToolModel,
   pickToolModels,
@@ -230,5 +231,40 @@ describe('groupModelsByProvider / filterModelsByProvider (R7.3)', () => {
       ),
     ).toEqual(['flux-schnell']);
     expect(filterModelsByProvider(catalog, 'openai_images')).toEqual([]);
+  });
+});
+
+describe('isRenderableMediaUrl (KI-378)', () => {
+  it.each([
+    'http://cdn.example.com/image.png',
+    'https://cdn.example.com/image.webp',
+  ])('пропускает http(s)-ссылку: %s', (url) => {
+    expect(isRenderableMediaUrl(url)).toBe(true);
+  });
+
+  it.each([
+    'data:image/png;base64,iVBORw0KGgo=',
+    'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+    'data:image/webp;base64,UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEAAUAmJaQAA3AA/vuUAAA=',
+    'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==',
+    // Схема и медиатип в data-URI регистронезависимы (RFC 2397).
+    'DATA:IMAGE/PNG;BASE64,iVBORw0KGgo=',
+  ])('пропускает растровый data:image: %s', (url) => {
+    expect(isRenderableMediaUrl(url)).toBe(true);
+  });
+
+  it.each([
+    // KI-378: SVG — единственный image-формат, способный нести скрипты.
+    'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=',
+    'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E',
+    // Только `;base64,`-форма из списка: URL-encoded data-URI не принимается.
+    'data:image/png,%89PNG%0D%0A%1A%0A',
+    // Не image-типы и небезопасные схемы.
+    'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==',
+    'data:application/pdf;base64,JVBERi0xLjQ=',
+    'javascript:alert(1)',
+    '',
+  ])('запрещает небезопасный URL: %s', (url) => {
+    expect(isRenderableMediaUrl(url)).toBe(false);
   });
 });
