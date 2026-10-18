@@ -133,13 +133,12 @@ ai-workflow-builder/
 ├── docs/                   ← документация
 │   ├── development/
 │   │   ├── RULES.md                 ← правила разработки
-│   │   ├── PROMPT_V2.md             ← стартовый промпт для новых чатов
-│   │   ├── ARCHITECTURE.md          ← слои, схема, ADR
+│   │   ├── PROMPT_CURRENT.md        ← актуальный системный промпт
 │   │   ├── GETTING_STARTED.md       ← этот файл
 │   │   └── RELEASES.md              ← чек-лист релиза
 │   ├── CHANGELOG.md
 │   └── KNOWN_ISSUES.md
-├── docker-compose.yml      ← PostgreSQL (Redis — добавляется в Runner)
+├── docker-compose.yml      ← PostgreSQL 17 + pgvector, Redis
 ├── package.json            ← backend
 ├── pnpm-lock.yaml          ← backend lock
 └── .env.example            ← шаблон для .env
@@ -654,11 +653,13 @@ netstat -ano | Select-String ":3000|:5173|:5433"
 1. **`docs/development/RULES.md`** — правила разработки (TS/NestJS/ESM/Drizzle).
 2. **`docs/KNOWN_ISSUES.md`** — известные проблемы и их статус.
 3. **`docs/CHANGELOG.md`** — история версий.
-4. **`docs/development/PROMPT_V2.md`** — стартовый промпт для нового чата с ИИ.
+4. **`docs/development/PROMPT_CURRENT.md`** — актуальный системный промпт для
+   нового чата с ИИ.
 
 ### 10.2. Возьмите первую задачу
 
-- Откройте `docs/development/PROMPT_V2.md` — там roadmap текущего этапа (Runner).
+- Откройте `docs/development/PROMPT_CURRENT.md` — там статус, метрики и план
+  следующего релиза.
 - Возьмите одну подзадачу (R1, R2, R3 или R4).
 - Работайте малыми шагами.
 
