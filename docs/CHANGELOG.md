@@ -23,12 +23,18 @@
 **v0.9.3 — производительность (route-level code-split, 774 → 141 kB),
 S3 presigned/streaming, enum-домены в API-контракте.**
 
+**v0.9.4 — S3 polish: retry/multipart, переподпись presigned URL, env
+публичного бакета; UI: миникарта, копирайт и версия, плашка истёкшей ссылки.**
+
 ### Added
 - **Testing Infra:** Настроен jsdom + Testing Library для компонентных тестов (KI-155).
 - **Performance:** Route-level code-split (React.lazy для всех 18 узлов). Основной чанк уменьшен с 774 kB до 141 kB (KI-008, 390).
 - **Testing:** Компонентные тесты для AgentNode и VectorUpsertNode на базе jsdom (KI-405).
 - **Media / S3:** Presigned URL для приватных бакетов и потоковая загрузка без буферизации в память (KI-425, 427).
 - **API Contract:** Секция `enums` в `api-contract.json` для проверки доменов значений (KI-440).
+- **S3:** Presigned URL для приватных бакетов и переподпись в SSE при истечении (KI-443, 444).
+- **S3:** Потоковая загрузка с ретраями и multipart через `@aws-sdk/lib-storage` (KI-442).
+- **UI:** Копирайт и версия в шапке (KI-446).
 
 ### Fixed
 - **Share:** `GET /workflow` возвращает collaborative workflows с `accessRole` (owner/editor/viewer). Список участников включает владельца первой строкой (KI-397, 398, 399).
@@ -36,10 +42,13 @@ S3 presigned/streaming, enum-домены в API-контракте.**
 - **Security:** `TRUST_PROXY` для корректного Rate Limiting за nginx (KI-419).
 - **UI:** Валидация `audioUrl` в `ImageToolNode` (KI-424).
 - **Docs:** Обновлены устаревшие комментарии в спеках web (KI-439).
+- **UI:** Миникарта теперь окрашивает узлы по статусу и имеет контур вьюпорта (KI-445).
+- **UI:** Плашка «Ссылка истекла» для медиа без `storedUrl` (KI-444).
 
 ### Documented
 - **KI-438..441** — новые KI v0.9.2.
 - **KI-442..447** — новые KI (S3 retry, presigned refresh, minimap, copyright, route-lazy).
+- **KI-448..451** — новые KI v0.9.4.
 
 ## [0.9.1] — 2026-10-18
 
