@@ -452,7 +452,7 @@ export function ShareModal({
                     <span className="min-w-0 flex-1 truncate text-xs text-foreground">
                       {participant.email ?? participant.userId}
                     </span>
-                    {isOwner ? (
+                    {isOwner && participant.role !== 'owner' ? (
                       <select
                         value={participant.role}
                         onChange={(event) => {
@@ -473,7 +473,7 @@ export function ShareModal({
                         {t(`share.participants.role.${participant.role}`)}
                       </span>
                     )}
-                    {isOwner && (
+                    {isOwner && participant.role !== 'owner' && (
                       <button
                         type="button"
                         onClick={() => void handleRemove(participant)}

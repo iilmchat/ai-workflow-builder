@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 // рядом — короткий путь читается проще.
 import {
   inputUrlFromOutputs,
+  isAudioUrlInvalid,
   pickInputPreviewUrl,
   readToolAudioUrl,
   withToolAudioUrl,
@@ -11,9 +12,8 @@ import {
 /**
  * Юнит-тесты чистой логики узла `image_tool` (R7.1, KI-196).
  *
- * Сам компонент не рендерится: в `vitest.config.ts` web стоит
- * `environment: 'node'` без jsdom (KI-155), поэтому проверяется логика превью —
- * то, что компонент только отображает.
+ * Проверяется логика превью и валидации без DOM; отображение компонента
+ * (jsdom, KI-155) покрыто `components/nodes/ImageToolNode.spec.tsx`.
  */
 describe('image_tool: превью входа (R7.1)', () => {
   it('берёт ссылку из порта url (выход image_generation)', () => {
@@ -102,5 +102,29 @@ describe('image_tool: audioUrl для lipsync (KI-369)', () => {
     ).toMatchObject({
       audioUrl: 'https://cdn/voice.mp3',
     });
+  });
+});
+
+describe('image_tool: валидация audioUrl (KI-424)', () => {
+  it('принимает http(s)-ссылки, в том числе в верхнем регистре схемы', () => {
+    expect(isAudioUrlInvalid('https://cdn/voice.mp3')).toBe(false);
+    expect(isAudioUrlInvalid('http://cdn/voice.mp3')).toBe(false);
+    // Схема по RFC 3986 регистронезависима (ср. KI-430).
+    expect(isAudioUrlInvalid('HTTPS://CDN/VOICE.MP3')).toBe(false);
+    expect(isAudioUrlInvalid('  https://cdn/voice.mp3  ')).toBe(false);
+  });
+
+  it('отвергает чужую схему и строку без схемы', () => {
+    expect(isAudioUrlInvalid('ftp://cdn/voice.mp3')).toBe(true);
+    expect(isAudioUrlInvalid('javascript:alert(1)')).toBe(true);
+    expect(isAudioUrlInvalid('cdn/voice.mp3')).toBe(true);
+    // `http:foo` формально URL, но не начинается с `http://`.
+    expect(isAudioUrlInvalid('http:cdn/voice.mp3')).toBe(true);
+  });
+
+  it('считает пустое поле нейтральным, а `https://` без хоста — ошибкой', () => {
+    expect(isAudioUrlInvalid('')).toBe(false);
+    expect(isAudioUrlInvalid('   ')).toBe(false);
+    expect(isAudioUrlInvalid('https://')).toBe(true);
   });
 });

@@ -428,6 +428,27 @@ export const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production', 'staging', 'preprod']).default('development'),
   /** Порт HTTP-сервера. */
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  /**
+   * Доверять ли `X-Forwarded-For` от reverse proxy (R7.7, KI-419).
+   *
+   * `@nestjs/throttler` считает лимит по `req.ip`, а Express за nginx/Caddy
+   * видит адрес самого прокси: без `trust proxy` все клиенты делят один
+   * счётчик (5/мин на всех). Включать **только** когда backend стоит за
+   * прокси и недоступен напрямую: иначе клиент подделает `X-Forwarded-For` и
+   * обойдёт rate limiting.
+   *
+   * Разбор строгий, как у `SANDBOX_ENABLED`/`OTEL_ENABLED`: `z.coerce.boolean()`
+   * превращает непустую строку `'false'` в `true`, поэтому он не используется.
+   */
+  TRUST_PROXY: z
+    .preprocess(
+      emptyToUndefined,
+      z
+        .union([z.boolean(), z.enum(['true', 'false'])])
+        .transform((value) => value === true || value === 'true')
+        .optional(),
+    )
+    .default(false),
   /** Строка подключения к PostgreSQL (в Docker compose проброшен порт 5433). */
   DATABASE_URL: z.url('DATABASE_URL должен быть валидным URL'),
   /**

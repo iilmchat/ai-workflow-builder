@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkflowStore, type GraphSnapshot } from './workflow';
+import { ApiWorkflowSchema } from '@/lib/api';
 import type { AppNode } from '@/types/graph';
 import type { SnapshotMessage } from '@/types/run-stream';
 
@@ -552,5 +553,68 @@ describe('useWorkflowStore — run.error в снимке (KI-347)', () => {
     state().applySnapshot(snapshotWithError(null));
 
     expect(state().runError).toBeNull();
+  });
+});
+
+describe('useWorkflowStore — роль доступа (KI-397)', () => {
+  beforeEach(() => {
+    useWorkflowStore.setState({ ...EMPTY_STATE, accessRole: null, notice: null });
+  });
+
+  it('setAccessRole выставляет роль, newWorkflow её сбрасывает', () => {
+    state().setAccessRole('viewer');
+
+    expect(state().accessRole).toBe('viewer');
+
+    state().newWorkflow();
+
+    expect(state().accessRole).toBeNull();
+  });
+
+  it('viewer не сохраняет workflow: уведомление вместо запроса на backend', async () => {
+    state().setAccessRole('viewer');
+
+    await state().saveWorkflowAsync();
+
+    // i18n в этом спеке замокан (`t` возвращает ключ) — проверяем ключ,
+    // а не текст: паритет ru/en проверяет отдельный i18n-спек.
+    expect(state().notice).toEqual({
+      kind: 'error',
+      text: 'topbar.viewer_readonly',
+    });
+    expect(state().isSaving).toBe(false);
+  });
+});
+
+describe('ApiWorkflowSchema — роль доступа (KI-397)', () => {
+  /** Минимальный валидный workflow: `nodes`/`edges`/`version` имеют дефолты. */
+  const MINIMAL_WORKFLOW = {
+    id: 'wf-1',
+    userId: 'u-1',
+    name: 'wf',
+  };
+
+  it('принимает роль viewer из ответа backend', () => {
+    const parsed = ApiWorkflowSchema.parse({
+      ...MINIMAL_WORKFLOW,
+      accessRole: 'viewer',
+    });
+
+    expect(parsed.accessRole).toBe('viewer');
+  });
+
+  it('без поля роль неизвестна — обратная совместимость', () => {
+    // Пока backend не отдаёт `accessRole` во всех ответах (KI-398), поле
+    // необязательно: `undefined` трактуется как «неизвестна».
+    expect(ApiWorkflowSchema.parse(MINIMAL_WORKFLOW).accessRole).toBeUndefined();
+    expect(
+      ApiWorkflowSchema.parse({ ...MINIMAL_WORKFLOW, accessRole: null }).accessRole,
+    ).toBeNull();
+  });
+
+  it('неизвестную роль отклоняет', () => {
+    expect(() =>
+      ApiWorkflowSchema.parse({ ...MINIMAL_WORKFLOW, accessRole: 'admin' }),
+    ).toThrow();
   });
 });

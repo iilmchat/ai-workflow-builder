@@ -9,6 +9,7 @@ import { resolveMediaSource } from '@/lib/media-source';
 import type { MediaModelInfo } from '@/types/media';
 import {
   inputUrlFromOutputs,
+  isAudioUrlInvalid,
   pickInputPreviewUrl,
   readToolAudioUrl,
   withToolAudioUrl,
@@ -85,6 +86,9 @@ export function ImageToolNode({ id, data }: NodeProps<ImageToolFlowNode>) {
   // KI-369: lipsync требует второй вход — аудио. Ссылка живёт в
   // `data.params.audioUrl` (backend передаёт её в обязательный слот `audio`).
   const audioUrl = readToolAudioUrl(data.params);
+  // KI-424: формат ссылки проверяет UI — `type="url"` не отсекает `ftp:` и не
+  // блокирует Run (кнопка вне формы), поэтому схема `http(s)` проверяется явно.
+  const audioUrlInvalid = isAudioUrlInvalid(audioUrl);
 
   const handleAudioUrlChange = useCallback(
     (value: string) => {
@@ -194,13 +198,33 @@ export function ImageToolNode({ id, data }: NodeProps<ImageToolFlowNode>) {
             </label>
             <input
               id={`image-tool-audio-${id}`}
-              type="text"
+              type="url"
               inputMode="url"
               value={audioUrl}
               placeholder={t('node.image_tool.audioUrl.placeholder')}
-              className="nodrag w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              aria-invalid={audioUrlInvalid}
+              aria-describedby={
+                audioUrlInvalid ? `image-tool-audio-error-${id}` : undefined
+              }
+              // KI-424: красная рамка — единственный визуальный признак ошибки
+              // формата; классы взаимоисключающие, чтобы `border-border` не
+              // перебивал `border-red-500` порядком в CSS.
+              className={`nodrag w-full rounded-lg border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:ring-1 ${
+                audioUrlInvalid
+                  ? 'border-red-500 focus:border-red-500 focus:ring-red-500'
+                  : 'border-border focus:border-primary focus:ring-primary'
+              }`}
               onChange={(event) => handleAudioUrlChange(event.target.value)}
             />
+
+            {audioUrlInvalid && (
+              <p
+                id={`image-tool-audio-error-${id}`}
+                className="mt-1 text-[10px] text-red-600"
+              >
+                {t('node.image_tool.audioUrl.invalid')}
+              </p>
+            )}
           </div>
         )}
 

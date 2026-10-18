@@ -6,7 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, sql, type SQL } from 'drizzle-orm';
 import { isDeepStrictEqual } from 'node:util';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
@@ -26,11 +26,15 @@ import type {
   SharedWorkflow,
   UpdateCollaboratorRoleDto,
   UpdateWorkflowDto,
+  WorkflowListItem,
 } from './dto/index.js';
 import {
   workflowAccessFilter,
+  workflowAccessListFilter,
+  workflowAccessRoleExpression,
   workflowOwnerFilter,
   type WorkflowAccessRole,
+  type WorkflowAccessRoleWithOwner,
 } from './workflow-access.js';
 
 /** Значение limit по умолчанию для постраничного списка. */
@@ -122,29 +126,46 @@ export class WorkflowService {
   }
 
   /**
-   * Возвращает список workflow с фильтром по владельцу и пагинацией.
+   * Возвращает список доступных пользователю workflow с пагинацией (R7.6,
+   * KI-398).
+   *
+   * Доступные — это собственные графы **и** чужие, где пользователь участник
+   * (`viewer`/`editor`). Раньше выборка ограничивалась `user_id = userId`,
+   * поэтому collaborative-workflow открывались только по прямой ссылке.
+   *
+   * `accessRole` вычисляется тем же запросом (коррелированный подзапрос по
+   * `workflow_collaborators`), а не отдельным запросом на строку: иначе список
+   * из 50 графов дал бы N+1. Роль нужна UI, чтобы скрыть Save/Run у viewer
+   * (KI-397).
+   *
+   * Без `userId` (внутренние вызовы и тесты) фильтра нет, а роль — `owner`:
+   * это прежнее поведение «вернуть все доступные графы», и без пользователя
+   * понятия «участник» не существует.
    *
    * Сортировка — по `createdAt` по убыванию (сначала новые).
    *
-   * @param userId - необязательный идентификатор владельца
+   * @param userId - необязательный идентификатор пользователя из access-токена
    * @param limit - максимум записей в ответе, по умолчанию 50
    * @param offset - сколько записей пропустить, по умолчанию 0
-   * @returns массив найденных workflow
+   * @returns массив workflow с ролью пользователя в каждом
    */
   async findAllAsync(
     userId?: string,
     limit: number = DEFAULT_LIMIT,
     offset: number = DEFAULT_OFFSET,
-  ): Promise<Workflow[]> {
-    const query = this.db
-      .select()
+  ): Promise<WorkflowListItem[]> {
+    const accessRole =
+      userId === undefined
+        ? sql<WorkflowAccessRoleWithOwner>`'owner'`.as('access_role')
+        : workflowAccessRoleExpression(userId);
+
+    return this.db
+      .select({ ...getTableColumns(workflows), accessRole })
       .from(workflows)
-      .where(userId ? eq(workflows.userId, userId) : undefined)
+      .where(userId === undefined ? undefined : this.buildListAccessFilter(userId))
       .orderBy(desc(workflows.createdAt))
       .limit(limit)
       .offset(offset);
-
-    return query;
   }
 
   /**
@@ -318,6 +339,21 @@ export class WorkflowService {
   }
 
   /**
+   * Собирает WHERE для списочной выборки: все workflow, доступные пользователю
+   * (KI-398).
+   *
+   * Это «безымянный» вариант {@link buildAccessFilter}: тот же предикат
+   * «владелец **или** участник», но без ограничения по `workflows.id` —
+   * для `GET /workflow`, где запрашивается не один граф, а весь список.
+   *
+   * @param userId - идентификатор пользователя из access-токена
+   * @returns условие для Drizzle
+   */
+  private buildListAccessFilter(userId: string): SQL {
+    return workflowAccessListFilter(this.db, userId);
+  }
+
+  /**
    * Собирает WHERE только для владельца workflow (R7.6).
    *
    * Используется операциями, которые участнику недоступны даже с ролью
@@ -423,15 +459,28 @@ export class WorkflowService {
   }
 
   /**
-   * Возвращает участников workflow (R7.6, DESIGN v0.9 § 3.6).
+   * Возвращает участников workflow, первым — владельца (R7.6, DESIGN v0.9
+   * § 3.6; KI-399).
    *
    * Список видят все, у кого есть доступ к графу: владелец и любой участник
    * (viewer тоже — это чтение). Чужой workflow неотличим от несуществующего:
    * 404, а не 403 (KI-202).
    *
+   * Владелец не хранится в `workflow_collaborators` — он определяется по
+   * `workflows.user_id`. Тем не менее в ответе он присутствует отдельной
+   * первой строкой с ролью `owner`, потому что DESIGN обещает UI полный список
+   * «owner + participants», а не «участники плюс отдельное поле владельца».
+   * Email владельца читается из `users` отдельным запросом: в строке workflow
+   * его нет. Если пользователь-владелец был удалён (FK на `workflows.user_id`
+   * нет), строка остаётся — `email` просто не заполняется.
+   *
+   * Строка участника с тем же id, что и владелец, отфильтровывается: инвайт
+   * владельца запрещён, но старые данные могли успеть создать дубль, и два
+   * «owner» в списке были бы визуальным багом.
+   *
    * @param id - uuid workflow
    * @param userId - пользователь из access-токена
-   * @returns участники, отсортированные по дате приглашения
+   * @returns владелец и участники, участники — по дате приглашения
    * @throws NotFoundException если workflow не существует или недоступен
    */
   async getCollaboratorsAsync(id: string, userId: string): Promise<CollaboratorResponse[]> {
@@ -440,6 +489,12 @@ export class WorkflowService {
     if (!workflow) {
       throw new NotFoundException(`Workflow ${id} не найден`);
     }
+
+    const [owner] = await this.db
+      .select({ email: users.email })
+      .from(users)
+      .where(eq(users.id, workflow.userId))
+      .limit(1);
 
     const rows = await this.db
       .select({
@@ -454,13 +509,26 @@ export class WorkflowService {
       .where(eq(workflowCollaborators.workflowId, id))
       .orderBy(workflowCollaborators.invitedAt);
 
-    return rows.map((row) => ({
-      userId: row.userId,
-      email: row.email,
-      role: row.role,
-      invitedAt: row.invitedAt.toISOString(),
-      invitedBy: row.invitedBy,
-    }));
+    return [
+      {
+        userId: workflow.userId,
+        email: owner?.email,
+        role: 'owner',
+        // Владелец участвует с момента создания workflow: отдельной даты
+        // «приглашения» у него нет.
+        invitedAt: workflow.createdAt.toISOString(),
+        invitedBy: workflow.userId,
+      },
+      ...rows
+        .filter((row) => row.userId !== workflow.userId)
+        .map((row) => ({
+          userId: row.userId,
+          email: row.email,
+          role: row.role,
+          invitedAt: row.invitedAt.toISOString(),
+          invitedBy: row.invitedBy,
+        })),
+    ];
   }
 
   /**

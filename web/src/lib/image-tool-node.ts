@@ -3,11 +3,18 @@ import { isRenderableMediaUrl } from '@/types/media';
 /**
  * Чистые функции узла `image_tool` (R7.1, KI-196).
  *
- * Вынесены из компонента (`components/nodes/ImageToolNode.tsx`): компонентные
- * тесты во фронтенде не запускаются — в `vitest.config.ts` стоит
- * `environment: 'node'` без jsdom (KI-155), поэтому вся логика, которую нужно
- * покрыть тестом, живёт в чистом модуле.
+ * Вынесены из компонента (`components/nodes/ImageToolNode.tsx`): логика
+ * превью и валидации проверяется без DOM, а компонентные тесты (jsdom,
+ * KI-155) покрывают только отображение.
  */
+
+/**
+ * Схема `http(s)` в начале значения (регистр не важен, RFC 3986).
+ *
+ * Проверка нужна до `new URL()`: `URL` принимает и `http:foo`, которое
+ * требованию «начинается с `http://` или `https://`» не соответствует.
+ */
+const HTTP_URL_PREFIX = /^https?:\/\//i;
 
 /**
  * Достаёт ссылку на входной файл из outputs узла-источника.
@@ -93,6 +100,42 @@ export function withToolAudioUrl(
   }
 
   return next;
+}
+
+/**
+ * Проверяет, что введённый `audioUrl` — корректная `http(s)`-ссылка (KI-424).
+ *
+ * Пустое значение считается **нейтральным**: поле ещё не заполнено, и красная
+ * рамка на новом узле `lipsync` была бы ложной ошибкой. Требование «аудио
+ * обязательно» проверяет backend (KI-369), а UI валидирует только формат
+ * введённой ссылки.
+ *
+ * `type="url"` в браузере недостаточно: он принимает и `ftp://`/`mailto:`, и
+ * не мешает нажать Run (кнопка живёт вне `<form>`), поэтому схема проверяется
+ * явно — до `URL`, чтобы отсечь `http:foo` без обязательных `//`.
+ *
+ * @param value - значение поля `data.params.audioUrl`
+ * @returns `true`, если непустая ссылка не начинается с `http://`/`https://`
+ *   или не разбирается как URL
+ */
+export function isAudioUrlInvalid(value: string): boolean {
+  const trimmed = value.trim();
+
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  if (!HTTP_URL_PREFIX.test(trimmed)) {
+    return true;
+  }
+
+  try {
+    // `https://` без хоста браузерный `type="url"` тоже считает ошибкой:
+    // проверяем, что после схемы есть непустой hostname.
+    return new URL(trimmed).hostname.length === 0;
+  } catch {
+    return true;
+  }
 }
 
 /**

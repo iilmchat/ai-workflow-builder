@@ -34,6 +34,7 @@ import {
   type ShareTokenDto,
   type UpdateCollaboratorRoleDto,
   type UpdateWorkflowDto,
+  type WorkflowListItem,
 } from './dto/index.js';
 import { WorkflowService } from './workflow.service.js';
 
@@ -87,18 +88,22 @@ export class WorkflowController {
   }
 
   /**
-   * `GET /workflow` — список workflow с фильтром по владельцу и пагинацией.
+   * `GET /workflow` — список доступных workflow с пагинацией (KI-398).
+   *
+   * Возвращаются и собственные графы, и чужие, где пользователь участник;
+   * у каждого элемента есть `accessRole` (`owner`/`editor`/`viewer`), чтобы UI
+   * не запрашивал роль отдельно.
    *
    * @param query - query-параметры `limit`, `offset` (устаревший `userId`
-   *   игнорируется: список ограничен владельцем токена)
-   * @param user - владелец из access-токена
-   * @returns массив workflow (сначала новые)
+   *   игнорируется: доступ определяется пользователем из токена)
+   * @param user - пользователь из access-токена
+   * @returns массив workflow с ролью (сначала новые)
    */
   @Get()
   async findAll(
     @Query(ZodValidationPipe.create(ListWorkflowsQuerySchema)) query: ListWorkflowsQueryDto,
     @CurrentUser() user: JwtPayload,
-  ): Promise<Workflow[]> {
+  ): Promise<WorkflowListItem[]> {
     return this.workflowService.findAllAsync(user.sub, query.limit, query.offset);
   }
 

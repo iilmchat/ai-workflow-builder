@@ -45,6 +45,15 @@ const participant: CollaboratorResponse = {
   invitedBy: OWNER_ID,
 };
 
+/** Владелец в списке участников (KI-399): роль `owner`, дата — создания. */
+const owner: CollaboratorResponse = {
+  userId: OWNER_ID,
+  email: 'owner@example.com',
+  role: 'owner',
+  invitedAt: INVITED_AT.toISOString(),
+  invitedBy: OWNER_ID,
+};
+
 /**
  * Создаёт цепочку-заглушку Drizzle query builder.
  *
@@ -121,13 +130,14 @@ describe('WorkflowService — участники (R7.6)', () => {
     vi.restoreAllMocks();
   });
 
-  it('getCollaboratorsAsync отдаёт участников с email и ISO-датой', async () => {
+  it('getCollaboratorsAsync отдаёт владельца первым и участников (KI-399)', async () => {
     selectResults = [
-      // Порядок вызовов: сначала основной SELECT workflow, затем EXISTS-
-      // подзапрос внутри фильтра доступа (мок-цепочка его не исполняет),
-      // и только потом запрос участников.
+      // Порядок вызовов: основной SELECT workflow, EXISTS-подзапрос внутри
+      // фильтра доступа (мок-цепочка его не исполняет), email владельца
+      // (KI-399), затем запрос участников.
       [baseWorkflow],
       [],
+      [{ email: 'owner@example.com' }],
       [
         {
           userId: PARTICIPANT_ID,
@@ -141,9 +151,47 @@ describe('WorkflowService — участники (R7.6)', () => {
 
     const result = await service.getCollaboratorsAsync(WORKFLOW_ID, PARTICIPANT_ID);
 
-    expect(result).toEqual([participant]);
+    expect(result).toEqual([owner, participant]);
+    // DESIGN § 3.6: «owner + participants» — владелец первой строкой.
+    expect(result[0]).toMatchObject({
+      userId: OWNER_ID,
+      email: 'owner@example.com',
+      role: 'owner',
+    });
     // Чтение списка доступно и viewer: доступ проверяется тем же findOneAsync.
-    expect(db.select).toHaveBeenCalledTimes(3);
+    expect(db.select).toHaveBeenCalledTimes(4);
+  });
+
+  it('getCollaboratorsAsync не дублирует владельца из строк участия (KI-399)', async () => {
+    selectResults = [
+      [baseWorkflow],
+      [],
+      [{ email: 'owner@example.com' }],
+      [
+        // Старые данные могли успеть создать участие владельца: в ответе он
+        // должен остаться один — с ролью owner.
+        {
+          userId: OWNER_ID,
+          email: 'owner@example.com',
+          role: 'editor',
+          invitedAt: INVITED_AT,
+          invitedBy: OWNER_ID,
+        },
+        {
+          userId: PARTICIPANT_ID,
+          email: 'viewer@example.com',
+          role: 'viewer',
+          invitedAt: INVITED_AT,
+          invitedBy: OWNER_ID,
+        },
+      ],
+    ];
+
+    const result = await service.getCollaboratorsAsync(WORKFLOW_ID, OWNER_ID);
+
+    expect(result).toHaveLength(2);
+    expect(result.filter((row) => row.role === 'owner')).toHaveLength(1);
+    expect(result[0]).toEqual(owner);
   });
 
   it('getCollaboratorsAsync: чужой workflow → NotFoundException', async () => {

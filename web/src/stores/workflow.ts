@@ -465,6 +465,16 @@ const FIELD_EDIT_COALESCE_MS = 1000;
  */
 let lastFieldEditAt = 0;
 
+/**
+ * Роль текущего пользователя в workflow (KI-397, R7.6).
+ *
+ * `owner` — владелец, `editor` — правка и запуск, `viewer` — только чтение.
+ * `null` — роль неизвестна (workflow не сохранён или backend ещё не отдал
+ * поле). В этом случае UI ведёт себя как при `editor`: блокировать действия
+ * «на всякий случай» нельзя — это сломало бы обычный редактор.
+ */
+export type AccessRole = 'owner' | 'editor' | 'viewer';
+
 /** Состояние редактора графа. */
 export interface WorkflowState extends HistorySlice {
   nodes: AppNode[];
@@ -521,6 +531,21 @@ export interface WorkflowState extends HistorySlice {
    * не сохранён или владелец ещё не пришёл в ответе API.
    */
   currentWorkflowOwnerId: string | null;
+  /**
+   * Роль текущего пользователя в workflow (KI-397).
+   *
+   * Пока backend не отдаёт `accessRole` в ответе API, поле остаётся `null`
+   * (сбрасывается при загрузке/создании документа). Интеграция с API выставляет
+   * его через {@link setAccessRole}; TopBar скрывает Save/Run при `viewer`.
+   */
+  accessRole: AccessRole | null;
+  /**
+   * Устанавливает роль текущего пользователя в workflow (KI-397).
+   *
+   * @param role - `owner`/`editor`/`viewer` из ответа API либо `null`, если
+   *   роль неизвестна
+   */
+  setAccessRole: (role: AccessRole | null) => void;
   /** Название текущего workflow, редактируется в верхней панели. */
   currentWorkflowName: string;
 
@@ -1775,6 +1800,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   currentWorkflowId: null,
   currentWorkflowOwnerId: null,
+  accessRole: null,
   currentWorkflowName: DEFAULT_WORKFLOW_NAME,
 
   executionLevels: {},
@@ -1941,6 +1967,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       future: [],
       currentWorkflowId: null,
       currentWorkflowOwnerId: null,
+      accessRole: null,
       currentWorkflowName: DEFAULT_WORKFLOW_NAME,
       executionLevels: {},
       selectedNodeId: null,
@@ -2095,11 +2122,26 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   markSaved: (hash) => set({ lastSavedHash: hash }),
 
+  // KI-397: точка интеграции с API — backend отдаёт роль в ответе workflow,
+  // дальше TopBar решает, показывать ли Save/Run.
+  setAccessRole: (role) => set({ accessRole: role }),
+
   setNodes: (nodes) => set({ nodes }),
   setEdges: (edges) => set({ edges }),
 
   saveWorkflowAsync: async () => {
-    const { nodes, edges, currentWorkflowId, currentWorkflowName } = get();
+    // KI-397: viewer не может сохранять. Кнопка в TopBar скрыта, но Ctrl+S
+    // живёт в Canvas и вызывает стор напрямую — без guard'а запрос всё равно
+    // ушёл бы на backend (и вернул 404).
+    if (get().accessRole === 'viewer') {
+      set({
+        notice: { kind: 'error', text: i18n.t('topbar.viewer_readonly') },
+      });
+      return;
+    }
+
+    const { nodes, edges, currentWorkflowId, currentWorkflowName, accessRole } =
+      get();
     const name = currentWorkflowName.trim() || DEFAULT_WORKFLOW_NAME;
     // KI-266: комментарии уходят на backend вместе с остальными узлами —
     // движок хранит их в графе, но в план выполнения не включает. Фильтр
@@ -2121,6 +2163,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       set({
         currentWorkflowId: saved.id,
         currentWorkflowOwnerId: saved.userId,
+        // KI-397: роль из ответа API; если backend её ещё не отдаёт —
+        // сохраняем прежнее значение (при создании это `null`).
+        accessRole: saved.accessRole ?? accessRole,
         currentWorkflowName: saved.name,
         // KI-195: запомнили «чистое» состояние — индикатор в TopBar погаснет.
         lastSavedHash: computeGraphHash(nodes, edges),
@@ -2159,6 +2204,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         edges,
         currentWorkflowId: workflow.id,
         currentWorkflowOwnerId: workflow.userId,
+        // KI-397: роль приходит из ответа `GET /workflow/:id`; пока backend
+        // поле не отдаёт — `null` («неизвестна»), UI действия не блокирует.
+        accessRole: workflow.accessRole ?? null,
         currentWorkflowName: workflow.name,
         // KI-195: только что загруженный граф — «чистый» (иначе после F5
         // индикатор показывал бы «есть изменения»).

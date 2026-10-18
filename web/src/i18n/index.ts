@@ -51,8 +51,9 @@ void i18n.use(initReactI18next).init({
   interpolation: { escapeValue: false },
 });
 
-// KI-155: в `environment: 'node'` (юнит-тесты web) `document` нет. Проверка
-// делает модуль безопасным для импорта вне браузера, не меняя поведение в нём.
+// KI-155: `document` доступен не всегда (SSR, node-окружение без jsdom).
+// Проверка делает модуль безопасным для импорта вне браузера, не меняя
+// поведение в нём.
 if (typeof document !== 'undefined') {
   document.documentElement.lang = i18n.language;
 }

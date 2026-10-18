@@ -8,7 +8,7 @@ import { z } from 'zod';
  * Владелец в этом списке отсутствует: он задаётся полем `workflows.user_id`,
  * а не строкой участия.
  */
-export const CollaboratorRoleSchema = z.enum(['viewer', 'editor']);
+export const CollaboratorRoleSchema = z.enum(['owner', 'viewer', 'editor']);
 
 /** Роль участника workflow. */
 export type CollaboratorRole = z.infer<typeof CollaboratorRoleSchema>;

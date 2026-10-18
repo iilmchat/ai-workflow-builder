@@ -46,6 +46,15 @@ export const ApiWorkflowSchema = z.object({
   version: z.number().default(1),
   createdAt: z.string().nullish(),
   updatedAt: z.string().nullish(),
+  /**
+   * Роль текущего пользователя в workflow (KI-397).
+   *
+   * Поле необязательное: backend отдаёт его ещё не во всех ответах (список
+   * workflow — KI-398). `null`/`undefined` означают «роль неизвестна», и UI не
+   * блокирует действия. Значения совпадают с `AccessRole`
+   * (`stores/workflow.ts`).
+   */
+  accessRole: z.enum(['owner', 'editor', 'viewer']).nullish(),
 });
 
 /** Workflow в терминах API. */

@@ -369,6 +369,28 @@ describe('staging / preprod считаются prod-подобными (KI-221)'
   });
 });
 
+describe('TRUST_PROXY (R7.7, KI-419)', () => {
+  it('по умолчанию выключен — прокси не доверяем', () => {
+    expect(EnvSchema.parse(baseEnv).TRUST_PROXY).toBe(false);
+    // Пустая строка в .env = «не задано» (KI-084), а не true.
+    expect(EnvSchema.parse({ ...baseEnv, TRUST_PROXY: '' }).TRUST_PROXY).toBe(false);
+  });
+
+  it("различает 'true' и 'false' из .env", () => {
+    expect(EnvSchema.parse({ ...baseEnv, TRUST_PROXY: 'true' }).TRUST_PROXY).toBe(true);
+    expect(EnvSchema.parse({ ...baseEnv, TRUST_PROXY: 'false' }).TRUST_PROXY).toBe(
+      false,
+    );
+    expect(EnvSchema.parse({ ...baseEnv, TRUST_PROXY: true }).TRUST_PROXY).toBe(true);
+    expect(EnvSchema.parse({ ...baseEnv, TRUST_PROXY: false }).TRUST_PROXY).toBe(false);
+  });
+
+  it('отклоняет мусор вместо булева значения', () => {
+    expect(() => EnvSchema.parse({ ...baseEnv, TRUST_PROXY: 'yes' })).toThrow();
+    expect(() => EnvSchema.parse({ ...baseEnv, TRUST_PROXY: '1' })).toThrow();
+  });
+});
+
 describe('SANDBOX_* (R7.5, KI-364)', () => {
   it('дефолты: выключено, таймаут 100 мс, память 16 МБ', () => {
     const parsed = EnvSchema.parse(baseEnv);

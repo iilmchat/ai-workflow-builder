@@ -1,4 +1,4 @@
-import { and, eq, exists, or, type SQL, type SQLWrapper } from 'drizzle-orm';
+import { and, eq, exists, or, sql, type SQL, type SQLWrapper } from 'drizzle-orm';
 import type { Database } from '../db/db.module.js';
 import { workflowCollaborators, workflows } from '../db/schema.js';
 
@@ -9,6 +9,16 @@ import { workflowCollaborators, workflows } from '../db/schema.js';
  * проходит оба условия и проверяется отдельной веткой `workflows.user_id`.
  */
 export type WorkflowAccessRole = 'viewer' | 'editor';
+
+/**
+ * Роль пользователя в workflow с учётом владельца (KI-398).
+ *
+ * В отличие от {@link WorkflowAccessRole} включает `owner`: в таблице
+ * `workflow_collaborators` роли владельца нет (он определяется по
+ * `workflows.user_id`), но в ответе `GET /workflow` клиенту нужна одна
+ * величина, по которой UI решает, что показывать (KI-397).
+ */
+export type WorkflowAccessRoleWithOwner = 'owner' | WorkflowAccessRole;
 
 /**
  * Коррелированное `EXISTS` по участнику workflow (R7.6).
@@ -65,12 +75,70 @@ export function workflowAccessFilter(
   userId: string,
   minimumRole: WorkflowAccessRole = 'viewer',
 ): SQL {
+  // `and` возвращает `SQL | undefined` только из-за сигнатуры с optional-
+  // аргументами; здесь оба аргумента заданы, поэтому fallback недостижим.
+  return (
+    and(eq(workflows.id, workflowId), workflowAccessListFilter(db, userId, minimumRole)) ??
+    eq(workflows.id, workflowId)
+  );
+}
+
+/**
+ * WHERE «workflow, доступные пользователю» без привязки к конкретному id
+ * (KI-398).
+ *
+ * Списочный вариант {@link workflowAccessFilter}: тот же предикат
+ * «владелец **или** участник», но без `workflows.id = $1`. Нужен
+ * `GET /workflow`, который раньше отдавал только собственные графы, из-за чего
+ * collaborative-workflow были видны лишь по прямой ссылке.
+ *
+ * @param db - соединение Drizzle
+ * @param userId - uuid пользователя из access-токена
+ * @param minimumRole - минимальная роль участника (по умолчанию `viewer`)
+ * @returns условие для Drizzle
+ */
+export function workflowAccessListFilter(
+  db: Database,
+  userId: string,
+  minimumRole: WorkflowAccessRole = 'viewer',
+): SQL {
   const owner = eq(workflows.userId, userId);
   const collaborator = collaboratorExistsCondition(db, userId, minimumRole);
 
-  // `and` возвращает `SQL | undefined` только из-за сигнатуры с optional-
-  // аргументами; здесь оба аргумента заданы, поэтому fallback недостижим.
-  return and(eq(workflows.id, workflowId), or(owner, collaborator)) ?? eq(workflows.id, workflowId);
+  // `or` возвращает `SQL | undefined` только из-за optional-сигнатуры; оба
+  // аргумента заданы, поэтому fallback недостижим.
+  return or(owner, collaborator) ?? owner;
+}
+
+/**
+ * Проекция роли пользователя для элемента списка workflow (KI-398).
+ *
+ * Один проход по БД вместо второго запроса «прочитать роли»: владелец получает
+ * `owner`, участник — свою роль из `workflow_collaborators`
+ * (`editor`/`viewer`). `LIMIT 1` страхует от дублей (в БД их не бывает —
+ * составной PK `(workflow_id, user_id)`), но не меняет результат.
+ *
+ * Выражение коррелировано с `workflows` основного запроса, поэтому его можно
+ * вставлять только в `SELECT`, где есть эта таблица.
+ *
+ * @param userId - uuid пользователя из access-токена
+ * @returns SQL-выражение с алиасом `access_role`
+ */
+export function workflowAccessRoleExpression(
+  userId: string,
+): SQL.Aliased<WorkflowAccessRoleWithOwner> {
+  return sql<WorkflowAccessRoleWithOwner>`
+    case
+      when ${workflows.userId} = ${userId} then 'owner'
+      else (
+        select ${workflowCollaborators.role}
+        from ${workflowCollaborators}
+        where ${workflowCollaborators.workflowId} = ${workflows.id}
+          and ${workflowCollaborators.userId} = ${userId}
+        limit 1
+      )
+    end
+  `.as('access_role');
 }
 
 /**

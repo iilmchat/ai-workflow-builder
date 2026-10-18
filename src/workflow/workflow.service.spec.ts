@@ -262,19 +262,59 @@ describe('WorkflowService', () => {
 
   describe('findAllAsync', () => {
     it('без userId не применяет фильтр по владельцу', async () => {
+      const row = { ...baseWorkflow, accessRole: 'owner' };
+      const localChain = chain(() => [row]);
+      db.select.mockImplementation(() => localChain);
+
       const result = await service.findAllAsync();
 
       expect(db.select).toHaveBeenCalledTimes(1);
-      expect(selectChain.from).toHaveBeenCalledWith(workflows);
-      expect(selectChain.where).toHaveBeenCalledWith(undefined);
-      expect(result).toEqual([baseWorkflow]);
+      expect(localChain.from).toHaveBeenCalledWith(workflows);
+      expect(localChain.where).toHaveBeenCalledWith(undefined);
+      expect(result).toEqual([row]);
     });
 
-    it('с userId фильтрует по владельцу', async () => {
+    it('с userId учитывает владельца и участников (KI-398)', async () => {
       await service.findAllAsync('user-1');
 
-      expect(whereSQL(selectChain.where)).toContain('"workflows"."user_id" = user-1');
+      const sql = whereSQL(selectChain.where);
+
+      // Список = свои + чужие, где пользователь участник. Прежний
+      // `eq(workflows.userId)` давал только свои (KI-398).
+      expect(sql).toContain('"workflows"."user_id" = user-1');
+      expect(sql).toContain('exists');
       expect(whereParams(selectChain.where)).toEqual(['user-1']);
+    });
+
+    it('возвращает свои и чужие workflow с accessRole (KI-398)', async () => {
+      const own = { ...baseWorkflow, accessRole: 'owner' };
+      const shared = {
+        ...baseWorkflow,
+        id: '99999999-9999-4999-8999-999999999999',
+        userId: 'user-2',
+        accessRole: 'editor',
+      };
+      db.select.mockImplementation(() => chain(() => [own, shared]));
+
+      const result = await service.findAllAsync('user-1');
+
+      expect(result).toHaveLength(2);
+      expect(result.map((item) => item.id)).toEqual([own.id, shared.id]);
+      // Роль приходит из SQL-проекции `access_role`: owner — по user_id,
+      // editor/viewer — из workflow_collaborators.
+      expect(result.map((item) => item.accessRole)).toEqual(['owner', 'editor']);
+    });
+
+    it('проецирует accessRole тем же запросом, без второго SELECT (KI-398)', async () => {
+      await service.findAllAsync('user-1');
+
+      // Первый вызов db.select — основная выборка списка; в её проекции
+      // обязано быть вычисляемое поле. N+1 исключён: отдельного запроса ролей
+      // нет (единственный второй select — построение EXISTS-подзапроса).
+      const selection = db.select.mock.calls[0]?.[0] as Record<string, unknown>;
+
+      expect(selection.accessRole).toBeDefined();
+      expect(db.select).toHaveBeenCalledTimes(2);
     });
 
     it('сортирует по createdAt по убыванию', async () => {

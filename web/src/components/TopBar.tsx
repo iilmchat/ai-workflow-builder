@@ -12,9 +12,11 @@ import {
   parseExportedWorkflowFile,
 } from '@/lib/export-import-api';
 import { nodeLabelOf } from '@/lib/node-registry';
+import { isAudioUrlInvalid, readToolAudioUrl } from '@/lib/image-tool-node';
 import { useAuthStore } from '@/stores/auth';
 import { useWorkflowStore } from '@/stores/workflow';
 import type { RunStatus } from '@/types/run-stream';
+import type { ImageToolFlowNode } from '@/types/graph';
 import { LoadModal } from './LoadModal';
 import { ShareModal } from './ShareModal';
 import { computeGraphHash } from '@/lib/graph-hash';
@@ -135,6 +137,11 @@ export function TopBar() {
   );
   const isWorkflowOwner =
     user !== null && currentWorkflowOwnerId !== null && user.id === currentWorkflowOwnerId;
+  // KI-397: viewer видит граф, но действия записи ему недоступны — backend
+  // отвечает 404 на PATCH/POST run. Пока роль приходит из API не всегда,
+  // `null` трактуем как «неизвестна» и ничего не скрываем.
+  const accessRole = useWorkflowStore((state) => state.accessRole);
+  const isViewer = accessRole === 'viewer';
   // KI-195: «грязный» граф — если хэш текущего состояния не совпадает с хэшем
   // последнего сохранения/загрузки.
   const isDirty = useWorkflowStore(
@@ -262,6 +269,26 @@ export function TopBar() {
   };
 
   /**
+   * Ищет `image_tool`-узлы с невалидным `audioUrl` (KI-424).
+   *
+   * У операции `lipsync` второй вход — аудио; ссылка не по схеме `http(s)`
+   * гарантированно упадёт на backend, поэтому Run блокируется до запроса.
+   * Пустое поле нейтрально: «аудио обязательно» — правило backend (KI-369),
+   * UI ругается только на введённую, но некорректную ссылку.
+   *
+   * @returns подписи узлов с невалидным `audioUrl` (пусто — запускать можно)
+   */
+  const findNodesWithInvalidAudioUrl = (): string[] => {
+    const { nodes } = useWorkflowStore.getState();
+
+    return nodes
+      .filter((node): node is ImageToolFlowNode => node.data.kind === 'image_tool')
+      .filter((node) => node.data.operation === 'lipsync')
+      .filter((node) => isAudioUrlInvalid(readToolAudioUrl(node.data.params)))
+      .map((node) => nodeLabelOf(node, node.id));
+  };
+
+  /**
    * Сохраняет граф. После первого сохранения id попадает в URL, чтобы
    * страницу можно было перезагрузить и вернуться к тому же workflow.
    */
@@ -385,6 +412,11 @@ export function TopBar() {
    * устаревшая версия графа.
    */
   const handleRun = async () => {
+    // KI-397: у viewer Run скрыт; guard оставлен для программных вызовов.
+    if (isViewer) {
+      return;
+    }
+
     // KI-074: сначала проверяем модели — граф с недоступной моделью упадёт.
     const unavailableNodes = findNodesWithUnavailableModel();
 
@@ -407,6 +439,20 @@ export function TopBar() {
         kind: 'error',
         text: t('topbar.image_models_missing', {
           nodes: nodesWithoutMediaModel.join(', '),
+        }),
+      });
+
+      return;
+    }
+
+    // KI-424: lipsync с невалидным audioUrl упадёт на backend — не запускаем.
+    const nodesWithInvalidAudioUrl = findNodesWithInvalidAudioUrl();
+
+    if (nodesWithInvalidAudioUrl.length > 0) {
+      setNotice({
+        kind: 'error',
+        text: t('topbar.audio_url_invalid', {
+          nodes: nodesWithInvalidAudioUrl.join(', '),
         }),
       });
 
@@ -588,15 +634,20 @@ export function TopBar() {
             {t('topbar.load')}
           </button>
 
-          <button
-            type="button"
-            onClick={() => void handleSave()}
-            disabled={isBusy}
-            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isSaving ? <Spinner /> : <span aria-hidden="true">💾</span>}
-            {t('topbar.save')}
-          </button>
+          {/* KI-397: viewer не может сохранять — кнопка не показывается
+              (не просто disabled: действие гарантированно вернёт 404). */}
+          {!isViewer && (
+            <button
+              type="button"
+              data-topbar-save=""
+              onClick={() => void handleSave()}
+              disabled={isBusy}
+              className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isSaving ? <Spinner /> : <span aria-hidden="true">💾</span>}
+              {t('topbar.save')}
+            </button>
+          )}
 
           {/* KI-195: индикатор несохранённых изменений. Значение вычисляется
               селектором (хэш графа против хэша последнего сохранения), а не
@@ -650,17 +701,21 @@ export function TopBar() {
             {t('topbar.import')}
           </button>
 
-          <button
-            type="button"
-            onClick={() => void handleRun()}
-            disabled={isBusy || isRunActive}
-            // Атрибут для e2e/smoke: статус запуска виден без разбора текста.
-            data-run-status={runStatus ?? 'idle'}
-            className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isRunActive ? <Spinner /> : <span aria-hidden="true">▶️</span>}
-            {runLabel}
-          </button>
+          {/* KI-397: viewer не запускает workflow — кнопка скрыта. */}
+          {!isViewer && (
+            <button
+              type="button"
+              data-topbar-run=""
+              onClick={() => void handleRun()}
+              disabled={isBusy || isRunActive}
+              // Атрибут для e2e/smoke: статус запуска виден без разбора текста.
+              data-run-status={runStatus ?? 'idle'}
+              className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isRunActive ? <Spinner /> : <span aria-hidden="true">▶️</span>}
+              {runLabel}
+            </button>
+          )}
 
           {/* R6.2.2: share-ссылка доступна только для сохранённого workflow. */}
           <button

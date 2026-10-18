@@ -6,6 +6,8 @@ import * as schema from '../db/schema.js';
 import {
   accessibleWorkflowIdsSubquery,
   workflowAccessFilter,
+  workflowAccessListFilter,
+  workflowAccessRoleExpression,
   workflowOwnerFilter,
 } from './workflow-access.js';
 
@@ -52,6 +54,29 @@ describe('workflow-access (R7.6)', () => {
 
     expect(query.sql).toContain('"workflow_collaborators"."role" =');
     expect(query.params).toEqual([WORKFLOW_ID, USER_ID, USER_ID, 'editor']);
+  });
+
+  it('списочный фильтр не ограничивает по id, но учитывает владельца и участие (KI-398)', () => {
+    const query = render(workflowAccessListFilter(db, USER_ID));
+
+    // Список — не один workflow: условия `workflows.id = ...` быть не должно.
+    expect(query.sql).not.toContain('"workflows"."id" =');
+    expect(query.sql).toContain('"workflows"."user_id" =');
+    expect(query.sql).toContain('exists');
+    expect(query.sql).toContain('"workflow_collaborators"."user_id" =');
+    expect(query.params).toEqual([USER_ID, USER_ID]);
+  });
+
+  it('проекция роли: owner для владельца, иначе роль участия (KI-398)', () => {
+    const query = render(workflowAccessRoleExpression(USER_ID).getSQL());
+
+    expect(query.sql.toLowerCase()).toContain('case');
+    expect(query.sql).toContain("then 'owner'");
+    // Роль участника берётся из workflow_collaborators по (workflow_id, user_id).
+    expect(query.sql).toContain('"workflow_collaborators"."role"');
+    expect(query.sql).toContain('"workflow_collaborators"."workflow_id" = "workflows"."id"');
+    expect(query.sql).toContain('"workflow_collaborators"."user_id" =');
+    expect(query.params).toEqual([USER_ID, USER_ID]);
   });
 
   it('owner-filter участников не учитывает', () => {
