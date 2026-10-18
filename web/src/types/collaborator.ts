@@ -4,9 +4,8 @@ import { z } from 'zod';
  * Роли участника workflow (R7.6, DESIGN v0.9 § 3.6) — зеркало backend
  * `WORKFLOW_COLLABORATOR_ROLES`.
  *
+ * `owner` — владелец (возвращается первой строкой в списке, нельзя изменить/удалить);
  * `viewer` — только чтение; `editor` — чтение + правка графа + запуск.
- * Владелец в этом списке отсутствует: он задаётся полем `workflows.user_id`,
- * а не строкой участия.
  */
 export const CollaboratorRoleSchema = z.enum(['owner', 'viewer', 'editor']);
 
@@ -39,7 +38,7 @@ export type Collaborator = z.infer<typeof CollaboratorSchema>;
  */
 export const InviteCollaboratorPayloadSchema = z.object({
   userId: z.uuid('Укажите корректный UUID пользователя'),
-  role: CollaboratorRoleSchema,
+  role: z.enum(['viewer', 'editor']), // owner нельзя пригласить
 });
 
 /** Валидированное тело приглашения. */
