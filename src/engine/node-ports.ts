@@ -191,6 +191,18 @@ export const NODE_PORT_CONTRACT: Record<string, NodePortContract> = {
     targetHandleId: 'text-input',
     inputPortName: 'prompt',
   },
+  // v0.10 S2 (DESIGN v0.10 § 3.1.3): узел `web_search`. Вход — запрос
+  // (`prompt`), выход — готовый текст для LLM (`text`, нумерованный список
+  // источников). Source-хендл назван `search-output`, чтобы не переиспользовать
+  // `text-output`: type-aware резолвер (KI-301) отдал бы по нему `text` только
+  // при точном совпадении контракта, а отдельное имя делает поток в графе
+  // читаемым.
+  web_search: {
+    sourceHandleId: 'search-output',
+    outputPortName: 'text',
+    targetHandleId: 'text-input',
+    inputPortName: 'prompt',
+  },
   // `compare` сознательно БЕЗ контракта: `NodePortContract` описывает один
   // вход, а узлу нужны два (`a` и `b`). С контрактом обе связи свернулись бы
   // в один ключ (KI-035) и второй операнд потерялся бы. Без контракта работает

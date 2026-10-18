@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useTheme } from '@/hooks/use-theme';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import { ApiError } from '@/lib/api';
 import { loginAsync, registerAsync } from '@/lib/auth-api';
@@ -53,6 +54,8 @@ export function LoginPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
+  // v0.10 S2: тема переключает светлый/тёмный вариант логотипа над формой.
+  const { resolved } = useTheme();
   const setSession = useAuthStore((state) => state.setSession);
 
   const [mode, setMode] = useState<Mode>('login');
@@ -122,65 +125,75 @@ export function LoginPage() {
 
   return (
     <div className="flex h-screen w-screen items-center justify-center bg-background px-4">
-      <form
-        onSubmit={(event) => void handleSubmit(event)}
-        className="w-full max-w-sm rounded-xl border border-border bg-background p-6 shadow-lg"
-      >
-        <h1 className="text-lg font-semibold text-foreground">
-          {t('auth.login.title')}
-        </h1>
+      <div className="flex w-full max-w-sm flex-col items-center gap-4">
+        {/* v0.10 S2: логотип 64 px по центру над формой. */}
+        <img
+          src={resolved === 'dark' ? '/logo-dark.svg' : '/logo.svg'}
+          alt="IIRuChating"
+          data-login-logo=""
+          className="h-16 w-auto"
+        />
 
-        <label className="mt-4 block text-xs font-medium text-muted-foreground">
-          {t('auth.login.email')}
-          <input
-            type="email"
-            name="email"
-            autoComplete="email"
-            value={email}
-            onChange={handleEmailChange}
-            aria-label={t('auth.login.email')}
-            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
-          />
-        </label>
-
-        <label className="mt-3 block text-xs font-medium text-muted-foreground">
-          {t('auth.login.password')}
-          <input
-            type="password"
-            name="password"
-            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-            maxLength={PASSWORD_MAX}
-            value={password}
-            onChange={handlePasswordChange}
-            aria-label={t('auth.login.password')}
-            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
-          />
-        </label>
-
-        {error !== null && (
-          <p role="alert" className="mt-3 text-xs text-red-600">
-            {error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="mt-4 w-full cursor-pointer rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+        <form
+          onSubmit={(event) => void handleSubmit(event)}
+          className="w-full rounded-xl border border-border bg-background p-6 shadow-lg"
         >
-          {mode === 'login' ? t('auth.login.submit') : t('auth.login.register')}
-        </button>
+          <h1 className="text-lg font-semibold text-foreground">
+            {t('auth.login.title')}
+          </h1>
 
-        <button
-          type="button"
-          onClick={handleToggle}
-          className="mt-3 w-full cursor-pointer text-center text-xs text-blue-600 hover:underline"
-        >
-          {mode === 'login'
-            ? t('auth.login.toggle.toRegister')
-            : t('auth.login.toggle.toLogin')}
-        </button>
-      </form>
+          <label className="mt-4 block text-xs font-medium text-muted-foreground">
+            {t('auth.login.email')}
+            <input
+              type="email"
+              name="email"
+              autoComplete="email"
+              value={email}
+              onChange={handleEmailChange}
+              aria-label={t('auth.login.email')}
+              className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+            />
+          </label>
+
+          <label className="mt-3 block text-xs font-medium text-muted-foreground">
+            {t('auth.login.password')}
+            <input
+              type="password"
+              name="password"
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              maxLength={PASSWORD_MAX}
+              value={password}
+              onChange={handlePasswordChange}
+              aria-label={t('auth.login.password')}
+              className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+            />
+          </label>
+
+          {error !== null && (
+            <p role="alert" className="mt-3 text-xs text-red-600">
+              {error}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="mt-4 w-full cursor-pointer rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {mode === 'login' ? t('auth.login.submit') : t('auth.login.register')}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleToggle}
+            className="mt-3 w-full cursor-pointer text-center text-xs text-blue-600 hover:underline"
+          >
+            {mode === 'login'
+              ? t('auth.login.toggle.toRegister')
+              : t('auth.login.toggle.toLogin')}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

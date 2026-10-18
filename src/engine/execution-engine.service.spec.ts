@@ -16,6 +16,7 @@ import { LlmRegistryService } from '../llm/llm-registry.service.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
+import { WEB_SEARCH_PROVIDER } from '../web-search/web-search.module.js';
 import { UnsupportedNodeTypeException, type SubWorkflowRecord } from './node-executors.js';
 import { RetryableNodeException, VectorDisabledException } from './errors.js';
 
@@ -316,6 +317,8 @@ describe('ExecutionEngineService', () => {
   let mediaVideoExecute: ReturnType<typeof vi.fn>;
   let mediaAudioExecute: ReturnType<typeof vi.fn>;
   let mediaMusicExecute: ReturnType<typeof vi.fn>;
+  /** v0.10 S2: поиск web-search-провайдера (Tavily подменяется моком). */
+  let webSearchExecute: ReturnType<typeof vi.fn>;
   let findWorkflow: ReturnType<typeof vi.fn>;
   let fake: ReturnType<typeof createFakeDb>;
   /** Окружение для `ConfigService`-заглушки (изменяется в отдельных тестах). */
@@ -426,6 +429,17 @@ describe('ExecutionEngineService', () => {
       (_node: NodeDto, _inputs: Record<string, unknown>, _runId: string) =>
         Promise.resolve(mediaNodeResult('https://cdn/music.mp3', 'MUSIC')),
     );
+    // v0.10 S2: web_search ходит в провайдера — в тесте он замокан.
+    webSearchExecute = vi.fn(
+      (_query: string, _options?: { maxResults?: number }) =>
+        Promise.resolve([
+          {
+            title: 'TypeScript',
+            url: 'https://example.com/ts',
+            snippet: 'Язык программирования.',
+          },
+        ]),
+    );
     // R6.7: подграфы приходят из WorkflowService — в юнит-тесте он замокан.
     findWorkflow = vi.fn((_id: string, _userId?: string) =>
       Promise.resolve(null as SubWorkflowRecord | null),
@@ -454,6 +468,15 @@ describe('ExecutionEngineService', () => {
             executeVideoAsync: mediaVideoExecute,
             executeAudioAsync: mediaAudioExecute,
             executeMusicAsync: mediaMusicExecute,
+          },
+        },
+        // v0.10 S2: провайдер узла web_search (Tavily в продакшене).
+        {
+          provide: WEB_SEARCH_PROVIDER,
+          useValue: {
+            name: 'fake',
+            isConfigured: true,
+            searchAsync: webSearchExecute,
           },
         },
         // R6.7 (KI-200): источник подграфов для узла sub_workflow.
@@ -1464,15 +1487,28 @@ describe('ExecutionEngineService', () => {
     expect(fake.rows[0].error).toContain('vector_query');
   });
 
-  it('v0.10 S0: заглушка web_search падает понятной ошибкой, а не «неизвестным типом»', async () => {
-    const graph: GraphDto = { nodes: [node('A', 'web_search')], edges: [] };
+  it('v0.10 S2: web_search выполняет поиск и отдаёт { results, text }', async () => {
+    const graph: GraphDto = {
+      nodes: [node('A', 'web_search', { query: 'typescript' })],
+      edges: [],
+    };
 
-    await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow(
-      UnsupportedNodeTypeException,
-    );
+    const result = await service.executeAsync(RUN_ID, graph);
 
-    expect(fake.rows[0].error).toContain('web_search');
-    expect(fake.rows[0].error).toContain('v0.10 S0');
+    expect(result.status).toBe('completed');
+    expect(webSearchExecute).toHaveBeenCalledWith('typescript', {
+      maxResults: 5,
+    });
+    expect(result.outputs.A).toEqual({
+      results: [
+        {
+          title: 'TypeScript',
+          url: 'https://example.com/ts',
+          snippet: 'Язык программирования.',
+        },
+      ],
+      text: expect.stringContaining('1. TypeScript'),
+    });
   });
 
   it('KI-031: повторный прогон графа не создаёт дубли node_runs (upsert)', async () => {

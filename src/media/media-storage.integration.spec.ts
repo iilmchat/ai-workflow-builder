@@ -27,6 +27,7 @@ import { RunEventsService } from '../runs/run-events.service.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
+import { WEB_SEARCH_PROVIDER } from '../web-search/web-search.module.js';
 import type { IMediaProvider } from './media-provider.interface.js';
 
 /**
@@ -216,6 +217,16 @@ describe.skipIf(!process.env.DATABASE_URL)(
           {
             provide: AgentService,
             useValue: { runAgentAsync: vi.fn() },
+          },
+          // v0.10 S2: web_search в этом графе не выполняется, но
+          // зависимость должна резолвиться при сборке TestingModule.
+          {
+            provide: WEB_SEARCH_PROVIDER,
+            useValue: {
+              name: 'fake',
+              isConfigured: false,
+              searchAsync: vi.fn(),
+            },
           },
           // v0.10 S0 (KI-455): движок читает PGVECTOR_ENABLED через ConfigService.
           {

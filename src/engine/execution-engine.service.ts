@@ -27,6 +27,8 @@ import {
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
+import { WEB_SEARCH_PROVIDER } from '../web-search/web-search.module.js';
+import type { IWebSearchProvider } from '../web-search/web-search.interface.js';
 import type { GraphDto, NodeDto } from './dto/index.js';
 import { EngineService, type ExecutionPlanDto } from './engine.service.js';
 import { RetryableNodeException, VectorDisabledException } from './errors.js';
@@ -45,7 +47,7 @@ import {
   executeTextNode,
   executeVectorQueryNodeAsync,
   executeVectorUpsertNodeAsync,
-  executeWebSearchNodeStub,
+  executeWebSearchNodeAsync,
   executeWriteFileNodeStub,
   prefixSubWorkflowGraph,
   type SubWorkflowContext,
@@ -231,6 +233,10 @@ export class ExecutionEngineService {
     // v0.10 S0 (KI-455): аварийный выключатель vector/memory-узлов.
     // ConfigModule глобальный, поэтому сервис резолвится в любом модуле.
     private readonly config: ConfigService,
+    // v0.10 S2 (DESIGN v0.10 § 3.1): web-search-провайдер узла web_search.
+    // Токен выбирается в WebSearchModule по env WEB_SEARCH_PROVIDER.
+    @Inject(WEB_SEARCH_PROVIDER)
+    private readonly webSearchProvider: IWebSearchProvider,
   ) {}
 
   /**
@@ -1098,11 +1104,21 @@ export class ExecutionEngineService {
 
         return { kind: 'plain', outputs, metrics: null };
       }
+      // v0.10 S2 (DESIGN v0.10 § 3.1): веб-поиск. Провайдер выбран в
+      // WebSearchModule по env; исполнитель валидирует data, формирует
+      // `{ results, text }` и не пропускает `rawContent` в outputs (KI-459).
+      case 'web_search': {
+        const outputs = await executeWebSearchNodeAsync(
+          node.data,
+          inputs,
+          this.webSearchProvider,
+        );
+
+        return { kind: 'plain', outputs, metrics: null };
+      }
       // v0.10 S0 (Foundation): новые типы зарегистрированы, но исполнители
-      // появятся в S2/S6/S8. Заглушки падают понятной ошибкой конкретного
+      // появятся в S6/S8. Заглушки падают понятной ошибкой конкретного
       // типа, а не «неизвестный тип»: план и граф остаются валидными.
-      case 'web_search':
-        return executeWebSearchNodeStub(node);
       case 'document_gen':
         return executeDocumentGenNodeStub(node);
       case 'read_file':

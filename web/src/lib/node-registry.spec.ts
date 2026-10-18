@@ -65,18 +65,15 @@ const VECTOR_MEMORY_TYPES = [
 const AGENT_TYPE = 'agent' as const;
 
 /**
- * Типы, добавленные в v0.10 S0 (Foundation).
+ * Типы, добавленные в v0.10 S0 (Foundation) и ещё не получившие компонент.
  *
- * Компонентов у них пока нет (`component: undefined`): это каркас для узлов
- * Web Search / Document Generation / Safe Filesystem. S1+ заменит значения,
- * поэтому проверять `lazy` у них нельзя — только регистрацию и i18n.
+ * `web_search` вышел из этого списка в S2 и проверяется отдельно — у него уже
+ * есть ленивый компонент и React Flow-регистрация.
  */
-const V010_TYPES = [
-  'web_search',
-  'document_gen',
-  'read_file',
-  'write_file',
-] as const;
+const V010_STUB_TYPES = ['document_gen', 'read_file', 'write_file'] as const;
+
+/** Тип, реализованный в v0.10 S2: узел веб-поиска. */
+const WEB_SEARCH_TYPE = 'web_search' as const;
 
 /** Все типы реестра — для проверки labelKey в обоих i18n-файлах. */
 const ALL_TYPES: readonly NodeType[] = [...NODE_TYPES];
@@ -277,11 +274,11 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
     }
   });
 
-  it('v0.10 S0: четыре каркасных типа, i18n и вставка в связь', () => {
-    for (const type of V010_TYPES) {
+  it('v0.10 S0: каркасные типы, i18n и вставка в связь', () => {
+    for (const type of V010_STUB_TYPES) {
       const entry = NODE_REGISTRY[type];
 
-      // S0 регистрирует тип, но компонент появится в S1+ — иначе каталог
+      // S0 регистрирует тип, но компонент появится в S6/S8 — иначе каталог
       // попытался бы отрисовать узел `undefined`-компонентом.
       expect(entry.component, `компонент ${type}`).toBeUndefined();
       expect(entry.icon, `иконка ${type}`).not.toBe('');
@@ -299,8 +296,37 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
     // иначе React Flow получил бы `undefined` вместо компонента.
     expect(NODE_TYPES).toHaveLength(22);
 
-    for (const type of V010_TYPES) {
+    for (const type of V010_STUB_TYPES) {
       expect(nodeTypes, type).not.toHaveProperty(type);
+    }
+  });
+
+  it('v0.10 S2: web_search — ленивый компонент, категория и i18n', () => {
+    const entry = NODE_REGISTRY[WEB_SEARCH_TYPE];
+
+    expect(entry.category).toBe('tools');
+    expect(entry.icon).not.toBe('');
+    expectLazyComponent(entry.component);
+    expect(canInsertOnEdge(WEB_SEARCH_TYPE)).toBe(true);
+    expect(isNodeType(WEB_SEARCH_TYPE)).toBe(true);
+    expect(entry.capabilities).toEqual({
+      externalState: true,
+      userConfig: true,
+    });
+
+    // S2 зарегистрировал компонент в React Flow.
+    expect(nodeTypes).toHaveProperty(WEB_SEARCH_TYPE);
+
+    for (const key of [
+      'node.web_search.label',
+      'node.web_search.query',
+      'node.web_search.query.placeholder',
+      'node.web_search.maxResults',
+      'node.web_search.results',
+      'node.web_search.empty',
+    ]) {
+      expect(ru, `ru: ${key}`).toHaveProperty([key]);
+      expect(en, `en: ${key}`).toHaveProperty([key]);
     }
   });
 

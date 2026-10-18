@@ -83,4 +83,14 @@ describe('TopBar — версия и копирайт (KI-446)', () => {
       screen.getByPlaceholderText(ru['topbar.name.placeholder']),
     ).toBeInTheDocument();
   });
+
+  it('показывает логотип 24 px слева от названия проекта (v0.10 S2)', () => {
+    renderTopBar();
+
+    const logo = screen.getByAltText('IIRuChating');
+
+    expect(logo.tagName).toBe('IMG');
+    expect(logo).toHaveClass('h-6');
+    expect(logo).toHaveAttribute('src', '/logo.svg');
+  });
 });

@@ -110,7 +110,8 @@ describe('node-ports', () => {
     });
   });
 
-  describe('sub_workflow (R6.7, KI-200)', () => {    it('выход — отдельный хендл result-output, а не общий text-output (KI-301)', () => {
+  describe('sub_workflow (R6.7, KI-200)', () => {
+    it('выход — отдельный хендл result-output, а не общий text-output (KI-301)', () => {
       // `text-output` переводится в порт `text`: с ним результат подграфа
       // (`outputs.result`) не доехал бы до зависимого узла.
       expect(handleIdToOutputPort('result-output')).toBe('result');
@@ -122,6 +123,22 @@ describe('node-ports', () => {
       expect(NODE_PORT_CONTRACT.sub_workflow.targetHandleId).toBe('text-input');
       expect(inferInputPortName('sub_workflow')).toBe('prompt');
       expect(inferDefaultOutputPort('sub_workflow')).toBe('result');
+    });
+  });
+
+  describe('web_search (v0.10 S2)', () => {
+    it('выход — search-output → text: LLM получает готовый список источников', () => {
+      expect(NODE_PORT_CONTRACT.web_search.sourceHandleId).toBe('search-output');
+      expect(NODE_PORT_CONTRACT.web_search.outputPortName).toBe('text');
+      expect(inferDefaultOutputPort('web_search')).toBe('text');
+      expect(handleIdToOutputPort('search-output', 'web_search')).toBe('text');
+      // Чужой хендл не подставляет порт web_search.
+      expect(handleIdToOutputPort('text-output', 'web_search')).toBeNull();
+    });
+
+    it('вход — text-input → prompt: запрос приходит от Text/LLM', () => {
+      expect(NODE_PORT_CONTRACT.web_search.targetHandleId).toBe('text-input');
+      expect(inferInputPortName('web_search')).toBe('prompt');
     });
   });
 });

@@ -502,9 +502,15 @@ export function TopBar() {
   return (
     <>
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-4">
-        <span className="text-sm" aria-hidden="true">
-          🧩
-        </span>
+        {/* v0.10 S2: фирменный логотип слева от названия проекта. Высота
+            фиксирована (24 px), ширина — по пропорциям исходника; тема
+            переключает светлый/тёмный SVG. */}
+        <img
+          src={resolved === 'dark' ? '/logo-dark.svg' : '/logo.svg'}
+          alt="IIRuChating"
+          data-app-logo=""
+          className="h-6 w-auto shrink-0"
+        />
 
         {/* KI-446: имя workflow и копирайт с версией — одна колонка.
             Строка версии стоит под именем, а не у правого края: там действия

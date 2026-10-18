@@ -22,7 +22,6 @@ import {
   executeReadFileNodeStub,
   executeSubWorkflowNode,
   executeTextNode,
-  executeWebSearchNodeStub,
   executeWriteFileNodeStub,
   prefixSubWorkflowGraph,
   type SubWorkflowContext,
@@ -743,7 +742,6 @@ describe('node-executors', () => {
   describe('заглушки узлов v0.10 S0', () => {
     /** Ожидаемые пары «заглушка → тип» для табличной проверки. */
     const stubs = [
-      { type: 'web_search', execute: executeWebSearchNodeStub },
       { type: 'document_gen', execute: executeDocumentGenNodeStub },
       { type: 'read_file', execute: executeReadFileNodeStub },
       { type: 'write_file', execute: executeWriteFileNodeStub },

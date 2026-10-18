@@ -3,12 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Favicon встроен SVG data-URI: отдельный файл не нужен, а браузер
-         перестаёт запрашивать /favicon.ico и получать 404 (KI-071). -->
-    <link
-      rel="icon"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔧</text></svg>"
-    />
+    <!-- Favicon — фирменный логотип (v0.10 S2). Файлы лежат в `web/public/`:
+         `logo.svg` для светлой темы, `logo-dark.svg` — для тёмной (используется
+         в UI, favicon берёт светлый вариант). -->
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <title>Workflow Builder</title>
     <!--
       Тема до первого рендера (R5.2, DESIGN § 3.3): класс .dark на <html>

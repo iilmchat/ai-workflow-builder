@@ -7208,18 +7208,67 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-459 — `rawContent` попадал в `node_runs.outputs` узла `web_search` (High)
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10 S2
+- **Файлы:** `src/engine/node-executors.ts`, `src/engine/web-search-executor.spec.ts`
+- **Описание:** контракт `WebSearchResult` содержит необязательный
+  `rawContent` — полный текст страницы. Если провайдер его возвращает,
+  сериализация результата в `node_runs.outputs` раздувала строку и JSONB,
+  а SSE-событие `node_completed` несло мегабайты текста в UI. Для LLM этот
+  текст не нужен: узел отдаёт готовый `text` из топ-N сниппетов.
+- **Решение:** исполнитель копирует только `{ title, url, snippet }` и
+  формирует `{ results, text }`; `text` дополнительно обрезается до 2 МБ
+  (UTF-8) с пометкой. Покрыто тестом «не пропускает rawContent».
+- **Связанные:** DESIGN v0.10 § 3.1.2/§ 3.1.3.
+
+---
+
+### KI-460 — у `web_search` не было контракта портов: `text` не доходил до LLM (Medium)
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10 S2
+- **Файлы:** `src/engine/node-ports.ts`, `src/engine/node-ports.spec.ts`
+- **Описание:** `NODE_PORT_CONTRACT` не содержал `web_search`. При связи
+  `web_search → llm` планировщик взял бы дефолт `inferDefaultOutputPort`
+  (`output`) или `null` из `handleIdToOutputPort('search-output', 'web_search')`,
+  и зависимый узел прочитал бы несуществующий `outputs.output` вместо
+  `outputs.text` — ровно ловушка KI-301/KI-368. Внешне граф выглядел бы
+  корректным, а LLM падал бы с «не задан prompt».
+- **Решение:** добавлен контракт `search-output → text`, вход
+  `text-input → prompt`; type-aware резолвер проверяется тестом.
+- **Связанные:** KI-301, KI-368, DESIGN v0.10 § 3.1.3.
+
+---
+
+### KI-461 — UI `web_search` не покрывает поля DESIGN `searchDepth`/`topic` (Low)
+- **Приоритет:** 🟢 Low | **Статус:** Deferred | **Обнаружено:** 2026-10-18
+- **Запланировано:** v0.10.x
+- **Файлы:** `web/src/components/nodes/WebSearchNode.tsx`,
+  `src/engine/node-executors.ts`, `src/web-search/web-search.interface.ts`
+- **Описание:** DESIGN v0.10 § 3.1.5 перечисляет `searchDepth`,
+  `includeAnswer`, `topic` и `days`, но провайдерский интерфейс S1 принимает
+  только `maxResults`. UI S2 честно показывает `query`/`maxResults`, а
+  Zod-схема отбрасывает неизвестные ключи. Расширение требует сначала
+  расширить `WebSearchOptions`/Tavily-запрос, иначе поля были бы мёртвыми.
+- **Решение:** добавить опции в `IWebSearchProvider` (S1) и только затем
+  вывести поля в узле; до этого не показывать настройки, которые никуда не
+  уходят.
+- **Связанные:** KI-459, DESIGN v0.10 § 3.1.1/§ 3.1.5.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 188 |
+| Fixed | 190 |
 | In Progress | 0 |
 | Planned | 1 |
-| Deferred | 0 |
+| Deferred | 1 |
 | Documented | 6 |
 | Open | 250 |
 | Won't Fix | 1 |
-| **Всего** | **446** |
+| **Всего** | **449** |
 
 ---
 

@@ -10,6 +10,10 @@ import { MediaModule } from '../media/media.module.js';
 // R7.5 (KI-364): QuickJsRunnerService для режима `sandbox` узла condition.
 import { SandboxModule } from '../sandbox/sandbox.module.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
+// v0.10 S2: ExecutionEngineService получает WEB_SEARCH_PROVIDER для узла
+// web_search. Модуль экспортирует токен, поэтому конкретный провайдер (Tavily)
+// остаётся заменяемым.
+import { WebSearchModule } from '../web-search/web-search.module.js';
 import { WorkflowModule } from '../workflow/workflow.module.js';
 import { RunEventsService } from './run-events.service.js';
 import { WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
@@ -47,6 +51,8 @@ import { RUNS_QUEUE_DB, RUNS_QUEUE_PREFIX } from './runs.worker-options.js';
     // R7.5 (KI-364): ExecutionEngineService получает QuickJsRunnerService
     // для режима `sandbox` узла condition.
     SandboxModule,
+    // v0.10 S2: WEB_SEARCH_PROVIDER для исполнителя узла web_search.
+    WebSearchModule,
     // R6.7 (KI-200): ExecutionEngineService загружает подграфы узлов
     // sub_workflow через WorkflowService (проверка владельца — 404).
     WorkflowModule,

@@ -153,6 +153,12 @@ const VideoGenNode = lazy(() =>
   })),
 );
 
+const WebSearchNode = lazy(() =>
+  import('@/components/nodes/WebSearchNode').then((module) => ({
+    default: module.WebSearchNode,
+  })),
+);
+
 /**
  * Компонент узла одного конкретного типа.
  *
@@ -447,11 +453,12 @@ export const NODE_REGISTRY = {
     canBeInsertedOnEdge: true,
     capabilities: { externalState: true, userConfig: true },
   },
-  // v0.10 S0 (Foundation): четыре новых типа. Компоненты появятся в S1+
-  // (`web_search` — S2, `document_gen` — S6, `read_file`/`write_file` — S8),
-  // поэтому `component` пока `undefined`: каталог и `nodeTypes` такие записи
-  // отфильтровывают. `canBeInsertedOnEdge: true` — у всех четырёх по контракту
-  // есть входной порт (`text-input`), даже если он появится вместе с UI.
+  // v0.10 S0 (Foundation): четыре новых типа. Компоненты появляются по срезам
+  // (`web_search` — S2, `document_gen` — S6, `read_file`/`write_file` — S8);
+  // у типов без компонента `component: undefined`, такие записи каталог и
+  // `nodeTypes` отфильтровывают. `canBeInsertedOnEdge: true` — у всех четырёх
+  // по контракту есть входной порт (`text-input`), даже если он появится
+  // вместе с UI.
   //
   // Категории ограничены существующими секциями `tools`/`output` (S0 не
   // добавляет `web`/`documents`/`files`): новые ключи `catalog.category.*`
@@ -460,7 +467,8 @@ export const NODE_REGISTRY = {
     labelKey: 'node.web_search.label',
     icon: '🔍',
     category: 'tools',
-    component: undefined,
+    // v0.10 S2: компонент с полями query/maxResults и списком результатов.
+    component: WebSearchNode,
     canBeInsertedOnEdge: true,
     capabilities: { externalState: true, userConfig: true },
   },

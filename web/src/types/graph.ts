@@ -727,11 +727,23 @@ export interface AgentNodeData extends Record<string, unknown> {
 /* ──────────────── Новые узлы v0.10 S0 (Foundation) ──────────────── */
 
 /**
- * Данные узла `web_search` (v0.10 S0, DESIGN v0.10 § 3.1).
+ * Верхняя граница `maxResults` узла `web_search` (v0.10 S2).
  *
- * Поля повторяют будущую backend-схему `WebSearchNodeDataSchema` (S2), но UI
- * пока не существует: на S0 достаточно дискриминатора `kind` и формы данных,
- * чтобы Save/Load не теряли настройки, заданные через API.
+ * Совпадает с backend-схемой `WebSearchNodeDataSchema`: UI не должен
+ * предлагать значение, которое исполнитель отвергнет валидацией.
+ */
+export const WEB_SEARCH_MAX_RESULTS_LIMIT = 10;
+
+/** `maxResults` по умолчанию — как на backend (DESIGN v0.10 § 3.1.1). */
+export const DEFAULT_WEB_SEARCH_MAX_RESULTS = 5;
+
+/**
+ * Данные узла `web_search` (v0.10 S2, DESIGN v0.10 § 3.1).
+ *
+ * Backend S2 валидирует `query`/`maxResults`, а поля DESIGN `searchDepth`,
+ * `includeAnswer`, `topic`, `days` пока не отправляются провайдеру (S1 принимает
+ * только `maxResults`, KI-461): они сохраняются в графе между Save/Load и будут
+ * задействованы после расширения `IWebSearchProvider`.
  *
  * Запрос приоритетно берётся из входа `prompt`; `query` — fallback для узла,
  * к которому не подключён Text/LLM.
