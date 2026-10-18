@@ -33,6 +33,11 @@ import {
   type AgentStep,
 } from '../agent/agent.types.js';
 import {
+  DocumentStorageUnavailableException,
+  DocumentTooLargeException,
+} from '../documents/document.errors.js';
+import { DOCX_MIME_TYPE } from '../documents/document.service.js';
+import {
   DEFAULT_EMBEDDING_DIMENSIONS,
   DEFAULT_EMBEDDING_MODEL,
 } from '../llm/llm-constants.js';
@@ -281,21 +286,395 @@ function truncateUtf8(text: string, maxBytes: number): string {
   return prefix + marker;
 }
 
-/* ──────────────── Заглушки узлов v0.10 S0 (Foundation) ──────────────── */
+/* ──────────────────────── Узел document_gen (v0.10 S6) ──────────────────────── */
 
 /**
- * ЗАГЛУШКА исполнителя узла `document_gen` (v0.10 S0).
+ * Предел исходного контента узла `document_gen` в байтах UTF-8 — 1 МБ
+ * (DESIGN v0.10 § 3.2.3).
  *
- * Генерация DOCX/PDF появится в срезе S6.
- *
- * @param _node - узел графа типа `document_gen` (в заглушке не используется)
- * @throws UnsupportedNodeTypeException всегда: исполнитель ещё не реализован
+ * Zod-схема ограничивает `data.content` теми же 1 000 000 **символов**, но
+ * контент может прийти по связи `inputs.prompt` и мимо схемы. Байтовый предел
+ * важнее символьного: кириллица занимает два байта, и миллион символов — это
+ * уже ~2 МБ памяти под строку до начала рендера.
  */
-export function executeDocumentGenNodeStub(_node: NodeDto): never {
-  throw new UnsupportedNodeTypeException(
+export const DOCUMENT_MAX_CONTENT_BYTES = 1_000_000;
+
+/** Предел исходного контента в символах (как в DESIGN/Zod). */
+export const DOCUMENT_MAX_CONTENT_CHARS = 1_000_000;
+
+/**
+ * Предел итогового DOCX в байтах — 10 МБ (DESIGN v0.10 § 3.2.3).
+ *
+ * Проверяется по фактическому буферу после `Packer.toBuffer`: DOCX — ZIP, его
+ * размер зависит от сжатия и встроенных стилей, а не только от текста.
+ */
+export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024;
+
+/** Источник контента узла `document_gen` (DESIGN § 3.2.1). */
+export type DocumentSource = 'markdown' | 'json';
+
+/** Выходной формат узла `document_gen`; S6 реализует только DOCX. */
+export type DocumentOutputFormat = 'docx' | 'pdf';
+
+/** Данные узла `document_gen` (v0.10 S6, DESIGN v0.10 § 3.2.1). */
+export interface DocumentGenerationNodeData {
+  /** Формат файла; S6 поддерживает только `docx`. */
+  format?: DocumentOutputFormat;
+  /** Как интерпретировать контент: Markdown или JSON. */
+  source?: DocumentSource;
+  /** Заголовок документа (используется в JSON-режиме). */
+  title?: string;
+  /** Контент, если он не пришёл по связи `inputs.prompt`. */
+  content?: string;
+  /** Имя файла для UI; в хранилище ключ строится из `runId`/`nodeId`. */
+  fileName?: string;
+}
+
+/**
+ * Zod-схема `data` узла `document_gen`.
+ *
+ * `format`/`source` имеют дефолты: узел, добавленный до S6, не содержит этих
+ * полей и должен выполняться как Markdown → DOCX. Неизвестные ключи
+ * (например, `kind` из UI) Zod отбрасывает — граф остаётся forward-compatible
+ * (RULES 1.17).
+ */
+const DocumentGenerationNodeDataSchema = z.object({
+  format: z.enum(['docx', 'pdf']).default('docx'),
+  source: z.enum(['markdown', 'json']).default('markdown'),
+  title: z.string().trim().max(200).optional(),
+  content: z.string().max(DOCUMENT_MAX_CONTENT_CHARS).optional(),
+  fileName: z.string().trim().max(120).optional(),
+});
+
+/**
+ * Структурный контракт рендерера DOCX.
+ *
+ * Нарочно не импортирует `DocumentService` как значение: исполнитель остаётся
+ * тестируемым без Nest-DI и без загрузки `docx`, а сервис подходит на эту роль
+ * структурно (тот же приём, что у {@link AgentRunner}).
+ */
+export interface DocumentGenerator {
+  /**
+   * Рендерит Markdown в DOCX.
+   *
+   * @param markdown - исходный Markdown
+   * @returns содержимое .docx
+   */
+  generateDocxFromMarkdownAsync(markdown: string): Promise<Buffer>;
+
+  /**
+   * Рендерит JSON-документ в DOCX.
+   *
+   * @param json - `{ title?, blocks: [...] }`
+   * @returns содержимое .docx
+   */
+  generateDocxFromJsonAsync(json: unknown): Promise<Buffer>;
+}
+
+/**
+ * Структурный контракт хранилища сгенерированных файлов.
+ *
+ * `IMediaStorage` удовлетворяет ему без адаптера. `backend` нужен, чтобы
+ * отличить выключенное сохранение (`none`) от временного сбоя S3: в первом
+ * случае документ некуда положить в принципе, во втором — виноват бэкенд.
+ */
+export interface DocumentGenerationStorage {
+  /** Бэкенд хранилища (`local`/`s3`/`none`). */
+  readonly backend: 'local' | 's3' | 'none';
+
+  /**
+   * Сохраняет готовый буфер.
+   *
+   * @param buffer - содержимое файла
+   * @param extension - расширение без точки (`docx`)
+   * @param runId - uuid запуска
+   * @param nodeId - id узла графа
+   * @returns ссылка и ключ объекта; `{ url: null, key: null }`, если бэкенд
+   *   не сохраняет файлы либо S3 недоступен
+   */
+  saveGeneratedAsync(
+    buffer: Buffer,
+    extension: string,
+    runId: string,
+    nodeId: string,
+  ): Promise<{ url: string | null; key: string | null }>;
+}
+
+/** Результат исполнителя `document_gen`: выходы и ключ для `node_runs`. */
+export interface DocumentGenerationNodeExecution {
+  /** Выходы узла (DESIGN § 3.2.5). */
+  outputs: Record<string, unknown>;
+  /**
+   * Ключ объекта в хранилище — движок пишет его в `node_runs.storage_key`
+   * (KI-451/KI-457). `null` невозможен при успехе: без ключа узел падает
+   * {@link DocumentStorageUnavailableException}.
+   */
+  storageKey: string | null;
+}
+
+/**
+ * Выбирает непустую строку: вход связи важнее поля узла.
+ *
+ * @param primary - значение входа (`inputs.prompt`)
+ * @param fallback - `data.content`
+ * @returns исходная строка (без trim — Markdown-разметка важна) либо `undefined`
+ */
+function pickDocumentContent(
+  primary: unknown,
+  fallback: string | undefined,
+): string | undefined {
+  if (typeof primary === 'string' && primary.trim().length > 0) {
+    return primary;
+  }
+
+  if (fallback !== undefined && fallback.trim().length > 0) {
+    return fallback;
+  }
+
+  return undefined;
+}
+
+/**
+ * Проверяет пределы исходного контента (DESIGN § 3.2.3).
+ *
+ * @param content - Markdown или JSON-строка
+ * @throws NodeDataValidationException если контент больше 1 МБ (UTF-8) или
+ *   1 000 000 символов
+ */
+function assertDocumentContentSize(content: string): void {
+  if (content.length > DOCUMENT_MAX_CONTENT_CHARS) {
+    throw new NodeDataValidationException(
+      'document_gen',
+      `контент больше ${DOCUMENT_MAX_CONTENT_CHARS} символов`,
+    );
+  }
+
+  const bytes = Buffer.byteLength(content, 'utf8');
+
+  if (bytes > DOCUMENT_MAX_CONTENT_BYTES) {
+    throw new NodeDataValidationException(
+      'document_gen',
+      `контент больше ${DOCUMENT_MAX_CONTENT_BYTES} байт UTF-8 (${bytes})`,
+    );
+  }
+}
+
+/**
+ * Разрешает контент узла в Markdown-строку или JSON-значение.
+ *
+ * Приоритет — `inputs.prompt` (DESIGN § 3.2.1). Для `source='json'` строка
+ * парсится `JSON.parse`-ом здесь, до рендера: битый JSON должен давать
+ * понятную ошибку узла, а не падение внутри `docx`-пакета.
+ *
+ * @param source - режим интерпретации
+ * @param prompt - значение входа `prompt` (может быть не строкой)
+ * @param fallback - `data.content`
+ * @returns размеченный контент
+ * @throws NodeDataValidationException если контент пуст, не того типа или JSON
+ *   не парсится
+ */
+function resolveDocumentContent(
+  source: DocumentSource,
+  prompt: unknown,
+  fallback: string | undefined,
+):
+  | { readonly kind: 'markdown'; readonly markdown: string }
+  | { readonly kind: 'json'; readonly json: unknown } {
+  if (source === 'markdown') {
+    if (prompt !== undefined && prompt !== null && typeof prompt !== 'string') {
+      throw new NodeDataValidationException(
+        'document_gen',
+        'inputs.prompt должен быть строкой Markdown',
+      );
+    }
+
+    const markdown = pickDocumentContent(prompt, fallback);
+
+    if (markdown === undefined) {
+      throw new NodeDataValidationException(
+        'document_gen',
+        'не задан контент: inputs.prompt пуст и data.content не заполнен',
+      );
+    }
+
+    assertDocumentContentSize(markdown);
+
+    return { kind: 'markdown', markdown };
+  }
+
+  // JSON-режим: вход может быть уже разобранным объектом (узел-предшественник
+  // отдал структуру) либо строкой JSON — оба варианта поддержаны.
+  if (typeof prompt === 'object' && prompt !== null) {
+    return { kind: 'json', json: prompt };
+  }
+
+  if (prompt !== undefined && prompt !== null && typeof prompt !== 'string') {
+    throw new NodeDataValidationException(
+      'document_gen',
+      'inputs.prompt должен быть JSON-строкой или объектом',
+    );
+  }
+
+  const raw = pickDocumentContent(prompt, fallback);
+
+  if (raw === undefined) {
+    throw new NodeDataValidationException(
+      'document_gen',
+      'не задан контент: inputs.prompt пуст и data.content не заполнен',
+    );
+  }
+
+  assertDocumentContentSize(raw);
+
+  try {
+    return { kind: 'json', json: JSON.parse(raw) as unknown };
+  } catch (error: unknown) {
+    const reason = error instanceof Error ? error.message : String(error);
+
+    throw new NodeDataValidationException(
+      'document_gen',
+      `content: некорректный JSON — ${reason}`,
+    );
+  }
+}
+
+/**
+ * Добавляет `data.title` в JSON-документ, если заголовка нет в самом JSON.
+ *
+ * `DocumentService.generateDocxFromJsonAsync` принимает только JSON-значение,
+ * отдельного аргумента `title` у него нет (S3). Поле узла важнее дефолта, но
+ * не перетирает явный `title` из контента.
+ *
+ * @param json - разобранный JSON-документ
+ * @param title - `data.title` (уже обрезан Zod-схемой)
+ * @returns исходное значение либо копия с добавленным `title`
+ */
+function withDocumentTitle(json: unknown, title: string | undefined): unknown {
+  if (title === undefined || title.length === 0) {
+    return json;
+  }
+
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) {
+    return json;
+  }
+
+  const record = json as Record<string, unknown>;
+
+  return record.title === undefined ? { ...record, title } : json;
+}
+
+/**
+ * Исполнитель узла `document_gen` (v0.10 S6, DESIGN v0.10 § 3.2).
+ *
+ * Конвейер: валидация `data` → выбор контента (`inputs.prompt` важнее
+ * `data.content`) → {@link DocumentGenerator} (Markdown/JSON → `Buffer`) →
+ * проверка 10 МБ → `saveGeneratedAsync(buffer,'docx',runId,nodeId)`.
+ *
+ * Ключ хранилища возвращается отдельным полем: движок кладёт его в
+ * `node_runs.storage_key`, чтобы ссылку можно было переподписать по ключу, а
+ * не парсить URL (KI-451/KI-457). Выходы содержат `storedUrl`/`fileUrl` —
+ * по ним UI рисует кнопку скачивания.
+ *
+ * @param node - узел графа типа `document_gen`
+ * @param inputs - нормализованные входы узла (после KI-034 ключ — `prompt`)
+ * @param runId - uuid запуска (первый сегмент ключа хранилища)
+ * @param documentService - рендерер DOCX (`DocumentService` в продакшене)
+ * @param mediaStorage - хранилище (`MEDIA_STORAGE` в продакшене)
+ * @returns выходы и `storageKey` для `node_runs`
+ * @throws NodeDataValidationException если `data`/контент не проходят проверки
+ * @throws DocumentTooLargeException если DOCX больше 10 МБ
+ * @throws DocumentStorageUnavailableException если сохранение выключено или
+ *   бэкенд не вернул ссылку/ключ
+ * @throws DocumentRenderException если рендерер не смог собрать документ
+ */
+export async function executeDocumentGenerationNodeAsync(
+  node: NodeDto,
+  inputs: Record<string, unknown>,
+  runId: string,
+  documentService: DocumentGenerator,
+  mediaStorage: DocumentGenerationStorage,
+): Promise<DocumentGenerationNodeExecution> {
+  const data = parseNodeData(
     'document_gen',
-    'Узел document_gen ещё не реализован (v0.10 S0)',
+    DocumentGenerationNodeDataSchema,
+    node.data,
   );
+
+  // PDF есть в DESIGN § 3.2.3, но в S6 реализован только DOCX-рендерер.
+  // Молча отдавать .docx на запрос PDF нельзя: UI/пользователь получит не тот
+  // формат, поэтому — явная ошибка (KI-463).
+  if (data.format !== 'docx') {
+    throw new NodeDataValidationException(
+      'document_gen',
+      `формат '${data.format}' пока не поддерживается: v0.10 S6 генерирует DOCX`,
+    );
+  }
+
+  // DESIGN § 3.2.4: без хранилища отдать документ нечем — падаем до рендера,
+  // чтобы не тратить CPU на файл, который некуда положить.
+  if (mediaStorage.backend === 'none') {
+    throw new DocumentStorageUnavailableException('MEDIA_STORAGE_BACKEND=none');
+  }
+
+  const content = resolveDocumentContent(data.source, inputs.prompt, data.content);
+
+  const buffer =
+    content.kind === 'markdown'
+      ? await documentService.generateDocxFromMarkdownAsync(content.markdown)
+      : await documentService.generateDocxFromJsonAsync(
+          withDocumentTitle(content.json, data.title),
+        );
+
+  // DESIGN § 3.2.3: итоговый файл ≤ 10 МБ. Проверка до сохранения — чтобы
+  // огромный файл не осел в локальном хранилище/S3. Лимит числа блоков (≤ 500)
+  // здесь не проверяется: `DocumentService` не отдаёт модель без повторного
+  // разбора — вынесено в KI-462.
+  if (buffer.byteLength > DOCUMENT_MAX_BYTES) {
+    throw new DocumentTooLargeException(buffer.byteLength, DOCUMENT_MAX_BYTES);
+  }
+
+  const saved = await mediaStorage.saveGeneratedAsync(
+    buffer,
+    'docx',
+    runId,
+    node.id,
+  );
+
+  // `null` означает `MEDIA_STORAGE_BACKEND=none` либо сбой S3 (S5): ссылки и
+  // ключа нет, значит узел не может отдать документ — это падение, а не успех
+  // с пустыми полями (DESIGN § 3.2.4).
+  if (saved.key === null || saved.url === null) {
+    throw new DocumentStorageUnavailableException(
+      'saveGeneratedAsync вернул null (S3 не настроен или недоступен)',
+    );
+  }
+
+  // Имя файла: явное `data.fileName` важнее имени, которое построило
+  // хранилище (`generated-<nodeId>.docx`). Ключ в хранилище не меняется —
+  // `fileName` нужен только для `download` в UI.
+  const storedFileName =
+    saved.key.split('/').at(-1) ?? `generated-${node.id}.docx`;
+  const fileName =
+    data.fileName !== undefined && data.fileName.length > 0
+      ? data.fileName
+      : storedFileName;
+
+  return {
+    storageKey: saved.key,
+    outputs: {
+      // DESIGN § 3.2.5: `fileUrl` — основной порт для downstream, `storedUrl`
+      // читает UI (как у media-узлов). Оба равны ссылке хранилища.
+      fileUrl: saved.url,
+      storedUrl: saved.url,
+      // `saveGeneratedAsync` не возвращает TTL: документ не провайдерский,
+      // ссылка local не истекает, а presigned S3 переподписывается по ключу.
+      storedExpiresAt: null,
+      fileName,
+      mimeType: DOCX_MIME_TYPE,
+      bytes: buffer.byteLength,
+      format: 'docx',
+    },
+  };
 }
 
 /**

@@ -67,13 +67,16 @@ const AGENT_TYPE = 'agent' as const;
 /**
  * Типы, добавленные в v0.10 S0 (Foundation) и ещё не получившие компонент.
  *
- * `web_search` вышел из этого списка в S2 и проверяется отдельно — у него уже
- * есть ленивый компонент и React Flow-регистрация.
+ * `web_search` вышел из этого списка в S2, `document_gen` — в S6: у них уже
+ * есть ленивые компоненты и React Flow-регистрация.
  */
-const V010_STUB_TYPES = ['document_gen', 'read_file', 'write_file'] as const;
+const V010_STUB_TYPES = ['read_file', 'write_file'] as const;
 
 /** Тип, реализованный в v0.10 S2: узел веб-поиска. */
 const WEB_SEARCH_TYPE = 'web_search' as const;
+
+/** Тип, реализованный в v0.10 S6: узел генерации документа. */
+const DOCUMENT_GEN_TYPE = 'document_gen' as const;
 
 /** Все типы реестра — для проверки labelKey в обоих i18n-файлах. */
 const ALL_TYPES: readonly NodeType[] = [...NODE_TYPES];
@@ -324,6 +327,41 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
       'node.web_search.maxResults',
       'node.web_search.results',
       'node.web_search.empty',
+    ]) {
+      expect(ru, `ru: ${key}`).toHaveProperty([key]);
+      expect(en, `en: ${key}`).toHaveProperty([key]);
+    }
+  });
+
+  it('v0.10 S6: document_gen — ленивый компонент, категория output и i18n', () => {
+    const entry = NODE_REGISTRY[DOCUMENT_GEN_TYPE];
+
+    // Категория осталась `output` из S0: отдельная `documents` потребовала бы
+    // новый ключ `catalog.category.*` в обоих i18n-файлах (см. реестр).
+    expect(entry.category).toBe('output');
+    expect(entry.icon).not.toBe('');
+    expectLazyComponent(entry.component);
+    expect(canInsertOnEdge(DOCUMENT_GEN_TYPE)).toBe(true);
+    expect(isNodeType(DOCUMENT_GEN_TYPE)).toBe(true);
+    expect(entry.capabilities).toEqual({
+      externalState: true,
+      userConfig: true,
+    });
+
+    // S6 зарегистрировал компонент в React Flow.
+    expect(nodeTypes).toHaveProperty(DOCUMENT_GEN_TYPE);
+
+    for (const key of [
+      'node.document_gen.label',
+      'node.document_gen.source',
+      'node.document_gen.source.markdown',
+      'node.document_gen.source.json',
+      'node.document_gen.content',
+      'node.document_gen.content.placeholder',
+      'node.document_gen.content.placeholderJson',
+      'node.document_gen.connected',
+      'node.document_gen.download',
+      'node.document_gen.hint',
     ]) {
       expect(ru, `ru: ${key}`).toHaveProperty([key]);
       expect(en, `en: ${key}`).toHaveProperty([key]);

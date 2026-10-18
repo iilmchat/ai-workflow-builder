@@ -141,4 +141,24 @@ describe('node-ports', () => {
       expect(inferInputPortName('web_search')).toBe('prompt');
     });
   });
+
+  describe('document_gen (v0.10 S6)', () => {
+    it('выход — document-output → fileUrl: ссылка на сохранённый DOCX', () => {
+      expect(NODE_PORT_CONTRACT.document_gen.sourceHandleId).toBe(
+        'document-output',
+      );
+      expect(NODE_PORT_CONTRACT.document_gen.outputPortName).toBe('fileUrl');
+      expect(inferDefaultOutputPort('document_gen')).toBe('fileUrl');
+      expect(handleIdToOutputPort('document-output', 'document_gen')).toBe(
+        'fileUrl',
+      );
+      // Чужой хендл не подставляет порт document_gen (KI-301).
+      expect(handleIdToOutputPort('text-output', 'document_gen')).toBeNull();
+    });
+
+    it('вход — text-input → prompt: Markdown/JSON приходит от Text/LLM', () => {
+      expect(NODE_PORT_CONTRACT.document_gen.targetHandleId).toBe('text-input');
+      expect(inferInputPortName('document_gen')).toBe('prompt');
+    });
+  });
 });

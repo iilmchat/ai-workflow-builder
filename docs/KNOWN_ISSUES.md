@@ -7092,7 +7092,10 @@ MediaModelInfo, engine-DTO
 - **Решение:** добавить в `node_runs` колонку `storage_key` (`text`, nullable),
   писать её при сохранении результата и подписывать по ней, а не парсить URL;
   нужна миграция Drizzle (RULES 3.10).
-- **Связанные:** KI-362, KI-425, KI-443.
+- **Прогресс v0.10 S6:** колонка и миграция есть (S5), `document_gen` пишет в
+  неё ключ сгенерированного DOCX; media-узлы ключ по-прежнему не пишут, а
+  переподпись идёт по URL — остаток вынесен в KI-464.
+- **Связанные:** KI-362, KI-425, KI-443, KI-464.
 
 ---
 
@@ -7189,7 +7192,11 @@ MediaModelInfo, engine-DTO
 - **Решение:** привести S6 к `document_generation` (с миграцией/алиасом для
   `document_gen` в `nodeDataFromApi`) либо обновить DESIGN; категорию
   `documents` добавить вместе с ключами `catalog.category.*`.
-- **Связанные:** KI-455, DESIGN v0.10 § 4.6.
+- **Прогресс v0.10 S6:** контракт осознанно оставлен `document_gen`/`output`:
+  задача S6 и существующие графы используют это имя, а переименование типа
+  затронуло бы API/БД и не входило в срез. Категория `documents` не добавлена;
+  запись остаётся Open.
+- **Связанные:** KI-455, KI-462, DESIGN v0.10 § 3.2/§ 4.6.
 
 ---
 
@@ -7257,6 +7264,95 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-462 — `document_gen` не проверяет лимит 500 блоков (Medium)
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Запланировано:** v0.10.x
+- **Файлы:** `src/engine/node-executors.ts`, `src/documents/document.service.ts`
+- **Описание:** DESIGN v0.10 § 3.2.3 ограничивает документ не только размером
+  контента (1 МБ) и файла (10 МБ), но и числом блоков (≤ 500). Исполнитель S6
+  проверяет первые два лимита, а число блоков — нет: `DocumentService` не
+  отдаёт `DocumentModel` наружу, и проверка потребовала бы второго разбора
+  Markdown/JSON перед рендером.
+- **Решение:** добавить в `DocumentService` публичный `countBlocks`/рендер по
+  готовой модели (`generateDocxFromModelAsync`) либо проверку внутри
+  `renderAsync`; исполнитель будет бросать `NodeDataValidationException`.
+- **Связанные:** KI-458 (в задании S6 этим номером назван лимит 10 МБ; в
+  реестре KI-458 — про `PGVECTOR_ENABLED`), DESIGN v0.10 § 3.2.3.
+
+---
+
+### KI-463 — PDF-режим `document_gen` не реализован в S6 (Low)
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Запланировано:** v0.10.x
+- **Файлы:** `src/engine/node-executors.ts`,
+  `web/src/components/nodes/DocumentGenNode.tsx`
+- **Описание:** `DocumentGenerationNodeDataSchema` знает `format: 'docx'|'pdf'`
+  (DESIGN § 3.2.1/§ 3.2.3), но `DocumentService` S3 умеет только DOCX.
+  Исполнитель S6 бросает понятную ошибку на `pdf`, а UI не показывает селект
+  формата — только источник Markdown/JSON. Молчаливая подмена PDF на DOCX
+  была бы хуже: пользователь получил бы не тот файл.
+- **Решение:** реализовать `PdfRenderer` (pdfkit + NotoSans, DESIGN § 3.2.3) и
+  вывести селект `format` в узле; до этого `pdf` остаётся явной ошибкой.
+- **Связанные:** DESIGN v0.10 § 3.2.3/§ 3.2.6.
+
+---
+
+### KI-464 — `storage_key` пишется, но переподпись S3 всё ещё идёт по URL (Medium)
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Запланировано:** v0.10.x
+- **Файлы:** `src/runs/runs-stream.service.ts`,
+  `src/media/media-storage.service.ts`, `src/db/schema.ts`
+- **Описание:** S6 пишет ключ сгенерированного документа в
+  `node_runs.storage_key`, но снимок SSE не читает эту колонку, а
+  `IMediaStorage.refreshStoredUrlAsync` принимает **ссылку** и извлекает ключ
+  из path-style URL. Для virtual-hosted style/URL-rewrite ключ по-прежнему не
+  восстановить — ровно сценарий KI-451. Кроме того, узел `document_gen` читает
+  ссылку из `nodeOutputs.storedUrl` (это копия в `node_runs.outputs`), а
+  `RunsStreamService` переподписывает только `node_runs.stored_url`, поэтому
+  после истечения presigned URL (1 ч) кнопка в узле может вести на 403. Запись
+  ключа без его использования закрывает только половину задачи.
+- **Решение:** добавить в `IMediaStorage` метод переподписи по ключу
+  (`refreshStoredUrlByKeyAsync(storageKey)`), в снимке выбирать `storage_key`
+  и передавать его; для `document_gen` — обновлять `outputs.storedUrl` (или
+  читать актуальную ссылку из поля снимка). Старый путь по URL оставить
+  fallback для старых строк.
+- **Связанные:** KI-451, KI-425, KI-443.
+
+---
+
+### KI-465 — `data.title` игнорируется в Markdown-режиме `document_gen` (Low)
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Запланировано:** v0.10.x
+- **Файлы:** `src/engine/node-executors.ts`,
+  `src/documents/document.service.ts`
+- **Описание:** в JSON-режиме `data.title` добавляется в документ (если в JSON
+  нет своего `title`), а в Markdown-режиме поле молча не используется:
+  `generateDocxFromMarkdownAsync` принимает только строку, а `parseMarkdown`
+  не заполняет `DocumentModel.title`. UI S6 поля `title` не показывает, но
+  значение может прийти из API/старого графа.
+- **Решение:** либо поддержать `title` в Markdown (H1/титульный параграф), либо
+  явно отклонять непустой `title` в Markdown-режиме; сейчас — задокументированное
+  ограничение.
+- **Связанные:** DESIGN v0.10 § 3.2.1.
+
+---
+
+### KI-466 — `download` у кнопки DOCX игнорируется для cross-origin S3 (Low)
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Запланировано:** v0.10.x
+- **Файлы:** `web/src/components/nodes/DocumentGenNode.tsx`
+- **Описание:** кнопка «Скачать DOCX» — `<a download>`. Для локального
+  хранилища (`/media/file/...`, same-origin) браузер сохраняет файл, а для
+  presigned S3 URL атрибут `download` игнорируется: ссылка открывается в новой
+  вкладке (файл всё равно можно сохранить). Это ограничение браузера, не
+  ошибка ссылки.
+- **Решение:** проксировать скачивание через backend-ручку с
+  `Content-Disposition: attachment` либо отдавать документы только через
+  same-origin `/media/file/...`; до этого поведение остается нативным.
+- **Связанные:** KI-425, KI-443.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
@@ -7266,9 +7362,9 @@ MediaModelInfo, engine-DTO
 | Planned | 1 |
 | Deferred | 1 |
 | Documented | 6 |
-| Open | 250 |
+| Open | 255 |
 | Won't Fix | 1 |
-| **Всего** | **449** |
+| **Всего** | **454** |
 
 ---
 

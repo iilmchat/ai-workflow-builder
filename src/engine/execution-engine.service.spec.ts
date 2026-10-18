@@ -4,6 +4,8 @@ import { Param } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { workflowRuns, type RunStatus } from '../db/schema.js';
 import { AgentService } from '../agent/agent.service.js';
+import { DocumentService } from '../documents/document.service.js';
+import { MEDIA_STORAGE } from '../media/media-storage.service.js';
 import type { RunEventDto } from '../runs/dto/index.js';
 import { RunEventsService } from '../runs/run-events.service.js';
 import type { EdgeDto, GraphDto, NodeDto } from './dto/index.js';
@@ -66,6 +68,8 @@ interface FakeNodeRun {
   tokensOut: number | null;
   costUsd: string | null;
   costRub: string | null;
+  /** v0.10 S6: ключ сгенерированного документа (KI-451). */
+  storageKey: string | null;
   startedAt: Date | null;
   finishedAt: Date | null;
 }
@@ -205,6 +209,7 @@ function createFakeDb(runId: string) {
             tokensOut: null,
             costUsd: null,
             costRub: null,
+            storageKey: null,
             finishedAt: null,
             ...values,
           } as FakeNodeRun;
@@ -319,6 +324,11 @@ describe('ExecutionEngineService', () => {
   let mediaMusicExecute: ReturnType<typeof vi.fn>;
   /** v0.10 S2: поиск web-search-провайдера (Tavily подменяется моком). */
   let webSearchExecute: ReturnType<typeof vi.fn>;
+  /** v0.10 S6: рендерер DOCX (DocumentService подменяется моком). */
+  let documentFromMarkdown: ReturnType<typeof vi.fn>;
+  let documentFromJson: ReturnType<typeof vi.fn>;
+  /** v0.10 S6: сохранение документа в хранилище. */
+  let saveGenerated: ReturnType<typeof vi.fn>;
   let findWorkflow: ReturnType<typeof vi.fn>;
   let fake: ReturnType<typeof createFakeDb>;
   /** Окружение для `ConfigService`-заглушки (изменяется в отдельных тестах). */
@@ -444,6 +454,20 @@ describe('ExecutionEngineService', () => {
     findWorkflow = vi.fn((_id: string, _userId?: string) =>
       Promise.resolve(null as SubWorkflowRecord | null),
     );
+    // v0.10 S6: узел document_gen. Буфер маленький — лимит 10 МБ не срабатывает.
+    documentFromMarkdown = vi.fn((_markdown: string) =>
+      Promise.resolve(Buffer.from('PK\u0003\u0004engine-docx')),
+    );
+    documentFromJson = vi.fn((_json: unknown) =>
+      Promise.resolve(Buffer.from('PK\u0003\u0004engine-docx')),
+    );
+    saveGenerated = vi.fn(
+      (_buffer: Buffer, _extension: string, runId: string, nodeId: string) =>
+        Promise.resolve({
+          url: `/media/file/${runId}/generated-${nodeId}.docx`,
+          key: `${runId}/generated-${nodeId}.docx`,
+        }),
+    );
     fake = createFakeDb(RUN_ID);
     envConfig = {
       SANDBOX_ENABLED: true,
@@ -477,6 +501,22 @@ describe('ExecutionEngineService', () => {
             name: 'fake',
             isConfigured: true,
             searchAsync: webSearchExecute,
+          },
+        },
+        // v0.10 S6: зависимости узла document_gen. В этом спеке узел не
+        // выполняется — заглушки нужны, чтобы Nest собрал граф DI.
+        {
+          provide: DocumentService,
+          useValue: {
+            generateDocxFromMarkdownAsync: documentFromMarkdown,
+            generateDocxFromJsonAsync: documentFromJson,
+          },
+        },
+        {
+          provide: MEDIA_STORAGE,
+          useValue: {
+            backend: 'local',
+            saveGeneratedAsync: saveGenerated,
           },
         },
         // R6.7 (KI-200): источник подграфов для узла sub_workflow.
@@ -1511,6 +1551,39 @@ describe('ExecutionEngineService', () => {
     });
   });
 
+  it('v0.10 S6: document_gen пишет storage_key в node_runs и ссылку в outputs', async () => {
+    const graph: GraphDto = {
+      nodes: [
+        node('A', 'document_gen', {
+          source: 'markdown',
+          content: '# Заголовок',
+        }),
+      ],
+      edges: [],
+    };
+
+    const result = await service.executeAsync(RUN_ID, graph);
+
+    expect(result.status).toBe('completed');
+    expect(documentFromMarkdown).toHaveBeenCalledWith('# Заголовок');
+    expect(saveGenerated).toHaveBeenCalledWith(
+      expect.any(Buffer),
+      'docx',
+      RUN_ID,
+      'A',
+    );
+
+    // KI-451: ключ объекта хранится отдельно от ссылки — по нему можно
+    // переподписать presigned URL, не разбирая URL.
+    expect(fake.rows[0]?.storageKey).toBe(`${RUN_ID}/generated-A.docx`);
+    // Ссылка уходит в outputs, из неё узел рисует кнопку скачивания.
+    expect(fake.rows[0]?.outputs).toMatchObject({
+      fileUrl: `/media/file/${RUN_ID}/generated-A.docx`,
+      storedUrl: `/media/file/${RUN_ID}/generated-A.docx`,
+      format: 'docx',
+    });
+  });
+
   it('KI-031: повторный прогон графа не создаёт дубли node_runs (upsert)', async () => {
     const graph: GraphDto = {
       nodes: [node('A', 'text', { value: 'a' }), node('B', 'text', { value: 'b' })],
@@ -1571,6 +1644,7 @@ describe('ExecutionEngineService', () => {
       tokensOut: row.tokensOut ?? null,
       costUsd: row.costUsd ?? null,
       costRub: row.costRub ?? null,
+      storageKey: row.storageKey ?? null,
       startedAt: row.startedAt ?? null,
       finishedAt: row.finishedAt ?? null,
     });

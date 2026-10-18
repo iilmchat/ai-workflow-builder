@@ -12,6 +12,8 @@ import {
 } from './common/http-throttle.constants.js';
 import { validateEnv } from './config/env.schema.js';
 import { DbModule } from './db/db.module.js';
+// v0.10 S6: генерация документов (DocumentService).
+import { DocumentsModule } from './documents/documents.module.js';
 import { LlmModule } from './llm/llm.module.js';
 import { MediaModule } from './media/media.module.js';
 import { WorkflowModule } from './workflow/workflow.module.js';
@@ -64,6 +66,7 @@ import { WebSearchModule } from './web-search/web-search.module.js';
     AuthModule,
     LlmModule,
     WebSearchModule,
+    DocumentsModule,
     MediaModule,
     WorkflowModule,
     EngineModule,

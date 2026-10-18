@@ -17,6 +17,13 @@ import {
   type NumberingDefinition,
 } from 'docx';
 import { z } from 'zod';
+// v0.10 S6: ошибки лимита и недоступного хранилища. Реэкспорт — чтобы
+// вызывающему коду (исполнитель узла, тесты) не нужно было знать о
+// существовании отдельного файла `document.errors.ts`.
+export {
+  DocumentStorageUnavailableException,
+  DocumentTooLargeException,
+} from './document.errors.js';
 
 /**
  * Генерация DOCX из Markdown и JSON (v0.10 S3).

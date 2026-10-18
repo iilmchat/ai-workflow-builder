@@ -203,6 +203,17 @@ export const NODE_PORT_CONTRACT: Record<string, NodePortContract> = {
     targetHandleId: 'text-input',
     inputPortName: 'prompt',
   },
+  // v0.10 S6 (DESIGN v0.10 § 3.2.5): узел `document_gen`. Вход — `prompt`
+  // (Markdown/JSON от Text/LLM), выход — `fileUrl` (ссылка на сохранённый
+  // DOCX). Имя выходного порта совпадает с ключом в `outputs` исполнителя:
+  // с `text-output`/`result` зависимый `output`/`http` прочитал бы `null`
+  // (ловушка KI-301/KI-460).
+  document_gen: {
+    sourceHandleId: 'document-output',
+    outputPortName: 'fileUrl',
+    targetHandleId: 'text-input',
+    inputPortName: 'prompt',
+  },
   // `compare` сознательно БЕЗ контракта: `NodePortContract` описывает один
   // вход, а узлу нужны два (`a` и `b`). С контрактом обе связи свернулись бы
   // в один ключ (KI-035) и второй операнд потерялся бы. Без контракта работает

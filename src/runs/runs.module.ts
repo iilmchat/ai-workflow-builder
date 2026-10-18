@@ -3,6 +3,8 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthModule } from '../auth/auth.module.js';
 import { AgentService } from '../agent/agent.service.js';
+// v0.10 S6: DocumentService для исполнителя узла document_gen.
+import { DocumentsModule } from '../documents/documents.module.js';
 import { EngineModule } from '../engine/engine.module.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import { LlmModule } from '../llm/llm.module.js';
@@ -53,6 +55,8 @@ import { RUNS_QUEUE_DB, RUNS_QUEUE_PREFIX } from './runs.worker-options.js';
     SandboxModule,
     // v0.10 S2: WEB_SEARCH_PROVIDER для исполнителя узла web_search.
     WebSearchModule,
+    // v0.10 S6: DocumentService для исполнителя узла document_gen.
+    DocumentsModule,
     // R6.7 (KI-200): ExecutionEngineService загружает подграфы узлов
     // sub_workflow через WorkflowService (проверка владельца — 404).
     WorkflowModule,

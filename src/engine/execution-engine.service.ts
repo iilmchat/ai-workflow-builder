@@ -14,6 +14,11 @@ import {
   workflows,
   type NodeRunStatus,
 } from '../db/schema.js';
+import { DocumentService } from '../documents/document.service.js';
+import {
+  MEDIA_STORAGE,
+  type IMediaStorage,
+} from '../media/media-storage.service.js';
 import { RunEventsService } from '../runs/run-events.service.js';
 import { withSpanAsync } from '../observability/tracing.js';
 import { AgentService } from '../agent/agent.service.js';
@@ -37,7 +42,7 @@ import {
   executeCompareNode,
   executeConditionNode,
   executeAgentNodeAsync,
-  executeDocumentGenNodeStub,
+  executeDocumentGenerationNodeAsync,
   executeHttpNode,
   executeMemoryReadNodeAsync,
   executeMemoryWriteNodeAsync,
@@ -186,6 +191,15 @@ type NodeStepResult = (
    * Остальные типы узлов поле не задают — массив остаётся пустым.
    */
   logs?: readonly string[];
+  /**
+   * Ключ объекта в хранилище (v0.10 S6, KI-451).
+   *
+   * Движок пишет его в `node_runs.storage_key`. Поле есть только у узлов,
+   * которые сохраняют файл сами (`document_gen`); у остальных — `undefined`,
+   * и UPDATE кладёт `null`. Отдельное поле, а не `metrics`, потому что
+   * документ не является media-генерацией с валютной стоимостью.
+   */
+  storageKey?: string | null;
 };
 
 /** Итог выполнения запуска. */
@@ -237,6 +251,11 @@ export class ExecutionEngineService {
     // Токен выбирается в WebSearchModule по env WEB_SEARCH_PROVIDER.
     @Inject(WEB_SEARCH_PROVIDER)
     private readonly webSearchProvider: IWebSearchProvider,
+    // v0.10 S6 (DESIGN v0.10 § 3.2): DOCX-рендерер и хранилище документа.
+    // DocumentService — из DocumentsModule (подключён в RunsModule), а
+    // MEDIA_STORAGE — из MediaModule; один экземпляр хранилища на приложение.
+    private readonly documentService: DocumentService,
+    @Inject(MEDIA_STORAGE) private readonly mediaStorage: IMediaStorage,
   ) {}
 
   /**
@@ -799,6 +818,10 @@ export class ExecutionEngineService {
           cacheCreationTokens: null,
           storedUrl: null,
           storedExpiresAt: null,
+          // v0.10 S6 (KI-451): ключ объекта — состояние конкретной попытки,
+          // как и stored_url: повторный запуск не должен переподписывать файл
+          // прошлого прогона.
+          storageKey: null,
           startedAt: new Date(),
           finishedAt: null,
         },
@@ -854,6 +877,9 @@ export class ExecutionEngineService {
               storedUrl: step.kind === 'media' ? step.metrics.storedUrl : null,
               storedExpiresAt:
                 step.kind === 'media' ? step.metrics.storedExpiresAt : null,
+              // v0.10 S6 (KI-451): ключ сгенерированного документа. Для
+              // остальных типов узлов поля нет — колонка остаётся NULL.
+              storageKey: step.storageKey ?? null,
               finishedAt: new Date(),
             })
             .where(eq(nodeRuns.id, nodeRun.id));
@@ -1116,11 +1142,25 @@ export class ExecutionEngineService {
 
         return { kind: 'plain', outputs, metrics: null };
       }
-      // v0.10 S0 (Foundation): новые типы зарегистрированы, но исполнители
-      // появятся в S6/S8. Заглушки падают понятной ошибкой конкретного
-      // типа, а не «неизвестный тип»: план и граф остаются валидными.
-      case 'document_gen':
-        return executeDocumentGenNodeStub(node);
+      // v0.10 S6 (DESIGN v0.10 § 3.2): генерация DOCX. Исполнитель валидирует
+      // `data`, рендерит Markdown/JSON и сохраняет файл; `storageKey` уходит в
+      // `node_runs.storage_key` (KI-451), `storedUrl` — в outputs для UI.
+      case 'document_gen': {
+        const result = await executeDocumentGenerationNodeAsync(
+          node,
+          inputs,
+          runId,
+          this.documentService,
+          this.mediaStorage,
+        );
+
+        return {
+          kind: 'plain',
+          outputs: result.outputs,
+          metrics: null,
+          storageKey: result.storageKey,
+        };
+      }
       case 'read_file':
         return executeReadFileNodeStub(node);
       case 'write_file':

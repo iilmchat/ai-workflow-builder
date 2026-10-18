@@ -16,7 +16,6 @@ import {
   UnsupportedNodeTypeException,
   executeCompareNode,
   executeConditionNode,
-  executeDocumentGenNodeStub,
   executeHttpNode,
   executeOutputNode,
   executeReadFileNodeStub,
@@ -742,7 +741,6 @@ describe('node-executors', () => {
   describe('заглушки узлов v0.10 S0', () => {
     /** Ожидаемые пары «заглушка → тип» для табличной проверки. */
     const stubs = [
-      { type: 'document_gen', execute: executeDocumentGenNodeStub },
       { type: 'read_file', execute: executeReadFileNodeStub },
       { type: 'write_file', execute: executeWriteFileNodeStub },
     ] as const;

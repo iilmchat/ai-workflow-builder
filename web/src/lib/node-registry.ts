@@ -69,6 +69,13 @@ const ConditionNode = lazy(() =>
   })),
 );
 
+// v0.10 S6: узел генерации документа (Markdown/JSON → DOCX).
+const DocumentGenNode = lazy(() =>
+  import('@/components/nodes/DocumentGenNode').then((module) => ({
+    default: module.DocumentGenNode,
+  })),
+);
+
 const HttpNode = lazy(() =>
   import('@/components/nodes/HttpNode').then((module) => ({
     default: module.HttpNode,
@@ -459,7 +466,6 @@ export const NODE_REGISTRY = {
   // `nodeTypes` отфильтровывают. `canBeInsertedOnEdge: true` — у всех четырёх
   // по контракту есть входной порт (`text-input`), даже если он появится
   // вместе с UI.
-  //
   // Категории ограничены существующими секциями `tools`/`output` (S0 не
   // добавляет `web`/`documents`/`files`): новые ключи `catalog.category.*`
   // потребовали бы правки обоих i18n-файлов сверх среза.
@@ -476,7 +482,8 @@ export const NODE_REGISTRY = {
     labelKey: 'node.document_gen.label',
     icon: '📄',
     category: 'output',
-    component: undefined,
+    // v0.10 S6: компонент с селектом Markdown/JSON, textarea и ссылкой на DOCX.
+    component: DocumentGenNode,
     canBeInsertedOnEdge: true,
     capabilities: { externalState: true, userConfig: true },
   },
