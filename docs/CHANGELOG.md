@@ -26,6 +26,8 @@
 - **UI lipsync (KI-369):** Поле `audioUrl` в `ImageToolNode`.
 - **Медиа-дефолты (KI-367):** Дефолтные модели для upscale (FAL/Replicate) и trim (@VideoEdit).
 - **R7.8-fix:** Реализован `S3MediaStorage` (PutObjectCommand, TTL) и `MediaCleanupService` (BullMQ cron, KI-412, KI-413).
+- **Agent Infrastructure:** Учет стоимости (CostBudgetService), SSRF-защита, OTel span `agent.step` (KI-407, 409, 416).
+- **LLM Providers:** Prompt caching для Anthropic, исправлен RouterAI Embeddings (KI-406, 414).
 
 ### Fixed
 - **KI-391:** Стабильный `INSTANCE_ID` (`hostname:PORT`) для BullMQ.
@@ -36,6 +38,7 @@
 ### Documented
 - **KI-418..424** — новые KI v0.9.1 (см. KNOWN_ISSUES.md).
 - **KI-425..430** — новые KI v0.9.1 (см. KNOWN_ISSUES.md).
+- **KI-431..436** — новые KI v0.9.1.
 
 ## [0.9.0] — 2026-10-18
 

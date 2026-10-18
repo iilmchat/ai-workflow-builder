@@ -6447,7 +6447,9 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-406 — RouterAI: `DEFAULT_EMBEDDING_MODEL` не существует у провайдера
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.9.1 (коммит `1c36901`) — `resolveEmbeddingModel` в
+  фабрике: bare-id получает префикс `openai/` у RouterAI.
 - **Файлы:** `src/llm/llm-provider.factory.ts`,
   `src/llm/llm-registry.service.ts`
 - **Описание:** RouterAI отвергает `text-embedding-3-small` (400) — нужен
@@ -6459,7 +6461,9 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-407 — Agent и `llm_call` обходят `CostBudgetService`
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.9.1 (коммит `a1ccf86`) — стоимость шагов агента
+  учитывается в `CostBudgetService` (`assertWithinBudgetAsync`).
 - **Файлы:** `src/agent/agent.service.ts`
 - **Описание:** `LlmNodeExecutor` пишет `cost_usd` в `node_runs`, а
   `AgentService` вызывает `LlmService.generateAsync` напрямую.
@@ -6481,7 +6485,9 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-409 — `http_request` без SSRF-защиты
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.9.1 (коммит `a1ccf86`) — `assertPublicHttpUrlAsync`:
+  DNS-резолв + блокировка приватных IPv4/IPv6 и metadata-алиасов.
 - **Файлы:** `src/agent/agent-tools.ts`
 - **Описание:** нет allowlist / запрета приватных IP. Можно дернуть
   `http://127.0.0.1:3000` и внутренние сервисы.
@@ -6540,7 +6546,9 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-414 — Anthropic prompt caching не включается
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.9.1 (коммит `1c36901`) — `cache_control: ephemeral`
+  на последнем system-блоке при длине промпта выше `PROMPT_CACHE_MIN_TOKENS`.
 - **Файлы:** `src/llm/providers/anthropic.provider.ts`
 - **Описание:** нет `cache_control: ephemeral` при `systemPrompt > 1024`, нет
   `PROMPT_CACHE_ENABLED` / `PROMPT_CACHE_MIN_TOKENS` (DESIGN § 3.7.3).
@@ -6562,7 +6570,9 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-416 — OTel span `agent.step` отсутствует
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.9.1 (коммит `a1ccf86`) — каждая итерация цикла
+  обёрнута в `withSpanAsync('agent.step', …)`.
 - **Файлы:** `src/agent/agent.service.ts`
 - **Описание:** DESIGN § 3.7.1 перечисляет `agent.step`, R7.7 ограничен
   `run.execute` / `node.execute` / `llm.call` / `media.createTask`.
@@ -6716,18 +6726,103 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-431 — `PROMPT_CACHE_MIN_TOKENS` не объявлена в `EnvSchema`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/config/env.schema.ts`
+- **Описание:** порог промпт-кэша читается провайдером напрямую
+  (`readPromptCacheMinTokens`, `src/llm/providers/anthropic.provider.ts`), хотя
+  переменной нет в `EnvSchema`. Значение не валидируется Zod: опечатка в имени
+  или строка `"abc"` молча откатываются на `DEFAULT_PROMPT_CACHE_MIN_TOKENS`
+  (1024), и включённый кэш незаметно работает с дефолтным порогом.
+- **Решение:** добавить `PROMPT_CACHE_MIN_TOKENS`
+  (`z.coerce.number().int().positive().default(1024)`) в `EnvSchema` и читать
+  через `ConfigService` (RULES 4.6), как остальные env-флаги.
+- **Связанные:** KI-414, KI-432.
+
+---
+
+### KI-432 — Порог промпт-кэша считается в символах, а не в токенах
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/llm/providers/anthropic.provider.ts`
+- **Описание:** `buildSystemParam` сравнивает `systemPrompt.length` (символы) с
+  `PROMPT_CACHE_MIN_TOKENS` (заявленные токены). Для латиницы символов больше,
+  чем токенов, и порог срабатывает с запасом; для кириллицы наоборот — 1024
+  символа ≈ 400–500 токенов, то есть `cache_control` ставится на промпт короче
+  минимального кэшируемого Anthropic (1024 токена), и кэш не создаётся, хотя
+  флаг включён.
+- **Решение:** оценивать токены (tokenizer или эвристика по языку) либо явно
+  переименовать переменную в `PROMPT_CACHE_MIN_CHARS` и подобрать порог под
+  реальную токенизацию.
+- **Связанные:** KI-414, KI-431.
+
+---
+
+### KI-433 — Метрики `AgentRunResult` не пишутся в `node_runs`
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/engine/node-executors.ts`
+- **Описание:** `executeAgentNodeAsync` возвращает только `outputs` и `steps`;
+  `tokensIn` / `tokensOut` / `costUsd` из `AgentRunResult` до движка не
+  доходят. У узла `agent` колонки `node_runs.tokens_in`, `tokens_out`,
+  `cost_usd` остаются `NULL`, поэтому бюджет (KI-407) считается, а в БД и в
+  агрегате запуска этих трат нет.
+- **Решение:** расширить `AgentNodeExecution` полями usage/cost и передавать их
+  в `updateNodeRunAsync` наравне с `LlmNodeExecutor`.
+- **Связанные:** KI-407, KI-038, KI-054.
+
+---
+
+### KI-434 — SSRF: `http_request` следует за redirect на приватный адрес
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/agent/agent-tools.ts`
+- **Описание:** `assertPublicHttpUrlAsync` проверяет только исходный URL, а
+  `fetch` вызывается без `redirect: 'manual'` и по умолчанию идёт по 3xx.
+  Публичный хост может ответить `302 Location: http://169.254.169.254/…`, и
+  запрос уйдёт на приватный адрес в обход guard (первый редирект бесплатен).
+- **Решение:** `redirect: 'manual'` с повторной проверкой каждого `Location`
+  и ограничением числа хопов либо проверка адреса на уровне соединения
+  (`dispatcher`/`lookup`).
+- **Связанные:** KI-409, KI-435.
+
+---
+
+### KI-435 — SSRF: DNS rebinding между проверкой и fetch
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/agent/agent-tools.ts`
+- **Описание:** адрес резолвится один раз в проверке, а `fetch` резолвит имя
+  повторно. При TTL=0 злоумышленник отдаёт публичный IP на первом запросе и
+  приватный на втором. Остаточный риск зафиксирован в JSDoc
+  `assertPublicHttpUrlAsync`; сбой DNS намеренно не блокирует запрос.
+- **Решение:** резолвить один раз и подключаться к выбранному IP (pinning через
+  `undici` dispatcher/`lookup`), проверяя адрес в момент соединения.
+- **Связанные:** KI-409, KI-434.
+
+---
+
+### KI-436 — Agent: hard-cap превышается на один шаг
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/agent/agent.service.ts`
+- **Описание:** `assertWithinBudgetAsync` вызывается после ответа LLM, когда
+  стоимость шага уже израсходована (до ответа провайдера она неизвестна). В
+  `hard`-режиме `BudgetExceededException` приходит после траты, поэтому
+  последний вызов может превысить лимит на стоимость одного шага.
+- **Решение:** проверять бюджет до вызова модели по оценке худшего случая
+  (`maxTokensPerStep`) либо условием `spent + worstCaseStep > limit`.
+- **Связанные:** KI-407, KI-048, KI-433.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 160 |
+| Fixed | 165 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 249 |
+| Open | 250 |
 | Won't Fix | 1 |
-| **Всего** | **418** |
+| **Всего** | **424** |
 
 ---
 
