@@ -1,5 +1,7 @@
 import { Controller, Get, Param } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { z } from 'zod';
+import { SHARE_THROTTLE } from '../common/http-throttle.constants.js';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import type { SharedWorkflow } from './dto/share-workflow.dto.js';
 import { WorkflowService } from './workflow.service.js';
@@ -37,6 +39,9 @@ export class WorkflowShareController {
    * @throws NotFoundException если токена нет (отозван или невалиден)
    */
   @Get(':token')
+  // KI-234: публичная ручка без аутентификации — 5 запросов в минуту с одного
+  // IP. Перебор uuid v4 нереален, но сканирование/DoS иначе не ограничены.
+  @Throttle({ default: SHARE_THROTTLE })
   async getShared(
     @Param(ZodValidationPipe.create(ShareTokenParamSchema))
     params: ShareTokenParamDto,

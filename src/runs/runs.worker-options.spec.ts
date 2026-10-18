@@ -1,3 +1,6 @@
+import { hostname } from 'node:os';
+import { resolveInstanceId } from './runs.worker-options.js';
+
 /**
  * Загружает модуль настроек воркера заново с заданным окружением.
  *
@@ -37,6 +40,31 @@ async function loadOptions(
   }
 }
 
+describe('resolveInstanceId (KI-391)', () => {
+  it('явный INSTANCE_ID важнее hostname и порта', () => {
+    expect(resolveInstanceId('prod-eu', 'node-1', '3100')).toBe('prod-eu');
+  });
+
+  it('обрезает пробелы у явного INSTANCE_ID', () => {
+    expect(resolveInstanceId('  smoke  ', 'node-1', '3100')).toBe('smoke');
+  });
+
+  it('строит стабильный hostname:PORT', () => {
+    expect(resolveInstanceId(undefined, 'node-1', '3100')).toBe('node-1:3100');
+  });
+
+  it('без PORT подставляет 3000', () => {
+    expect(resolveInstanceId(undefined, 'node-1', undefined)).toBe(
+      'node-1:3000',
+    );
+    expect(resolveInstanceId(undefined, 'node-1', '')).toBe('node-1:3000');
+  });
+
+  it('пустой explicit игнорируется (пустая строка из .env)', () => {
+    expect(resolveInstanceId('', 'node-1', '3100')).toBe('node-1:3100');
+  });
+});
+
 describe('WORKFLOW_RUNS_WORKER_OPTIONS и RUN_STALE_THRESHOLD_MS (KI-065, KI-032)', () => {
   afterEach(() => {
     vi.resetModules();
@@ -62,10 +90,8 @@ describe('WORKFLOW_RUNS_WORKER_OPTIONS и RUN_STALE_THRESHOLD_MS (KI-065, KI-032
     });
     expect(options.RUN_STALE_THRESHOLD_MS).toBe(300_000);
     expect(options.RUNS_QUEUE_DB).toBe(0);
-    // KI-387: без INSTANCE_ID идентификатор генерируется при старте.
-    expect(options.RUNS_INSTANCE_ID).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-    );
+    // KI-391: без INSTANCE_ID идентификатор стабилен — hostname:PORT.
+    expect(options.RUNS_INSTANCE_ID).toBe(`${hostname()}:3000`);
   });
 
   it('берёт значения из окружения', async () => {
@@ -77,6 +103,7 @@ describe('WORKFLOW_RUNS_WORKER_OPTIONS и RUN_STALE_THRESHOLD_MS (KI-065, KI-032
       BULLMQ_PREFIX: 'workflow-runs-dev',
       REDIS_QUEUE_DB: '2',
       INSTANCE_ID: 'dev-instance',
+      PORT: '3100',
     });
 
     expect(options.WORKFLOW_RUNS_WORKER_OPTIONS).toEqual({
@@ -89,17 +116,28 @@ describe('WORKFLOW_RUNS_WORKER_OPTIONS и RUN_STALE_THRESHOLD_MS (KI-065, KI-032
     expect(options.RUN_STALE_THRESHOLD_MS).toBe(60_000);
     // KI-387: БД Redis и маркер инстанса тоже из окружения.
     expect(options.RUNS_QUEUE_DB).toBe(2);
+    // KI-391: явный INSTANCE_ID важнее hostname:PORT.
     expect(options.RUNS_INSTANCE_ID).toBe('dev-instance');
   });
 
-  it('KI-387: параллельные инстансы получают разные сгенерированные id', async () => {
-    // Модуль перечитывается (vi.resetModules) — как два процесса, стартовавших
-    // без INSTANCE_ID: идентификаторы обязаны различаться, иначе воркер одного
-    // инстанса примет задание другого.
-    const first = await loadOptions({ INSTANCE_ID: undefined });
-    const second = await loadOptions({ INSTANCE_ID: undefined });
+  it('KI-391: без INSTANCE_ID идентификатор стабилен между рестартами', async () => {
+    // Модуль перечитывается (vi.resetModules) — как два процесса на одном
+    // хосте/порту: идентификаторы обязаны совпасть, иначе новый воркер
+    // пропустит задание прежнего и run останется в `pending`.
+    const first = await loadOptions({ INSTANCE_ID: undefined, PORT: '4100' });
+    const second = await loadOptions({ INSTANCE_ID: undefined, PORT: '4100' });
 
-    expect(first.RUNS_INSTANCE_ID).not.toBe(second.RUNS_INSTANCE_ID);
+    expect(first.RUNS_INSTANCE_ID).toBe(`${hostname()}:4100`);
+    expect(second.RUNS_INSTANCE_ID).toBe(first.RUNS_INSTANCE_ID);
+  });
+
+  it('KI-391: без PORT берёт 3000', async () => {
+    const options = await loadOptions({
+      INSTANCE_ID: undefined,
+      PORT: undefined,
+    });
+
+    expect(options.RUNS_INSTANCE_ID).toBe(`${hostname()}:3000`);
   });
 
   it('падает с понятной ошибкой на нечисловом значении', async () => {

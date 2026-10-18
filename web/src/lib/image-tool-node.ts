@@ -45,6 +45,56 @@ export function inputUrlFromOutputs(
 }
 
 /**
+ * Проверяет, что значение — обычный объект (не массив и не `null`).
+ *
+ * @param value - значение из `data.params` (jsonb, RULES 1.17)
+ * @returns `true`, если у значения можно читать/писать ключи
+ */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Читает `data.params.audioUrl` для операции `lipsync` (KI-369).
+ *
+ * @param params - `data.params` узла (не типизирован: jsonb)
+ * @returns URL аудио либо `''`, если поле не задано/не строка
+ */
+export function readToolAudioUrl(params: unknown): string {
+  if (!isPlainRecord(params)) {
+    return '';
+  }
+
+  return typeof params.audioUrl === 'string' ? params.audioUrl : '';
+}
+
+/**
+ * Возвращает новые `data.params` с обновлённым `audioUrl` (KI-369).
+ *
+ * Остальные параметры операции (`prompt`, поля модели) сохраняются. Пустое
+ * значение удаляет ключ: пустых строк в JSON быть не должно (KI-129).
+ *
+ * @param params - текущие `data.params` узла
+ * @param audioUrl - значение поля ввода
+ * @returns копия параметров с `audioUrl` либо без него
+ */
+export function withToolAudioUrl(
+  params: unknown,
+  audioUrl: string,
+): Record<string, unknown> {
+  const next = isPlainRecord(params) ? { ...params } : {};
+  const trimmed = audioUrl.trim();
+
+  if (trimmed.length === 0) {
+    delete next.audioUrl;
+  } else {
+    next.audioUrl = trimmed;
+  }
+
+  return next;
+}
+
+/**
  * Выбирает ссылку для превью входа узла.
  *
  * Приоритет: вход по связи (первый узел, у которого есть ссылка) →

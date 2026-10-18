@@ -12,7 +12,7 @@ import {
 } from '../dto/media-task.dto.js';
 import { toMediaTaskResult, type MediaTaskResult } from '../dto/media-task.mapper.js';
 import {
-  DEFAULT_IMAGE_TOOL_MODELS,
+  CREATIVELAB_IMAGE_TOOL_MODELS,
   DEFAULT_IMAGE_TOOL_PROMPTS,
   IMAGE_TOOL_RESERVED_PARAM_KEYS,
   type ImageToolOperation,
@@ -320,7 +320,7 @@ export class CreativeLabProvider implements IMediaProvider {
     const requestedModel =
       typeof params.model === 'string' && params.model.length > 0
         ? params.model
-        : DEFAULT_IMAGE_TOOL_MODELS[tool];
+        : CREATIVELAB_IMAGE_TOOL_MODELS[tool];
 
     if (!requestedModel) {
       throw new MediaProviderException(

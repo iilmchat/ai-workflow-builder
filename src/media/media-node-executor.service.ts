@@ -125,13 +125,35 @@ interface ResolvedGenerationModel {
 }
 
 /**
+ * Схема `params` узла `image_tool` (R7.1, KI-369).
+ *
+ * Известные ключи валидируются, остальные (`duration`, поля конкретной модели)
+ * проходят как есть через `.passthrough()` и фильтруются каталогом модели
+ * (KI-181). `audioUrl` — публичная http(s)-ссылка для `lipsync`: пустая строка
+ * из UI считается «не задано», а невалидный URL ловится здесь, до платного
+ * запроса (KI-369).
+ */
+const ImageToolParamsSchema = z
+  .object({
+    /** Пользовательский промпт операции. */
+    prompt: z.string().optional(),
+    /** Аудио для `lipsync` (второй обязательный слот `kling-lipsync`). */
+    audioUrl: z.preprocess(
+      (value) =>
+        typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+      z.url({ protocol: /^https?$/ }).optional(),
+    ),
+  })
+  .passthrough();
+
+/**
  * Схема `data` узла `image_tool` (R7.1, DESIGN v0.9 § 3.1).
  *
  * `inputUrl` — фолбэк для случая, когда вход не пришёл по связи (узел можно
  * запустить с одной лишь ссылкой). Схема допускает `model` без значения: у
- * операций с дефолтной моделью (`bg_removal`, `lipsync`) пользователь может её
- * не выбирать, а у остальных отсутствие модели даёт понятную ошибку на
- * выполнении.
+ * операций с дефолтной моделью (`bg_removal`, `lipsync`, `trim`, `upscale`)
+ * пользователь может её не выбирать, а у остальных отсутствие модели даёт
+ * понятную ошибку на выполнении.
  */
 const ImageToolNodeDataSchema = z.object({
   /** Операция инструмента (5 значений DESIGN § 3.1). */
@@ -143,7 +165,7 @@ const ImageToolNodeDataSchema = z.object({
     .url({ protocol: /^https?$/ })
     .optional(),
   /** Параметры конкретной операции (промпт, audioUrl, поля модели). */
-  params: z.record(z.string(), z.unknown()).optional(),
+  params: ImageToolParamsSchema.optional(),
 });
 
 /** Разобранные `data` узла `image_tool`. */
@@ -1047,8 +1069,7 @@ export class MediaNodeExecutor {
       }
 
       if (
-        key === 'prompt' ||
-        key === 'audioUrl' ||
+        ((key === 'prompt' || key === 'audioUrl') && value !== undefined) ||
         (isParamValue(value) && !IMAGE_TOOL_RESERVED_PARAM_KEYS.has(key))
       ) {
         params[key] = value;
@@ -1065,25 +1086,31 @@ export class MediaNodeExecutor {
   }
 
   /**
-   * Находит провайдера и модель-инструмент для операции (R7.1).
+   * Находит провайдера и модель-инструмент для операции (R7.1, KI-367).
    *
    * Маршрутизация — по каталогу: провайдер, объявивший модель, и обслуживает
-   * вызов. Если модель не задана, берётся дефолт операции
-   * ({@link DEFAULT_IMAGE_TOOL_MODELS}).
+   * вызов. Если модель не задана, перебираются дефолты операции
+   * ({@link DEFAULT_IMAGE_TOOL_MODELS}) в порядке приоритета: так `upscale`
+   * работает через FAL/Replicate, а `bg_removal`/`lipsync`/`trim` — через
+   * CreativeLab, без ручного выбора модели (KI-367).
    *
    * @param operation - операция инструмента
    * @param requestedModel - id модели из `data.model`, если выбран
    * @returns провайдера и его описание модели (цена нужна для бюджета)
    * @throws MediaProviderException если ни один провайдер не сконфигурирован,
-   *   у операции нет дефолтной модели или модель не объявлена каталогом
+   *   у операции нет дефолтной модели, ни один дефолт не найден в каталогах
+   *   или явно выбранная модель не объявлена каталогом
    */
   private async resolveToolTargetAsync(
     operation: ImageToolOperation,
     requestedModel: string | undefined,
   ): Promise<{ provider: IMediaProvider; model: MediaModelInfo }> {
-    const modelId = requestedModel ?? DEFAULT_IMAGE_TOOL_MODELS[operation];
+    const candidates =
+      requestedModel !== undefined
+        ? [requestedModel]
+        : [...(DEFAULT_IMAGE_TOOL_MODELS[operation] ?? [])];
 
-    if (!modelId) {
+    if (candidates.length === 0) {
       throw new MediaProviderException(
         'media',
         `Для операции ${operation} не выбрана модель: укажите id модели-инструмента из каталога`,
@@ -1101,16 +1128,26 @@ export class MediaNodeExecutor {
 
     for (const provider of configured) {
       const models = await provider.listModelsAsync();
-      const model = models.find((candidate) => candidate.id === modelId);
 
-      if (model) {
-        return { provider, model };
+      for (const modelId of candidates) {
+        const model = models.find((candidate) => candidate.id === modelId);
+
+        if (model) {
+          return { provider, model };
+        }
       }
+    }
+
+    if (requestedModel !== undefined) {
+      throw new MediaProviderException(
+        'media',
+        `Модель-инструмент не найдена в каталоге media: ${requestedModel}`,
+      );
     }
 
     throw new MediaProviderException(
       'media',
-      `Модель-инструмент не найдена в каталоге media: ${modelId}`,
+      `Для операции ${operation} нет доступной модели по умолчанию (проверены: ${candidates.join(', ')}): выберите id модели-инструмента из каталога`,
     );
   }
 

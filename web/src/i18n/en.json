@@ -120,6 +120,8 @@
   "node.image_generation.label": "Image generation",
   "node.image_tool.alt": "Operation result",
   "node.image_tool.applying": "Processing…",
+  "node.image_tool.audioUrl": "Lip sync audio (URL)",
+  "node.image_tool.audioUrl.placeholder": "Paste an audio file URL…",
   "node.image_tool.error": "Operation failed",
   "node.image_tool.input.alt": "Input image",
   "node.image_tool.input.none": "No input file",

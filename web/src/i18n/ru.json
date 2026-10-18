@@ -124,6 +124,8 @@
   "node.image_generation.label": "Генерация изображения",
   "node.image_tool.alt": "Результат операции",
   "node.image_tool.applying": "Обработка…",
+  "node.image_tool.audioUrl": "Аудио для липсинка (URL)",
+  "node.image_tool.audioUrl.placeholder": "Вставьте ссылку на аудиофайл…",
   "node.image_tool.error": "Ошибка операции",
   "node.image_tool.input.alt": "Входное изображение",
   "node.image_tool.input.none": "Нет входного файла",

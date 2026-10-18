@@ -59,18 +59,62 @@ export function isImageToolOperation(value: unknown): value is ImageToolOperatio
 }
 
 /**
- * Модель по умолчанию для операции.
+ * Модели-инструменты CreativeLab по умолчанию (проверено по каталогу upstream).
  *
- * Заполнено только там, где у upstream **есть** подходящая модель (проверено
- * запросом каталога): удаление фона и липсинк. Для остальных операций дефолта
- * нет — узел без выбранной модели честно падает с понятной ошибкой, а не
- * подставляет случайную модель (принцип KI-069: молчаливой подмены нет).
+ * Каталог CreativeLab не помечает инструменты отдельным типом (KI-366), поэтому
+ * дефолт — это id обычной IMAGE/VIDEO-модели с обязательным входным слотом.
+ * Значения сверены с живым каталогом (`GET /api/v2/media/models`, 113 моделей,
+ * 2026-10-18): `bgremover` (image), `kling-lipsync` (video + audio),
+ * `@VideoEdit` (video). Для `upscale`/`chromakey` подходящих моделей в каталоге
+ * нет — подставлять «похожую» модель нельзя: это платный запрос с неверной
+ * семантикой (KI-367).
+ *
+ * Провайдер использует эту карту для собственного дефолта, когда исполнитель
+ * узла не передал `params.model`.
  */
-export const DEFAULT_IMAGE_TOOL_MODELS: Partial<
+export const CREATIVELAB_IMAGE_TOOL_MODELS: Partial<
   Record<ImageToolOperation, string>
 > = {
   bg_removal: 'bgremover',
   lipsync: 'kling-lipsync',
+  trim: '@VideoEdit',
+};
+
+/**
+ * Модель-инструмент по умолчанию для операции — упорядоченный список
+ * кандидатов (KI-367).
+ *
+ * Значение — полный id модели в каталоге провайдера: у CreativeLab id без
+ * префикса (`bgremover`), у прямых провайдеров — с префиксом
+ * (`fal:fal-ai/clarity-upscaler`, `replicate:nightmareai/real-esrgan`).
+ * `MediaNodeExecutor` берёт первого кандидата, которого реально объявил
+ * сконфигурированный провайдер, поэтому порядок задаёт приоритет.
+ *
+ * Заполнено только то, что существует в каталогах:
+ * - `upscale` — FAL `clarity-upscaler` / Replicate `real-esrgan` (R7.3);
+ * - `bg_removal` — CreativeLab `bgremover` / FAL `rembg` / Replicate `rembg`;
+ * - `lipsync` — CreativeLab `kling-lipsync`;
+ * - `trim` — CreativeLab `@VideoEdit`;
+ * - `chromakey` — пусто: ни один каталог не объявляет модель хромакея.
+ *
+ * Принцип KI-069: молчаливой подмены нет. Если ни один кандидат не найден,
+ * узел падает с понятной ошибкой, а не отправляет платный запрос «похожей»
+ * модели.
+ */
+export const DEFAULT_IMAGE_TOOL_MODELS: Partial<
+  Record<ImageToolOperation, readonly string[]>
+> = {
+  upscale: ['fal:fal-ai/clarity-upscaler', 'replicate:nightmareai/real-esrgan'],
+  bg_removal: [
+    'bgremover',
+    'fal:fal-ai/imageutils/rembg',
+    'replicate:cjwbw/rembg',
+  ],
+  lipsync: ['kling-lipsync'],
+  // Хромакея нет ни у CreativeLab, ни у прямых провайдеров (KI-418): модель
+  // выбирается вручную, если она появится в каталоге.
+  chromakey: [],
+  trim: ['@VideoEdit'],
 };
 
 /**

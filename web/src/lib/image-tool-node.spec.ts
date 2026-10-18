@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 // Относительный путь (не `@/`): alias `@` в тестах настроен, но модуль лежит
 // рядом — короткий путь читается проще.
-import { inputUrlFromOutputs, pickInputPreviewUrl } from './image-tool-node';
+import {
+  inputUrlFromOutputs,
+  pickInputPreviewUrl,
+  readToolAudioUrl,
+  withToolAudioUrl,
+} from './image-tool-node';
 
 /**
  * Юнит-тесты чистой логики узла `image_tool` (R7.1, KI-196).
@@ -51,5 +56,51 @@ describe('image_tool: превью входа (R7.1)', () => {
     // Небезопасный `data.inputUrl` не подставляется.
     expect(pickInputPreviewUrl([], 'javascript:alert(1)')).toBeNull();
     expect(pickInputPreviewUrl([], undefined)).toBeNull();
+  });
+});
+
+describe('image_tool: audioUrl для lipsync (KI-369)', () => {
+  it('читает строку и игнорирует нестроковые значения', () => {
+    expect(readToolAudioUrl({ audioUrl: 'https://cdn/voice.mp3' })).toBe(
+      'https://cdn/voice.mp3',
+    );
+    expect(readToolAudioUrl({ audioUrl: 42 })).toBe('');
+    expect(readToolAudioUrl(undefined)).toBe('');
+    expect(readToolAudioUrl(null)).toBe('');
+    expect(readToolAudioUrl(['https://cdn/voice.mp3'])).toBe('');
+  });
+
+  it('добавляет audioUrl, сохраняя остальные параметры операции', () => {
+    expect(
+      withToolAudioUrl(
+        { prompt: 'говори как диктор', duration: 5 },
+        '  https://cdn/voice.mp3  ',
+      ),
+    ).toMatchObject({
+      prompt: 'говори как диктор',
+      duration: 5,
+      audioUrl: 'https://cdn/voice.mp3',
+    });
+  });
+
+  it('удаляет ключ при пустом значении (KI-129)', () => {
+    const next = withToolAudioUrl(
+      { audioUrl: 'https://cdn/old.mp3', prompt: 'x' },
+      '   ',
+    );
+
+    expect(next).toMatchObject({ prompt: 'x' });
+    expect(next).not.toHaveProperty('audioUrl');
+  });
+
+  it('создаёт params, если у узла их ещё нет', () => {
+    expect(withToolAudioUrl(undefined, 'https://cdn/voice.mp3')).toMatchObject({
+      audioUrl: 'https://cdn/voice.mp3',
+    });
+    expect(
+      withToolAudioUrl('не объект', 'https://cdn/voice.mp3'),
+    ).toMatchObject({
+      audioUrl: 'https://cdn/voice.mp3',
+    });
   });
 });

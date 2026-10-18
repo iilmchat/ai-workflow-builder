@@ -7,7 +7,12 @@ import i18n from '@/i18n';
 import { useNodeDataHistory } from '@/hooks/use-node-data-history';
 import { resolveMediaSource } from '@/lib/media-source';
 import type { MediaModelInfo } from '@/types/media';
-import { inputUrlFromOutputs, pickInputPreviewUrl } from '@/lib/image-tool-node';
+import {
+  inputUrlFromOutputs,
+  pickInputPreviewUrl,
+  readToolAudioUrl,
+  withToolAudioUrl,
+} from '@/lib/image-tool-node';
 import { NODE_REGISTRY } from '@/lib/node-registry';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
@@ -75,6 +80,17 @@ export function ImageToolNode({ id, data }: NodeProps<ImageToolFlowNode>) {
       }
     },
     [id, updateNodeData],
+  );
+
+  // KI-369: lipsync требует второй вход — аудио. Ссылка живёт в
+  // `data.params.audioUrl` (backend передаёт её в обязательный слот `audio`).
+  const audioUrl = readToolAudioUrl(data.params);
+
+  const handleAudioUrlChange = useCallback(
+    (value: string) => {
+      updateNodeData(id, { params: withToolAudioUrl(data.params, value) });
+    },
+    [data.params, id, updateNodeData],
   );
 
   // Preview входа: берём outputs первого входящего узла, у которого есть ссылка
@@ -166,6 +182,26 @@ export function ImageToolNode({ id, data }: NodeProps<ImageToolFlowNode>) {
           <p className="mt-1 truncate text-[10px] text-muted-foreground" title={price}>
             {price}
           </p>
+        )}
+
+        {operation === 'lipsync' && (
+          <div className="mt-2">
+            <label
+              htmlFor={`image-tool-audio-${id}`}
+              className="mb-1 block text-[10px] text-muted-foreground"
+            >
+              {t('node.image_tool.audioUrl')}
+            </label>
+            <input
+              id={`image-tool-audio-${id}`}
+              type="text"
+              inputMode="url"
+              value={audioUrl}
+              placeholder={t('node.image_tool.audioUrl.placeholder')}
+              className="nodrag w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              onChange={(event) => handleAudioUrlChange(event.target.value)}
+            />
+          </div>
         )}
 
         {previewUrl !== null ? (

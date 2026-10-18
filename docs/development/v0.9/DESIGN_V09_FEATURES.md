@@ -140,9 +140,12 @@ $X». Yandex — «кэш недоступен» (честно). Обоснов�
 **Реальность upstream (KI-366/367):** `GET /media/models?type=TOOL` даёт
 пустой список — CreativeLab не маркирует инструменты отдельным типом.
 Инструменты резолвятся model-first: `toolModels = TOOL ∪ модели с
-обязательным входом`. Дефолтные модели есть только у bg_removal
-(bgremover) и lipsync (kling-lipsync); для upscale/chromakey/trim
-модель выбирается вручную (KI-367). Реализовано в R7.1.
+обязательным входом`. Дефолтные модели (v0.9.1, KI-367): bg_removal
+(`bgremover`), lipsync (`kling-lipsync`), trim (`@VideoEdit`), upscale
+(FAL `clarity-upscaler` / Replicate `real-esrgan` — нужен
+соответствующий провайдер). У chromakey модели нет ни в одном каталоге
+(KI-418) — операция требует ручного выбора, если модель появится.
+Реализовано в R7.1.
 
 **Backend:** `MediaNodeExecutor` расширяется — `kind='image_tool'`
 использует `IMediaProvider.applyToolAsync(input, tool, params)` (новый

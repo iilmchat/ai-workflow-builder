@@ -128,6 +128,15 @@ describe('MediaNodeExecutor: узел image_tool (R7.1, KI-196)', () => {
             ],
           }),
           model('upscale-model', { price: 25 }),
+          // KI-367: дефолты из каталогов прямых провайдеров и @VideoEdit.
+          model('fal:fal-ai/clarity-upscaler', { price: 1 }),
+          model('@VideoEdit', {
+            type: 'VIDEO',
+            price: 50,
+            inputs: [
+              { key: 'video', kind: 'video', role: 'reference', required: true },
+            ],
+          }),
         ]),
       ),
       createTaskAsync: vi.fn(() => Promise.resolve(task())),
@@ -207,7 +216,35 @@ describe('MediaNodeExecutor: узел image_tool (R7.1, KI-196)', () => {
     expect(provider.applyToolAsync).toHaveBeenCalledWith(
       INPUT_URL,
       'bg_removal',
-      expect.objectContaining({ model: DEFAULT_IMAGE_TOOL_MODELS.bg_removal }),
+      expect.objectContaining({ model: DEFAULT_IMAGE_TOOL_MODELS.bg_removal?.[0] }),
+    );
+  });
+
+  it('KI-367: без выбранной модели trim берёт @VideoEdit из CreativeLab', async () => {
+    await executor.executeToolAsync(
+      toolNode({ operation: 'trim', model: undefined, inputUrl: INPUT_URL }),
+      {},
+      RUN_ID,
+    );
+
+    expect(provider.applyToolAsync).toHaveBeenCalledWith(
+      INPUT_URL,
+      'trim',
+      expect.objectContaining({ model: '@VideoEdit' }),
+    );
+  });
+
+  it('KI-367: без выбранной модели upscale берёт дефолт прямого провайдера', async () => {
+    await executor.executeToolAsync(
+      toolNode({ operation: 'upscale', model: undefined, inputUrl: INPUT_URL }),
+      {},
+      RUN_ID,
+    );
+
+    expect(provider.applyToolAsync).toHaveBeenCalledWith(
+      INPUT_URL,
+      'upscale',
+      expect.objectContaining({ model: 'fal:fal-ai/clarity-upscaler' }),
     );
   });
 
@@ -312,6 +349,43 @@ describe('MediaNodeExecutor: узел image_tool (R7.1, KI-196)', () => {
         model: 'kling-lipsync',
         idempotencyKey: `${RUN_ID}:tool-1`,
       },
+    );
+  });
+
+  it('KI-369: невалидный audioUrl отклоняется Zod до платного вызова', async () => {
+    const error = await executor
+      .executeToolAsync(
+        toolNode({
+          operation: 'lipsync',
+          model: 'kling-lipsync',
+          params: { audioUrl: 'not-a-url' },
+        }),
+        { url: INPUT_URL },
+        RUN_ID,
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(NodeDataValidationException);
+    expect((error as Error).message).toContain('audioUrl');
+    expect(provider.applyToolAsync).not.toHaveBeenCalled();
+  });
+
+  it('KI-369: пустой audioUrl из UI считается «не задано»', async () => {
+    await executor.executeToolAsync(
+      toolNode({
+        operation: 'lipsync',
+        model: 'kling-lipsync',
+        params: { audioUrl: '' },
+      }),
+      { url: INPUT_URL },
+      RUN_ID,
+    );
+
+    // Пустая строка не проходит в params: провайдер сам сообщит, что аудио нет.
+    expect(provider.applyToolAsync).toHaveBeenCalledWith(
+      INPUT_URL,
+      'lipsync',
+      expect.not.objectContaining({ audioUrl: expect.anything() }),
     );
   });
 

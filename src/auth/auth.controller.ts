@@ -12,7 +12,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
+import { LOGIN_THROTTLE } from '../common/http-throttle.constants.js';
 import { parseDurationToMs } from '../common/utils/parse-duration.js';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import {
@@ -72,6 +74,9 @@ export class AuthController {
    */
   @Post('login')
   @HttpCode(HttpStatus.OK)
+  // KI-206: 5 попыток в минуту с одного IP — защита от брутфорса. Считаются и
+  // успешные, и неуспешные попытки, поэтому перебор упирается в 429.
+  @Throttle({ default: LOGIN_THROTTLE })
   async login(
     @Body(ZodValidationPipe.create(LoginSchema)) dto: LoginDto,
     @Res({ passthrough: true }) response: Response,

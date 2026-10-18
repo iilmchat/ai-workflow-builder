@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { hostname } from 'node:os';
 import { z } from 'zod';
 import { WorkerEnvSchema, type WorkerEnv } from '../config/env.schema.js';
 
@@ -56,17 +56,50 @@ export const RUNS_QUEUE_PREFIX = workerEnv.BULLMQ_PREFIX;
 export const RUNS_QUEUE_DB = workerEnv.REDIS_QUEUE_DB;
 
 /**
- * Идентификатор текущего backend-инстанса (KI-387).
+ * Собирает идентификатор инстанса: явный `INSTANCE_ID` или `hostname:PORT`.
+ *
+ * Вынесено отдельной функцией, чтобы поведение можно было покрыть тестом без
+ * перезагрузки модуля и подмены `os.hostname()`.
+ *
+ * @param explicit - значение `INSTANCE_ID` из окружения (пустое = не задано)
+ * @param host - имя хоста (`os.hostname()`)
+ * @param port - порт из `process.env.PORT`; пусто/`'0'` → 3000
+ * @returns стабильный идентификатор вида `host:3000`
+ */
+export function resolveInstanceId(
+  explicit: string | undefined,
+  host: string,
+  port: string | undefined,
+): string {
+  const trimmed = explicit?.trim();
+
+  if (trimmed !== undefined && trimmed.length > 0) {
+    return trimmed;
+  }
+
+  return `${host}:${port || 3000}`;
+}
+
+/**
+ * Идентификатор текущего backend-инстанса (KI-387, KI-391).
  *
  * Один и тот же в пределах процесса: продюсер (`RunsService`) кладёт его в
- * payload задания, а воркер (`RunsProcessor`) сверяет со своим. Если
- * `INSTANCE_ID` не задан, генерируется случайный uuid — два параллельных
- * инстанса не совпадут. При рестарте без явного `INSTANCE_ID` идентификатор
- * меняется, поэтому задания, оставшиеся в общей очереди от прежнего процесса,
- * будут пропущены: для параллельной работы задавайте `INSTANCE_ID` (и/или
- * уникальный `BULLMQ_PREFIX`/`REDIS_QUEUE_DB`).
+ * payload задания, а воркер (`RunsProcessor`) сверяет со своим. Явный
+ * `INSTANCE_ID` имеет приоритет. Если он не задан, идентификатор строится из
+ * `os.hostname()` и `PORT` — он **стабилен между рестартами** процесса на том же
+ * хосте/порту, поэтому задание, оставшееся в очереди от прежнего процесса,
+ * новый воркер примет, а не пропустит (KI-391).
+ *
+ * Параллельные инстансы различаются хостом и/или портом. Если инстансы
+ * запускаются в среде с эфемерным hostname (пересоздание Docker-контейнера,
+ * поды Kubernetes), задавайте `INSTANCE_ID` явно — иначе после пересоздания
+ * идентификатор изменится.
  */
-export const RUNS_INSTANCE_ID = workerEnv.INSTANCE_ID ?? randomUUID();
+export const RUNS_INSTANCE_ID = resolveInstanceId(
+  workerEnv.INSTANCE_ID,
+  hostname(),
+  process.env.PORT,
+);
 
 /**
  * Порог «зависшего» запуска (мс).

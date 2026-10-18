@@ -273,8 +273,9 @@ export interface ImageToolNodeData extends Record<string, unknown> {
    * id модели-инструмента из каталога media (`GET /media/models?type=TOOL`).
    *
    * `''` — «модель ещё не выбрана». У операций с известной моделью
-   * (`bg_removal`, `lipsync`) backend подставит дефолт, у остальных запуск
-   * упадёт понятной ошибкой — молчаливой подмены нет (KI-069).
+   * (`bg_removal`, `lipsync`, `trim`, `upscale`) backend подставит дефолт из
+   * каталога; у `chromakey` модели в каталоге нет — запуск упадёт понятной
+   * ошибкой, молчаливой подмены нет (KI-069, KI-367).
    */
   model?: string;
   /**
@@ -283,7 +284,12 @@ export interface ImageToolNodeData extends Record<string, unknown> {
    * `undefined` не присваиваем (KI-129): пустых ключей в JSON быть не должно.
    */
   inputUrl?: string;
-  /** Параметры конкретной операции (промпт, audioUrl, поля модели). */
+  /**
+   * Параметры конкретной операции.
+   *
+   * Для `lipsync` здесь лежит `audioUrl` — второй обязательный вход (KI-369);
+   * остальные ключи (промпт, поля модели) уходят в `params` запроса upstream.
+   */
   params?: Record<string, unknown>;
 }
 
