@@ -29,6 +29,16 @@
      KI-158: 10% почти не читались — контуры узлов терялись на фоне. */
   --color-canvas-mask: color-mix(in oklab, black 30%, transparent);
 
+  /*
+   * Узлы миникарты (KI-445): своя пара цветов, а не цвета карточки на холсте.
+   * До этого узел красился в `--color-node-bg`, то есть в тот же белый, что и
+   * фон миникарты, и «растворялся» в нём — миникарта выглядела пустым
+   * квадратом, даже когда граф был в ней отрисован. Заливка заметно темнее
+   * фона, контур темнее заливки.
+   */
+  --color-minimap-node: theme(colors.slate.400);
+  --color-minimap-node-stroke: theme(colors.slate.600);
+
   /* Узлы. */
   --color-node-bg: theme(colors.white);
   --color-node-border: theme(colors.slate.200);
@@ -78,6 +88,11 @@
      миникарта сливалась с холстом. Затемняем, как в светлой теме. */
   --color-canvas-mask: color-mix(in oklab, black 60%, transparent);
 
+  /* KI-445: на тёмном фоне миникарты узел должен быть светлее её фона
+     (slate.950 в `--color-background`), иначе он снова теряется. */
+  --color-minimap-node: theme(colors.slate.500);
+  --color-minimap-node-stroke: theme(colors.slate.300);
+
   --color-node-bg: theme(colors.slate.900);
   --color-node-border: theme(colors.slate.700);
   --color-node-shadow: color-mix(in oklab, black 40%, transparent);
@@ -116,8 +131,18 @@
   --xy-controls-button-border-color: var(--color-border);
   --xy-minimap-background-color: var(--color-background);
   --xy-minimap-mask-background-color: var(--color-canvas-mask);
-  --xy-minimap-node-background-color: var(--color-node-bg);
-  --xy-minimap-node-stroke-color: var(--color-node-border);
+  /*
+   * KI-445: у React Flow контур видимой области (`--xy-minimap-mask-stroke-color`)
+   * по умолчанию прозрачный, поэтому граница вьюпорта на миникарте не
+   * рисовалась вовсе — при вписанном в кадр графе маска вырождается в ноль, и
+   * миникарта показывала только фон. Цвет контура — акцентный.
+   * Толщину из CSS задать нельзя: она должна масштабироваться вместе с
+   * viewBox, поэтому 1 px передаётся пропом `<MiniMap maskStrokeWidth>`.
+   */
+  --xy-minimap-mask-stroke-color: var(--color-primary);
+  /* KI-445: узлы миникарты — собственным цветом, а не цветом карточки. */
+  --xy-minimap-node-background-color: var(--color-minimap-node);
+  --xy-minimap-node-stroke-color: var(--color-minimap-node-stroke);
   --xy-edge-label-background-color: var(--color-background);
   --xy-edge-label-color: var(--color-foreground);
 }
@@ -132,7 +157,12 @@
   box-shadow: 0 1px 3px var(--color-node-shadow);
 }
 
-/* Узлы миникарты: контур чуть плотнее фона, чтобы читались и без маски. */
+/*
+ * Узлы миникарты: контур чуть плотнее заливки, чтобы карточки читались и без
+ * маски. Важно: здесь `stroke-width` — в единицах viewBox миникарты (React Flow
+ * растягивает их на 200×150), поэтому на экране линия тоньше 1 px. Контраст
+ * миникарте даёт заливка (`--color-minimap-node`, KI-445), а не контур.
+ */
 .react-flow__minimap-node {
   stroke-width: 1.5;
 }

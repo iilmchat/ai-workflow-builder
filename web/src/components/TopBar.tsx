@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import i18n, { setLanguage, type Language } from '@/i18n';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import { useTheme } from '@/hooks/use-theme';
+import { APP_VERSION } from '@/lib/app-version';
 import { logoutAsync } from '@/lib/auth-api';
 import { exportFileNameOf, triggerDownload } from '@/lib/download-blob';
 import {
@@ -505,14 +506,30 @@ export function TopBar() {
           🧩
         </span>
 
-        <input
-          value={name}
-          onChange={handleNameChange}
-          placeholder={t('topbar.name.placeholder')}
-          aria-label={t('topbar.name.placeholder')}
-          // nodrag: единое правило для всех input внутри редактора.
-          className="nodrag w-64 rounded-lg border border-transparent px-2 py-1 text-sm font-medium text-foreground outline-none hover:border-border focus:border-primary focus:ring-1 focus:ring-primary"
-        />
+        {/* KI-446: имя workflow и копирайт с версией — одна колонка.
+            Строка версии стоит под именем, а не у правого края: там действия
+            (Save/Run/Share/профиль), и на 1280 px она вытеснила бы кнопки.
+            `data-app-version` — контракт для CDP-смоука (RULES 1.12). */}
+        <div className="flex min-w-0 flex-col">
+          <input
+            value={name}
+            onChange={handleNameChange}
+            placeholder={t('topbar.name.placeholder')}
+            aria-label={t('topbar.name.placeholder')}
+            // nodrag: единое правило для всех input внутри редактора.
+            className="nodrag w-64 rounded-lg border border-transparent px-2 py-1 text-sm font-medium text-foreground outline-none hover:border-border focus:border-primary focus:ring-1 focus:ring-primary"
+          />
+
+          <span
+            data-app-version={APP_VERSION}
+            // Полная форма копирайта (с названием продукта) — в тултипе:
+            // в шапке она не влезает, а RULES 1.12 требует её целиком.
+            title={t('topbar.copyright.full', { version: APP_VERSION })}
+            className="px-2 text-[10px] leading-none text-muted-foreground"
+          >
+            {t('topbar.copyright', { version: APP_VERSION })}
+          </span>
+        </div>
 
         {runStatus !== null && (
           <span

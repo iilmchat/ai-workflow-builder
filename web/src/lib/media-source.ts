@@ -1,13 +1,14 @@
 import { isRenderableMediaUrl } from '@/types/media';
 
 /**
- * Выбор источника media для узла (R7.8, KI-362).
+ * Выбор источника media для узла (KI-444, R7.8/KI-362).
  *
- * Приоритет: своя ссылка (`storedUrl`, живёт у нас) → ссылка провайдера
- * (`mediaUrl`/`resultUrls[0]`) → плейсхолдер. Если своя ссылка истекла
- * (`storedExpiresAt` в прошлом), показывается маркер «ссылка истекла», а не
- * битая картинка: ссылка провайдера к тому моменту почти наверняка мертва
- * (48 часов), и молчаливая подстановка дала бы «сломанный» `<img>`.
+ * Своя ссылка (`storedUrl` — копия результата в нашем хранилище) — единственный
+ * источник, срок жизни которого нам известен. Ссылка провайдера живёт 48 часов
+ * и после этого мертва (KI-443), поэтому в разметку она **не подставляется**:
+ * если своей копии нет (`storedUrl` отсутствует) или её TTL прошёл
+ * (`storedExpiresAt` в прошлом), узел показывает плейсхолдер «ссылка истекла»
+ * (`ExpiredMediaPlaceholder`), а не возможно битую картинку.
  *
  * Чистая функция без React: покрывается юнит-тестами. Компонентные тесты
  * медиа-узлов идут в jsdom через `@testing-library/react` (KI-155).
@@ -20,7 +21,7 @@ export type MediaOutputsLike = Record<string, unknown> | null | undefined;
 export interface MediaSource {
   /** URL для `<img>`/`<video>`/`<audio>`; `null` — показывать нечего. */
   src: string | null;
-  /** Своя ссылка истекла — нужен плейсхолдер «ссылка истекла». */
+  /** Ссылка недоступна: нужен плейсхолдер «ссылка истекла». */
   expired: boolean;
   /** Ссылка есть, но она небезопасна для разметки — нужен маркер «некорректный URL». */
   invalid: boolean;
@@ -45,6 +46,10 @@ export interface MediaSourceInput {
 
 /**
  * Достаёт ссылку провайдера из выходов media-узла.
+ *
+ * Нужна не для показа (см. {@link resolveMediaSource}), а как признак того, что
+ * результат у узла **есть**: по нему отличаем «результат не сохранён у нас» от
+ * «узел ещё не выполнялся».
  *
  * Поддерживает обе формы: `mediaUrl` (image/video/audio/music) и
  * `resultUrls[0]` (`image_tool`).
@@ -94,7 +99,12 @@ export function isSafeStoredUrl(url: string): boolean {
 }
 
 /**
- * Выбирает источник media с учётом своей ссылки и её TTL (R7.8).
+ * Выбирает источник media с учётом своей ссылки и её TTL (R7.8, KI-444).
+ *
+ * Правило одно: показывать можно только свою ссылку. Она либо жива (`src`),
+ * либо недоступна — истёк TTL **или** копии нет вовсе, хотя результат у узла
+ * есть (`expired`). Некорректная ссылка (схема `javascript:`, не-растровый
+ * `data:`) отличается от «истекла»: это ошибка данных, а не времени.
  *
  * @param input - выходы узла, своя ссылка и время
  * @returns источник: `src`, признаки `expired`/`invalid`
@@ -112,23 +122,28 @@ export function resolveMediaSource(input: MediaSourceInput): MediaSource {
     Number.isFinite(Date.parse(storedExpiresAt)) &&
     Date.parse(storedExpiresAt) <= now;
 
-  if (storedUrl !== null && !storedExpired) {
+  if (storedUrl !== null) {
+    if (storedExpired) {
+      return { src: null, expired: true, invalid: false };
+    }
+
     return isSafeStoredUrl(storedUrl)
       ? { src: storedUrl, expired: false, invalid: false }
       : { src: null, expired: false, invalid: true };
   }
 
-  if (storedExpired) {
-    return { src: null, expired: true, invalid: false };
-  }
-
+  // Своей копии нет. Результат при этом мог быть: старый прогон (до появления
+  // хранилища) либо сбой загрузки в S3 — узел тогда отдаёт `storedUrl: null`.
+  // Ссылку провайдера не подставляем: её TTL (48 часов) нам неизвестен, и
+  // молчаливая подстановка дала бы битый `<img>` через сутки.
   const providerUrl = providerMediaUrlOf(input.outputs);
 
   if (providerUrl === null) {
+    // Результата нет вообще — это не «истекла», а «ещё не выполнялся».
     return { src: null, expired: false, invalid: false };
   }
 
   return isRenderableMediaUrl(providerUrl)
-    ? { src: providerUrl, expired: false, invalid: false }
+    ? { src: null, expired: true, invalid: false }
     : { src: null, expired: false, invalid: true };
 }

@@ -22,6 +22,10 @@ import { useHotkeys } from '@/hooks/use-hotkeys';
 import { FIT_SELECTION_OPTIONS, FIT_VIEW_OPTIONS } from '@/lib/fit-view-options';
 import { computeGraphHash } from '@/lib/graph-hash';
 import { findGuides, type HelperLines } from '@/lib/graph-guides';
+import {
+  MINIMAP_MASK_STROKE_WIDTH,
+  minimapNodeColor,
+} from '@/lib/minimap';
 import { canInsertOnEdge } from '@/lib/node-registry';
 import { useWorkflowStore, type CanvasMode, type FindCenterHandler, type Position } from '@/stores/workflow';
 import { useTranslation } from 'react-i18next';
@@ -130,6 +134,10 @@ function CanvasInner({ onReady }: CanvasProps) {
   const setCanvasMode = useWorkflowStore((state) => state.setCanvasMode);
   const showMinimap = useWorkflowStore((state) => state.showMinimap);
   const setShowMinimap = useWorkflowStore((state) => state.setShowMinimap);
+  // KI-445: статусы узлов нужны миникарте — по ним красится каждый узел
+  // (см. `minimapNodeColor`), иначе на миникарте видны только одинаковые
+  // прямоугольники, а до фикса — вообще ничего.
+  const nodeStatuses = useWorkflowStore((state) => state.nodeStatuses);
   const isCatalogOpen = useWorkflowStore((state) => state.isCatalogOpen);
   const setCatalogOpen = useWorkflowStore((state) => state.setCatalogOpen);
   // KI-187: комментарии-стикеры — создание по `C`, видимость по `Shift+C`.
@@ -265,6 +273,22 @@ function CanvasInner({ onReady }: CanvasProps) {
       y: center.y - COMMENT_DEFAULT_HEIGHT / 2,
     };
   }, [screenToFlowPosition]);
+
+  /**
+   * Цвет узла на миникарте (KI-445).
+   *
+   * Проп `nodeColor` React Flow зовёт для каждого узла при каждом изменении
+   * графа, поэтому функция мемоизирована: новая ссылка на каждый ре-рендер
+   * канваса заставляла бы перерисовывать все прямоугольники миникарты.
+   * Зависимость — карта статусов: она меняется только при событиях запуска.
+   *
+   * @param node - узел графа (React Flow отдаёт его из `nodeLookup`)
+   * @returns CSS-цвет заливки прямоугольника на миникарте
+   */
+  const minimapColorOf = useCallback(
+    (node: Node) => minimapNodeColor(nodeStatuses[node.id]),
+    [nodeStatuses],
+  );
 
   // Отдаём функцию поиска центра наружу ровно один раз: повторные вызовы
   // дёргали бы состояние приложения на каждом ре-рендере канваса.
@@ -518,8 +542,19 @@ function CanvasInner({ onReady }: CanvasProps) {
           <Controls fitViewOptions={FIT_VIEW_OPTIONS} />
           {/* KI-190: миникарту можно скрыть (хоткей `M` или кнопка панели
               режимов). KI-158 (контраст) учтён в theme.css; KI-170
-              (`aria-label` у `<MiniMap />`) остаётся открытым. */}
-          {showMinimap && <MiniMap />}
+              (`aria-label` у `<MiniMap />`) остаётся открытым.
+              KI-445: `nodeColor` и `maskStrokeWidth` заданы явно. Раньше узел
+              красился цветом фона (`--color-node-bg`), контур вьюпорта был
+              прозрачным, а маска при вписанном графе вырождалась в ноль —
+              миникарта выглядела пустым белым квадратом. Цвета узлов —
+              статусные (см. `@/lib/minimap`), толщина контура — через проп:
+              React Flow масштабирует её на размер графа. */}
+          {showMinimap && (
+            <MiniMap
+              nodeColor={minimapColorOf}
+              maskStrokeWidth={MINIMAP_MASK_STROKE_WIDTH}
+            />
+          )}
 
           {/* KI-185 (fix4): кнопки «+»/«×» живут в самом ребре
               (`InsertableEdge`) — Canvas их больше не рисует и не хранит hover. */}

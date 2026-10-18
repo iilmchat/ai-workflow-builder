@@ -304,6 +304,8 @@
   "tools.vector_query": "Векторный поиск",
   "tools.vector_upsert": "Запись в вектор",
   "topbar.audio_url_invalid": "Невалидный audioUrl у узлов: {{nodes}}. Ссылка должна начинаться с http:// или https://.",
+  "topbar.copyright": "© 2026 RuChating (iilmchat) · v{{version}}",
+  "topbar.copyright.full": "© 2026 RuChating (iilmchat) · IIChatTools AI Workflow Builder v{{version}}",
   "topbar.export": "Скачать JSON",
   "topbar.image_models_missing": "Выберите image-модель в узлах: {{nodes}}. Список моделей — в селекте узла Image Generation.",
   "topbar.import": "Импорт",

@@ -304,6 +304,8 @@
   "tools.vector_query": "Vector query",
   "tools.vector_upsert": "Vector upsert",
   "topbar.audio_url_invalid": "Invalid audioUrl in nodes: {{nodes}}. The URL must start with http:// or https://.",
+  "topbar.copyright": "© 2026 RuChating (iilmchat) · v{{version}}",
+  "topbar.copyright.full": "© 2026 RuChating (iilmchat) · IIChatTools AI Workflow Builder v{{version}}",
   "topbar.export": "Download JSON",
   "topbar.image_models_missing": "Choose an image model in nodes: {{nodes}}. The model list is in the Image Generation node select.",
   "topbar.import": "Import",
