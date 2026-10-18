@@ -1,7 +1,7 @@
 # IIChatTools AI Workflow Builder
 
 [![CI](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml/badge.svg)](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.10.0-blue.svg)](docs/CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.10.1-blue.svg)](docs/CHANGELOG.md)
 [![Backend tests](https://img.shields.io/badge/backend_tests-1123-brightgreen.svg)](docs/development/RELEASES.md)
 [![Frontend tests](https://img.shields.io/badge/frontend_tests-375-brightgreen.svg)](docs/development/RELEASES.md)
 [![License](https://img.shields.io/badge/license-proprietary-lightgrey.svg)](#лицензия)
@@ -10,7 +10,7 @@
 > workflow на холсте, запускайте их в фоне и наблюдайте за результатом в
 > реальном времени.
 
-**Версия:** `v0.10.0` · **Стек:** NestJS 12 · React 19 · PostgreSQL 17 + pgvector ·
+**Версия:** `v0.10.1` · **Стек:** NestJS 12 · React 19 · PostgreSQL 17 + pgvector ·
 S3 · OpenTelemetry · Docker/GHCR
 **© 2026 RuChating (iilmchat)**
 
@@ -185,6 +185,7 @@ backend должен быть запущен первым.
 | [MANUAL_TESTING_GUIDE.md](docs/qa/MANUAL_TESTING_GUIDE.md) | QA | 129 ручных кейсов и чек-лист приёмки |
 | [GETTING_STARTED.md](docs/development/GETTING_STARTED.md) | разработчики | Разворачивание проекта за ~20 минут |
 | [ARCHITECTURE.md](docs/development/ARCHITECTURE.md) | разработчики | Архитектура, контракты и Docker-развёртывание |
+| [DESIGN v0.11](docs/development/v0.11/DESIGN_V011_FEATURES.md) | разработчики | DOCX-шаблоны, MCP Adapter, Reliability/History |
 | [RULES.md](docs/development/RULES.md) | разработчики | Правила кода, docs, workflow и безопасности |
 | [PROMPT_CURRENT.md](docs/development/PROMPT_CURRENT.md) | ассистент / dsh | Актуальные системные инструкции и метрики |
 | [RELEASES.md](docs/development/RELEASES.md) | релиз-менеджер | Пошаговый чек-лист выпуска версии |
@@ -197,11 +198,11 @@ backend должен быть запущен первым.
 
 | Показатель | Значение |
 |---|---|
-| Версия | **v0.10.0** |
+| Версия | **v0.10.1** |
 | Backend-тесты | **1123** (17 skipped) |
 | Frontend-тесты | **375** |
 | Типов узлов | **22** |
-| KI-реестр | **KI-472** — последний номер; всего **460** записей |
+| KI-реестр | **KI-480** — последний номер; всего **468** записей |
 | CI | GitHub Actions: build, typecheck, migrations, tests (backend + web) |
 | Docker | multi-stage образ + `docker-compose.prod.yml`, публикация в GHCR |
 

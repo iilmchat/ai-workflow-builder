@@ -3,7 +3,7 @@
 > **Навигационный хаб проекта.** Здесь собраны все документы: от руководства
 > пользователя до правил разработки и чек-листа релиза.
 >
-> **Версия продукта:** `v0.10.0` · **Обновлено:** 2026-10-19 · **HEAD:** актуальный
+> **Версия продукта:** `v0.10.1` · **Обновлено:** 2026-10-19 · **HEAD:** актуальный
 
 ---
 
@@ -106,6 +106,7 @@
 
 | Версия | Документ | Статус | О чём |
 |---|---|---|---|
+| v0.11 | [DESIGN_V011_FEATURES.md](development/v0.11/DESIGN_V011_FEATURES.md) | Draft (в разработке) | DOCX-шаблоны, MCP Adapter, Reliability/History, dark theme |
 | v0.10 | [DESIGN_V010_FEATURES.md](development/v0.10/DESIGN_V010_FEATURES.md) | Released (v0.10.0) | Web Search, Document Generation, safe filesystem, Docker/GHCR |
 | v0.9 | [DESIGN_V09_FEATURES.md](development/v0.9/DESIGN_V09_FEATURES.md) | Released (v0.9.0) | медиа, состояние (pgvector/Memory), агенты, sandbox, наблюдаемость |
 | v0.8 | [DESIGN_V08_FEATURES.md](development/v0.8/DESIGN_V08_FEATURES.md) | Approved | Auth, Share, sub-workflows, Canvas UX, LLM upgrade |
@@ -138,12 +139,12 @@
 
 | Показатель | Значение |
 |---|---|
-| Версия продукта | **v0.10.0** |
+| Версия продукта | **v0.10.1** |
 | Backend-тесты | **1123** (17 skipped) |
 | Frontend-тесты | **375** |
 | Типов узлов | **22** |
-| KI-реестр | **KI-472** — последний номер; всего **460** записей |
-| Открытых High KI | **8** |
+| KI-реестр | **KI-480** — последний номер; всего **468** записей |
+| Открытых High KI | **6** |
 | Языки интерфейса | RU / EN |
 | Стек | NestJS 12 · React 19 · PostgreSQL 17 + pgvector · S3 · OTel · Docker/GHCR |
 
@@ -172,7 +173,7 @@ docs/
     ├── KI_GITHUB_SYNC.md          ← синхронизация KI с GitHub
     ├── api-contract.json          ← REST-контракт
     ├── sse-contract.json          ← SSE-контракт
-    ├── v0.7/ v0.8/ v0.9/ v0.10/   ← DESIGN-документы
+    ├── v0.7/ v0.8/ v0.9/ v0.10/ v0.11/  ← DESIGN-документы
     └── archive/prompts/           ← архив промптов
 ```
 
@@ -195,4 +196,4 @@ docs/
 
 ---
 
-**© 2026 RuChating (iilmchat) · IIChatTools AI Workflow Builder v0.10.0**
+**© 2026 RuChating (iilmchat) · IIChatTools AI Workflow Builder v0.10.1**

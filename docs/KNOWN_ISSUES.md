@@ -7606,6 +7606,54 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-478 — Узел `http` уязвим к SSRF (High)
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/engine/node-executors.ts`
+- **Описание:** `executeHttpNode` вызывает `fetch` напрямую: нет проверки схемы
+  и приватных IPv4/IPv6, нет блокировки metadata-адресов и нет
+  `redirect: 'manual'`. В отличие от `http_request` (KI-409), где
+  `assertPublicHttpUrlAsync` уже стоит, узел `http` может обратиться к
+  internal-сервису или metadata-endpoint (`169.254.169.254`), а также уйти на
+  приватный адрес по цепочке redirect'ов.
+- **Решение:** использовать общий `SafeHttpClient` из DESIGN v0.11 § 3.5:
+  резолв + блокировка приватных диапазонов, `redirect: 'manual'` с повторной
+  проверкой каждого `Location`, pinning IP. Для доверенных инсталляций —
+  явный env-флаг (DESIGN v0.11 § 7.7, вопрос 7).
+- **Связанные:** KI-409, KI-434, KI-435, DESIGN v0.11 § 1.2/§ 3.5.
+
+---
+
+### KI-479 — Multipart Content-Type не поддерживается фронтендом (Medium)
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `web/src/lib/api.ts`
+- **Описание:** `sendAsync` безусловно выполняет
+  `headers.set('Content-Type', 'application/json')` (строка 265), даже если
+  передан `FormData`. Браузер не может добавить `multipart/form-data; boundary`,
+  и сервер получает JSON-заголовок с multipart-телом. Следствие: загрузка
+  DOCX-шаблона (`POST /workflow/:id/document-templates`) из UI невозможна.
+- **Решение:** не ставить JSON-заголовок для `FormData` и не перезаписывать
+  явно заданный `Content-Type` (DESIGN v0.11 § 3.1.8).
+- **Связанные:** DESIGN v0.11 § 1.2/§ 3.1.8, KI-480.
+
+---
+
+### KI-480 — Расхождение имён `document_generation` и `document_gen` (Low)
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `web/src/lib/node-registry.ts`,
+  `docs/development/v0.11/DESIGN_V011_FEATURES.md`
+- **Описание:** фактический тип узла — `document_gen` (`NODE_REGISTRY`,
+  сохранённые графы, API и контракт портов), но DESIGN v0.11 и исторические
+  документы местами называют его `document_generation`. Переименование типа
+  сломало бы совместимость, поэтому KI-457 закрыт как `Won't Fix`; остаётся
+  документационное расхождение, которое вводит в заблуждение при добавлении
+  новых полей и контрактных проверок.
+- **Решение:** зафиксировать `document_gen` как единственное имя типа,
+  `document_generation` — только человекочитаемое название фичи; синхронизировать
+  DESIGN, CHANGELOG и i18n-ключи при следующей правке (DESIGN v0.11 § 1.2, § 6).
+- **Связанные:** KI-457, DESIGN v0.11 § 1.2.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
@@ -7615,9 +7663,9 @@ MediaModelInfo, engine-DTO
 | Planned | 1 |
 | Deferred | 1 |
 | Documented | 6 |
-| Open | 248 |
+| Open | 251 |
 | Won't Fix | 4 |
-| **Всего** | **465** |
+| **Всего** | **468** |
 
 ---
 

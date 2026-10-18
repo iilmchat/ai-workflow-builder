@@ -1,8 +1,8 @@
 # PROMPT_CURRENT — актуальный стартовый промпт
 
-**Версия промпта:** 7.1
+**Версия промпта:** 7.2
 **Дата:** 2026-10-19
-**Статус:** актуален для HEAD после релиза **v0.10.0**
+**Статус:** актуален для HEAD после релиза **v0.10.1**
 **Заменяет:** [`archive/prompts/PROMPT_V5_v6.4.md`](archive/prompts/PROMPT_V5_v6.4.md)
 **Правила ведения:** RULES § 2.17 (старые версии — в `archive/prompts/`)
 
@@ -19,17 +19,17 @@
 
 | Параметр | Значение |
 |---|---|
-| **Релиз** | `v0.10.0` (Latest на GitHub) |
+| **Релиз** | `v0.10.1` (тег на HEAD) |
 | **HEAD** | актуальный; перед сессией сверять `git log -1` и `git status --short` |
 | **Репозиторий** | `https://github.com/iilmchat/ai-workflow-builder` |
 | **Рабочий путь** | локальный клон — **зависит от машины**; брать путь из конкретного задания, не угадывать |
 | **Backend-тесты** | **1123** passed, 17 skipped (`pnpm test`) |
 | **Frontend-тесты** | **375** passed (`pnpm --dir web test`) |
-| **KI** | **472** — последний номер реестра (**460 записей** на HEAD; сводку пересчитывать по RULES 3.20) |
-| **Open High** | **8** (см. § 3) |
+| **KI** | **480** — последний номер реестра (**468 записей** на HEAD; сводку пересчитывать по RULES 3.20) |
+| **Open High** | **6** (см. § 3) |
 | **Стек** | NestJS 12 · TypeScript 6 (strict, ESM) · React 19 · Drizzle ORM · PostgreSQL 17 + **pgvector** · BullMQ + Redis · **S3** · **OpenTelemetry** · QuickJS-WASM · **Docker/GHCR** |
 
-**Что уже реализовано (v0.10.0):**
+**Что уже реализовано (v0.10.1):**
 
 - **Ядро.** Визуальный редактор на `@xyflow/react` v12, **22 типа узлов**,
   типизированные порты, undo/redo, автосохранение, импорт/экспорт,
@@ -65,6 +65,7 @@
 | `v0.9.3` | Route-level code-split (774 → 141 kB), S3 presigned/streaming, enum-домены в API-контракте |
 | `v0.9.4` | S3 retry/multipart, переподпись presigned URL, env публичного бакета; миникарта, копирайт/версия, плашка истёкшей ссылки |
 | `v0.10.0` | Web Search, DOCX-генерация, safe filesystem (22 узла), Docker/GHCR, ServeStatic, `storage_key`; KI-452..455, 459, 460, 467..471 |
+| `v0.10.1` | Синхронизация версий `package.json`/`web` (0.10.1), аудит реестра KI, регистрация KI-478..480, DESIGN v0.11 |
 
 ---
 
@@ -84,20 +85,16 @@
 
 ---
 
-## § 3. Открытые KI (актуально на v0.10.0)
+## § 3. Открытые KI (актуально на v0.10.1)
 
 **🟠 High:**
 
 - **KI-066** — у run-аренды нет heartbeat.
 - **KI-104** — повтор узла учитывает только LLM-исключения.
-- **KI-238** — SPA для `/workflow/share/*` в проде: Docker-поставка уже отдаёт
-  её через NestJS (KI-468), отдельный fallback в ingress больше не обязателен;
-  статус в реестре — `Open` до проверки на конкретном ingress.
-- **KI-361** — Video / Audio / Music узлы (media-generation).
-- **KI-366** — `type: 'TOOL'` у upstream не существует.
 - **KI-380** — OpenAI Images не поддерживает `applyToolAsync`.
 - **KI-418** — CreativeLab не объявляет модели upscale/chromakey.
 - **KI-433** — метрики `AgentRunResult` не пишутся в `node_runs`.
+- **KI-478** — узел `http` не защищён от SSRF (приватные IP, redirects).
 
 **🟡 Medium / 🟢 Low (ближайший техдолг):**
 
@@ -114,6 +111,9 @@
 - **KI-464** 🟡 — `storage_key` не используется для переподписи S3.
 - **KI-472** 🟢 — API-префиксы продублированы в `app.module.ts` и
   `api-prefixes.ts`.
+- **KI-479** 🟡 — `sendAsync` всегда шлёт `application/json`; multipart-загрузка
+  DOCX-шаблона невозможна.
+- **KI-480** 🟢 — имена `document_generation` и `document_gen` расходятся.
 
 **✅ Зарегистрированы и закрыты в v0.10.0 (2026-10-19):**
 
@@ -136,6 +136,10 @@
 
 ## § 4. План на следующий релиз
 
+**Статус:** `v0.11.0` в разработке — DESIGN создан и ожидает ревью:
+[`v0.11/DESIGN_V011_FEATURES.md`](v0.11/DESIGN_V011_FEATURES.md)
+(Document Templates, MCP Adapter, Reliability/History, dark theme).
+
 **Вариант A (рекомендуемый) — `v0.10.1` (patch / hardening):**
 
 1. Довести `storage_key` до переподписи S3 (KI-451/KI-464) и отдачу
@@ -154,7 +158,20 @@ RULES § 2.14.
 
 ---
 
-## § 5. Как начать работу
+## § 5. Документация
+
+| Документ | Когда открывать |
+|---|---|
+| [RULES.md](RULES.md) | перед любой правкой — правила кода, docs и workflow |
+| [DESIGN v0.11](v0.11/DESIGN_V011_FEATURES.md) | текущий дизайн: DOCX-шаблоны, MCP Adapter, Reliability/History |
+| [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) | реестр KI; сводка пересчитывается по RULES 3.20 |
+| [CHANGELOG.md](../CHANGELOG.md) | история изменений и рабочая секция `[Unreleased]` |
+| [USER_GUIDE.md](../user_guide/USER_GUIDE.md) | пользовательские сценарии и ограничения |
+| [MANUAL_TESTING_GUIDE.md](../qa/MANUAL_TESTING_GUIDE.md) | приёмка релиза (RULES 2.16) |
+
+---
+
+## § 6. Как начать работу
 
 1. Пользователь присылает `git log -1` и `git status --short`.
 2. Ты подтверждаешь сценарий (`v0.10.1` или `v0.11.0`) и список KI.
