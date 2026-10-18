@@ -2892,7 +2892,9 @@
 ---
 
 ### KI-155 — Frontend не может тестировать компоненты
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-14
+- **Исправлено в:** v0.9.2 — `web/vitest.config.ts`: `environment: 'jsdom'`,
+  алиас `@`, `include` для `.tsx` и `setupFiles` (`@testing-library/jest-dom`).
 - **Файлы:** `web/vitest.config.ts`
 - **Описание:** `environment: 'node'`, `include` без `.tsx` и отсутствие алиаса
   `@/` делают невозможным импорт любого компонента в тест: `@/…` не резолвится
@@ -6339,7 +6341,9 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-397 — Viewer-UI не скрывает Save/Run
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-17
+- **Исправлено в:** v0.9.2 — `accessRole` в сторе; `TopBar` скрывает Save и Run
+  для viewer.
 - **Файлы:** `web/src/components/TopBar.tsx`, `web/src/stores/workflow.ts`
 - **Описание:** Backend корректно блокирует PATCH/POST run для viewer (404),
   но в `TopBar` остаются активными кнопки «Сохранить» и «Запустить».
@@ -6350,7 +6354,9 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-398 — `GET /workflow` не включает collaborative workflows
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-17
+- **Исправлено в:** v0.9.2 — `findAllAsync` отдаёт collaborative workflows с
+  `accessRole` (`workflowAccessRoleExpression`).
 - **Файлы:** `src/workflow/workflow.service.ts` (`findAllAsync`)
 - **Описание:** Пользователь видит в списке только свои workflow. Чтобы
   открыть чужой workflow как участник — только прямая ссылка `?workflowId=`.
@@ -6361,7 +6367,9 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-399 — Collaborators-ответ без владельца
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-17
+- **Исправлено в:** v0.9.2 — owner первой строкой в списке участников
+  (`WorkflowParticipantRole`; в `workflow_collaborators` владелец не пишется).
 - **Файлы:** `src/workflow/workflow.service.ts`,
   `src/workflow/dto/collaborator.dto.ts`
 - **Описание:** DESIGN § 3.6 обещает «owner + participants», API отдаёт
@@ -6607,7 +6615,9 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-419 — ThrottlerGuard не учитывает reverse proxy
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.9.2 — env `TRUST_PROXY` + `app.set('trust proxy', …)`
+  (`src/main.ts`), по умолчанию выключено (см. KI-441).
 - **Файлы:** `src/app.module.ts`, `src/main.ts`
 - **Описание:** Без `trust proxy` за nginx все клиенты имеют один IP (лимит 5/мин на всех).
 - **Решение:** env `TRUST_PROXY` + `app.set('trust proxy', ...)`.
@@ -6650,7 +6660,10 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-424 — UI lipsync: audioUrl без валидации
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.9.2 — `isAudioUrlInvalid` (`web/src/lib/image-tool-node.ts`)
+  + красная рамка/подсказка в `ImageToolNode`; пустое значение — нейтрально
+  (см. KI-438).
 - **Файлы:** `web/src/components/nodes/ImageToolNode.tsx`
 - **Описание:** Поле принимает любую строку, нет плеера и подсказки.
 - **Решение:** `type="url"`, preview-player.
@@ -6811,18 +6824,97 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-437 — Web-зеркало `CollaboratorSchema` не знает роль `owner`
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `web/src/types/collaborator.ts`
+- **Описание:** `fetchCollaborators` (`web/src/lib/collaborators-api.ts`)
+  валидирует каждый элемент ответа `GET /workflow/:id/collaborators` через
+  `z.array(CollaboratorSchema)`, а `role` — через `CollaboratorRoleSchema`.
+  Пока enum ролей в зеркале уже, чем домен ответа, owner-строка (KI-399) не
+  проходит `z.enum`, парсинг падает на валидации (`ZodError`), и список
+  участников в `ShareModal` не отображается — вместе с невозможностью сменить
+  роль остальным участникам.
+- **Решение:** держать `CollaboratorRoleSchema` в точном соответствии с
+  доменом ролей backend (`owner` / `viewer` / `editor`, как `accessRole` в
+  `web/src/lib/api.ts`), а домен инвайта (`viewer`/`editor`) при
+  необходимости описывать отдельной схемой.
+- **Связанные:** KI-399, KI-397, KI-440.
+
+---
+
+### KI-438 — Пустой `audioUrl` у lipsync не блокирует Run
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `web/src/lib/image-tool-node.ts`
+- **Описание:** `isAudioUrlInvalid` считает пустое значение **нейтральным**
+  (красная рамка на новом узле `lipsync` была бы ложной ошибкой), поэтому
+  узел без аудио запускается: Run уходит на backend, а `lipsync` падает уже в
+  прогоне. Требование «аудио обязательно» проверяет только backend (KI-369),
+  UI блокирует лишь неверный формат ссылки — нет ни подсказки, ни disabled Run.
+- **Решение:** блокировать Run (или явно подсвечивать поле) для операции
+  `lipsync`, пока `audioUrl` пуст, не трогая форматную валидацию KI-424.
+- **Связанные:** KI-369, KI-424.
+
+---
+
+### KI-439 — Комментарии спеков web ссылаются на `environment: 'node'`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `web/src/stores/*.spec.ts`
+- **Описание:** после перехода на jsdom (KI-155) шапки спеков
+  (`generation-store.spec.ts`, `image-tool-store.spec.ts`,
+  `workflow-nodes.spec.ts`, `workflow.spec.ts`) продолжают объяснять заглушку
+  `@/i18n` и мок `window` тем, что «тесты идут в `environment: 'node'` — без
+  jsdom». Комментарии врут: окружение уже jsdom, а мок нужен ради API, которых
+  в jsdom нет (`matchMedia`, `ResizeObserver`). Читатель делает вывод, что
+  компоненты по-прежнему не тестируются.
+- **Решение:** переписать шапки под jsdom (что именно не реализовано в jsdom
+  и зачем заглушка), логику тестов не трогать.
+- **Связанные:** KI-155.
+
+---
+
+### KI-440 — `api-contract.json` не кодирует enum-домены
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `docs/development/api-contract.json`
+- **Описание:** контракт хранит только имена полей
+  (`"CollaboratorResponse": ["email", "invitedAt", "invitedBy", "role", "userId"]`),
+  но не допустимые значения. Домены `role` (`owner`/`viewer`/`editor`) и
+  `accessRole` не сверяются: обе стороны (backend и `web/src/lib/api.ts`) могут
+  разойтись в enum, а `api-contract.spec.ts` с обеих сторон этого не заметит —
+  ровно расхождение класса KI-437 ловится только руками.
+- **Решение:** добавить в контракт секцию `enums` (поле → отсортированный
+  список значений) и сверять её в обоих spec'ах наравне со списками полей.
+- **Связанные:** KI-358, KI-437, KI-399.
+
+---
+
+### KI-441 — `TRUST_PROXY` не задаёт число хопов / подсети
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/config/env.schema.ts`
+- **Описание:** `TRUST_PROXY` — булев флаг
+  (`z.union([z.boolean(), z.enum(['true', 'false'])])`, дефолт `false`), и в
+  `src/main.ts` он уходит в `app.set('trust proxy', true | false)`. `true`
+  доверяет всей цепочке `X-Forwarded-For`: при двух прокси (CDN → nginx)
+  клиент подставляет левый адрес и обходит rate limiting, а выразить
+  «доверять N хопам / только этим подсетям» конфигурация не может вовсе.
+- **Решение:** принимать число хопов или список подсетей (как `trust proxy` в
+  Express: `1`, `['10.0.0.0/8']`), валидировать в `EnvSchema` и передавать в
+  `set` без преобразования к boolean.
+- **Связанные:** KI-419, KI-206, KI-420.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 165 |
+| Fixed | 171 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 250 |
+| Open | 249 |
 | Won't Fix | 1 |
-| **Всего** | **424** |
+| **Всего** | **429** |
 
 ---
 

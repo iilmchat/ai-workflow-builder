@@ -17,6 +17,20 @@
 ---
 ## [Unreleased]
 
+**v0.9.2 — testing infra (jsdom), роли доступа в Share (owner/editor/viewer),
+`TRUST_PROXY`, валидация `audioUrl`.**
+
+### Added
+- **Testing Infra:** Настроен jsdom + Testing Library для компонентных тестов (KI-155).
+
+### Fixed
+- **Share:** `GET /workflow` возвращает collaborative workflows с `accessRole` (owner/editor/viewer). Список участников включает владельца первой строкой (KI-397, 398, 399).
+- **Security:** `TRUST_PROXY` для корректного Rate Limiting за nginx (KI-419).
+- **UI:** Валидация `audioUrl` в `ImageToolNode` (KI-424).
+
+### Documented
+- **KI-437..441** — новые KI v0.9.2.
+
 ## [0.9.1] — 2026-10-18
 
 **Patch-релиз после v0.9.0. Rate limiting, стабильный INSTANCE_ID, медиа-фиксы.**
