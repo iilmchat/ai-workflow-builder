@@ -20,17 +20,26 @@
 **v0.9.2 — testing infra (jsdom), роли доступа в Share (owner/editor/viewer),
 `TRUST_PROXY`, валидация `audioUrl`.**
 
+**v0.9.3 — производительность (route-level code-split, 774 → 141 kB),
+S3 presigned/streaming, enum-домены в API-контракте.**
+
 ### Added
 - **Testing Infra:** Настроен jsdom + Testing Library для компонентных тестов (KI-155).
+- **Performance:** Route-level code-split (React.lazy для всех 18 узлов). Основной чанк уменьшен с 774 kB до 141 kB (KI-008, 390).
+- **Testing:** Компонентные тесты для AgentNode и VectorUpsertNode на базе jsdom (KI-405).
+- **Media / S3:** Presigned URL для приватных бакетов и потоковая загрузка без буферизации в память (KI-425, 427).
+- **API Contract:** Секция `enums` в `api-contract.json` для проверки доменов значений (KI-440).
 
 ### Fixed
 - **Share:** `GET /workflow` возвращает collaborative workflows с `accessRole` (owner/editor/viewer). Список участников включает владельца первой строкой (KI-397, 398, 399).
 - **Share:** Роль `owner` больше не проходит в инвайт: `InviteCollaboratorPayloadSchema` ограничен `viewer`/`editor` (как backend), JSDoc зеркала ролей синхронизирован (KI-437).
 - **Security:** `TRUST_PROXY` для корректного Rate Limiting за nginx (KI-419).
 - **UI:** Валидация `audioUrl` в `ImageToolNode` (KI-424).
+- **Docs:** Обновлены устаревшие комментарии в спеках web (KI-439).
 
 ### Documented
 - **KI-438..441** — новые KI v0.9.2.
+- **KI-442..447** — новые KI (S3 retry, presigned refresh, minimap, copyright, route-lazy).
 
 ## [0.9.1] — 2026-10-18
 
