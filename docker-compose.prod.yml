@@ -1,0 +1,102 @@
+# Production-стек: приложение собирается из Dockerfile, БД и Redis — отдельные
+# сервисы. Запуск:
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Отличия от dev docker-compose.yml:
+# - app ходит в db/redis по именам сервисов (db:5432, redis:6379), а не по
+#   127.0.0.1:5433/6379 — поэтому DATABASE_URL/REDIS_URL перекрываются ниже,
+#   хотя остальные переменные берутся из .env;
+# - БД и Redis проброшены только на loopback и на других портах (5434/6380),
+#   чтобы prod-стек мог работать одновременно с dev-стеком.
+name: workflow-builder-prod
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Для деплоя готового образа из GHCR задайте IMAGE_NAME/IMAGE_TAG
+    # (например, ghcr.io/owner/workflow-builder:v0.9.1) и уберите build.
+    image: ${IMAGE_NAME:-workflow-builder}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # .env для локальной разработки содержит COOKIE_SECURE=false, а
+      # env.schema.ts fail-fast запрещает это при NODE_ENV=production.
+      # В проде приложение стоит за HTTPS (reverse proxy), поэтому true.
+      COOKIE_SECURE: "true"
+      # environment имеет приоритет над env_file: внутри сети compose
+      # локальные 127.0.0.1:5433/6379 из .env не работают.
+      # ВАЖНО: в проде задайте POSTGRES_PASSWORD в .env и смените dev-дефолт.
+      DATABASE_URL: postgres://${POSTGRES_USER:-workflow}:${POSTGRES_PASSWORD:-devpass123}@db:5432/${POSTGRES_DB:-workflow_builder}
+      REDIS_URL: redis://redis:6379
+      # .env задаёт ./data/media; в контейнере это должно быть на volume.
+      MEDIA_STORAGE_LOCAL_PATH: /app/data/media
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    volumes:
+      - media-data:/app/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  db:
+    # pgvector обязателен: миграция 0008_pgvector.sql делает CREATE EXTENSION
+    # vector, которого нет в официальном postgres:17-alpine.
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-workflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpass123}
+      POSTGRES_DB: ${POSTGRES_DB:-workflow_builder}
+    ports:
+      # Только loopback: прод-БД не должна быть доступна снаружи.
+      - "127.0.0.1:${DB_PORT:-5434}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-workflow} -d ${POSTGRES_DB:-workflow_builder}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # AOF переживает рестарт контейнера (очереди BullMQ).
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6380}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  db-data:
+  redis-data:
+  media-data:

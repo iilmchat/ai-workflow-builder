@@ -1,0 +1,39 @@
+# Зависимости: ставятся внутри builder-стадии.
+node_modules
+**/node_modules
+
+# Артефакты сборки: собираются внутри образа (иначе локальный dist перетрёт
+# результат сборки в контейнере).
+dist
+**/dist
+web/dist
+build
+coverage
+*.tsbuildinfo
+
+# Секреты и локальные env-файлы.
+.env
+.env.*
+!.env.example
+
+# Git и CI: для сборки образа не нужны.
+.git
+.gitignore
+.github
+.husky
+
+# Локальные артефакты, тесты и документация — не нужны в runtime-образе.
+.smoke
+.tmp
+.temp
+data
+docs
+test
+*.log
+.vscode
+.idea
+.DS_Store
+
+# Инфраструктурные файлы, которые не должны попадать в контекст сборки.
+Dockerfile
+docker-compose*.yml

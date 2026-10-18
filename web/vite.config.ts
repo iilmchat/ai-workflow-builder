@@ -72,6 +72,10 @@ function buildProxy(): Record<string, string | ProxyOptions> {
  * `http://localhost:5173` после этого изменения может не открыться.
  */
 export default defineConfig({
+  // Docker-образ отдаёт SPA с корня (`/`), поэтому base не должен быть `/api/`.
+  // Явно фиксируем: все ассеты index.html ссылаются на `/assets/...`, и
+  // ServeStaticModule находит их в web/dist.
+  base: '/',
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

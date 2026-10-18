@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "./dist",
+    "declaration": false,
+    "incremental": false,
+    "types": ["node"]
+  },
+  "include": ["migrate.ts"],
+  "exclude": ["node_modules", "dist", "test"]
+}
