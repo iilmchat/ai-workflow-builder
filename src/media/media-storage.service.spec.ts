@@ -1,3 +1,4 @@
+import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +11,8 @@ import {
   createMediaStorage,
   resolveFileExtension,
   sanitizeStorageSegment,
+  type S3ClientLike,
+  type S3MediaStorageOptions,
 } from './media-storage.service.js';
 
 /**
@@ -183,15 +186,6 @@ describe('Другие бэкенды хранилища (R7.8)', () => {
     await expect(storage.openAsync('r/n.png')).resolves.toBeNull();
   });
 
-  it('s3 (заглушка): не падает и возвращает null — узел живёт на ссылке провайдера', async () => {
-    const storage = new S3MediaStorage('https://s3.test', 'bucket');
-
-    expect(storage.backend).toBe('s3');
-    await expect(
-      storage.uploadAsync({ runId: 'r', nodeId: 'n', sourceUrl: 'https://x/y.png' }),
-    ).resolves.toBeNull();
-  });
-
   it('createMediaStorage выбирает бэкенд по env', () => {
     const config = (values: Record<string, unknown>): ConfigService =>
       ({ get: (key: string) => values[key] }) as unknown as ConfigService;
@@ -199,9 +193,170 @@ describe('Другие бэкенды хранилища (R7.8)', () => {
     expect(createMediaStorage(config({ MEDIA_STORAGE_BACKEND: 'none' })).backend).toBe(
       'none',
     );
-    expect(createMediaStorage(config({ MEDIA_STORAGE_BACKEND: 's3' })).backend).toBe(
-      's3',
-    );
     expect(createMediaStorage(config({})).backend).toBe('local');
+  });
+
+  it('createMediaStorage: s3 без ключей откатывается на local (KI-412)', () => {
+    const config = (values: Record<string, unknown>): ConfigService =>
+      ({ get: (key: string) => values[key] }) as unknown as ConfigService;
+
+    // Бакет/ключи не заданы — S3 недоступен, сохранять «в никуда» нельзя.
+    expect(createMediaStorage(config({ MEDIA_STORAGE_BACKEND: 's3' })).backend).toBe(
+      'local',
+    );
+  });
+
+  it('createMediaStorage: настроенный s3 остаётся s3 (KI-412)', () => {
+    const config = (values: Record<string, unknown>): ConfigService =>
+      ({ get: (key: string) => values[key] }) as unknown as ConfigService;
+
+    const storage = createMediaStorage(
+      config({
+        MEDIA_STORAGE_BACKEND: 's3',
+        S3_ENDPOINT: 'https://s3.test',
+        S3_BUCKET: 'media',
+        S3_ACCESS_KEY_ID: 'access',
+        S3_SECRET_ACCESS_KEY: 'secret',
+        S3_REGION: 'us-east-1',
+        S3_TTL_DAYS: 30,
+      }),
+    );
+
+    expect(storage.backend).toBe('s3');
+  });
+});
+
+describe('S3MediaStorage: загрузка в бакет (R7.8, KI-412)', () => {
+  /**
+   * Собирает полные параметры S3 с подставным клиентом.
+   *
+   * @param send - заглушка `send` (проверяет команду вместо сети)
+   * @returns параметры хранилища для теста
+   */
+  function optionsWith(send: ReturnType<typeof vi.fn>): S3MediaStorageOptions {
+    return {
+      endpoint: 'https://s3.test/',
+      bucket: 'media',
+      accessKeyId: 'access',
+      secretAccessKey: 'secret',
+      region: 'us-east-1',
+      ttlDays: 30,
+      client: { send } as unknown as S3ClientLike,
+    };
+  }
+
+  it('скачивает результат и отправляет PutObjectCommand в бакет', async () => {
+    const body = new Uint8Array([137, 80, 78, 71, 1, 2, 3]);
+    stubFetch(body, { headers: { 'content-type': 'image/png' } });
+
+    const send = vi.fn((_command: PutObjectCommand) => Promise.resolve({}));
+    const storage = new S3MediaStorage(optionsWith(send));
+
+    const saved = await storage.uploadAsync({
+      runId: 'run-1',
+      nodeId: 'node-a',
+      sourceUrl: 'https://provider.test/out.png',
+    });
+
+    // Ровно один вызов — один объект в бакете.
+    expect(send).toHaveBeenCalledTimes(1);
+
+    const command = send.mock.calls[0]?.[0];
+
+    expect(command).toBeInstanceOf(PutObjectCommand);
+    expect(command.input).toMatchObject({
+      Bucket: 'media',
+      Key: 'run-1/node-a.png',
+      ContentType: 'image/png',
+      ContentLength: body.byteLength,
+    });
+    expect(command.input.Body).toEqual(body);
+
+    expect(saved?.storageKey).toBe('run-1/node-a.png');
+    // Ссылка ведёт прямо в бакет (path-style), endpoint без хвостового `/`.
+    expect(saved?.storedUrl).toBe('https://s3.test/media/run-1/node-a.png');
+    expect(saved?.bytes).toBe(body.byteLength);
+    expect(saved?.storedExpiresAt).toBeInstanceOf(Date);
+
+    const days = (saved?.storedExpiresAt?.getTime() ?? 0) - Date.now();
+    expect(days).toBeGreaterThan(29 * 24 * 60 * 60 * 1000);
+    expect(days).toBeLessThan(31 * 24 * 60 * 60 * 1000);
+  });
+
+  it('S3 не настроен (нет ключей) → null и ни одного вызова клиента', async () => {
+    stubFetch(new Uint8Array([1, 2, 3]));
+
+    const send = vi.fn(() => Promise.resolve({}));
+    const storage = new S3MediaStorage({
+      ...optionsWith(send),
+      accessKeyId: undefined,
+      secretAccessKey: undefined,
+    });
+
+    expect(storage.isConfigured).toBe(false);
+    await expect(
+      storage.uploadAsync({
+        runId: 'run-2',
+        nodeId: 'node-b',
+        sourceUrl: 'https://provider.test/out.png',
+      }),
+    ).resolves.toBeNull();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('S3 недоступен (send отклонён) → null, исключения нет', async () => {
+    stubFetch(new Uint8Array([1, 2, 3]), {
+      headers: { 'content-type': 'image/webp' },
+    });
+
+    const send = vi.fn(() => Promise.reject(new Error('S3 connection refused')));
+    const storage = new S3MediaStorage(optionsWith(send));
+
+    await expect(
+      storage.uploadAsync({
+        runId: 'run-3',
+        nodeId: 'node-c',
+        sourceUrl: 'https://provider.test/out',
+      }),
+    ).resolves.toBeNull();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('upstream ответил ошибкой → null (узел живёт на ссылке провайдера)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('nope', { status: 502 }))),
+    );
+
+    const send = vi.fn(() => Promise.resolve({}));
+    const storage = new S3MediaStorage(optionsWith(send));
+
+    await expect(
+      storage.uploadAsync({
+        runId: 'run-4',
+        nodeId: 'node-d',
+        sourceUrl: 'https://provider.test/broken.png',
+      }),
+    ).resolves.toBeNull();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('TTL=0 — ссылка без срока (storedExpiresAt = null)', async () => {
+    stubFetch(new Uint8Array([1, 2, 3]));
+
+    const send = vi.fn(() => Promise.resolve({}));
+    const storage = new S3MediaStorage({
+      ...optionsWith(send),
+      ttlDays: 0,
+    });
+    const saved = await storage.uploadAsync({
+      runId: 'run-5',
+      nodeId: 'node-e',
+      sourceUrl: 'https://provider.test/out',
+    });
+
+    expect(saved?.storedExpiresAt).toBeNull();
+    // Без content-type и расширения в URL — `.bin`.
+    expect(saved?.storageKey).toBe('run-5/node-e.bin');
   });
 });

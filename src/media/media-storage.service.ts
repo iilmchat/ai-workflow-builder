@@ -1,3 +1,4 @@
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -19,10 +20,11 @@ import { pipeline } from 'node:stream/promises';
  * - {@link LocalMediaStorage} (по умолчанию) — файлы на диске
  *   (`./data/media/<runId>/<nodeId>.<ext>`), отдаются ручкой
  *   `GET /media/file/:runId/:fileName`;
- * - {@link S3MediaStorage} — S3-совместимое хранилище. Пока это заглушка:
- *   параметры валидируются, но загрузка не выполняется (нет SDK в
- *   зависимостях), поэтому узел честно живёт на ссылке провайдера и пишет
- *   предупреждение в лог.
+ * - {@link S3MediaStorage} — S3-совместимое хранилище (AWS S3, MinIO, R2,
+ *   Yandex Object Storage): результат скачивается и кладётся в бакет
+ *   `PutObjectCommand` (KI-412). Если параметры не заданы или S3 недоступен,
+ *   {@link createMediaStorage} откатывается на local, а сама загрузка в S3
+ *   возвращает `null` — узел остаётся на ссылке провайдера.
  *
  * `none` — сохранение выключено (прежнее поведение).
  */
@@ -372,13 +374,69 @@ export class LocalMediaStorage implements IMediaStorage {
 }
 
 /**
- * S3-совместимое хранилище (DESIGN § 3.8, слой 2) — **заглушка**.
+ * Параметры S3-хранилища (все — из env, KI-412).
  *
- * В зависимостях нет S3-SDK, а подписывать запросы SigV4 вручную ради среза
- * R7.8 — несоразмерно (и непроверяемо без живого бакета). Поэтому класс
- * реализует интерфейс и честно сообщает, что загрузка не выполнена: узел
- * остаётся на ссылке провайдера (48 ч), а в лог уходит предупреждение.
- * Подключение настоящего SDK — отдельный KI (см. отчёт).
+ * Передаются объектом, а не позиционными аргументами: настройка состоит из
+ * шести значений, и перепутать `accessKeyId` с `secretAccessKey` при вызове
+ * слишком легко.
+ */
+export interface S3MediaStorageOptions {
+  /** S3-совместимый endpoint (`S3_ENDPOINT`). */
+  endpoint?: string;
+  /** Бакет (`S3_BUCKET`). */
+  bucket?: string;
+  /** Access key (`S3_ACCESS_KEY_ID`). */
+  accessKeyId?: string;
+  /** Secret key (`S3_SECRET_ACCESS_KEY`). */
+  secretAccessKey?: string;
+  /** Регион (`S3_REGION`); для MinIO/R2 обычно `us-east-1`. */
+  region?: string;
+  /** TTL ссылки в днях (`S3_TTL_DAYS`, `0` — без срока). */
+  ttlDays?: number;
+  /**
+   * Готовый клиент S3. Подменяется в тестах, чтобы не ходить в сеть; в
+   * приложении не задаётся — клиент собирается из env.
+   */
+  client?: S3ClientLike;
+}
+
+/**
+ * Минимальная граница S3-клиента, достаточная хранилищу.
+ *
+ * Реальный `S3Client` ей соответствует, а в тестах подставляется объект с
+ * `send` — без моков целого SDK и без сети.
+ */
+export interface S3ClientLike {
+  /** Отправляет команду в S3. */
+  send(command: PutObjectCommand): Promise<unknown>;
+}
+
+/** Проверенные (непустые) параметры подключения к S3. */
+interface ResolvedS3Config {
+  endpoint: string;
+  bucket: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  region: string;
+}
+
+/**
+ * S3-совместимое хранилище media-результатов (DESIGN § 3.8, слой 2).
+ *
+ * Скачивает результат провайдера и кладёт его в бакет через
+ * `PutObjectCommand` (`@aws-sdk/client-s3`, KI-412). Ключ объекта — тот же, что
+ * у локального слоя: `<runId>/<fileName>`, поэтому `stored_url` и TTL
+ * считаются одинаково для обоих бэкендов.
+ *
+ * **Отказоустойчивость.** S3 — необязательный слой: если параметры не заданы,
+ * upstream ответил ошибкой, файл больше лимита или сам S3 недоступен,
+ * {@link uploadAsync} возвращает `null` (и пишет предупреждение), а узел
+ * продолжает жить на ссылке провайдера. Исключение здесь было бы хуже:
+ * генерация уже оплачена, и терять её результат из-за недоступного хранилища
+ * нельзя. При старте такой конфиг откатывается на local —
+ * см. {@link createMediaStorage}.
+ *
+ * @see https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html
  */
 @Injectable()
 export class S3MediaStorage implements IMediaStorage {
@@ -386,33 +444,142 @@ export class S3MediaStorage implements IMediaStorage {
 
   private readonly logger = new Logger(S3MediaStorage.name);
 
-  /**
-   * @param endpoint - S3 endpoint (для сообщения в логе)
-   * @param bucket - бакет (для сообщения в логе)
-   */
-  constructor(
-    private readonly endpoint: string | undefined,
-    private readonly bucket: string | undefined,
-  ) {}
+  /** Клиент создаётся лениво: без настроек S3 он не нужен вовсе. */
+  private client: S3ClientLike | null = null;
 
   /**
-   * Не сохраняет файл: S3-бэкенд ещё не реализован.
+   * @param options - параметры из env (`S3_*`, KI-412)
+   */
+  constructor(private readonly options: S3MediaStorageOptions = {}) {}
+
+  /**
+   * Заданы ли все обязательные параметры S3.
    *
-   * @param _input - что скачать (не используется)
-   * @returns всегда `null` («файл не сохранён»), чтобы узел не падал
+   * Без access/secret key загрузка невозможна: подпись SigV4 не построить.
+   * IAM-роль инстанса намеренно не используется — env-контракт R7.8 требует
+   * явных ключей, а их отсутствие означает «S3 не настроен» и откат на local.
    */
-  async uploadAsync(_input: MediaUploadInput): Promise<MediaStoredFile | null> {
-    this.logger.warn(
-      `MEDIA_STORAGE_BACKEND=s3, но S3-загрузка не реализована ` +
-        `(endpoint=${this.endpoint ?? 'не задан'}, bucket=${this.bucket ?? 'не задан'}) — ` +
-        'используется ссылка провайдера',
-    );
+  get isConfigured(): boolean {
+    return this.resolveConfig() !== null;
+  }
 
-    return null;
+  /**
+   * Скачивает результат провайдера и кладёт его в S3.
+   *
+   * @param input - ссылка, runId и nodeId
+   * @returns сохранённый файл либо `null`, если S3 не настроен/недоступен или
+   *   файл превышает лимит (узел остаётся на ссылке провайдера)
+   */
+  async uploadAsync(input: MediaUploadInput): Promise<MediaStoredFile | null> {
+    const config = this.resolveConfig();
+
+    if (config === null) {
+      this.logger.warn(
+        `MEDIA_STORAGE_BACKEND=s3, но S3 не настроен ` +
+          `(endpoint=${this.options.endpoint ?? 'не задан'}, ` +
+          `bucket=${this.options.bucket ?? 'не задан'}, ` +
+          `accessKeyId=${this.options.accessKeyId ? 'задан' : 'не задан'}, ` +
+          `secretAccessKey=${this.options.secretAccessKey ? 'задан' : 'не задан'}) — ` +
+          'используется ссылка провайдера',
+      );
+
+      return null;
+    }
+
+    try {
+      const response = await fetch(input.sourceUrl, {
+        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      });
+
+      if (!response.ok) {
+        this.logger.warn(
+          `Не удалось скачать media-результат для S3 (${response.status}): ` +
+            `${input.sourceUrl} — используется ссылка провайдера`,
+        );
+
+        return null;
+      }
+
+      const declaredLength = Number(response.headers.get('content-length') ?? Number.NaN);
+
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_DOWNLOAD_BYTES) {
+        this.logger.warn(
+          `Media-результат больше лимита S3 (${declaredLength} > ${MAX_DOWNLOAD_BYTES} байт): ` +
+            `${input.sourceUrl} — используется ссылка провайдера`,
+        );
+
+        return null;
+      }
+
+      // Тело буферизуется: `PutObjectCommand` требует повторяемый Body (SDK
+      // ретраит запрос), а поток из `fetch` одноразовый. Потолок проверяется
+      // и по `Content-Length`, и по факту (chunked его может не отдать).
+      const body = new Uint8Array(await response.arrayBuffer());
+
+      if (body.byteLength > MAX_DOWNLOAD_BYTES) {
+        this.logger.warn(
+          `Media-результат больше лимита S3 (${body.byteLength} > ${MAX_DOWNLOAD_BYTES} байт): ` +
+            `${input.sourceUrl} — используется ссылка провайдера`,
+        );
+
+        return null;
+      }
+
+      const responseContentType = response.headers.get('content-type');
+      // Параметры вида `; charset=binary` в метаданные объекта не пишем:
+      // `Content-Type` S3 должен быть чистым MIME-типом.
+      const contentType =
+        (input.contentType ?? responseContentType ?? 'application/octet-stream')
+          .split(';')[0]
+          ?.trim() || 'application/octet-stream';
+      const fileName = `${sanitizeStorageSegment(input.nodeId)}.${resolveFileExtension(
+        input.sourceUrl,
+        contentType,
+      )}`;
+      const storageKey = `${sanitizeStorageSegment(input.runId)}/${fileName}`;
+
+      await this.getClient(config).send(
+        new PutObjectCommand({
+          Bucket: config.bucket,
+          Key: storageKey,
+          Body: body,
+          ContentType: contentType,
+          ContentLength: body.byteLength,
+        }),
+      );
+
+      const ttlDays = this.options.ttlDays ?? 0;
+      const storedExpiresAt =
+        ttlDays > 0 ? new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000) : null;
+
+      this.logger.log(
+        `Media сохранена в S3: ${storageKey} (${body.byteLength} байт, ttl=${ttlDays} дн.)`,
+      );
+
+      return {
+        storedUrl: this.buildStoredUrl(config, storageKey),
+        storedExpiresAt,
+        storageKey,
+        bytes: body.byteLength,
+      };
+    } catch (error: unknown) {
+      // Сеть/S3 упали: результат генерации не теряем, узел живёт на ссылке
+      // провайдера (48 ч), а причина остаётся в логе.
+      this.logger.warn(
+        `S3-загрузка не удалась (${toErrorMessage(error)}): ${input.sourceUrl} — ` +
+          'используется ссылка провайдера',
+      );
+
+      return null;
+    }
   }
 
   /**
    * S3-бэкенд не отдаёт файлы через этот сервис.
+   *
+   * `storedUrl` указывает прямо на бакет, поэтому HTTP-ручка
+   * `GET /media/file/...` для S3 не используется. Если бакет приватный,
+   * понадобятся signed URL — отдельная задача (KI-415).
    *
    * @param _storageKey - ключ (не используется)
    * @returns всегда `null`
@@ -420,6 +587,88 @@ export class S3MediaStorage implements IMediaStorage {
   async openAsync(_storageKey: string): Promise<MediaReadResult | null> {
     return null;
   }
+
+  /**
+   * Собирает проверенную конфигурацию из параметров.
+   *
+   * @returns параметры без пустых значений либо `null`, если чего-то не хватает
+   */
+  private resolveConfig(): ResolvedS3Config | null {
+    const endpoint = this.options.endpoint?.trim();
+    const bucket = this.options.bucket?.trim();
+    const accessKeyId = this.options.accessKeyId?.trim();
+    const secretAccessKey = this.options.secretAccessKey?.trim();
+
+    if (
+      endpoint === undefined ||
+      endpoint.length === 0 ||
+      bucket === undefined ||
+      bucket.length === 0 ||
+      accessKeyId === undefined ||
+      accessKeyId.length === 0 ||
+      secretAccessKey === undefined ||
+      secretAccessKey.length === 0
+    ) {
+      return null;
+    }
+
+    return {
+      endpoint,
+      bucket,
+      accessKeyId,
+      secretAccessKey,
+      region: this.options.region?.trim() || 'us-east-1',
+    };
+  }
+
+  /**
+   * Возвращает клиент S3, создавая его при первом обращении.
+   *
+   * `forcePathStyle` включён всегда: endpoint задаётся вручную (MinIO, R2,
+   * Yandex Object Storage), а для них path-style — единственный рабочий режим;
+   * AWS S3 такой формат также поддерживает.
+   *
+   * @param config - проверенные параметры подключения
+   * @returns клиент S3
+   */
+  private getClient(config: ResolvedS3Config): S3ClientLike {
+    this.client ??=
+      this.options.client ??
+      new S3Client({
+        region: config.region,
+        endpoint: config.endpoint,
+        forcePathStyle: true,
+        credentials: {
+          accessKeyId: config.accessKeyId,
+          secretAccessKey: config.secretAccessKey,
+        },
+      });
+
+    return this.client;
+  }
+
+  /**
+   * Строит публичную ссылку на объект: `<endpoint>/<bucket>/<key>`.
+   *
+   * @param config - проверенные параметры подключения
+   * @param storageKey - ключ объекта `<runId>/<fileName>`
+   * @returns URL для `node_runs.stored_url`
+   */
+  private buildStoredUrl(config: ResolvedS3Config, storageKey: string): string {
+    const base = config.endpoint.replace(/\/+$/, '');
+
+    return `${base}/${config.bucket}/${storageKey}`;
+  }
+}
+
+/**
+ * Приводит неизвестную ошибку к тексту для лога.
+ *
+ * @param error - значение из `catch` (тип `unknown`)
+ * @returns текст ошибки
+ */
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -453,8 +702,16 @@ export class NoopMediaStorage implements IMediaStorage {
   }
 }
 
+/** Логгер выбора бэкенда: живёт вне классов, потому что решает фабрика. */
+const storageFactoryLogger = new Logger('MediaStorageFactory');
+
 /**
- * Собирает хранилище по env (R7.8).
+ * Собирает хранилище по env (R7.8, KI-412).
+ *
+ * `MEDIA_STORAGE_BACKEND=s3` — это **предпочтение**, а не жёсткое требование:
+ * без `S3_ENDPOINT`/`S3_BUCKET`/ключей бакет физически недоступен, поэтому
+ * фабрика откатывается на {@link LocalMediaStorage} с предупреждением в лог.
+ * Иначе приложение стартовало бы и молча теряло результаты генерации.
  *
  * @param config - доступ к env (RULES 4.6); без него — `local` с дефолтами
  * @returns реализация хранилища
@@ -468,9 +725,23 @@ export function createMediaStorage(config?: ConfigService): IMediaStorage {
   }
 
   if (backend === 's3') {
-    return new S3MediaStorage(
-      config?.get<string>('S3_ENDPOINT'),
-      config?.get<string>('S3_BUCKET'),
+    const s3 = new S3MediaStorage({
+      endpoint: config?.get<string>('S3_ENDPOINT'),
+      bucket: config?.get<string>('S3_BUCKET'),
+      accessKeyId: config?.get<string>('S3_ACCESS_KEY_ID'),
+      secretAccessKey: config?.get<string>('S3_SECRET_ACCESS_KEY'),
+      region: config?.get<string>('S3_REGION'),
+      ttlDays: config?.get<number>('S3_TTL_DAYS'),
+    });
+
+    if (s3.isConfigured) {
+      return s3;
+    }
+
+    storageFactoryLogger.warn(
+      'MEDIA_STORAGE_BACKEND=s3, но S3 не настроен ' +
+        '(нужны S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY) — ' +
+        'используется local',
     );
   }
 
