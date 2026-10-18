@@ -2,6 +2,7 @@ import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import {
@@ -49,6 +50,34 @@ function stubFetch(body: Uint8Array, init: ResponseInit = {}): void {
     'fetch',
     vi.fn(() => Promise.resolve(new Response(payload, { status: 200, ...init }))),
   );
+}
+
+/**
+ * Дочитывает `Body` команды `PutObjectCommand` в буфер.
+ *
+ * После KI-427 тело — поток (`Readable`), а не `Uint8Array`: проверка
+ * «SDK получил ровно те байты» требует его вычитать.
+ *
+ * @param body - `Body` из `PutObjectCommand.input`
+ * @returns собранные байты
+ * @throws Error если тело не поток и не байты
+ */
+async function readCommandBodyAsync(body: unknown): Promise<Buffer> {
+  if (body instanceof Readable) {
+    const chunks: Buffer[] = [];
+
+    for await (const chunk of body) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+    }
+
+    return Buffer.concat(chunks);
+  }
+
+  if (body instanceof Uint8Array) {
+    return Buffer.from(body);
+  }
+
+  throw new Error(`Неожиданный тип Body: ${typeof body}`);
 }
 
 describe('LocalMediaStorage: скачивание и отдача (R7.8, KI-362)', () => {
@@ -245,9 +274,14 @@ describe('S3MediaStorage: загрузка в бакет (R7.8, KI-412)', () => 
     };
   }
 
-  it('скачивает результат и отправляет PutObjectCommand в бакет', async () => {
+  it('стримит тело в PutObjectCommand и отдаёт signed URL приватного бакета', async () => {
     const body = new Uint8Array([137, 80, 78, 71, 1, 2, 3]);
-    stubFetch(body, { headers: { 'content-type': 'image/png' } });
+    stubFetch(body, {
+      headers: {
+        'content-type': 'image/png',
+        'content-length': String(body.byteLength),
+      },
+    });
 
     const send = vi.fn((_command: PutObjectCommand) => Promise.resolve({}));
     const storage = new S3MediaStorage(optionsWith(send));
@@ -270,17 +304,105 @@ describe('S3MediaStorage: загрузка в бакет (R7.8, KI-412)', () => 
       ContentType: 'image/png',
       ContentLength: body.byteLength,
     });
-    expect(command.input.Body).toEqual(body);
+    // KI-427: в S3 уходит поток, а не буфер на 200 МБ.
+    expect(command.input.Body).toBeInstanceOf(Readable);
+    expect(await readCommandBodyAsync(command.input.Body)).toEqual(Buffer.from(body));
 
     expect(saved?.storageKey).toBe('run-1/node-a.png');
-    // Ссылка ведёт прямо в бакет (path-style), endpoint без хвостового `/`.
-    expect(saved?.storedUrl).toBe('https://s3.test/media/run-1/node-a.png');
     expect(saved?.bytes).toBe(body.byteLength);
+    // Публичность бакета не задана — safe default: presigned GET (KI-425).
+    expect(saved?.storedUrl).toContain('https://s3.test/media/run-1/node-a.png?');
+    expect(saved?.storedUrl).toContain('X-Amz-Expires=3600');
+    expect(saved?.storedUrl).toContain('X-Amz-Signature=');
     expect(saved?.storedExpiresAt).toBeInstanceOf(Date);
+
+    const seconds = (saved?.storedExpiresAt?.getTime() ?? 0) - Date.now();
+    expect(seconds).toBeGreaterThan(3500 * 1000);
+    expect(seconds).toBeLessThan(3700 * 1000);
+  });
+
+  it('без Content-Length не передаёт длину: тело всё равно стримится', async () => {
+    const body = new Uint8Array([1, 2, 3, 4]);
+    stubFetch(body, { headers: { 'content-type': 'video/mp4' } });
+
+    const uploaded: Buffer[] = [];
+    // SDK вычитывает Body целиком — заглушка делает то же, иначе счётчик
+    // размера (KI-427) не успевает сработать.
+    const send = vi.fn(async (command: PutObjectCommand) => {
+      uploaded.push(await readCommandBodyAsync(command.input.Body));
+
+      return {};
+    });
+    const storage = new S3MediaStorage(optionsWith(send));
+
+    const saved = await storage.uploadAsync({
+      runId: 'run-1',
+      nodeId: 'node-a',
+      sourceUrl: 'https://provider.test/out.mp4',
+    });
+
+    const command = send.mock.calls[0]?.[0];
+
+    expect(command.input.ContentLength).toBeUndefined();
+    expect(uploaded[0]).toEqual(Buffer.from(body));
+    expect(saved?.bytes).toBe(body.byteLength);
+  });
+
+  it('публичный бакет — прямой URL и TTL в днях (KI-425)', async () => {
+    const body = new Uint8Array([1, 2, 3]);
+    stubFetch(body, {
+      headers: {
+        'content-type': 'image/png',
+        'content-length': String(body.byteLength),
+      },
+    });
+
+    const send = vi.fn(async (command: PutObjectCommand) => {
+      await readCommandBodyAsync(command.input.Body);
+
+      return {};
+    });
+    const storage = new S3MediaStorage({
+      ...optionsWith(send),
+      publicBucket: true,
+    });
+    const saved = await storage.uploadAsync({
+      runId: 'run-1',
+      nodeId: 'node-a',
+      sourceUrl: 'https://provider.test/out.png',
+    });
+
+    // Endpoint без хвостового `/`, path-style.
+    expect(saved?.storedUrl).toBe('https://s3.test/media/run-1/node-a.png');
+    expect(saved?.storedUrl).not.toContain('X-Amz-Signature');
 
     const days = (saved?.storedExpiresAt?.getTime() ?? 0) - Date.now();
     expect(days).toBeGreaterThan(29 * 24 * 60 * 60 * 1000);
     expect(days).toBeLessThan(31 * 24 * 60 * 60 * 1000);
+  });
+
+  it('getSignedUrlAsync подписывает GetObject на час (KI-425)', async () => {
+    const send = vi.fn(() => Promise.resolve({}));
+    const storage = new S3MediaStorage(optionsWith(send));
+
+    const signed = await storage.getSignedUrlAsync('run-1/node-a.png');
+
+    expect(signed).toContain('https://s3.test/media/run-1/node-a.png?');
+    expect(signed).toContain('X-Amz-Expires=3600');
+    expect(signed).toContain('X-Amz-Signature=');
+    // Подпись локальная: ни одной команды в S3 не отправлено.
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('getSignedUrlAsync без настроек S3 — исключение', async () => {
+    const storage = new S3MediaStorage({
+      ...optionsWith(vi.fn(() => Promise.resolve({}))),
+      accessKeyId: undefined,
+    });
+
+    await expect(storage.getSignedUrlAsync('run-1/node-a.png')).rejects.toThrow(
+      /не настроен/,
+    );
   });
 
   it('S3 не настроен (нет ключей) → null и ни одного вызова клиента', async () => {
@@ -341,13 +463,14 @@ describe('S3MediaStorage: загрузка в бакет (R7.8, KI-412)', () => 
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('TTL=0 — ссылка без срока (storedExpiresAt = null)', async () => {
+  it('публичный бакет с TTL=0 — ссылка без срока (storedExpiresAt = null)', async () => {
     stubFetch(new Uint8Array([1, 2, 3]));
 
     const send = vi.fn(() => Promise.resolve({}));
     const storage = new S3MediaStorage({
       ...optionsWith(send),
       ttlDays: 0,
+      publicBucket: true,
     });
     const saved = await storage.uploadAsync({
       runId: 'run-5',

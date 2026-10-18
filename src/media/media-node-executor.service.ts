@@ -250,6 +250,26 @@ type MusicGenNodeData = z.infer<typeof MusicGenNodeDataSchema>;
 type GenerationNodeData = VideoGenNodeData | AudioGenNodeData | MusicGenNodeData;
 
 /**
+ * Убирает query-строку из URL перед записью в лог.
+ *
+ * `storedUrl` приватного S3 — presigned GET (KI-425): `X-Amz-Signature` —
+ * capability на объект, и целиком в лог он попадать не должен. Путь без query
+ * остаётся полезным для диагностики (`who/where`), а подпись — нет.
+ *
+ * @param url - ссылка (может быть `null`, если файл не сохранён)
+ * @returns URL без query либо `—`
+ */
+function redactUrlForLog(url: string | null): string {
+  if (url === null || url.length === 0) {
+    return '—';
+  }
+
+  const queryIndex = url.indexOf('?');
+
+  return queryIndex === -1 ? url : `${url.slice(0, queryIndex)}?<redacted>`;
+}
+
+/**
  * Исполнитель узлов типа `image_generation` (v0.6.0b.2.2), `image_tool` (R7.1)
  * и media-генерации R7.2 — `video_generation`, `audio_generation`,
  * `music_generation` (DESIGN v0.9 § 3.2).
@@ -405,7 +425,7 @@ export class MediaNodeExecutor {
     };
 
     this.logger.log(
-      `Media-узел ${node.id}: cost=${metrics.costRub ?? '?'}₽, url=${finished.resultUrls[0] ?? '?'}, stored=${metrics.storedUrl ?? '—'}`,
+      `Media-узел ${node.id}: cost=${metrics.costRub ?? '?'}₽, url=${finished.resultUrls[0] ?? '?'}, stored=${redactUrlForLog(metrics.storedUrl)}`,
     );
 
     return {
@@ -520,7 +540,7 @@ export class MediaNodeExecutor {
     };
 
     this.logger.log(
-      `Media-инструмент ${node.id}: cost=${metrics.costRub ?? '?'}₽, url=${finished.resultUrls[0] ?? '?'}, stored=${metrics.storedUrl ?? '—'}`,
+      `Media-инструмент ${node.id}: cost=${metrics.costRub ?? '?'}₽, url=${finished.resultUrls[0] ?? '?'}, stored=${redactUrlForLog(metrics.storedUrl)}`,
     );
 
     return {
@@ -752,7 +772,7 @@ export class MediaNodeExecutor {
     };
 
     this.logger.log(
-      `Media-узел ${node.id}: cost=${metrics.costRub ?? '?'}₽, url=${finished.resultUrls[0] ?? '?'}, stored=${metrics.storedUrl ?? '—'}`,
+      `Media-узел ${node.id}: cost=${metrics.costRub ?? '?'}₽, url=${finished.resultUrls[0] ?? '?'}, stored=${redactUrlForLog(metrics.storedUrl)}`,
     );
 
     return {

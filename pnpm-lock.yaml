@@ -172,6 +172,9 @@ importers:
       '@aws-sdk/client-s3':
         specifier: ^3.1152.0
         version: 3.1152.0
+      '@aws-sdk/s3-request-presigner':
+        specifier: ^3.1152.0
+        version: 3.1152.0
       '@nestjs/bullmq':
         specifier: ^12.0.0
         version: 12.0.0(@nestjs/common@12.1.2(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0))(@nestjs/core@12.1.2)(bullmq@6.3.12(ioredis@6.0.0(supports-color@7.2.0))(pg@8.23.1))
@@ -391,6 +394,10 @@ packages:
 
   '@aws-sdk/nested-clients@3.997.48':
     resolution: {integrity: sha512-B01jdXJtAW/XOiUzGdI2mz67WyEHbGEc9X6Euzw3bjLAa+txTqdZDER4X2FsIEcXzV2ABqudVZ5thali8tCCzQ==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/s3-request-presigner@3.1152.0':
+    resolution: {integrity: sha512-hddG6iscvmJaToltXuAjyszhIfOe6Fw+Xcy/0V5DslTmX91AH5DKG5VMZdKso+9LK4+8dJbyPxEl2/tT06ySkg==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/signature-v4-multi-region@3.996.48':
@@ -3648,6 +3655,15 @@ snapshots:
       '@smithy/core': 3.36.0
       '@smithy/fetch-http-handler': 5.8.0
       '@smithy/node-http-handler': 4.12.1
+      '@smithy/types': 4.19.0
+      tslib: 2.8.1
+
+  '@aws-sdk/s3-request-presigner@3.1152.0':
+    dependencies:
+      '@aws-sdk/core': 3.978.3
+      '@aws-sdk/signature-v4-multi-region': 3.996.48
+      '@aws-sdk/types': 3.974.6
+      '@smithy/core': 3.36.0
       '@smithy/types': 4.19.0
       tslib: 2.8.1
 

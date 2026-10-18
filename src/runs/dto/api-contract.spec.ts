@@ -23,10 +23,18 @@
  * Для них имена полей читаются из исходника компилятором TypeScript (`ts`), а не
  * гадаются регуляркой; появление Zod-схем ответов — отдельная задача (KI-358).
  *
- * Сравниваются **имена** полей (не типы и не проверки): гейт отвечает на вопрос
- * «тот же состав контракта?». Ужесточение самих схем-зеркал web (`z.uuid()`
- * вместо `z.string()`, `.min(1)` для `ExportWorkflowDto.name` и т.п.) — задача
- * KI-350.
+ * **Enum-домены (KI-440).** Секция `enums` контракта задаёт допустимые значения
+ * поля (`<DTO>.<поле>` → отсортированный список): `CollaboratorResponse.role`,
+ * `RunResponse.status`, `RunBudgetResponse.mode`. Backend-spec сверяет их с
+ * Zod-схемами (`z.enum` из канонического списка ролей/статусов) и с
+ * TS-литеральным типом `BudgetMode`; web-spec делает то же со своими
+ * Zod-зеркалами. Раньше обе стороны могли разойтись в значениях роли молча —
+ * ровно класс KI-437.
+ *
+ * Сравниваются **имена** полей и **значения** enum-доменов (не типы и не
+ * проверки): гейт отвечает на вопрос «тот же состав контракта?». Ужесточение
+ * самих схем-зеркал web (`z.uuid()` вместо `z.string()`, `.min(1)` для
+ * `ExportWorkflowDto.name` и т.п.) — задача KI-350.
  *
  * Путь к JSON и к исходникам строится от `import.meta.url`, а не от
  * `process.cwd()`: иначе spec зависел бы от каталога запуска (RULES 1.9, ср.
@@ -38,7 +46,12 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { z } from 'zod';
 import { describe, expect, it } from 'vitest';
+import {
+  WORKFLOW_COLLABORATOR_ROLES,
+  WORKFLOW_RUN_STATUSES,
+} from '../../db/schema.js';
 import { ExportWorkflowSchema } from '../../workflow/dto/export-workflow.dto.js';
 
 /** Каталог этого spec'а (`src/runs/dto`). */
@@ -76,6 +89,9 @@ const COLLABORATOR_DTO_PATH = join(
 
 /** Файл с `RunBudgetResponse` (`GET /runs/:id/budget`, R7.1). */
 const RUN_BUDGET_DTO_PATH = join(SPEC_DIR, 'run-budget.dto.ts');
+
+/** Файл с TS-типом `BudgetMode` — источник домена `RunBudgetResponse.mode`. */
+const COST_BUDGET_SERVICE_PATH = join(SPEC_DIR, '..', 'cost-budget.service.ts');
 
 /**
  * Где объявлен DTO ответа и как из него читать поля.
@@ -137,12 +153,73 @@ type DtoSource =
   },
 };
 
+/**
+ * Источник допустимых значений enum-домена (KI-440).
+ *
+ * - `zod` — домен задан Zod-схемой (`z.enum`): значения берутся из `options`;
+ * - `literal-union` — домен задан TS-типом-объединением строковых литералов
+ *   (`type BudgetMode = 'hard' | 'soft'`); у типа нет runtime-значения, поэтому
+ *   он читается из исходника компилятором TypeScript.
+ */
+type EnumSource =
+  | {
+      readonly kind: 'zod';
+      readonly schema: { readonly options: readonly string[] };
+      readonly label: string;
+    }
+  | {
+      readonly kind: 'literal-union';
+      readonly path: string;
+      readonly typeName: string;
+      readonly label: string;
+    };
+
+/**
+ * Роли в ответе `GET /workflow/:id/collaborators` (KI-399).
+ *
+ * `owner` — значение только ответа: владелец не строка
+ * `workflow_collaborators` и через инвайт не назначается, поэтому в
+ * `WORKFLOW_COLLABORATOR_ROLES` его нет. Домен собирается здесь, а не
+ * дублируется литералами: канонический список ролей участия остаётся в
+ * `src/db/schema.ts`.
+ */
+const PARTICIPANT_ROLES = ['owner', ...WORKFLOW_COLLABORATOR_ROLES] as const;
+
+/**
+ * Enum-домены, которые обязан кодировать контракт: `<DTO>.<поле>` → источник.
+ *
+ * Ключи обязаны совпадать с ключами `enums` в JSON (проверяется отдельным
+ * тестом). Новое enum-поле ответа добавляется в оба места сразу, иначе гейт
+ * упадёт — ровно как со списком полей.
+ */
+const ENUM_SOURCES: Record<string, EnumSource> = {
+  'CollaboratorResponse.role': {
+    kind: 'zod',
+    schema: z.enum(PARTICIPANT_ROLES),
+    label: 'src/db/schema.ts + src/workflow/dto/collaborator.dto.ts',
+  },
+  // `BudgetMode` — TS-тип без runtime-константы, поэтому читается из исходника.
+  'RunBudgetResponse.mode': {
+    kind: 'literal-union',
+    path: COST_BUDGET_SERVICE_PATH,
+    typeName: 'BudgetMode',
+    label: 'src/runs/cost-budget.service.ts',
+  },
+  'RunResponse.status': {
+    kind: 'zod',
+    schema: z.enum(WORKFLOW_RUN_STATUSES),
+    label: 'src/db/schema.ts',
+  },
+};
+
 /** Структура JSON-контракта. */
 interface ApiContract {
   /** Версия формата: несовместимая правка формата поднимает её. */
   version: number;
   /** Имя backend-DTO → отсортированные имена полей ответа. */
   responses: Record<string, string[]>;
+  /** `<DTO>.<поле>` → отсортированные допустимые значения (KI-440). */
+  enums: Record<string, string[]>;
 }
 
 /** Кэш разобранных исходников: один файл читается один раз на прогон spec-файла. */
@@ -259,6 +336,121 @@ async function readFieldsAsync(name: string, source: DtoSource): Promise<string[
 }
 
 /**
+ * Собирает строковые литералы из узла типа.
+ *
+ * Поддержан только домен, который действительно есть в DTO: объединение
+ * строковых литералов (`'hard' | 'soft'`). Всё остальное (ссылки на другие
+ * типы, шаблонные литералы) роняет разбор: молча пустой список дал бы ложно
+ * зелёный гейт.
+ *
+ * @param node - узел типа из AST
+ * @param typeName - имя типа (для сообщения)
+ * @param label - путь к файлу для сообщения об ошибке
+ * @returns значения литералов в порядке объявления
+ * @throws Error если встретился неподдержанный член объединения
+ */
+function collectStringLiterals(
+  node: ts.TypeNode,
+  typeName: string,
+  label: string,
+): string[] {
+  if (ts.isLiteralTypeNode(node) && ts.isStringLiteral(node.literal)) {
+    return [node.literal.text];
+  }
+
+  if (ts.isUnionTypeNode(node)) {
+    return node.types.flatMap((child) => collectStringLiterals(child, typeName, label));
+  }
+
+  throw new Error(
+    `Тип ${typeName} (${label}) содержит не-строковый член: ` +
+      'разбор enum-домена в api-contract.spec.ts его не понимает',
+  );
+}
+
+/**
+ * Читает домен из TS-типа-объединения строковых литералов.
+ *
+ * @param filePath - абсолютный путь к файлу с типом
+ * @param typeName - имя типа (например, `BudgetMode`)
+ * @param label - путь к файлу для сообщения об ошибке (в виде ссылки на файл)
+ * @returns значения литералов
+ * @throws Error если тип не найден или содержит не-строковый член
+ */
+async function readLiteralUnionAsync(
+  filePath: string,
+  typeName: string,
+  label: string,
+): Promise<string[]> {
+  const source = await readSourceAsync(filePath);
+
+  for (const statement of source.statements) {
+    if (!ts.isTypeAliasDeclaration(statement) || statement.name.text !== typeName) {
+      continue;
+    }
+
+    const values = collectStringLiterals(statement.type, typeName, label);
+
+    if (values.length === 0) {
+      throw new Error(
+        `Тип ${typeName} (${label}) разобран без значений: проверь разбор в api-contract.spec.ts`,
+      );
+    }
+
+    return values;
+  }
+
+  throw new Error(
+    `Тип ${typeName} не найден в ${label}: обнови ENUM_SOURCES в api-contract.spec.ts`,
+  );
+}
+
+/**
+ * Читает допустимые значения одного enum-домена — из Zod-схемы либо из
+ * TS-типа-объединения.
+ *
+ * @param key - ключ домена `<DTO>.<поле>`
+ * @param source - где домен объявлен и как читать его значения
+ * @returns отсортированные значения
+ * @throws Error если значения прочитать нельзя (см. {@link readLiteralUnionAsync})
+ */
+async function readEnumValuesAsync(key: string, source: EnumSource): Promise<string[]> {
+  if (source.kind === 'zod') {
+    const values = source.schema.options.map(String).sort();
+
+    if (values.length === 0) {
+      throw new Error(
+        `Enum ${key} (${source.label}) разобран без значений: проверь разбор в api-contract.spec.ts`,
+      );
+    }
+
+    return values;
+  }
+
+  return (await readLiteralUnionAsync(source.path, source.typeName, source.label))
+    .slice()
+    .sort();
+}
+
+/**
+ * Собирает фактические enum-домены всех гейтуемых полей.
+ *
+ * @returns `<DTO>.<поле>` → отсортированные значения (та же структура, что в JSON)
+ */
+async function actualEnumsAsync(): Promise<Record<string, string[]>> {
+  const entries = await Promise.all(
+    Object.entries(ENUM_SOURCES).map(
+      async ([key, source]): Promise<[string, string[]]> => [
+        key,
+        await readEnumValuesAsync(key, source),
+      ],
+    ),
+  );
+
+  return Object.fromEntries(entries);
+}
+
+/**
  * Собирает фактические поля всех гейтуемых DTO.
  *
  * @returns имя DTO → отсортированные имена полей (та же структура, что в JSON)
@@ -322,6 +514,30 @@ function mismatchMessage(
 }
 
 /**
+ * Собирает сообщение о расхождении enum-домена (KI-440).
+ *
+ * @param key - ключ домена `<DTO>.<поле>` (в кавычках-ёлочках для падежа)
+ * @param diff - добавленные и убранные значения
+ * @returns текст ошибки для `expect`
+ */
+function enumMismatchMessage(
+  key: string,
+  diff: { added: string[]; removed: string[] },
+): string {
+  const actions: string[] = [];
+
+  if (diff.added.length > 0) {
+    actions.push(`добавила значение ${diff.added.join(', ')} в enum «${key}»`);
+  }
+
+  if (diff.removed.length > 0) {
+    actions.push(`убрала значение ${diff.removed.join(', ')} из enum «${key}»`);
+  }
+
+  return `Схема backend ${actions.join(' и ')}, но JSON не обновлён: ${CONTRACT_LABEL}`;
+}
+
+/**
  * Читает JSON-контракт (результат кэшируется).
  *
  * @returns разобранный контракт
@@ -369,6 +585,120 @@ describe('REST-контракт: backend DTO ↔ docs/development/api-contract.j
     }
 
     expect(mismatches).toEqual([]);
+  });
+
+  it('список enum-доменов в JSON совпадает со списком, объявленным в коде (KI-440)', async () => {
+    const contract = await readContractAsync();
+    const actual = await actualEnumsAsync();
+
+    expect(contract.enums).toBeTypeOf('object');
+    expect(Object.keys(contract.enums).sort()).toEqual(Object.keys(ENUM_SOURCES).sort());
+
+    // Защита от «пустого» разбора: пустой список значений прошёл бы сравнение
+    // с пустым JSON-списком, не поймав ни одного расхождения.
+    for (const [key, values] of Object.entries(actual)) {
+      expect(values.length, `Enum ${key} разобран без значений`).toBeGreaterThan(0);
+    }
+  });
+
+  it('значения enum-доменов совпадают с Zod-схемами и TS-типами backend (KI-440)', async () => {
+    const contract = await readContractAsync();
+    const actual = await actualEnumsAsync();
+    const mismatches: string[] = [];
+
+    for (const [key, values] of Object.entries(actual)) {
+      const diff = compareFields(values, contract.enums[key] ?? []);
+
+      if (diff.added.length > 0 || diff.removed.length > 0) {
+        mismatches.push(enumMismatchMessage(key, diff));
+      }
+    }
+
+    expect(mismatches).toEqual([]);
+  });
+
+  it('enum-домены ссылаются на объявленные поля и отсортированы (KI-440)', async () => {
+    const contract = await readContractAsync();
+
+    for (const [key, values] of Object.entries(contract.enums)) {
+      const dot = key.indexOf('.');
+
+      expect(dot, `Ключ ${key} должен иметь вид <DTO>.<поле>`).toBeGreaterThan(0);
+
+      const dto = key.slice(0, dot);
+      const field = key.slice(dot + 1);
+
+      expect(contract.responses[dto], `DTO ${dto} не объявлен в responses`).toBeDefined();
+      expect(contract.responses[dto]).toContain(field);
+      expect(values.length, `Enum ${key} пуст`).toBeGreaterThan(0);
+      expect(values, `Enum ${key} не отсортирован`).toEqual([...values].sort());
+      expect(new Set(values).size, `Enum ${key} содержит дубли`).toBe(values.length);
+    }
+  });
+
+  it('CollaboratorResponse.role кодирует owner/editor/viewer (регрессия KI-440)', async () => {
+    expect((await readContractAsync()).enums['CollaboratorResponse.role']).toEqual([
+      'editor',
+      'owner',
+      'viewer',
+    ]);
+  });
+
+  it('RunResponse.status и RunBudgetResponse.mode кодируют свои домены (KI-440)', async () => {
+    const contract = await readContractAsync();
+
+    expect(contract.enums['RunResponse.status']).toEqual([
+      'cancelled',
+      'completed',
+      'failed',
+      'pending',
+      'running',
+    ]);
+    expect(contract.enums['RunBudgetResponse.mode']).toEqual(['hard', 'soft']);
+  });
+
+  it('гейт ловит добавленное и убранное значение enum (негативная проверка)', () => {
+    expect(compareFields(['editor', 'owner', 'viewer'], ['editor', 'owner', 'viewer'])).toEqual(
+      { added: [], removed: [] },
+    );
+    // Backend добавил роль в ответ, JSON не обновили — гейт обязан упасть.
+    expect(compareFields(['editor', 'owner', 'viewer'], ['editor', 'owner'])).toEqual({
+      added: ['viewer'],
+      removed: [],
+    });
+    // Backend убрал роль: JSON отстал с другой стороны.
+    expect(compareFields(['owner', 'viewer'], ['editor', 'owner', 'viewer'])).toEqual({
+      added: [],
+      removed: ['editor'],
+    });
+    expect(
+      enumMismatchMessage('CollaboratorResponse.role', {
+        added: ['viewer'],
+        removed: [],
+      }),
+    ).toBe(
+      'Схема backend добавила значение viewer в enum «CollaboratorResponse.role», ' +
+        `но JSON не обновлён: ${CONTRACT_LABEL}`,
+    );
+    expect(
+      enumMismatchMessage('CollaboratorResponse.role', {
+        added: [],
+        removed: ['editor'],
+      }),
+    ).toBe(
+      'Схема backend убрала значение editor из enum «CollaboratorResponse.role», ' +
+        `но JSON не обновлён: ${CONTRACT_LABEL}`,
+    );
+  });
+
+  it('разбор enum падает, если TS-тип переименован или содержит не-литерал', async () => {
+    await expect(
+      readLiteralUnionAsync(
+        COST_BUDGET_SERVICE_PATH,
+        'GhostMode',
+        'src/runs/cost-budget.service.ts',
+      ),
+    ).rejects.toThrow(/не найден/);
   });
 
   it('гейт ловит добавленное и убранное поле (негативная проверка)', () => {
