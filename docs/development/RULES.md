@@ -55,7 +55,7 @@
 | 2.13 | **В текстах `CHANGELOG.md` / `KNOWN_ISSUES.md` / `RULES.md` / `README.md` — не использовать буквальные паттерны API-ключей** (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). Husky pre-commit hook (`.husky/pre-commit`) блокирует такие коммиты. Употреблять описательно: «префикс ключа Anthropic», «подстрока с реальным ключом» и т.п. |
 | 2.14 | **DESIGN-документы для крупных фич** — `docs/development/vX.Y/DESIGN_<TOPIC>.md`. Обязательные секции: 1) Контекст (какие KI закрывает), 2) Ключевое архитектурное решение, 3) Технические секции по срезам, 4) Совместимость и миграция, 5) План работ (подшаги с оценками), 6) Что НЕ входит в релиз, 7) Риски и открытые вопросы, 8) Решения (заполняется после ревью). При передаче DESIGN в чат — формат § 2.10-A |
 | 2.16 | **Перед каждым релизом (`vX.Y.Z`) обязательно актуализировать `docs/user_guide/USER_GUIDE.md` и `docs/qa/MANUAL_TESTING_GUIDE.md`** — версию продукта, новые UI/фичи, ограничения и новые кейсы. Релиз без обновлённых гайдов не выпускается (см. `docs/development/RELEASES.md`) |
-| 2.17 | **При изменении системных инструкций для dsh — обновлять `docs/development/PROMPT_CURRENT.md`, а старые версии переносить в `docs/development/archive/prompts/`** (имя файла — `PROMPT_V<версия>.md`). Исторические `PROMPT_V1–V4` остаются в `docs/development/` как есть |
+| 2.17 | **При изменении системных инструкций для dsh — обновлять `docs/development/PROMPT_CURRENT.md`, а старые версии переносить в `docs/development/archive/prompts/`** (имя файла — `PROMPT_V<версия>.md`). Все исторические версии PROMPT_V* подлежат переносу в archive/prompts/ (в корне development/ только актуальный PROMPT_CURRENT.md). |
 
 **Типы записей в CHANGELOG:** `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`.
 
