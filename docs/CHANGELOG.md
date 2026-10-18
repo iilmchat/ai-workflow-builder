@@ -17,6 +17,22 @@
 ---
 ## [Unreleased]
 
+## [0.9.1] — 2026-10-18
+
+**Patch-релиз после v0.9.0. Rate limiting, стабильный INSTANCE_ID, медиа-фиксы.**
+
+### Added
+- **HTTP Rate Limiting (KI-206, KI-234):** `@nestjs/throttler` (5/мин на login/share, 300/мин общий).
+- **UI lipsync (KI-369):** Поле `audioUrl` в `ImageToolNode`.
+- **Медиа-дефолты (KI-367):** Дефолтные модели для upscale (FAL/Replicate) и trim (@VideoEdit).
+
+### Fixed
+- **KI-391:** Стабильный `INSTANCE_ID` (`hostname:PORT`) для BullMQ.
+- **KI-367:** Частично закрыт (остаток по chromakey — KI-418).
+
+### Documented
+- **KI-418..424** — новые KI v0.9.1 (см. KNOWN_ISSUES.md).
+
 ## [0.9.0] — 2026-10-18
 
 **Minor-релиз v0.9.0 после v0.8.5. Медиа-инструменты и бюджет, генерация

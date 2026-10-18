@@ -3532,7 +3532,8 @@
 ---
 
 ### KI-206 — Нет rate limiting / refresh / logout
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.9.1 (коммит `af1766d`) — добавлен `@nestjs/throttler`.
 - **Остаток (v0.9.0):** refresh/logout реализованы в R6.1b (v0.8.0,
   коммит `4b1c149`), **rate-limit не сделан** — `@nestjs/throttler` нет в
   зависимостях, на `/auth/login` ограничения нет. R7.7 закрыл rate limiting
@@ -3955,7 +3956,8 @@
 ---
 
 ### KI-234 — Нет rate-limit на публичных ручках
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.9.1 (коммит `af1766d`) — `GET /workflow/share/:token` защищён (5/мин).
 - **Остаток (v0.9.0):** throttler'а на публичных ручках нет —
   `GET /workflow/share/:token` и `POST /auth/login` по-прежнему без
   ограничения. R7.7 добавил per-provider семафор (KI-067), это не HTTP
@@ -5835,13 +5837,15 @@ MediaModelInfo, engine-DTO
 - **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-16
 - **Исправлено в:** v0.9.0 (R7.8, коммит `3e2844a`)
 - **Fix:** `IMediaStorage` + `LocalMediaStorage` (`./data/media`, TTL 30 дней,
-  sanitize key, защита от path traversal) и `S3MediaStorage` (заглушка).
+  sanitize key, защита от path traversal) и `S3MediaStorage`.
   Миграция 0010: `node_runs.stored_url`, `stored_expires_at`. Публичный
   `GET /media/file/:runId/:fileName` (uuid как capability). UI показывает
   `storedUrl ?? mediaUrl` и `ExpiredMediaPlaceholder`. Ошибка сохранения не
   роняет узел (генерация уже оплачена).
-- **Остаток:** S3-загрузка не реализована (KI-412), TTL-очистка файлов не
-  сделана (KI-413), `/media/file` без signed URL (KI-415).
+- **Доработано в R7.8-fix (v0.9.2):** S3-загрузка через `@aws-sdk/client-s3`
+  (KI-412), ежедневная cron-очистка локального хранилища по TTL (KI-413).
+- **Остаток:** `/media/file` без signed URL (KI-415), приватный S3-бакет
+  (KI-425), TTL объектов S3 (KI-426).
 - **Файлы:** `src/media/media-storage.service.ts`,
   `src/media/media-node-executor.service.ts`, `src/db/schema.ts`,
   `web/src/components/ExpiredMediaPlaceholder.tsx`
@@ -5935,7 +5939,8 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-367 — нет моделей для upscale/chromakey/trim
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.9.1 (коммит `af1766d`) — trim (@VideoEdit), upscale (FAL/Replicate). Остаток по chromakey — KI-418.
 - **Файлы:** `src/media/image-tool.ts`
 - **Описание:** в каталоге CreativeLab есть дефолтные модели только у
   `bg_removal` (`bgremover`) и `lipsync` (`kling-lipsync`). Для остальных
@@ -5967,7 +5972,8 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-369 — lipsync требует audio, нет поля в UI
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.9.1 (коммит `af1766d`) — добавлено поле `audioUrl` в `ImageToolNode`.
 - **Файлы:** `web/src/components/nodes/ImageToolNode.tsx`
 - **Описание:** lipsync требует два входа (видео + аудио). Audio
   передаётся через `data.params.audioUrl`; если нет — понятная ошибка до
@@ -6251,7 +6257,8 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-391 — Рестарт без `INSTANCE_ID` оставляет run в `pending`
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-17
+- **Исправлено в:** v0.9.1 (коммит `af1766d`) — дефолт `os.hostname():PORT`.
 - **Файлы:** `src/runs/runs.worker-options.ts`, `src/runs/runs.processor.ts`
 - **Описание:** `INSTANCE_ID` по умолчанию — `randomUUID()` на процесс. После
   рестарта без явного `INSTANCE_ID` задания от прежнего процесса попадают к
@@ -6501,24 +6508,30 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-412 — S3 media storage: заглушка без загрузки
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
-- **Файлы:** `src/media/media-storage.service.ts`
-- **Описание:** `S3MediaStorage` валидирует env, но `uploadAsync` возвращает
-  `null` (нет SDK, SigV4 не реализован). `MEDIA_STORAGE_BACKEND=s3` = `none`
-  + warning в логе.
-- **Решение:** добавить `@aws-sdk/client-s3` или SigV4 через `node:crypto`.
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.9.2 (R7.8-fix, коммит `<hash>`)
+- **Fix:** добавлен `@aws-sdk/client-s3`; `S3MediaStorage` скачивает результат
+  и кладёт объект `PutObjectCommand` (`S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`,
+  ключи из env). Без ключей/бакета `createMediaStorage` откатывается на
+  `local`, а сбой S3/upstream возвращает `null` (узел живёт на ссылке
+  провайдера). Тесты — мок `S3Client.send`.
+- **Файлы:** `src/media/media-storage.service.ts`, `package.json`
+- **Остаток:** закрытый бакет и TTL объектов S3 — KI-425, KI-426.
 - **Связанные:** KI-362, KI-413.
 
 ---
 
 ### KI-413 — TTL локальных media-файлов не чистится
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
-- **Файлы:** `src/media/media-storage.service.ts`, `src/runs/runs.processor.ts`
-- **Описание:** `stored_expires_at` фиксируется (30 дней), но cron/cleanup
-  нет — `./data/media` растёт неограниченно.
-- **Решение:** BullMQ repeatable job (раз в сутки): удалять файлы старше TTL
-  + старые `data/media/{runId}/`.
-- **Связанные:** KI-362, KI-215 (cleanup `refresh_tokens` — тот же паттерн).
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.9.2 (R7.8-fix, коммит `<hash>`)
+- **Fix:** `MediaCleanupService` + `MediaCleanupProcessor`: BullMQ
+  `upsertJobScheduler` с cron `0 3 * * *`; удаляются файлы
+  `./data/media/{runId}/` старше `MEDIA_STORAGE_LOCAL_TTL_DAYS` (по `fs.stat`,
+  без БД), опустевшие каталоги убираются. `TTL=0` — очистка выключена.
+  Префикс/БД Redis общие с очередью запусков (KI-387).
+- **Файлы:** `src/media/media-cleanup.service.ts`, `src/media/media.module.ts`
+- **Связанные:** KI-362, KI-215 (cleanup `refresh_tokens` — тот же паттерн),
+  KI-427.
 
 ---
 
@@ -6569,18 +6582,125 @@ MediaModelInfo, engine-DTO
 - **Связанные:** KI-150, KI-055.
 
 ---
+
+### KI-418 — CreativeLab не объявляет модели upscale/chromakey
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/media/image-tool.ts`, `src/media/providers/creativelab.provider.ts`
+- **Описание:** Живой каталог 113 моделей не содержит upscale или chromakey. trim замаплен на `@VideoEdit`, upscale на FAL/Replicate, chromakey пуст.
+- **Решение:** дождаться upstream, либо скрыть операцию.
+- **Связанные:** KI-366, KI-367.
+
+---
+
+### KI-419 — ThrottlerGuard не учитывает reverse proxy
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/app.module.ts`, `src/main.ts`
+- **Описание:** Без `trust proxy` за nginx все клиенты имеют один IP (лимит 5/мин на всех).
+- **Решение:** env `TRUST_PROXY` + `app.set('trust proxy', ...)`.
+- **Связанные:** KI-206, KI-234.
+
+---
+
+### KI-420 — In-memory ThrottlerStorage не общий между инстансами
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/app.module.ts`
+- **Описание:** При N инстансах лимит умножается на N.
+- **Решение:** Redis-storage для throttler.
+- **Связанные:** KI-387, KI-419.
+
+---
+
+### KI-421 — АвтоINSTANCE_ID нестабилен при пересоздании контейнера
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/runs/runs.worker-options.ts`
+- **Описание:** `hostname:PORT` меняется в Docker/K8s при пересоздании.
+- **Решение:** явный `INSTANCE_ID` в манифесте.
+- **Связанные:** KI-387, KI-391.
+
+---
+
+### KI-422 — Лимиты @Throttle статические
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/http-throttle.constants.ts`
+- **Описание:** 5/мин и 300/мин захардкожены, нельзя изменить без пересборки.
+- **Решение:** `ThrottlerModule.forRootAsync`.
+
+---
+
+### KI-423 — POST /auth/register и /auth/refresh без строгого лимита
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/auth/auth.controller.ts`
+- **Описание:** Строгий лимит есть только у login.
+- **Решение:** `@Throttle` для register (3/час) и refresh (30/мин).
+
+---
+
+### KI-424 — UI lipsync: audioUrl без валидации
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `web/src/components/nodes/ImageToolNode.tsx`
+- **Описание:** Поле принимает любую строку, нет плеера и подсказки.
+- **Решение:** `type="url"`, preview-player.
+- **Связанные:** KI-369.
+
+---
+
+### KI-425 — S3 `storedUrl` не работает для приватного бакета
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/media/media-storage.service.ts`
+- **Описание:** `storedUrl` для S3 — прямой `<endpoint>/<bucket>/<key>`. При
+  приватном бакете (норма для прода) UI получит 403. Локальный бэкенд отдаёт
+  файл через `GET /media/file/...`, S3 — нет.
+- **Решение:** presigned GET (`@aws-sdk/s3-request-presigner`) при чтении
+  `node_runs.stored_url` или проксирование S3 через `openAsync`.
+- **Связанные:** KI-412, KI-415, KI-362.
+
+---
+
+### KI-426 — `S3_TTL_DAYS` не удаляет объекты из бакета
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/media/media-storage.service.ts`
+- **Описание:** `stored_expires_at` вычисляется, но cron чистит только
+  локальный диск (KI-413). Объекты S3 живут вечно и растут в цене.
+- **Решение:** lifecycle-правило на бакете (`Expiration`) либо `DeleteObjects`
+  в задании очистки.
+- **Связанные:** KI-412, KI-413, KI-362.
+
+---
+
+### KI-427 — S3-загрузка буферизует файл в память (до 200 МБ)
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/media/media-storage.service.ts`
+- **Описание:** `PutObjectCommand.Body` — буфер: при `concurrency=5` и
+  видео-результатах пиковая память может достигать ~1 ГБ.
+- **Решение:** потоковая загрузка (`Upload` из `@aws-sdk/lib-storage`) с
+  известным `ContentLength` или запись во временный файл.
+- **Связанные:** KI-412, KI-065.
+
+---
+
+### KI-428 — Cron-очистка media покрыта только unit-тестами
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/media/media-cleanup.service.spec.ts`
+- **Описание:** Проверены логика удаления и регистрация расписания (моки fs и
+  Queue), но нет интеграционного теста «Redis + BullMQ + реальный каталог»:
+  `upsertJobScheduler` и фактический запуск воркера не проверяются.
+- **Решение:** integration-тест с `REDIS_URL` (как media-storage.integration).
+- **Связанные:** KI-413, KI-362.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 149 |
+| Fixed | 151 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 247 |
+| Open | 249 |
 | Won't Fix | 1 |
-| **Всего** | **405** |
+| **Всего** | **409** |
 
 ---
 
