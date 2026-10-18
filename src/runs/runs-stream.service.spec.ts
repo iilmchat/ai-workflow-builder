@@ -4,6 +4,10 @@ import { Test } from '@nestjs/testing';
 import type { Observable } from 'rxjs';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import type { NodeRun, WorkflowRun } from '../db/schema.js';
+import {
+  MEDIA_STORAGE,
+  type IMediaStorage,
+} from '../media/media-storage.service.js';
 import { RunEventsService } from './run-events.service.js';
 import { RunsService } from './runs.service.js';
 import { RunsStreamService } from './runs-stream.service.js';
@@ -264,6 +268,7 @@ describe('RunsStreamService', () => {
     rows?: NodeRun[];
     events?: { subscribeAsync: ReturnType<typeof vi.fn> };
     run?: WorkflowRun | null;
+    storage?: Partial<IMediaStorage>;
   }): Promise<{
     service: RunsStreamService;
     runs: { getRunRowAsync: ReturnType<typeof vi.fn> };
@@ -279,6 +284,13 @@ describe('RunsStreamService', () => {
     const events = options.events ?? {
       subscribeAsync: vi.fn(() => emptyEvents),
     };
+    const storage = {
+      backend: 'local' as const,
+      uploadAsync: vi.fn(() => Promise.resolve(null)),
+      openAsync: vi.fn(() => Promise.resolve(null)),
+      refreshStoredUrlAsync: vi.fn(() => Promise.resolve(null)),
+      ...options.storage,
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -286,6 +298,8 @@ describe('RunsStreamService', () => {
         { provide: RunsService, useValue: runs },
         { provide: RunEventsService, useValue: events },
         { provide: DRIZZLE, useValue: dbStub(options.rows ?? []) },
+        // KI-443: снимок переподписывает просроченный stored_url.
+        { provide: MEDIA_STORAGE, useValue: storage },
       ],
     }).compile();
 
@@ -338,6 +352,83 @@ describe('RunsStreamService', () => {
         },
       ],
     });
+  });
+
+  it('KI-443: переподписывает просроченный stored_url и отдаёт новый срок', async () => {
+    const oldUrl = 'https://s3.test/media/run-1/A.png?X-Amz-Signature=old';
+    const freshUrl = 'https://s3.test/media/run-1/A.png?X-Amz-Signature=new';
+    const freshExpiresAt = new Date(Date.now() + 3_600_000);
+    const refreshStoredUrlAsync = vi.fn(() =>
+      Promise.resolve({ storedUrl: freshUrl, storedExpiresAt: freshExpiresAt }),
+    );
+
+    const { service } = await createService({
+      rows: [
+        nodeRun({
+          storedUrl: oldUrl,
+          // Час назад ссылка была подписана и уже истекла.
+          storedExpiresAt: new Date(Date.now() - 60_000),
+        }),
+      ],
+      storage: { refreshStoredUrlAsync },
+    });
+    const messages = await collectAsync(
+      service.streamAsync(RUN_ID, new AbortController().signal),
+    );
+    const snapshot = payloads(messages)[0] as {
+      nodes: Array<{ storedUrl: string | null; storedExpiresAt: string | null }>;
+    };
+
+    expect(refreshStoredUrlAsync).toHaveBeenCalledWith(oldUrl);
+    expect(snapshot.nodes[0]?.storedUrl).toBe(freshUrl);
+    // Срок тоже обновлён: иначе UI счёл бы свежий URL истёкшим.
+    expect(snapshot.nodes[0]?.storedExpiresAt).toBe(
+      freshExpiresAt.toISOString(),
+    );
+  });
+
+  it('KI-443: свежий stored_url не переподписывается', async () => {
+    const refreshStoredUrlAsync = vi.fn(() => Promise.resolve(null));
+
+    const { service } = await createService({
+      rows: [
+        nodeRun({
+          storedUrl: 'https://s3.test/media/run-1/A.png?X-Amz-Signature=live',
+          storedExpiresAt: new Date(Date.now() + 60_000),
+        }),
+      ],
+      storage: { refreshStoredUrlAsync },
+    });
+
+    await collectAsync(service.streamAsync(RUN_ID, new AbortController().signal));
+
+    expect(refreshStoredUrlAsync).not.toHaveBeenCalled();
+  });
+
+  it('KI-443: ошибка переподписи не ломает снимок — остаётся исходная ссылка', async () => {
+    const oldUrl = 'https://s3.test/media/run-1/A.png?X-Amz-Signature=old';
+    const { service } = await createService({
+      rows: [
+        nodeRun({
+          storedUrl: oldUrl,
+          storedExpiresAt: new Date(Date.now() - 60_000),
+        }),
+      ],
+      storage: {
+        refreshStoredUrlAsync: vi.fn(() =>
+          Promise.reject(new Error('S3 connection refused')),
+        ),
+      },
+    });
+    const messages = await collectAsync(
+      service.streamAsync(RUN_ID, new AbortController().signal),
+    );
+    const snapshot = payloads(messages)[0] as {
+      nodes: Array<{ storedUrl: string | null }>;
+    };
+
+    // RULES 4.18: внешняя ошибка логируется, снимок отдаётся как есть.
+    expect(snapshot.nodes[0]?.storedUrl).toBe(oldUrl);
   });
 
   it('KI-347: отдаёт error запуска из workflow_runs в snapshot', async () => {

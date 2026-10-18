@@ -1,5 +1,13 @@
-import { PutObjectCommand } from '@aws-sdk/client-s3';
+import {
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
+  PutObjectCommand,
+  S3Client,
+  UploadPartCommand,
+} from '@aws-sdk/client-s3';
+import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -53,12 +61,13 @@ function stubFetch(body: Uint8Array, init: ResponseInit = {}): void {
 }
 
 /**
- * Дочитывает `Body` команды `PutObjectCommand` в буфер.
+ * Дочитывает `Body` команды S3 в буфер.
  *
- * После KI-427 тело — поток (`Readable`), а не `Uint8Array`: проверка
- * «SDK получил ровно те байты» требует его вычитать.
+ * `Upload` (KI-442) отправляет чанки буфером, но helper оставляет поддержку
+ * `Readable`: так проверка «SDK получил ровно те байты» не зависит от того,
+ * какую форму тела выбрал SDK.
  *
- * @param body - `Body` из `PutObjectCommand.input`
+ * @param body - `Body` из `PutObjectCommand.input`/`UploadPartCommand.input`
  * @returns собранные байты
  * @throws Error если тело не поток и не байты
  */
@@ -213,6 +222,7 @@ describe('Другие бэкенды хранилища (R7.8)', () => {
       storage.uploadAsync({ runId: 'r', nodeId: 'n', sourceUrl: 'https://x/y.png' }),
     ).resolves.toBeNull();
     await expect(storage.openAsync('r/n.png')).resolves.toBeNull();
+    await expect(storage.refreshStoredUrlAsync('r/n.png')).resolves.toBeNull();
   });
 
   it('createMediaStorage выбирает бэкенд по env', () => {
@@ -255,6 +265,20 @@ describe('Другие бэкенды хранилища (R7.8)', () => {
   });
 });
 
+/**
+ * Конфигурация настоящего клиента для подставного `send`.
+ *
+ * `Upload` из `@aws-sdk/lib-storage` читает из `client.config` endpoint,
+ * path-style и настройку checksums, поэтому одного `send` тестовой заглушке
+ * уже недостаточно (KI-442).
+ */
+const REAL_S3_CONFIG = new S3Client({
+  region: 'us-east-1',
+  endpoint: 'https://s3.test',
+  forcePathStyle: true,
+  credentials: { accessKeyId: 'access', secretAccessKey: 'secret' },
+}).config;
+
 describe('S3MediaStorage: загрузка в бакет (R7.8, KI-412)', () => {
   /**
    * Собирает полные параметры S3 с подставным клиентом.
@@ -270,11 +294,11 @@ describe('S3MediaStorage: загрузка в бакет (R7.8, KI-412)', () => 
       secretAccessKey: 'secret',
       region: 'us-east-1',
       ttlDays: 30,
-      client: { send } as unknown as S3ClientLike,
+      client: { send, config: REAL_S3_CONFIG } as unknown as S3ClientLike,
     };
   }
 
-  it('стримит тело в PutObjectCommand и отдаёт signed URL приватного бакета', async () => {
+  it('Upload кладёт тело одним PutObject и отдаёт signed URL приватного бакета', async () => {
     const body = new Uint8Array([137, 80, 78, 71, 1, 2, 3]);
     stubFetch(body, {
       headers: {
@@ -304,8 +328,9 @@ describe('S3MediaStorage: загрузка в бакет (R7.8, KI-412)', () => 
       ContentType: 'image/png',
       ContentLength: body.byteLength,
     });
-    // KI-427: в S3 уходит поток, а не буфер на 200 МБ.
-    expect(command.input.Body).toBeInstanceOf(Readable);
+    // KI-442: `Upload` буферизует чанк — SDK может повторить запрос с теми
+    // же байтами (одноразовый поток после первого чтения уже пуст).
+    expect(command.input.Body).not.toBeInstanceOf(Readable);
     expect(await readCommandBodyAsync(command.input.Body)).toEqual(Buffer.from(body));
 
     expect(saved?.storageKey).toBe('run-1/node-a.png');
@@ -321,13 +346,13 @@ describe('S3MediaStorage: загрузка в бакет (R7.8, KI-412)', () => 
     expect(seconds).toBeLessThan(3700 * 1000);
   });
 
-  it('без Content-Length не передаёт длину: тело всё равно стримится', async () => {
+  it('без Content-Length не передаёт длину: Upload считает байты сам', async () => {
     const body = new Uint8Array([1, 2, 3, 4]);
     stubFetch(body, { headers: { 'content-type': 'video/mp4' } });
 
     const uploaded: Buffer[] = [];
-    // SDK вычитывает Body целиком — заглушка делает то же, иначе счётчик
-    // размера (KI-427) не успевает сработать.
+    // `Upload` вычитывает Body чанками сам — заглушка делает то же, иначе
+    // счётчик размера (KI-427) не успевает сработать.
     const send = vi.fn(async (command: PutObjectCommand) => {
       uploaded.push(await readCommandBodyAsync(command.input.Body));
 
@@ -346,6 +371,132 @@ describe('S3MediaStorage: загрузка в бакет (R7.8, KI-412)', () => 
     expect(command.input.ContentLength).toBeUndefined();
     expect(uploaded[0]).toEqual(Buffer.from(body));
     expect(saved?.bytes).toBe(body.byteLength);
+  });
+
+  it('KI-442: объект больше 5 МБ уходит multipart-чанками, готовыми к повтору', async () => {
+    const partSize = 5 * 1024 * 1024;
+    const body = new Uint8Array(partSize + 1024);
+    stubFetch(body, {
+      headers: {
+        'content-type': 'video/mp4',
+        'content-length': String(body.byteLength),
+      },
+    });
+
+    const commands: unknown[] = [];
+    const send = vi.fn(async (command: unknown) => {
+      commands.push(command);
+
+      if (command instanceof CreateMultipartUploadCommand) {
+        return { UploadId: 'upload-1' };
+      }
+
+      if (command instanceof UploadPartCommand) {
+        return { ETag: `"etag-${command.input.PartNumber ?? 0}"` };
+      }
+
+      if (command instanceof CompleteMultipartUploadCommand) {
+        return {};
+      }
+
+      return {};
+    });
+    const storage = new S3MediaStorage(optionsWith(send));
+
+    const saved = await storage.uploadAsync({
+      runId: 'run-1',
+      nodeId: 'node-a',
+      sourceUrl: 'https://provider.test/out.mp4',
+    });
+
+    expect(saved?.bytes).toBe(body.byteLength);
+    expect(
+      commands.some((command) => command instanceof CreateMultipartUploadCommand),
+    ).toBe(true);
+
+    const parts = commands
+      .filter((command): command is UploadPartCommand =>
+        command instanceof UploadPartCommand,
+      )
+      .sort(
+        (left, right) =>
+          (left.input.PartNumber ?? 0) - (right.input.PartNumber ?? 0),
+      );
+
+    // Каждая часть — самостоятельный буфер: её можно отправить повторно.
+    expect(parts).toHaveLength(2);
+    expect((await readCommandBodyAsync(parts[0]?.input.Body)).byteLength).toBe(
+      partSize,
+    );
+    expect((await readCommandBodyAsync(parts[1]?.input.Body)).byteLength).toBe(1024);
+
+    const complete = commands.find(
+      (command): command is CompleteMultipartUploadCommand =>
+        command instanceof CompleteMultipartUploadCommand,
+    );
+
+    expect(complete?.input.MultipartUpload?.Parts).toHaveLength(2);
+  });
+
+  it('KI-442: повторяет PutObject после 503 (буфер вместо одноразового потока)', async () => {
+    const body = new Uint8Array([1, 2, 3, 4]);
+    stubFetch(body, {
+      headers: {
+        'content-type': 'image/png',
+        'content-length': String(body.byteLength),
+      },
+    });
+
+    let attempts = 0;
+    const server = createServer((request, response) => {
+      request.on('data', () => undefined);
+      request.on('end', () => {
+        attempts += 1;
+
+        if (attempts === 1) {
+          response.writeHead(503, { 'content-type': 'application/xml' });
+          response.end('<Error><Code>SlowDown</Code><Message>retry</Message></Error>');
+
+          return;
+        }
+
+        response.writeHead(200, { ETag: '"etag-1"' });
+        response.end();
+      });
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', resolve);
+    });
+
+    try {
+      const address = server.address() as AddressInfo;
+      const endpoint = `http://127.0.0.1:${address.port}`;
+      const storage = new S3MediaStorage({
+        endpoint,
+        bucket: 'media',
+        accessKeyId: 'access',
+        secretAccessKey: 'secret',
+        region: 'us-east-1',
+        ttlDays: 30,
+        publicBucket: true,
+      });
+
+      const saved = await storage.uploadAsync({
+        runId: 'run-1',
+        nodeId: 'node-a',
+        sourceUrl: 'https://provider.test/out.png',
+      });
+
+      // Первый PUT — 503, второй — 200: результат не потерян.
+      expect(saved).not.toBeNull();
+      expect(attempts).toBe(2);
+      expect(saved?.storedUrl).toBe(`${endpoint}/media/run-1/node-a.png`);
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    }
   });
 
   it('публичный бакет — прямой URL и TTL в днях (KI-425)', async () => {
@@ -391,6 +542,51 @@ describe('S3MediaStorage: загрузка в бакет (R7.8, KI-412)', () => 
     expect(signed).toContain('X-Amz-Expires=3600');
     expect(signed).toContain('X-Amz-Signature=');
     // Подпись локальная: ни одной команды в S3 не отправлено.
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('KI-443: refreshStoredUrlAsync переподписывает просроченный URL по ключу', async () => {
+    const send = vi.fn(() => Promise.resolve({}));
+    const storage = new S3MediaStorage(optionsWith(send));
+
+    const refreshed = await storage.refreshStoredUrlAsync(
+      'https://s3.test/media/run-1/node-a.png?X-Amz-Signature=old',
+    );
+
+    expect(refreshed?.storedUrl).toContain(
+      'https://s3.test/media/run-1/node-a.png?',
+    );
+    expect(refreshed?.storedUrl).toContain('X-Amz-Signature=');
+    expect(refreshed?.storedUrl).not.toContain('old');
+    expect(refreshed?.storedExpiresAt).toBeInstanceOf(Date);
+
+    const seconds = (refreshed?.storedExpiresAt?.getTime() ?? 0) - Date.now();
+    expect(seconds).toBeGreaterThan(3500 * 1000);
+    expect(seconds).toBeLessThan(3700 * 1000);
+    // Переподпись локальная: в S3 ничего не отправляется.
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('KI-443: refreshStoredUrlAsync не трогает чужой bucket и публичный URL', async () => {
+    const send = vi.fn(() => Promise.resolve({}));
+    const privateStorage = new S3MediaStorage(optionsWith(send));
+
+    await expect(
+      privateStorage.refreshStoredUrlAsync(
+        'https://other.test/other-bucket/run-1/node-a.png',
+      ),
+    ).resolves.toBeNull();
+
+    const publicStorage = new S3MediaStorage({
+      ...optionsWith(send),
+      publicBucket: true,
+    });
+
+    await expect(
+      publicStorage.refreshStoredUrlAsync(
+        'https://s3.test/media/run-1/node-a.png',
+      ),
+    ).resolves.toBeNull();
     expect(send).not.toHaveBeenCalled();
   });
 

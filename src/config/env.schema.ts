@@ -324,8 +324,8 @@ export type ObservabilityEnv = z.infer<typeof ObservabilityEnvSchema>;
  * Zod-схема хранилища media-результатов (R7.8, KI-362).
  *
  * `local` (default) — файлы на диске (`./data/media`), `s3` — внешнее
- * хранилище (заглушка: параметры валидируются, но загрузка выключена до
- * появления SDK), `none` — ничего не сохраняем (ссылки провайдера живут 48 ч).
+ * S3-совместимое хранилище (загрузка через `@aws-sdk/lib-storage`, KI-412),
+ * `none` — ничего не сохраняем (ссылки провайдера живут 48 ч).
  */
 export const MediaStorageEnvSchema = z.object({
   /** Бэкенд хранилища: `local`, `s3` или `none` (default `local`). */
@@ -357,6 +357,24 @@ export const MediaStorageEnvSchema = z.object({
   S3_TTL_DAYS: z
     .preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(3650).optional())
     .default(30),
+  /**
+   * Публичный ли бакет S3 (default `false`, KI-444).
+   *
+   * `true` — `stored_url` собирается прямым URL `<endpoint>/<bucket>/<key>`;
+   * `false` — presigned GET на час. Для приватного бакета прямой URL даёт 403,
+   * поэтому безопасный дефолт — подписанные ссылки. Разбор строгий, как у
+   * `TRUST_PROXY`/`SANDBOX_ENABLED`: `z.coerce.boolean()` превращает непустую
+   * строку `'false'` в `true`, и публичный бакет включился бы по ошибке.
+   */
+  S3_PUBLIC_BUCKET: z
+    .preprocess(
+      emptyToUndefined,
+      z
+        .union([z.boolean(), z.enum(['true', 'false'])])
+        .transform((value) => value === true || value === 'true')
+        .optional(),
+    )
+    .default(false),
 });
 
 /** Валидированные настройки хранилища media-результатов (R7.8). */

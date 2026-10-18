@@ -7,6 +7,10 @@ import { nodeRuns, type NodeRun } from '../db/schema.js';
 import type { GraphSnapshotDto } from '../engine/dto/index.js';
 import { calculateCacheSavingsUsd } from '../llm/model-pricing.js';
 import {
+  MEDIA_STORAGE,
+  type IMediaStorage,
+} from '../media/media-storage.service.js';
+import {
   RunStreamMessageSchema,
   type NodeRunSnapshot,
   type RunEventDto,
@@ -40,11 +44,14 @@ export class RunsStreamService {
    * @param runsService - чтение запуска (даёт NotFoundException для 404)
    * @param runEvents - подписка на события запуска
    * @param db - соединение Drizzle (чтение `node_runs` для снимка)
+   * @param mediaStorage - хранилище media-результатов: переподписывает
+   *   просроченный `stored_url` в снимке (KI-443)
    */
   constructor(
     private readonly runsService: RunsService,
     private readonly runEvents: RunEventsService,
     @Inject(DRIZZLE) private readonly db: Database,
+    @Inject(MEDIA_STORAGE) private readonly mediaStorage: IMediaStorage,
   ) {}
 
   /**
@@ -203,7 +210,11 @@ export class RunsStreamService {
         // после F5 вместо «причина недоступна».
         error: run.error,
       },
-      nodes: rows.map((row) => this.toNodeSnapshot(row, run.snapshot)),
+      // Ссылки переподписываются параллельно: независимые подписи не должны
+      // выполняться в цикле (RULES 4.17).
+      nodes: await Promise.all(
+        rows.map((row) => this.toNodeSnapshotAsync(row, run.snapshot)),
+      ),
     };
   }
 
@@ -216,15 +227,23 @@ export class RunsStreamService {
    * только в `model-pricing.ts`). Без модели (узел удалён/тип без модели)
    * экономия — `null`, токены при этом всё равно отдаются.
    *
+   * **KI-443:** просроченный `stored_url` приватного S3 — presigned GET,
+   * который живёт час. Если `stored_expires_at` уже прошёл, ссылка
+   * переподписывается здесь, на чтении: UI получает рабочую ссылку и новый
+   * `storedExpiresAt` (иначе `resolveMediaSource` показал бы плейсхолдер
+   * «ссылка истекла» даже при свежем URL). В БД ссылка не обновляется:
+   * снимок — это проекция, а подпись стоит дёшево и не требует записи.
+   *
    * @param row - строка таблицы `node_runs`
    * @param snapshot - снимок графа запуска (нужен `data.model` узла)
    * @returns узел снимка состояния
    */
-  private toNodeSnapshot(
+  private async toNodeSnapshotAsync(
     row: NodeRun,
     snapshot: GraphSnapshotDto,
-  ): NodeRunSnapshot {
+  ): Promise<NodeRunSnapshot> {
     const model = snapshot.nodes.find((node) => node.id === row.nodeId)?.data.model;
+    const stored = await this.resolveStoredUrlAsync(row);
 
     return {
       nodeId: row.nodeId,
@@ -244,11 +263,53 @@ export class RunsStreamService {
         typeof model === 'string'
           ? calculateCacheSavingsUsd(model, row.cacheReadTokens)
           : null,
-      storedUrl: row.storedUrl,
-      storedExpiresAt: row.storedExpiresAt?.toISOString() ?? null,
+      storedUrl: stored.storedUrl,
+      storedExpiresAt: stored.storedExpiresAt?.toISOString() ?? null,
       durationMs: row.durationMs,
       startedAt: row.startedAt?.toISOString() ?? null,
       finishedAt: row.finishedAt?.toISOString() ?? null,
     };
+  }
+
+  /**
+   * Отдаёт актуальные ссылку и срок её жизни для media-узла (KI-443).
+   *
+   * Свежая ссылка возвращается как есть. Просроченную просит переподписать
+   * хранилище: local вернёт `null` (относительный URL не истекает), S3 —
+   * новый presigned GET и новый срок. Любая ошибка хранилища не должна
+   * ломать снимок: остаётся исходная пара, UI покажет плейсхолдер.
+   *
+   * @param row - строка `node_runs`
+   * @returns ссылка и срок (исходные, если обновление не удалось/не нужно)
+   */
+  private async resolveStoredUrlAsync(
+    row: NodeRun,
+  ): Promise<{ storedUrl: string | null; storedExpiresAt: Date | null }> {
+    if (
+      row.storedUrl === null ||
+      row.storedExpiresAt === null ||
+      row.storedExpiresAt.getTime() > Date.now()
+    ) {
+      return { storedUrl: row.storedUrl, storedExpiresAt: row.storedExpiresAt };
+    }
+
+    try {
+      const refreshed = await this.mediaStorage.refreshStoredUrlAsync(
+        row.storedUrl,
+      );
+
+      if (refreshed !== null) {
+        return refreshed;
+      }
+    } catch (error: unknown) {
+      // RULES 4.18: внешняя граница (S3) не должна ронять SSE-снимок.
+      const message = error instanceof Error ? error.message : String(error);
+
+      this.logger.warn(
+        `Не удалось переподписать stored_url узла ${row.nodeId}: ${message}`,
+      );
+    }
+
+    return { storedUrl: row.storedUrl, storedExpiresAt: row.storedExpiresAt };
   }
 }

@@ -12,7 +12,7 @@ import { MediaController } from './media.controller.js';
 import { MediaNodeExecutor } from './media-node-executor.service.js';
 import { MEDIA_PROVIDERS, MediaRegistryService } from './media-registry.service.js';
 import { MediaStorageController } from './media-storage.controller.js';
-import { mediaStorageProvider } from './media-storage.service.js';
+import { MEDIA_STORAGE, mediaStorageProvider } from './media-storage.service.js';
 import {
   orderMediaProviders,
   parseMediaProviderPriority,
@@ -118,6 +118,8 @@ import { ReplicateProvider } from './providers/replicate.provider.js';
     MediaRegistryService,
     MediaNodeExecutor,
   ],
-  exports: [MediaRegistryService, MediaNodeExecutor],
+  // MEDIA_STORAGE экспортируется для `RunsStreamService`: снимок SSE
+  // переподписывает просроченный `stored_url` (KI-443).
+  exports: [MediaRegistryService, MediaNodeExecutor, MEDIA_STORAGE],
 })
 export class MediaModule {}

@@ -1,4 +1,5 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -22,12 +23,13 @@ import { pipeline } from 'node:stream/promises';
  *   (`./data/media/<runId>/<nodeId>.<ext>`), отдаются ручкой
  *   `GET /media/file/:runId/:fileName`;
  * - {@link S3MediaStorage} — S3-совместимое хранилище (AWS S3, MinIO, R2,
- *   Yandex Object Storage): результат **потоком** кладётся в бакет
- *   `PutObjectCommand` (KI-412, KI-427), а `storedUrl` для приватного бакета —
- *   presigned GET на 1 час (`@aws-sdk/s3-request-presigner`, KI-425). Если
- *   параметры не заданы или S3 недоступен, {@link createMediaStorage}
- *   откатывается на local, а сама загрузка в S3 возвращает `null` — узел
- *   остаётся на ссылке провайдера.
+ *   Yandex Object Storage): результат **потоком** кладётся в бакет через
+ *   `Upload` из `@aws-sdk/lib-storage` (KI-412, KI-427, KI-442), а `storedUrl`
+ *   для приватного бакета — presigned GET на 1 час
+ *   (`@aws-sdk/s3-request-presigner`, KI-425). Просроченная ссылка
+ *   переподписывается на чтении (KI-443). Если параметры не заданы или S3
+ *   недоступен, {@link createMediaStorage} откатывается на local, а сама
+ *   загрузка в S3 возвращает `null` — узел остаётся на ссылке провайдера.
  *
  * `none` — сохранение выключено (прежнее поведение).
  */
@@ -62,6 +64,14 @@ export interface MediaStoredFile {
   bytes: number;
 }
 
+/** Обновлённая ссылка на сохранённый файл (KI-443). */
+export interface MediaRefreshedUrl {
+  /** Свежая ссылка, пригодная для UI. */
+  storedUrl: string;
+  /** Когда обновлённая ссылка перестанет быть доступной. */
+  storedExpiresAt: Date | null;
+}
+
 /** Открытый файл для отдачи по HTTP. */
 export interface MediaReadResult {
   /** Поток чтения файла. */
@@ -94,6 +104,20 @@ export interface IMediaStorage {
    * @throws Error если ключ недопустим (выход за пределы каталога)
    */
   openAsync(storageKey: string): Promise<MediaReadResult | null>;
+
+  /**
+   * Переподписывает ссылку на сохранённый файл, если это поддерживает бэкенд.
+   *
+   * Нужен для `node_runs.stored_url`: у приватного бакета S3 это presigned GET
+   * на час (KI-425), и после истечения ссылка отдаёт 403 (KI-443). Хранилище
+   * само решает, умеет ли оно обновлять ссылку: local возвращает `null`
+   * (относительный URL не подписывается и не истекает).
+   *
+   * @param storedUrl - ссылка из `node_runs.stored_url`
+   * @returns свежая ссылка с новым сроком либо `null`, если обновление не
+   *   поддерживается или невозможно
+   */
+  refreshStoredUrlAsync(storedUrl: string): Promise<MediaRefreshedUrl | null>;
 }
 
 /** Таймаут скачивания результата провайдера (мс). */
@@ -386,6 +410,23 @@ export class LocalMediaStorage implements IMediaStorage {
       return null;
     }
   }
+
+  /**
+   * Локальная ссылка не переподписывается.
+   *
+   * `storedUrl` локального хранилища — относительный путь
+   * `/media/file/<runId>/<fileName>`: у него нет подписи, и 403 он не отдаёт.
+   * `storedExpiresAt` здесь означает срок хранения файла, а не срок жизни
+   * ссылки, поэтому обновлять нечего.
+   *
+   * @param _storedUrl - сохранённая ссылка (не используется)
+   * @returns всегда `null`
+   */
+  async refreshStoredUrlAsync(
+    _storedUrl: string,
+  ): Promise<MediaRefreshedUrl | null> {
+    return null;
+  }
 }
 
 /**
@@ -415,8 +456,7 @@ export interface S3MediaStorageOptions {
    * `false` или не задано — presigned GET на {@link S3_SIGNED_URL_TTL_SECONDS}.
    * По умолчанию флаг не выставлен, и хранилище отдаёт **signed URL**: для
    * приватного бакета прямой URL даёт 403, поэтому неизвестность трактуется в
-   * безопасную сторону. Флаг задаётся вызывающим кодом; переменной окружения
-   * для него пока нет.
+   * безопасную сторону. Флаг читается из env `S3_PUBLIC_BUCKET` (KI-444).
    */
   publicBucket?: boolean;
   /**
@@ -427,12 +467,16 @@ export interface S3MediaStorageOptions {
 }
 
 /**
- * Минимальная граница S3-клиента, достаточная хранилищу.
+ * Минимальная граница S3-клиента, достаточная хранилищу и `Upload`.
  *
  * Реальный `S3Client` ей соответствует, а в тестах подставляется объект с
- * `send` — без моков целого SDK и без сети.
+ * `send` и `config` реального клиента — без сети и без моков целого SDK.
+ * `config` нужен `Upload`: он читает `endpoint`, `forcePathStyle` и
+ * `requestChecksumCalculation`, чтобы собрать multipart-запрос.
  */
 export interface S3ClientLike {
+  /** Конфигурация клиента (для `Upload`: endpoint, path-style, checksums). */
+  readonly config: S3Client['config'];
   /** Отправляет команду в S3. */
   send(command: PutObjectCommand): Promise<unknown>;
 }
@@ -450,24 +494,22 @@ interface ResolvedS3Config {
  * S3-совместимое хранилище media-результатов (DESIGN § 3.8, слой 2).
  *
  * Результат провайдера скачивается потоком и кладётся в бакет через
- * `PutObjectCommand` (`@aws-sdk/client-s3`, KI-412). Тело ответа **не
- * буферизуется**: `Readable.fromWeb(...)` передаётся в `Body`, поэтому
- * 200-мегабайтное видео не занимает память процесса (KI-427). Ключ объекта —
- * тот же, что у локального слоя: `<runId>/<fileName>`, поэтому `stored_url` и
- * TTL считаются одинаково для обоих бэкендов.
+ * `Upload` из `@aws-sdk/lib-storage` (KI-412, KI-442). `Upload` читает поток
+ * чанками по 5 МБ и передаёт в SDK **буфер**, поэтому автоматический ретрай
+ * (сеть, 5xx, таймаут) повторяет запрос с теми же байтами, а не с уже
+ * прочитанным одноразовым потоком. Объект больше 5 МБ уходит multipart'ом, и
+ * повторяется только упавшая часть. Память при этом ограничена размером
+ * чанка (и очередью из четырёх), а не всем 200-мегабайтным видео (KI-427).
+ * Ключ объекта — тот же, что у локального слоя: `<runId>/<fileName>`, поэтому
+ * `stored_url` и TTL считаются одинаково для обоих бэкендов.
  *
  * **Ссылка.** Для приватного бакета (норма для прода) прямой URL даёт 403,
  * поэтому `storedUrl` — presigned GET на {@link S3_SIGNED_URL_TTL_SECONDS}
  * (`getSignedUrlAsync`, KI-425). Для публичного бакета (`publicBucket: true`)
  * остаётся прямой URL. Если публичность неизвестна, выбирается signed URL —
- * он безопаснее.
- *
- * **Ограничения.** Поток из `fetch` одноразовый, поэтому автоматический
- * ретрай SDK на нём не сработает (повторный запрос уйдёт с уже прочитанным
- * телом); надёжный ретрай требует `Upload` из `@aws-sdk/lib-storage` или
- * временного файла. `storedUrl` приватного бакета живёт час: `storedExpiresAt`
- * это отражает, но переподписи при чтении пока нет — `getSignedUrlAsync` даёт
- * примитив, вызывающего кода для него ещё нет.
+ * он безопаснее. Просроченная ссылка переподписывается на чтении:
+ * {@link refreshStoredUrlAsync} извлекает ключ объекта из URL и подписывает
+ * его заново (KI-443).
  *
  * **Отказоустойчивость.** S3 — необязательный слой: если параметры не заданы,
  * upstream ответил ошибкой, файл больше лимита или сам S3 недоступен,
@@ -492,9 +534,10 @@ export class S3MediaStorage implements IMediaStorage {
   /**
    * Настоящий SDK-клиент для подписи URL.
    *
-   * `client` может быть подменным объектом с одним `send` (тесты), а
-   * `getSignedUrl` работает с полноценным `S3Client` — поэтому подпись идёт
-   * через отдельный клиент, собранный из тех же параметров.
+   * `client` может быть подменным объектом с `send` и `config` реального
+   * клиента (тесты), а `getSignedUrl` работает с полноценным `S3Client` —
+   * поэтому подпись идёт через отдельный клиент, собранный из тех же
+   * параметров.
    */
   private signingClient: S3Client | null = null;
 
@@ -584,9 +627,12 @@ export class S3MediaStorage implements IMediaStorage {
       )}`;
       const storageKey = `${sanitizeStorageSegment(input.runId)}/${fileName}`;
 
-      // KI-427: тело не буферизуется. `Readable.fromWeb` отдаёт поток из
-      // `fetch`, счётчик проверяет потолок по факту (chunked может не отдать
-      // `Content-Length`), а сам поток уходит в `Body` без копии в память.
+      // KI-427/KI-442: поток из `fetch` остаётся потоком (память не растёт на
+      // весь файл), но в S3 его отдаёт `Upload`, а не `PutObjectCommand`.
+      // `Upload` читает тело чанками (по умолчанию 5 МБ) и отправляет в SDK
+      // буфер: при ретрае SDK повторяет запрос с теми же байтами. Одноразовый
+      // поток в `Body` после первого чтения повторно отправить нельзя, поэтому
+      // прежняя схема теряла результат на транзиентном сбое (KI-442).
       let bytes = 0;
       const counter = new Transform({
         transform(chunk: Buffer, _encoding, callback): void {
@@ -604,8 +650,8 @@ export class S3MediaStorage implements IMediaStorage {
         },
       });
       const source = Readable.fromWeb(response.body as unknown as NodeReadableStream);
-      // `pipe` не пробрасывает ошибку источника в приёмник: без этого SDK ждал
-      // бы данные от уже сломанного потока.
+      // `pipe` не пробрасывает ошибку источника в приёмник: без этого `Upload`
+      // ждал бы данные от уже сломанного потока.
       source.on('error', (error: Error) => {
         counter.destroy(error);
       });
@@ -613,20 +659,29 @@ export class S3MediaStorage implements IMediaStorage {
       const body = source.pipe(counter);
 
       try {
-        await this.getClient(config).send(
-          new PutObjectCommand({
+        const upload = new Upload({
+          // `client` в тестах — объект с `send` и `config` реального клиента;
+          // `Upload` читает из `config` endpoint/path-style/checksums.
+          client: this.getClient(config) as unknown as S3Client,
+          params: {
             Bucket: config.bucket,
             Key: storageKey,
             Body: body,
             ContentType: contentType,
             // Длину передаём только если upstream её назвал: для chunked
-            // `ContentLength` неизвестен, и SDK отправит поток как есть.
+            // `ContentLength` неизвестен, и `Upload` определит размер по
+            // фактически прочитанным чанкам.
             ...(Number.isFinite(declaredLength) ? { ContentLength: declaredLength } : {}),
-          }),
-        );
+          },
+          // Упавшая multipart-загрузка не должна оставлять части в бакете.
+          leavePartsOnError: false,
+        });
+
+        await upload.done();
       } catch (error: unknown) {
         // Поток не дочитан — освобождаем сокет upstream.
         body.destroy();
+        source.destroy();
 
         throw error;
       }
@@ -692,9 +747,9 @@ export class S3MediaStorage implements IMediaStorage {
    * Строит presigned GET-ссылку на объект бакета (KI-425).
    *
    * Ссылка живёт {@link S3_SIGNED_URL_TTL_SECONDS} секунд. Метод нужен и
-   * `uploadAsync` (для приватного бакета), и вызывающему коду, который хранит
-   * `stored_url` дольше часа и хочет переподписать ссылку при чтении, — сам
-   * `storedUrl` автоматически не продлевается.
+   * `uploadAsync` (для приватного бакета), и {@link refreshStoredUrlAsync},
+   * который переподписывает `stored_url` при чтении: сам `storedUrl`
+   * автоматически не продлевается (KI-443).
    *
    * @param key - ключ объекта `<runId>/<fileName>`
    * @returns подписанный URL на `GetObject`
@@ -708,6 +763,64 @@ export class S3MediaStorage implements IMediaStorage {
     }
 
     return this.signGetUrlAsync(config, key);
+  }
+
+  /**
+   * Переподписывает просроченный `stored_url` приватного бакета (KI-443).
+   *
+   * В БД хранится только сама ссылка (отдельной колонки с ключом объекта
+   * нет), поэтому ключ восстанавливается из URL: path-style
+   * `<endpoint>/<bucket>/<runId>/<fileName>`. Для публичного бакета ссылка
+   * прямая и не истекает как presigned — обновлять нечего; TTL там относится
+   * к удалению объекта, поэтому возвращается `null`.
+   *
+   * Метод не бросает: снимок запуска не должен ломаться из-за недоступного
+   * S3 — вызывающий код оставит старую ссылку и плейсхолдер «ссылка истекла»
+   * (RULES 4.18).
+   *
+   * @param storedUrl - ссылка из `node_runs.stored_url`
+   * @returns свежая ссылка с новым сроком либо `null`, если переподписать
+   *   нельзя (публичный бакет, не S3-URL, S3 не настроен, ошибка подписи)
+   */
+  async refreshStoredUrlAsync(
+    storedUrl: string,
+  ): Promise<MediaRefreshedUrl | null> {
+    const config = this.resolveConfig();
+
+    if (config === null || this.options.publicBucket === true) {
+      return null;
+    }
+
+    const key = storageKeyFromUrl(config, storedUrl);
+
+    if (key === null) {
+      this.logger.warn(
+        `Не удалось извлечь ключ объекта из stored_url (bucket=${config.bucket}) — ` +
+          'ссылка не переподписана',
+      );
+
+      return null;
+    }
+
+    try {
+      const refreshedUrl = await this.signGetUrlAsync(config, key);
+
+      this.logger.debug(`stored_url переподписан: ${key}`);
+
+      return {
+        storedUrl: refreshedUrl,
+        storedExpiresAt: new Date(
+          Date.now() + S3_SIGNED_URL_TTL_SECONDS * 1000,
+        ),
+      };
+    } catch (error: unknown) {
+      this.logger.warn(
+        `Не удалось переподписать stored_url для ${key} ` +
+          `(${toErrorMessage(error)})`,
+      );
+
+      return null;
+    }
   }
 
   /**
@@ -836,6 +949,52 @@ export class S3MediaStorage implements IMediaStorage {
 }
 
 /**
+ * Восстанавливает ключ объекта из сохранённой S3-ссылки (KI-443).
+ *
+ * `stored_url` — это либо presigned GET, либо прямой URL, но в обоих случаях
+ * path-style: `<endpoint>/<bucket>/<runId>/<fileName>`. Bucket известен из
+ * конфигурации, поэтому ключ — всё, что идёт после `/<bucket>/`. Query
+ * (`X-Amz-Signature`, `X-Amz-Expires`) отбрасывается.
+ *
+ * @param config - проверенные параметры подключения
+ * @param storedUrl - ссылка из `node_runs.stored_url`
+ * @returns ключ объекта `<runId>/<fileName>` либо `null`, если URL не от этого
+ *   бакета/невалиден
+ */
+function storageKeyFromUrl(
+  config: ResolvedS3Config,
+  storedUrl: string,
+): string | null {
+  let pathname: string;
+
+  try {
+    pathname = new URL(storedUrl).pathname;
+  } catch {
+    return null;
+  }
+
+  const marker = `/${config.bucket}/`;
+  const markerIndex = pathname.indexOf(marker);
+
+  if (markerIndex === -1) {
+    return null;
+  }
+
+  const rawKey = pathname.slice(markerIndex + marker.length);
+
+  if (rawKey.length === 0) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(rawKey);
+  } catch {
+    // Битый percent-encoding: ключ не восстановить.
+    return null;
+  }
+}
+
+/**
  * Приводит неизвестную ошибку к тексту для лога.
  *
  * @param error - значение из `catch` (тип `unknown`)
@@ -874,6 +1033,18 @@ export class NoopMediaStorage implements IMediaStorage {
   async openAsync(_storageKey: string): Promise<MediaReadResult | null> {
     return null;
   }
+
+  /**
+   * Ссылок нет — обновлять нечего.
+   *
+   * @param _storedUrl - сохранённая ссылка (не используется)
+   * @returns всегда `null`
+   */
+  async refreshStoredUrlAsync(
+    _storedUrl: string,
+  ): Promise<MediaRefreshedUrl | null> {
+    return null;
+  }
 }
 
 /** Логгер выбора бэкенда: живёт вне классов, потому что решает фабрика. */
@@ -906,6 +1077,8 @@ export function createMediaStorage(config?: ConfigService): IMediaStorage {
       secretAccessKey: config?.get<string>('S3_SECRET_ACCESS_KEY'),
       region: config?.get<string>('S3_REGION'),
       ttlDays: config?.get<number>('S3_TTL_DAYS'),
+      // KI-444: флаг публичного бакета приходит из env, как остальные `S3_*`.
+      publicBucket: config?.get<boolean>('S3_PUBLIC_BUCKET') === true,
     });
 
     if (s3.isConfigured) {
