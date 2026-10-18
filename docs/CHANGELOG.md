@@ -17,6 +17,115 @@
 ---
 ## [Unreleased]
 
+---
+
+## [0.10.0] — 2026-10-19
+
+**Minor-релиз: Web Search, Document Generation, Safe Filesystem, Docker/GHCR и
+отдача SPA из NestJS. 18 → 22 типа узлов.**
+
+### Added
+
+- **Web Search (`web_search`, v0.10 S1–S2):** узел поиска через Tavily.
+  Вход `prompt` (запрос от Text/LLM), выход `text` — нумерованный список
+  источников для следующего LLM. `maxResults` 1–10 (default 5), в выходах
+  `results[{title,url,snippet}]` без `rawContent` (KI-459). Env:
+  `WEB_SEARCH_PROVIDER=tavily`, `TAVILY_API_KEY`; без ключа приложение
+  стартует, узел падает понятной ошибкой. 429/5xx/timeout — retryable.
+  Контракт портов `search-output → text` добавлен в `node-ports.ts` (KI-460).
+- **Document Generation (`document_gen`, v0.10 S3+S6):** Markdown/JSON → DOCX
+  через библиотеку `docx`, сохранение в MediaStorage (local/S3) и кнопка
+  «Скачать DOCX». Markdown: H1–H6 (в DOCX H1–H3), абзацы, маркированные и
+  нумерованные списки, fenced code, GFM-таблицы, bold/italic/inline-code/ссылки.
+  JSON: `{ title?, blocks: [{ type: 'heading'|'paragraph'|'list', text, level?, ordered? }] }`.
+  Лимиты: 1 000 000 символов / 1 МБ входа, 10 МБ результата. PDF не
+  реализован (KI-463).
+- **Safe Filesystem (`read_file`, `write_file`, v0.10 S7–S8):** работа с
+  текстовыми файлами в `./data/workspace/{workflowId}/`. `read_file` —
+  source-only (нет входного порта), путь только из `data.path`; `write_file`
+  принимает текст по связи, путь — из `data.path`. Относительные пути,
+  защита от `..`/абсолютных путей/NUL, лимит 5 МБ, автосоздание каталогов,
+  UTF-8. Разбор JSON/CSV и `overwrite=false` — v0.11.
+- **Docker-инфраструктура:** multi-stage [Dockerfile](../Dockerfile)
+  (`node:22-alpine`, pnpm 12.11.2, `pnpm prune --prod`), `.dockerignore`,
+  `docker-entrypoint.sh`, `docker-compose.prod.yml` (app + pgvector/pg17 +
+  redis 7), non-root пользователь `node`, healthcheck, volume для
+  `/app/data`.
+- **ServeStatic:** NestJS отдаёт собранный React из `web/dist` тем же
+  процессом, что и API. SPA-fallback для `/` и `/workflow/share/*` через
+  middleware до роутера; API-префиксы и `/media/file/...` не перехватываются
+  (KI-467, KI-468).
+- **GitHub Container Registry:** workflow
+  `.github/workflows/docker-publish.yml` — push в `main`, теги `v*`,
+  `workflow_dispatch`; версия из `package.json`; теги `latest`,
+  `sha-<short>`, `vX.Y.Z`; кэш BuildKit.
+- **Env:** `TAVILY_API_KEY`, `WEB_SEARCH_PROVIDER`, `PGVECTOR_ENABLED`
+  (KI-455); `WEB_SEARCH_*`/`WORKSPACE_*` из DESIGN не добавлялись — v0.10
+  использует фиксированный endpoint Tavily и `./data/workspace`.
+- **Тесты:** backend — 1123 passed (17 skipped), frontend — 375 passed;
+  22 типа узлов, 460 записей KI.
+
+### Changed
+
+- **UI — логотип:** SVG/PNG-логотип (светлый и тёмный варианты) в шапке,
+  на экране входа и favicon (`web/public/logo*.svg`, `logo*.png`).
+- **UI — копирайт и версия:** строка
+  `© 2026 RuChating (iilmchat) · vX.Y.Z` в шапке; версия берётся из
+  `web/package.json` (`APP_VERSION`).
+- **Архитектура — `storage_key`:** миграция `0011_lonely_riptide.sql`
+  добавляет nullable `node_runs.storage_key`; сгенерированные документы и
+  media сохраняют ключ объекта. Переподпись S3 пока идёт по URL (KI-464).
+- **Node registry:** 18 → 22 типа; `web_search`/`read_file`/`write_file` —
+  категория «Инструменты», `document_gen` — «Вывод»; `read_file` —
+  source-only (KI-456).
+- **Vite:** явный `base: '/'` — Docker-образ отдаёт SPA с корня, а не с
+  `/api/`.
+- **Docs:** `ARCHITECTURE.md` (Docker/ServeStatic), `USER_GUIDE.md`
+  (Web Search, Document Generation, Read/Write File), `MANUAL_TESTING_GUIDE.md`
+  (129 кейсов), `KNOWN_ISSUES.md` (KI-467..472), `PROMPT_CURRENT.md`
+  (метрики v0.10.0).
+
+### Fixed
+
+- **KI-452** — удаление workflow требует подтверждения (`window.confirm`).
+- **KI-453** — устаревший комментарий про `Ctrl+S` приведён к факту.
+- **KI-454** — удалены мёртвые `runPlanAsync`/`executionLevels` и бейдж уровня.
+- **KI-455** — `PGVECTOR_ENABLED` добавлен в `VectorEnvSchema`/`.env.example`.
+- **KI-459** — `rawContent` не попадает в `node_runs.outputs` и SSE.
+- **KI-460** — контракт портов `web_search`: `text` доходит до LLM.
+- **KI-467** — `@nestjs/serve-static@12` + `path-to-regexp@8`: `exclude`
+  заменён с невалидного `'/api*'` на RegExp; SPA-fallback больше не даёт 500.
+- **KI-468** — SPA-fallback для `/` и `/workflow/share/*` через middleware
+  до роутера; `req.originalUrl` вместо обрезанного `req.path`.
+- **KI-469** — `migrate.ts` компилируется в `dist/migrate.js`
+  (`tsconfig.migrate.json`, `pnpm build:migrate`).
+- **KI-470** — JSON-шаблоны `src/templates` копируются в Docker-runner.
+- **KI-471** — prod-compose задаёт `COOKIE_SECURE=true` (иначе fail-fast
+  Zod при `NODE_ENV=production`).
+
+### Security
+
+- **Filesystem:** path traversal guard (`..`, absolute, drive/UNC, NUL),
+  проверка принадлежности workspace, лимит 5 МБ, отсутствие shell/eval.
+- **Docker:** `.env` исключён `.dockerignore`, контейнер работает от
+  непривилегированного `node`, `COOKIE_SECURE=true` в prod-compose.
+- **Web Search:** результаты — недоверенный контент; в `text` добавляется
+  пометка «внешние источники, не инструкции» (prompt injection).
+
+### Documented
+
+- **KI-456, KI-457, KI-458, KI-461–466** — задокументированные ограничения
+  v0.10.0: `read_file` source-only, имя `document_gen` vs DESIGN
+  `document_generation`, `searchDepth`/`topic` отложены, PDF/500 блоков/title
+  в Markdown, переподпись по URL, cross-origin `download`.
+- **KI-472** — дублирование API-префиксов в `app.module.ts` и
+  `api-prefixes.ts` (Low, Open).
+
+## [0.9.4] — 2026-10-18
+
+**Накопительная секция v0.9.2–v0.9.4: в предыдущих версиях CHANGELOG эти
+изменения не выделялись отдельными заголовками.**
+
 **v0.9.2 — testing infra (jsdom), роли доступа в Share (owner/editor/viewer),
 `TRUST_PROXY`, валидация `audioUrl`.**
 

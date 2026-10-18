@@ -1,9 +1,9 @@
 # DESIGN v0.10 — Web Search, Document Generation, Safe Filesystem
 
 **Файл:** `docs/development/v0.10/DESIGN_V010_FEATURES.md`
-**Версия:** 1.0 (draft)
-**Дата:** 2026-10-18
-**Статус:** Draft — к ревью
+**Версия:** 1.0 (2026-10-19)
+**Дата:** 2026-10-19
+**Статус:** Released (v0.10.0)
 **Закрывает (планируется):** KI-448, KI-449, KI-452, KI-453, KI-454, KI-455
 **Связанные:** KI-104, KI-273, KI-415, KI-451, KI-008, KI-333
 **RULES:** 2.5, 2.14

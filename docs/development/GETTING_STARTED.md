@@ -3,7 +3,8 @@
 **Для кого:** новый разработчик, который впервые поднимает `IIChatTools AI Workflow Builder`.
 **Время:** ~20 минут на Windows, ~15 минут на macOS/Linux.
 **Результат:** работающий backend (`http://localhost:3000`), frontend
-(`http://localhost:5173`), PostgreSQL 17 в Docker и зелёные тесты.
+(`http://localhost:5173`), PostgreSQL 17 + pgvector и Redis в Docker, зелёные
+тесты. Для production — готовый `docker-compose.prod.yml` (см. § 7).
 
 ---
 
@@ -23,7 +24,7 @@ docker compose up -d && pnpm install && pnpm db:migrate && pnpm start:dev
 cd web && pnpm install && pnpm dev
 ```
 
-Если что-то не работает — раздел **§ 7 Troubleshooting** в конце.
+Если что-то не работает — раздел **§ 8 Troubleshooting** в конце.
 
 ---
 
@@ -33,7 +34,7 @@ cd web && pnpm install && pnpm dev
 |---|---|---|---|
 | **Node.js** | 22 LTS или выше | `node --version` | Runtime для backend и frontend |
 | **pnpm** | 12.x (см. ниже) | `pnpm --version` | Пакетный менеджер (не npm!) |
-| **Docker Desktop** | последняя | `docker --version` | PostgreSQL 17 + будущий Redis |
+| **Docker Desktop** | последняя | `docker --version` | PostgreSQL 17 + pgvector и Redis (dev и prod compose) |
 | **Git** | любая актуальная | `git --version` | — |
 | **GitHub CLI** (опц.) | 2.40+ | `gh --version` | Клонирование + создание PR |
 | **VS Code** (опц.) | последняя | — | Рекомендуется с расширениями ESLint, Prettier, Tailwind |
@@ -150,7 +151,7 @@ ai-workflow-builder/
 
 ---
 
-## § 3. Поднимаем PostgreSQL в Docker
+## § 3. Поднимаем PostgreSQL и Redis в Docker
 
 ### 3.1. Что здесь важно — про порт 5433
 
@@ -167,7 +168,8 @@ Windows-сервис «перебьёт» его, и вы будете отла�
 docker compose up -d
 ```
 
-Первый запуск ~30 секунд — Docker скачает `postgres:17-alpine` (~80 MB).
+Первый запуск дольше обычного — Docker скачает `pgvector/pgvector:pg17`
+(образ с расширением `vector`, нужен для миграции `0008_pgvector.sql`).
 
 **Проверка:**
 
@@ -177,8 +179,8 @@ docker ps --filter "name=workflow-builder-db"
 
 Ожидание:
 ```
-CONTAINER ID   IMAGE                STATUS          PORTS
-xxx            postgres:17-alpine   Up 10 seconds   0.0.0.0:5433->5432/tcp
+CONTAINER ID   IMAGE                      STATUS          PORTS
+xxx            pgvector/pgvector:pg17     Up 10 seconds   0.0.0.0:5433->5432/tcp
 ```
 
 **Проверка порта:**
@@ -199,12 +201,12 @@ lsof -i :5433
 
 ```yaml
 ports:
-  - "5434:5432"   # вместо 5433
+  - "5435:5432"   # вместо 5433; 5434 занят prod-compose по умолчанию
 ```
 
 И в `.env`:
 ```
-DATABASE_URL=postgres://workflow:devpass123@127.0.0.1:5434/workflow_builder
+DATABASE_URL=postgres://workflow:devpass123@127.0.0.1:5435/workflow_builder
 ```
 
 ---
@@ -232,7 +234,22 @@ DATABASE_URL=postgres://workflow:devpass123@127.0.0.1:5433/workflow_builder
 # App
 NODE_ENV=development
 PORT=3000
+
+# Redis / BullMQ
+REDIS_URL=redis://127.0.0.1:6379
+
+# Web Search (v0.10): без ключа приложение стартует, узел web_search падает
+TAVILY_API_KEY=
+WEB_SEARCH_PROVIDER=tavily
+
+# S3 (опционально): true — прямые URL публичного бакета, false — presigned
+S3_PUBLIC_BUCKET=false
 ```
+
+> **`WORKSPACE_ROOT` в v0.10 не используется.** Узлы `read_file`/`write_file`
+> работают в `./data/workspace/{workflowId}/` от `process.cwd()`; каталог
+> создаётся автоматически при записи. Настраиваемый корень — в следующих
+> версиях. Для Docker этот путь живёт в volume `/app/data`.
 
 ### 4.3. Что НЕ надо коммитить
 
@@ -319,8 +336,12 @@ pnpm start:dev
 ```bash
 # В другом терминале
 curl http://localhost:3000/
-# Ожидание: Hello World!
+# Ожидание: Hello World! (curl без Accept: text/html)
 ```
+
+В браузере `http://localhost:3000/` теперь отдаёт SPA (`index.html`):
+`ServeStaticModule` + middleware перехватывают только HTML-навигацию. API
+остаётся JSON, а `/media/file/...` — файлами.
 
 Или через PowerShell:
 ```powershell
@@ -382,9 +403,92 @@ pnpm dev
 
 ---
 
-## § 7. Troubleshooting
+## § 7. Production: Docker
 
-### 7.1. `pnpm: команда не найдена`
+`docker-compose.prod.yml` поднимает три сервиса: `app` (сборка из
+[`Dockerfile`](../../Dockerfile)), `db` (`pgvector/pgvector:pg17`) и `redis`
+(`redis:7-alpine`). Приложение и SPA отдаются одним контейнером.
+
+### 7.1. Подготовка
+
+1. Установлен Docker Desktop (см. § 1).
+2. Есть `.env` в корне (см. § 4). Для production обязательно задайте
+   `JWT_SECRET` и смените `POSTGRES_PASSWORD` с dev-дефолта.
+3. Свободны порты `3000`, `5434`, `6380` (БД/Redis проброшены только на
+   `127.0.0.1`).
+
+### 7.2. Запуск
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+
+# Статус и логи
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs -f app
+```
+
+Ожидание в логах:
+
+```text
+Running migrations...
+✅ Миграции применены
+Starting application...
+[TemplateLoaderService] Шаблоны загружены: 3 из 3 (/app/src/templates)
+[NestApplication] Nest application successfully started
+```
+
+Откройте **http://localhost:3000** — backend отдаёт и API, и собранный React
+(`web/dist`). Порты `5434` (Postgres) и `6380` (Redis) — только для отладки
+с хоста.
+
+### 7.3. Остановка и обновление
+
+```bash
+# Остановить (данные в volumes сохраняются)
+docker compose -f docker-compose.prod.yml down
+
+# Остановить и удалить volumes (DANGER: БД и media будут потеряны)
+docker compose -f docker-compose.prod.yml down -v
+
+# Пересобрать после изменений
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+### 7.4. Проверка
+
+```bash
+# SPA: должен вернуться index.html, не "Hello World!"
+curl -H "Accept: text/html" http://127.0.0.1:3000/
+
+# API: JSON 401 без токена
+curl -H "Accept: application/json" http://127.0.0.1:3000/auth/me
+
+# Синтаксис compose
+docker compose -f docker-compose.prod.yml config --quiet
+```
+
+> **HTTPS.** В prod-compose включён `COOKIE_SECURE=true` (требование
+> `env.schema.ts` при `NODE_ENV=production`). По голому HTTP refresh-cookie
+> не установится — ставьте reverse proxy с TLS. Для локальной проверки
+> используйте dev-режим или HTTPS-туннель.
+
+### 7.5. Если контейнер не стартует
+
+- `COOKIE_SECURE=false недопустим в production` — если вы переопределяли
+  `COOKIE_SECURE` в compose, верните `true` (prod требует HTTPS); для
+  локальной проверки без TLS используйте dev-compose (KI-471).
+- `port is already allocated` — занят `3000`/`5434`/`6380`; измените
+  `APP_PORT`/`DB_PORT`/`REDIS_PORT` в `.env` или остановите dev-стек.
+- `app` в `restart loop` — смотрите `logs app`: чаще всего миграции/БД или
+  невалидный env.
+- `PathError ... /api*` — устаревший образ; пересоберите (`--build`) после
+  фикса KI-467.
+
+---
+
+## § 8. Troubleshooting
+
+### 8.1. `pnpm: команда не найдена`
 
 **Причина:** pnpm не установлен или не в `PATH`.
 
@@ -395,7 +499,7 @@ npm install -g pnpm@12.11.2
 pnpm --version
 ```
 
-### 7.2. `Error: DATABASE_URL is not set`
+### 8.2. `Error: DATABASE_URL is not set`
 
 **Причина:** `.env` не создан или NestJS его не видит.
 
@@ -413,7 +517,7 @@ cat .env
 2. Проверьте, что `main.ts` начинается с `import 'dotenv/config';`.
 3. Перезапустите `pnpm start:dev`.
 
-### 7.3. `28P01 password authentication failed for user "workflow"`
+### 8.3. `28P01 password authentication failed for user "workflow"`
 
 **Причина:** Docker-контейнер запущен с другим паролем, или вы подключаетесь
 к **чужому** Postgres (системному) на 5432.
@@ -451,7 +555,7 @@ sleep 10                  # macOS/Linux
 pnpm db:migrate
 ```
 
-### 7.4. `Error: connect ECONNREFUSED 127.0.0.1:5433`
+### 8.4. `Error: connect ECONNREFUSED 127.0.0.1:5433`
 
 **Причина:** Docker-контейнер не запущен.
 
@@ -463,14 +567,14 @@ docker compose up -d
 
 Если Docker Desktop вообще не запущен — откройте его и подождите ~30 сек.
 
-### 7.5. `drizzle-kit migrate` падает молча
+### 8.5. `drizzle-kit migrate` падает молча
 
 **Причина:** известный баг drizzle-kit на Windows — не показывает stack trace.
 
 **Fix:** используйте `pnpm db:migrate` — он вызывает `tsx migrate.ts` с полным
 выводом ошибки. Если падает — увидите **настоящую** причину.
 
-### 7.6. `EADDRINUSE: address already in use :::3000`
+### 8.6. `EADDRINUSE: address already in use :::3000`
 
 **Причина:** предыдущий `pnpm start:dev` не завершился корректно.
 
@@ -486,7 +590,7 @@ Stop-Process -Id 20696 -Force
 lsof -ti :3000 | xargs kill -9
 ```
 
-### 7.7. `EADDRINUSE` на 5173
+### 8.7. `EADDRINUSE` на 5173
 
 Аналогично, но для Vite:
 
@@ -498,7 +602,7 @@ Stop-Process -Id <PID> -Force
 
 Или просто `Ctrl+C` в терминале, где запущен `pnpm dev`.
 
-### 7.8. Узлы на frontend рендерятся как дефолтные (серые прямоугольники)
+### 8.8. Узлы на frontend рендерятся как дефолтные (серые прямоугольники)
 
 **Причина:** потерян проп `nodeTypes` в `Canvas.tsx`, **tsc это не ловит**
 (проп необязательный) — известная проблема (KI-007).
@@ -514,7 +618,7 @@ Stop-Process -Id <PID> -Force
 >
 ```
 
-### 7.9. `CRLF will be replaced by LF` при `git add`
+### 8.9. `CRLF will be replaced by LF` при `git add`
 
 **Это нормально.** Файл `.gitattributes` содержит `* text=auto eol=lf` — Git
 нормализует переносы строк на LF (стандарт для Node.js). Ваши файлы на диске
@@ -522,7 +626,7 @@ Stop-Process -Id <PID> -Force
 
 **Игнорируйте эти warnings.**
 
-### 7.10. Frontend: `pnpm install` идёт медленно
+### 8.10. Frontend: `pnpm install` идёт медленно
 
 **Причина:** скачивается `@xyflow/react`, `react`, `vite`, Tailwind — ~60 пакетов.
 
@@ -532,12 +636,12 @@ Stop-Process -Id <PID> -Force
 
 ---
 
-## § 8. Работа с DeepSeek Harness (опционально)
+## § 9. Работа с DeepSeek Harness (опционально)
 
 `dsh` — это **внешний инструмент** для генерации кода, не часть проекта.
 Устанавливается отдельно.
 
-### 8.1. Установка
+### 9.1. Установка
 
 ```bash
 npx @deepseek-ai/dsh web
@@ -548,7 +652,7 @@ npx @deepseek-ai/dsh web
 - В настройках подключите модель (API-ключ DeepSeek).
 - Выберите workspace: путь к `ai-workflow-builder`.
 
-### 8.2. Как использовать
+### 9.2. Как использовать
 
 В Web UI dsh:
 1. Выберите workspace (`workflow-builder`).
@@ -565,7 +669,7 @@ npx @deepseek-ai/dsh web
    git push
    ```
 
-### 8.3. Правила работы с dsh
+### 9.3. Правила работы с dsh
 
 - **Одна задача — одна логическая единица.** Не смешивайте.
 - **Не давайте доступ к папкам вне проекта.**
@@ -574,7 +678,7 @@ npx @deepseek-ai/dsh web
 
 ---
 
-## § 9. Полезные команды (шпаргалка)
+## § 10. Полезные команды (шпаргалка)
 
 ### Backend
 
@@ -614,11 +718,19 @@ pnpm preview           # посмотреть production-сборку локал
 ### Docker
 
 ```bash
-docker compose up -d           # поднять Postgres (+ Redis в будущем)
-docker compose down            # остановить
+# Dev-инфраструктура: PostgreSQL 17 + pgvector, Redis, pgAdmin
+docker compose up -d
+docker compose down
 docker compose down -v         # остановить + удалить volume (данные!)
+
 docker logs workflow-builder-db --tail 50
 docker exec -it workflow-builder-db psql -U workflow -d workflow_builder
+
+# Production: app + db + redis (см. § 7)
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs -f app
+docker compose -f docker-compose.prod.yml down
 ```
 
 ### Git
@@ -646,9 +758,9 @@ netstat -ano | Select-String ":3000|:5173|:5433"
 
 ---
 
-## § 10. Что дальше
+## § 11. Что дальше
 
-### 10.1. Прочитайте документацию
+### 11.1. Прочитайте документацию
 
 Обязательный минимум:
 1. **`docs/development/RULES.md`** — правила разработки (TS/NestJS/ESM/Drizzle).
@@ -659,14 +771,14 @@ netstat -ano | Select-String ":3000|:5173|:5433"
 5. **`docs/development/PROMPT_CURRENT.md`** — актуальный системный промпт для
    нового чата с ИИ.
 
-### 10.2. Возьмите первую задачу
+### 11.2. Возьмите первую задачу
 
 - Откройте `docs/development/PROMPT_CURRENT.md` — там статус, метрики и план
   следующего релиза.
 - Возьмите одну подзадачу (R1, R2, R3 или R4).
 - Работайте малыми шагами.
 
-### 10.3. Как коммитить
+### 11.3. Как коммитить
 
 Формат: `<type>(<scope>): <subject>`
 
@@ -683,14 +795,14 @@ feat(runs): add BullMQ queue for workflow execution
 Build 0/0. Tests 73/73.
 ```
 
-### 10.4. Открывайте PR для нетривиальных изменений
+### 11.4. Открывайте PR для нетривиальных изменений
 
 Для мелких правок — push в `main` (это pet-проект).
 Для крупных фич — ветка `feature/xxx` + PR.
 
 ---
 
-## § 11. Контакты и ссылки
+## § 12. Контакты и ссылки
 
 - **GitHub:** https://github.com/iilmchat/ai-workflow-builder
 - **Issues:** https://github.com/iilmchat/ai-workflow-builder/issues

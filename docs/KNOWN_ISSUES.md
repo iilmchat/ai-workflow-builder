@@ -4037,7 +4037,11 @@
 - **Решение:** правило в nginx/Caddy/ingress; задокументировать в `docs/development/GETTING_STARTED.md` (файла
 `DEPLOYMENT.md` в репозитории нет — завести при подготовке прода).
 - **Когда чинить:** до прод-развёртывания.
-- **Связанные:** KI-197, KI-072 (единый /api-префикс).
+- **Примечание (v0.10.0 Docker):** NestJS `ServeStaticModule` + SPA-middleware
+  сами отдают `index.html` для `/workflow/share/*` при `Accept: text/html`;
+  отдельный SPA-fallback в nginx/Caddy/ingress больше не обязателен (KI-468).
+  Статус оставлен `Open` до проверки на конкретном ingress.
+- **Связанные:** KI-197, KI-072 (единый /api-префикс), KI-468.
 
 ---
 
@@ -7353,18 +7357,143 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-467 — `ServeStaticModule` падал на `exclude: ['/api*']` (High)
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.0 Docker
+- **Файлы:** `src/app.module.ts`, `Dockerfile`, `package.json`,
+  `pnpm-lock.yaml`
+- **Описание:** `@nestjs/serve-static@12` использует `path-to-regexp@8`, где
+  шаблон `'/api*'` синтаксически невалиден. Первый запрос, доходивший до
+  SPA-fallback, падал с `PathError: Missing parameter name at index 5: /api*`
+  и возвращал **500** вместо `index.html`. Ошибка не проявлялась на старте:
+  приложение поднималось, ломался только HTML-fallback.
+- **Решение:** `exclude` заменён на RegExp
+  `^\/(?:api|auth|llm|media|workflow|engine|runs|templates|nodes)(?:\/|$)`,
+  покрывающий реальные API-префиксы backend'а. Проверено в контейнере:
+  SPA-маршруты — 200 `text/html`, API — JSON, `/media/file/...` — 404 JSON.
+- **Связанные:** KI-468, KI-472.
+
+---
+
+### KI-468 — ServeStatic не перехватывает `/` и `/workflow/share/*`: контроллеры регистрируются раньше (Medium)
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.0 Docker
+- **Файлы:** `src/app.module.ts`
+- **Описание:** `ServeStaticModule.register()` вызывается в `onModuleInit`,
+  то есть **после** регистрации контроллеров. `GET /` перехватывал
+  `AppController` (возвращал `Hello World!`), а `GET /workflow/share/:token` —
+  `WorkflowShareController` (возвращал JSON). Браузер не получал SPA ни на
+  корне, ни по публичной share-ссылке. Дополнительно `req.path` внутри
+  Nest-middleware обрезан до пути монтирования (`/`), поэтому проверка пути
+  по `req.path` ошибочно срабатывала для всех HTML-запросов.
+- **Решение:** в `AppModule.configure()` добавлена middleware, которая
+  регистрируется **до** роутера и отдаёт `web/dist/index.html` только для
+  `GET`, `Accept: text/html` и путей `/` или `/workflow/share/*`. Маршрут
+  берётся из `req.originalUrl`. API-ручки и прямые скачивания
+  (`/media/file/...`, `/workflow/:id/export`) не перехватываются.
+- **Связанные:** KI-238, KI-467.
+
+---
+
+### KI-469 — `migrate.ts` не попадал в `dist`, entrypoint не мог применить миграции (High)
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.0 Docker
+- **Файлы:** `tsconfig.migrate.json`, `package.json`, `Dockerfile`,
+  `docker-entrypoint.sh`
+- **Описание:** `migrate.ts` лежит в корне, а `nest build` использует
+  `tsconfig.build.json` с `rootDir: ./src` и `include: ["src"]`. Поэтому
+  `pnpm build` удалял `dist` и не создавал `dist/migrate.js`; entrypoint
+  `node dist/migrate.js` падал бы с `MODULE_NOT_FOUND` ещё до старта
+  приложения. Отдельный скрипт миграций `pnpm db:migrate` использует `tsx`,
+  которого нет в production-образе после `pnpm prune --prod`.
+- **Решение:** добавлен `tsconfig.migrate.json` (`rootDir: "."`,
+  `outDir: "./dist"`, `include: ["migrate.ts"]`) и скрипт
+  `pnpm build:migrate`. Dockerfile выполняет
+  `pnpm build && pnpm build:migrate`; runner получает готовый
+  `dist/migrate.js`. Порядок «миграции → приложение» проверен логами
+  контейнера.
+- **Связанные:** KI-470.
+
+---
+
+### KI-470 — В Docker-runner не копировались JSON-шаблоны `src/templates` (Medium)
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.0 Docker
+- **Файлы:** `Dockerfile`
+- **Описание:** `nest build` не копирует `.json`-ассеты в `dist` (это уже
+  известно как KI-289). `TemplateLoaderService` ищет шаблоны в
+  `dist/templates` и в фолбэке `<repo>/src/templates`. В runner-стадии
+  `src/` отсутствовал, поэтому `GET /templates` вернул бы пустой список,
+  хотя приложение стартовало бы без ошибки (fail-soft).
+- **Решение:** в runner добавлен
+  `COPY --from=builder /app/src/templates ./src/templates`. В логе контейнера
+  — `Шаблоны загружены: 3 из 3 (/app/src/templates)`.
+- **Связанные:** KI-289.
+
+---
+
+### KI-471 — Prod-compose с dev-`.env` падал на `COOKIE_SECURE=false` (Medium)
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.0 Docker
+- **Файлы:** `docker-compose.prod.yml`, `src/config/env.schema.ts`
+- **Описание:** `docker-compose.prod.yml` задаёт `NODE_ENV=production`, а
+  `env_file: .env` приносит dev-значение `COOKIE_SECURE=false`. Схема
+  `env.schema.ts` fail-fast запрещает `false` в production (security), поэтому
+  контейнер перезапускался с
+  `COOKIE_SECURE=false недопустим в production`. Аналогично будет отвергнут
+  `AUTH_DISABLED=true`.
+- **Решение:** в `environment` prod-compose добавлен явный
+  `COOKIE_SECURE: "true"`. Это корректно только за HTTPS/reverse proxy; при
+  локальном HTTP refresh-cookie не установится. Для локальной проверки
+  использовать dev-compose или HTTPS-туннель.
+- **Связанные:** —.
+
+---
+
+### KI-472 — API-префиксы продублированы в `app.module.ts` и `web/src/lib/api-prefixes.ts` (Low)
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/app.module.ts`, `web/src/lib/api-prefixes.ts`,
+  `src/engine/node-ports.ts`
+- **Описание:** `API_ROUTE_PATTERN` в `app.module.ts` перечисляет префиксы
+  (`api`, `auth`, `llm`, `media`, `workflow`, `engine`, `runs`, `templates`,
+  `nodes`) вручную. Источник правды для frontend/Vite — `api-prefixes.ts`,
+  паритет которого проверяется spec'ами. При добавлении нового контроллера
+  список в `app.module.ts` можно забыть, и SPA-fallback начнёт отдавать
+  `index.html` вместо JSON-404 для неизвестной API-ручки.
+- **Решение:** генерировать regex/список из единого машинночитаемого
+  источника (например, `api-prefixes.json` в `docs/development/`), либо
+  добавить паритет-спек `api-prefixes.spec.ts`, который сравнивает regex с
+  реестром. До этого — синхронизировать вручную при каждом новом контроллере.
+- **Связанные:** KI-299, KI-467.
+
+---
+
+### KI-473 — Коллизия ссылок в `node-executors.ts`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/engine/node-executors.ts`
+- **Описание:** В коде есть ссылка на `KI-467` (в контексте CSV-разбора), но `KI-467` теперь занят Docker-проблемой (`serve-static`). Нужно поправить комментарий на `KI-474`.
+
+---
+
+### KI-474 — UI-селекты форматов у файловых узлов не применяются
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/engine/node-executors.ts`, `web/src/components/nodes/*.tsx`
+- **Описание:** `read_file` и `write_file` принимают `format` и `overwrite`, но исполнители их игнорируют (всегда текст, всегда перезапись).
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 190 |
+| Fixed | 195 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 1 |
 | Documented | 6 |
-| Open | 255 |
+| Open | 258 |
 | Won't Fix | 1 |
-| **Всего** | **454** |
+| **Всего** | **462** |
 
 ---
 

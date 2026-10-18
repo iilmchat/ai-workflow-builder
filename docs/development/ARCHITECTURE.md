@@ -1,19 +1,20 @@
 # ARCHITECTURE — IIChatTools AI Workflow Builder
 
 **Файл:** `docs/development/ARCHITECTURE.md`
-**Версия:** 1.0
-**Дата:** 2026-10-18
-**Статус:** актуален для **v0.9.5**
+**Версия:** 1.1
+**Дата:** 2026-10-19
+**Статус:** актуален для **v0.10.0**
 **Для кого:** новый разработчик, DevOps, автор нового узла/провайдера
 **Связанные:** [RULES](RULES.md), [DESIGN v0.9](v0.9/DESIGN_V09_FEATURES.md),
+[DESIGN v0.10](v0.10/DESIGN_V010_FEATURES.md),
 [GETTING_STARTED](GETTING_STARTED.md), [RELEASES](RELEASES.md)
 
 > **Как читать.** Документ идёт по C4-модели: контекст → контейнеры →
 > компоненты, затем динамический сценарий запуска и ключевые паттерны.
 > Схемы — Mermaid; они рендерятся на GitHub без дополнительных инструментов.
 >
-> **Граница документа.** Здесь описано **текущее** состояние (`v0.9.5`).
-> Планируемые узлы `v0.10` — в
+> **Граница документа.** Здесь описано **текущее** состояние (`v0.10.0`).
+> Детали реализации срезов v0.10 — в
 > [`v0.10/DESIGN_V010_FEATURES.md`](v0.10/DESIGN_V010_FEATURES.md).
 
 ---
@@ -29,7 +30,7 @@
 | Как выполняется граф? | Уровни Кана: уровни последовательно, узлы внутри уровня — параллельно (`Promise.allSettled`) |
 | Что при падении узла? | Зависимые узлы получают `skipped`; независимые ветки продолжают работу; запуск — `failed` |
 | Где выполняются JS-выражения? | QuickJS-WASM (`SANDBOX_ENABLED`, по умолчанию выключен) |
-| Где хранятся медиа? | `./data/media` (local) или S3-совместимый бакет; в `node_runs.stored_url` — своя ссылка |
+| Где хранятся медиа и документы? | `./data/media` (local) или S3-совместимый бакет; в `node_runs.stored_url` — своя ссылка, в `node_runs.storage_key` — ключ объекта (с v0.10) |
 
 ---
 
@@ -98,7 +99,7 @@ flowchart LR
   Stream --> Store
   Store --> UI
   Engine -->|"LLM / media"| Providers
-  Engine -->|"stored_url"| Media
+  Engine -->|"stored_url + storage_key"| Media
 ```
 
 ### 2.2 Контейнеры
@@ -119,7 +120,7 @@ flowchart LR
 > зарегистрирован в `RunsModule`). Логически это разные контейнеры, поэтому
 > worker можно вынести в отдельный процесс без изменения контрактов, но сейчас
 > деплой — один backend. Это упрощает dev и усложняет масштабирование:
-> см. § 7.3.
+> см. § 7.4.
 
 ### 2.3 Внешние порты
 
@@ -127,9 +128,15 @@ flowchart LR
 |---|---|---|
 | `3000` | Backend HTTP + SSE | `src/main.ts` (`PORT`) |
 | `5173` | Vite dev-server | `web/vite.config.ts` (host `127.0.0.1`) |
-| `5433` → `5432` | PostgreSQL в Docker Compose | `docker-compose.yml` |
-| `6379` | Redis | `docker-compose.yml` |
+| `5433` → `5432` | PostgreSQL в dev Docker Compose | `docker-compose.yml` |
+| `6379` | Redis в dev Docker Compose | `docker-compose.yml` |
+| `5434` → `5432` | PostgreSQL в prod Compose (только loopback) | `docker-compose.prod.yml` (`DB_PORT`) |
+| `6380` → `6379` | Redis в prod Compose (только loopback) | `docker-compose.prod.yml` (`REDIS_PORT`) |
 | `4318` | OTLP/HTTP collector (опц.) | `OTEL_EXPORTER_OTLP_ENDPOINT` |
+
+> Порты prod-БД/Redis вынесены на `5434`/`6380`, чтобы prod-стек мог
+> работать одновременно с dev-стеком на `5433`/`6379`. Наружу они
+> публикуются только на `127.0.0.1`.
 
 Vite проксирует префиксы из `web/src/lib/api-prefixes.ts`:
 `workflow`, `engine`, `llm`, `media`, `auth`, `templates`, `runs`, `nodes`.
@@ -150,6 +157,9 @@ Vite проксирует префиксы из `web/src/lib/api-prefixes.ts`:
 | `RunsModule` | `src/runs/` | Очередь, `workflow_runs`, SSE, события, бюджет |
 | `LlmModule` | `src/llm/` | Провайдеры, реестр моделей, стоимость, semaphore, кэш-токены |
 | `MediaModule` | `src/media/` | Модели, провайдеры, генерация, storage, cleanup |
+| `DocumentsModule` | `src/documents/` | DOCX из Markdown/JSON (`docx`), лимиты и ошибки рендера |
+| `FilesystemModule` | `src/filesystem/` | Безопасный workspace `read_file`/`write_file` |
+| `WebSearchModule` | `src/web-search/` | Провайдер Tavily для узла `web_search` |
 | `SandboxModule` | `src/sandbox/` | QuickJS-WASM для `condition`/`code_eval` |
 | `TemplatesModule` | `src/templates/` | Шаблоны из поставки и instantiate |
 | `ObservabilityModule` | `src/observability/` | OTel SDK, `withSpanAsync`, Pino |
@@ -166,7 +176,7 @@ Vite проксирует префиксы из `web/src/lib/api-prefixes.ts`:
 | `LoadModal` | `web/src/components/LoadModal.tsx` | Список workflow, удаление, шаблоны |
 | `RunResultPanel` | `web/src/components/RunResultPanel.tsx` | Outputs, метрики, ошибки, логи |
 | `ShareViewPage` | `web/src/components/ShareViewPage.tsx` | Read-only граф по Share-ссылке |
-| `nodes/*` | `web/src/components/nodes/` | 18 компонентов узлов (lazy) |
+| `nodes/*` | `web/src/components/nodes/` | 22 компонента узлов (lazy), включая `WebSearchNode`, `DocumentGenNode`, `ReadFileNode`, `WriteFileNode` |
 | `workflow` store | `web/src/stores/workflow.ts` | Граф, selection, run-state, план, notice |
 | `run-stream` | `web/src/lib/run-stream.ts` | SSE через `fetch` + `ReadableStream`, reconnect |
 | `sse-parser` | `web/src/lib/sse-parser.ts` | Разбор SSE-кадров (без `EventSource`) |
@@ -199,7 +209,7 @@ Vite проксирует префиксы из `web/src/lib/api-prefixes.ts`:
 | `workflow_vectors` | Векторы | `vector(1536)`, HNSW, коллекция + workflow |
 | `workflow_memory` | Key-value память | PK `(workflow_id, key)`, JSONB-значение |
 | `workflow_runs` | Запуск | `snapshot` графа, статус, `error`, timestamps |
-| `node_runs` | Узел запуска | Уникальный `(run_id, node_id)`, inputs/outputs, метрики, `stored_url` |
+| `node_runs` | Узел запуска | Уникальный `(run_id, node_id)`, inputs/outputs, метрики, `stored_url`, `storage_key` (v0.10) |
 
 **Redis:**
 
@@ -210,8 +220,9 @@ Vite проксирует префиксы из `web/src/lib/api-prefixes.ts`:
 **Файлы:**
 
 - media local: `./data/media/<runId>/<nodeId>.<ext>`;
-- S3: объект `<runId>/<fileName>`;
-- workspace (future v0.10): `./data/workspace/{workflowId}/`.
+- S3: объект `<runId>/<fileName>`, ключ пишется в `node_runs.storage_key`;
+- workspace (v0.10): `./data/workspace/{workflowId}/` — только local,
+  относительные пути, лимит 5 МБ на файл.
 
 ---
 
@@ -427,7 +438,7 @@ WASM-модуль грузится лениво при первом вызове
 `uploadAsync` скачивает результат (таймаут 120 с, лимит 200 МБ) → пишет
 локально или потоком в S3 (`Upload` из `@aws-sdk/lib-storage`) → возвращает
 `{ storedUrl, storedExpiresAt, storageKey, bytes }` → executor пишет
-`stored_url`/`stored_expires_at` в `node_runs`.
+`stored_url`/`stored_expires_at`/`storage_key` в `node_runs`.
 
 **Безопасность путей.** `sanitizeStorageSegment` вырезает `..` и всё вне
 `[A-Za-z0-9._-]`; `resolveInsideBase` проверяет, что итоговый путь лежит под
@@ -439,9 +450,11 @@ SSE-снимка `RunsStreamService` проверяет `stored_expires_at` и �
 прямой URL, переподпись не нужна. Если S3 не настроен — fallback на local с
 warn-логом.
 
-**Ограничение:** ключ объекта в `node_runs` не хранится (KI-451), поэтому
-переподпись восстанавливает ключ из URL и работает только для path-style.
-Добавление `storage_key` — в v0.10 (DESIGN v0.10 § 3.2/§ 4).
+**`storage_key` (v0.10).** Миграция `0011_lonely_riptide.sql` добавляет
+nullable `node_runs.storage_key`; `document_gen` и media-исполнители пишут
+ключ объекта при сохранении. Переподпись S3 пока по-прежнему идёт по URL,
+а не по ключу (KI-464); для старых строк без `storage_key` остаётся
+fallback-парсинг URL (KI-451).
 
 ### 5.6 Контракты узлов и реестр
 
@@ -494,29 +507,88 @@ pnpm --dir web install
 pnpm --dir web dev            # Vite :5173
 ```
 
-### 7.2 Prod (минимальный контур)
+### 7.2 Prod: Docker (рекомендуемый)
+
+Образ собирается multi-stage [`Dockerfile`](../../Dockerfile): в builder
+остаются инструменты сборки, в runner — только runtime-артефакты.
+
+| Stage | База | Что делает |
+|---|---|---|
+| `builder` | `node:22-alpine` | ставит `pnpm@12.11.2`; `HUSKY=0`; копирует `package.json`/`pnpm-lock.yaml`/`pnpm-workspace.yaml` и манифесты `web/`; `pnpm install --frozen-lockfile` для корня и `web`; копирует исходники; `pnpm build && pnpm build:migrate`; `pnpm --dir web build`; `pnpm prune --prod` |
+| `runner` | `node:22-alpine` | копирует `package.json`, production `node_modules`, `dist/`, `web/dist/`, `drizzle/`, `drizzle.config.ts`, `src/templates/` и entrypoint; работает от пользователя `node`; `EXPOSE 3000` |
+
+**Как NestJS отдаёт React.** `ServeStaticModule.forRoot()` в
+`src/app.module.ts` получает `rootPath` из
+`join(dirname(fileURLToPath(import.meta.url)), '..', 'web', 'dist')`
+(в контейнере — `/app/web/dist`) и отдаёт ассеты/`index.html`. API-пути исключены RegExp
+`^\/(?:api|auth|llm|media|workflow|engine|runs|templates|nodes)(?:\/|$)`.
+`ServeStaticModule` регистрирует Express-маршруты в `onModuleInit`, то есть
+после контроллеров, поэтому для `/` и `/workflow/share/*` в
+`AppModule.configure()` добавлена middleware до роутера: только `GET` с
+`Accept: text/html`, путь берётся из `req.originalUrl`. Так SPA открывается
+по корню и share-ссылке, а `/media/file/...` и `/workflow/:id/export`
+по-прежнему отдают контроллеры (KI-467, KI-468).
+
+**Entrypoint.** `docker-entrypoint.sh`:
+
+```sh
+#!/bin/sh
+set -e
+
+echo "Running migrations..."
+node dist/migrate.js
+
+echo "Starting application..."
+exec node dist/main.js
+```
+
+`set -e` не даёт приложению стартовать после неудачной миграции. `exec`
+заменяет PID 1 на Node, чтобы `docker stop` доставил SIGTERM и
+`enableShutdownHooks()` закрыл pg-пул и BullMQ. `migrate.ts` компилируется
+отдельным `tsconfig.migrate.json` в `dist/migrate.js`: `pnpm build` удаляет
+`dist` и сам по себе этот файл не создаёт (KI-469).
+
+**`docker-compose.prod.yml`.** Проект `workflow-builder-prod`, три сервиса:
+
+| Сервис | Образ / сборка | Ключевое |
+|---|---|---|
+| `app` | `build: .` | `env_file: .env`, overrides `DATABASE_URL=…@db:5432`, `REDIS_URL=redis://redis:6379`, `COOKIE_SECURE=true`; volume `media-data:/app/data`; healthcheck `fetch('/')` |
+| `db` | `pgvector/pgvector:pg17` | volume `db-data`; `127.0.0.1:5434→5432`; `pg_isready`; обязателен для `CREATE EXTENSION vector` |
+| `redis` | `redis:7-alpine` | AOF; volume `redis-data`; `127.0.0.1:6380→6379`; `redis-cli ping` |
+
+`depends_on: condition: service_healthy` гарантирует, что миграции в
+entrypoint запустятся после готовности Postgres. `COOKIE_SECURE=true`
+обязателен для production-валидации env и предполагает HTTPS/reverse proxy
+(KI-471); `TRUST_PROXY=true` включать только за реальным прокси.
+
+**Публикация в GHCR.** `.github/workflows/docker-publish.yml` собирает образ
+на push в `main`, тег `v*` и вручную; версия читается из `package.json`
+(`node -p`), теги — `latest`, `sha-<short>`, `vX.Y.Z`; используется
+`docker/metadata-action` и кэш `type=gha`.
+
+### 7.3 Prod без Docker (минимальный контур)
 
 | Компонент | Требование |
 |---|---|
-| reverse proxy | SPA-fallback для `/workflow/share/*` (KI-238); `X-Forwarded-For` + `TRUST_PROXY=true` |
-| backend | Node 22+, `pnpm build` → `node dist/main`; один или несколько инстансов |
+| reverse proxy | проксирует всё на backend `:3000`; SPA отдаёт NestJS (`ServeStaticModule`), отдельный SPA-fallback в nginx не нужен; `X-Forwarded-For` + `TRUST_PROXY=true` |
+| backend | Node 22+, `pnpm build` + `pnpm build:migrate`; миграции `node dist/migrate.js` до старта; один или несколько инстансов |
 | PostgreSQL | 17 + extension `vector`; миграции до старта новой версии |
 | Redis | общий для инстансов; одинаковые `BULLMQ_PREFIX`/`REDIS_QUEUE_DB` или разные |
-| media | S3 при >1 инстансе; local только для single-instance |
+| media / workspace | S3 и общий volume при >1 инстансе; local только для single-instance |
 | OTel | `OTEL_ENABLED=true` + collector |
 
-### 7.3 Масштабирование
+### 7.4 Масштабирование
 
 - **API/Worker** можно разнести: `RunsProcessor` не зависит от HTTP, но
   сейчас живёт в том же процессе. При выносе нужен отдельный entrypoint.
 - **SSE** масштабируется горизонтально: любой API-инстанс подписывается на
   Redis и отдаёт поток; sticky sessions не обязательны.
-- **Local media** (и будущий workspace) не разделяются между инстансами —
-  для multi-instance нужен S3 (media) и общий volume (workspace).
+- **Local media и workspace** не разделяются между инстансами — для
+  multi-instance нужен S3 (media) и общий volume (workspace, media).
 - **`INSTANCE_ID`** задавать явно в Docker/K8s: авто-id из `hostname:PORT`
   меняется при пересоздании контейнера (KI-391/KI-421).
 
-### 7.4 Наблюдаемость
+### 7.5 Наблюдаемость
 
 - OTel-спаны: `run.execute` → `node.execute` → `llm.call` / `media.createTask`
   / `agent.step`;
@@ -526,17 +598,18 @@ pnpm --dir web dev            # Vite :5173
 
 ---
 
-## 8. Известные ограничения (на v0.10.0 S0)
+## 8. Известные ограничения (на v0.10.0)
 
 | Ограничение | Влияние | Ссылка |
 |---|---|---|
-| API и worker — один процесс | Нельзя масштабировать worker отдельно без нового entrypoint | § 7.3 |
-| Local media не shared | Multi-instance теряет файлы | KI-362, § 7.3 |
-| `storage_key` не хранится | Presigned refresh ломается на virtual-hosted/external URL | KI-451 |
+| API и worker — один процесс | Нельзя масштабировать worker отдельно без нового entrypoint | § 7.4 |
+| Local media/workspace не shared | Multi-instance теряет файлы и workspace | KI-362, § 7.4 |
+| `storage_key` пишется, но переподпись идёт по URL | Presigned refresh ломается на virtual-hosted/external URL | KI-464, KI-451 |
 | Публичный `/media/file` | Нет signed URL для local-файлов | KI-415 |
 | Retry только LLM и `RetryableNodeException` | Media/HTTP ошибки не повторяются | KI-104 |
 | План не обновляется автоматически | Бейджа уровней нет (удалён в S0); планирование — S10 | KI-454 |
 | `PGVECTOR_ENABLED` проверяется движком | Agent-инструменты `vector_*`/`memory_*` флаг не видят | KI-455, KI-458 |
+| `read_file` не парсит JSON/CSV | Формат в UI — задел на v0.11; узел отдаёт сырой UTF-8 | USER_GUIDE § 3.22 |
 | Нет глобального `HttpExceptionFilter` | Формат ошибок не гарантирован на всех ручках | KI-012 |
 | Нет отмены запуска из UI | `cancelled`-статус недостижим | — |
 

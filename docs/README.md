@@ -3,7 +3,7 @@
 > **Навигационный хаб проекта.** Здесь собраны все документы: от руководства
 > пользователя до правил разработки и чек-листа релиза.
 >
-> **Версия продукта:** `v0.9.4` · **Обновлено:** 2026-10-18 · **HEAD:** актуальный
+> **Версия продукта:** `v0.10.0` · **Обновлено:** 2026-10-19 · **HEAD:** актуальный
 
 ---
 
@@ -32,7 +32,7 @@
 
 | Документ | Что внутри | Когда читать |
 |---|---|---|
-| [**USER_GUIDE.md**](user_guide/USER_GUIDE.md) | Быстрый старт Text → LLM → Output, обзор интерфейса, каталог **18 узлов** с бизнес-кейсами, совместная работа и роли, бюджет и стоимость, словарь | Первый запуск; перед настройкой нового сценария |
+| [**USER_GUIDE.md**](user_guide/USER_GUIDE.md) | Быстрый старт Text → LLM → Output, обзор интерфейса, каталог **22 узлов** с бизнес-кейсами, совместная работа и роли, бюджет и стоимость, словарь | Первый запуск; перед настройкой нового сценария |
 
 **Основные разделы гайда:**
 
@@ -55,7 +55,7 @@
 
 | Документ | Что внутри | Когда читать |
 |---|---|---|
-| [**MANUAL_TESTING_GUIDE.md**](qa/MANUAL_TESTING_GUIDE.md) | **116 ручных кейсов** с приоритетами P1–P3, предусловиями, шагами и ожидаемым результатом; чек-лист приёмки и шаблон баг-репорта | Перед каждым релизом и при регрессе |
+| [**MANUAL_TESTING_GUIDE.md**](qa/MANUAL_TESTING_GUIDE.md) | **129 ручных кейсов** с приоритетами P1–P3, предусловиями, шагами и ожидаемым результатом; чек-лист приёмки и шаблон баг-репорта | Перед каждым релизом и при регрессе |
 | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | Реестр KI: приоритет, статус, файлы, решения | Перед тестированием — что уже известно |
 | [RELEASES.md](development/RELEASES.md) | Пошаговый чек-лист выпуска версии | При подготовке релиза |
 
@@ -72,7 +72,8 @@
 | S3 / STORAGE | 9 | local/S3, TTL, плашка, переподпись |
 | EDGE CASES | 18 | бюджет, Redis, ключи, БД, нагрузка |
 | CONTRACT | 4 | api/sse/prefixes/enums |
-| **Итого** | **116** | |
+| V0.10 | 13 | Web Search, DOCX, workspace, Docker |
+| **Итого** | **129** | |
 
 > ⚠️ **Правило «до/после»** (RULES 4.33). Для проверок «закрылось / не
 > открылось / не изменилось» фиксируйте состояние **до** действия.
@@ -86,6 +87,7 @@
 | Документ | Что внутри | Обязательность |
 |---|---|---|
 | [**RULES.md**](development/RULES.md) | Единый свод правил: базовые, документация, workflow, TypeScript/NestJS/ESM, безопасность, git | **Обязателен** для всех изменений |
+| [**ARCHITECTURE.md**](development/ARCHITECTURE.md) | C4-архитектура, жизненный цикл Run, контракты, Docker-развёртывание | При изучении кода и деплоя |
 | [**PROMPT_CURRENT.md**](development/PROMPT_CURRENT.md) | Актуальный системный промпт для ассистента/dsh: статус, метрики, открытые KI, план | Перед новой сессией |
 | [**GETTING_STARTED.md**](development/GETTING_STARTED.md) | Пошаговое разворачивание: Node, pnpm, Docker, миграции, тесты | Первый запуск |
 | [**RELEASES.md**](development/RELEASES.md) | Чек-лист релиза: тесты, сборка, docs, версия, тег, Release Notes | Перед каждым релизом |
@@ -104,6 +106,7 @@
 
 | Версия | Документ | Статус | О чём |
 |---|---|---|---|
+| v0.10 | [DESIGN_V010_FEATURES.md](development/v0.10/DESIGN_V010_FEATURES.md) | Released (v0.10.0) | Web Search, Document Generation, safe filesystem, Docker/GHCR |
 | v0.9 | [DESIGN_V09_FEATURES.md](development/v0.9/DESIGN_V09_FEATURES.md) | Released (v0.9.0) | медиа, состояние (pgvector/Memory), агенты, sandbox, наблюдаемость |
 | v0.8 | [DESIGN_V08_FEATURES.md](development/v0.8/DESIGN_V08_FEATURES.md) | Approved | Auth, Share, sub-workflows, Canvas UX, LLM upgrade |
 | v0.7 | [DESIGN_UI_SLICES.md](development/v0.7/DESIGN_UI_SLICES.md) | Draft | тема, i18n, каталог узлов, уборка типов |
@@ -135,13 +138,14 @@
 
 | Показатель | Значение |
 |---|---|
-| Версия продукта | **v0.9.4** |
-| Backend-тесты | **1001** |
-| Frontend-тесты | **339** |
-| Типов узлов | **18** |
-| KI-реестр | **KI-451** — последний номер в реестре |
+| Версия продукта | **v0.10.0** |
+| Backend-тесты | **1123** (17 skipped) |
+| Frontend-тесты | **375** |
+| Типов узлов | **22** |
+| KI-реестр | **KI-472** — последний номер; всего **460** записей |
+| Открытых High KI | **8** |
 | Языки интерфейса | RU / EN |
-| Стек | NestJS 12 · React 19 · PostgreSQL 17 + pgvector · S3 · OTel |
+| Стек | NestJS 12 · React 19 · PostgreSQL 17 + pgvector · S3 · OTel · Docker/GHCR |
 
 > Цифры обновляются перед каждым релизом по [RELEASES.md](development/RELEASES.md)
 > и пересчитываются по факту (RULES 3.20, 3.21).
@@ -161,13 +165,14 @@ docs/
 │   └── MANUAL_TESTING_GUIDE.md    ← для тестировщиков
 └── development/
     ├── RULES.md                   ← правила разработки
+    ├── ARCHITECTURE.md            ← архитектура и Docker
     ├── PROMPT_CURRENT.md          ← актуальный промпт
     ├── RELEASES.md                ← чек-лист релиза
     ├── GETTING_STARTED.md         ← разворачивание
     ├── KI_GITHUB_SYNC.md          ← синхронизация KI с GitHub
     ├── api-contract.json          ← REST-контракт
     ├── sse-contract.json          ← SSE-контракт
-    ├── v0.7/ v0.8/ v0.9/          ← DESIGN-документы
+    ├── v0.7/ v0.8/ v0.9/ v0.10/   ← DESIGN-документы
     └── archive/prompts/           ← архив промптов
 ```
 
@@ -190,4 +195,4 @@ docs/
 
 ---
 
-**© 2026 RuChating (iilmchat) · IIChatTools AI Workflow Builder v0.9.4**
+**© 2026 RuChating (iilmchat) · IIChatTools AI Workflow Builder v0.10.0**

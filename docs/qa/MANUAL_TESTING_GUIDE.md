@@ -1,11 +1,14 @@
 # Гайд по ручному тестированию — IIChatTools AI Workflow Builder
 
 **Файл:** `docs/qa/MANUAL_TESTING_GUIDE.md`
-**Версия документа:** 1.0 (2026-10-18)
-**Версия продукта:** 0.9.1
-**Область:** ручная проверка релиза v0.9.1 — Auth, Canvas UI, Engine, LLM/Media,
-Vector/Agent, Share/Access, S3/Storage, Edge Cases.
-**Источники требований:** [`DESIGN v0.9`](../development/v0.9/DESIGN_V09_FEATURES.md),
+**Версия документа:** 1.1 (2026-10-19)
+**Версия продукта:** 0.10.0
+**Область:** ручная проверка релиза v0.10.0 — Auth, Canvas UI, Engine, LLM/Media,
+Vector/Agent, Share/Access, S3/Storage, Edge Cases, Web Search / Documents /
+Files, Docker.
+**Источники требований:** [`DESIGN v0.10`](../development/v0.10/DESIGN_V010_FEATURES.md),
+[`DESIGN v0.9`](../development/v0.9/DESIGN_V09_FEATURES.md),
+[`ARCHITECTURE`](../development/ARCHITECTURE.md),
 [`api-contract.json`](../development/api-contract.json),
 [`sse-contract.json`](../development/sse-contract.json),
 [`RULES`](../development/RULES.md), [`KNOWN_ISSUES`](../KNOWN_ISSUES.md).
@@ -15,8 +18,8 @@ Vector/Agent, Share/Access, S3/Storage, Edge Cases.
 ## 0. Как пользоваться этим документом
 
 1. **Кейсы идут блоками** (AUTH, CANVAS, ENGINE, LLM/MEDIA, VECTOR/AGENT,
-   SHARE/ACCESS, STORAGE, EDGE, CONTRACT). Внутри блока — сквозная нумерация,
-   например `CANVAS-07`.
+   SHARE/ACCESS, STORAGE, EDGE, CONTRACT, V0.10). Внутри блока — сквозная
+   нумерация, например `CANVAS-07` или `DOCKER-01`.
 2. **У каждого кейса есть:** название, приоритет, предусловие, шаги, ожидаемый
    результат. Если шаг требует данных — они указаны в предусловии или прямо в шаге.
 3. **Приоритеты:**
@@ -24,7 +27,7 @@ Vector/Agent, Share/Access, S3/Storage, Edge Cases.
    - **P2** — важный: выпуск возможен с записью в KI;
    - **P3** — косметика/редкий сценарий.
 4. **Результат фиксируется** коротко: `PASS` / `FAIL` + путь к скриншоту или
-   JSON-файлу. Для FAIL — баг-репорт по шаблону из § 13 и ссылка на KI.
+   JSON-файлу. Для FAIL — баг-репорт по шаблону из § 14 и ссылка на KI.
 5. **Правило «до/после» (RULES 4.33).** Для проверок вида «закрылось /
    не открылось / не изменилось» сначала зафиксируйте состояние **до**
    действия, иначе «после» неотличимо от исходного.
@@ -44,7 +47,8 @@ Vector/Agent, Share/Access, S3/Storage, Edge Cases.
 | [S3 / STORAGE](#8-s3--storage) | 9 | local/S3, TTL, плашка, переподпись |
 | [EDGE CASES](#9-edge-cases) | 18 | бюджет, Redis, ключи, БД, нагрузка |
 | [CONTRACT](#10-регресс-контрактов) | 4 | api/sse/prefixes/enums |
-| **Итого** | **116** | |
+| [V0.10](#11-web-search--documents--files--docker) | 13 | Web Search, DOCX, workspace, Docker |
+| **Итого** | **129** | |
 
 ---
 
@@ -82,8 +86,15 @@ Vector/Agent, Share/Access, S3/Storage, Edge Cases.
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_REGION` | — | доступ к S3/MinIO |
 | `S3_TTL_DAYS` | `30` | TTL ссылок S3 |
 | `S3_PUBLIC_BUCKET` | `false` (default) / `true` | прямые ссылки вместо presigned |
+| `TAVILY_API_KEY` | валидный ключ Tavily / пусто | web-search; без ключа — негативный кейс `WS-03` |
+| `WEB_SEARCH_PROVIDER` | `tavily` (default) | провайдер поиска, v0.10 — только Tavily |
 | `REDIS_URL`, `DATABASE_URL` | см. `.env` | зависимости выполнения |
+| `COOKIE_SECURE` | `false` (dev) / `true` (prod) | secure-cookie; в production `false` запрещён |
 | `AUTH_DISABLED` | `false` (default) | отключение авторизации (только dev) |
+
+> `WORKSPACE_ROOT` в v0.10 **не читается**: workspace жёстко привязан к
+> `./data/workspace/{workflowId}` (от `process.cwd()`). Переменная появится
+> вместе с настраиваемым корнем в следующих версиях.
 
 Ключи LLM- и media-провайдеров задаются в `.env` администратором. **Никогда** не
 вставляйте ключи в этот документ, в скриншоты и в тикеты — только название
@@ -114,6 +125,9 @@ UUID участников нужны для приглашений: `GET /auth/m
 4. `QA-AGENT` — `Текст → Агент (HTTP-запрос) → Вывод`.
 5. `QA-MEDIA` — `Текст → Генерация изображения → Медиа-инструмент (Апскейл)`.
 6. `QA-BIG` — 40–50 узлов, разброс координат ~20 000 px (для Fit/миникарты).
+7. `QA-SEARCH` — `Текст → Веб-поиск → LLM → Вывод`.
+8. `QA-DOCS` — `Текст (Markdown) → Генерация документа → Вывод` и вариант с JSON.
+9. `QA-FILES` — `Запись файла → Чтение файла` (два запуска) и `Чтение файла → LLM`.
 
 ### 1.4. Полезные адреса API
 
@@ -173,7 +187,7 @@ UUID участников нужны для приглашений: `GET /auth/m
 - `POST /auth/register` → 2xx; в ответе есть `accessToken` и `user`.
 - Refresh-cookie выставлена (`HttpOnly`, `SameSite`), access-токен в ответе.
 - В шапке отображается строка копирайта с версией (`[data-app-version]`), и она
-  совпадает с `version` из `web/package.json` (на момент релиза — `0.9.1`,
+  совпадает с `version` из `web/package.json` (на момент релиза — `0.10.0`,
   KI-446).
 
 #### AUTH-02 — Регистрация на существующий email
@@ -1697,9 +1711,200 @@ presigned-ссылки S3, `S3_PUBLIC_BUCKET`, TTL и cleanup, поведени�
 
 ---
 
-## 11. Что НЕ тестируем в этой версии
+## 11. WEB SEARCH / DOCUMENTS / FILES / DOCKER
 
-Явные ограничения v0.9.1 (не заводить как баги, но фиксировать как «ожидаемо»):
+**Что проверяем:** узлы `web_search`, `document_gen`, `read_file`,
+`write_file`, а также Docker-поставку (`Dockerfile`, `docker-compose.prod.yml`,
+`docker-entrypoint.sh`, ServeStatic). Требования — DESIGN v0.10 § 3.1–3.3,
+ARCHITECTURE § 7.2, KI-459, KI-460, KI-467..KI-471.
+
+#### WS-01 — Успешный веб-поиск
+**Приоритет:** P1
+**Предусловие:** `TAVILY_API_KEY` валиден, `WEB_SEARCH_PROVIDER=tavily`;
+сценарий `QA-SEARCH`; у узла «Веб-поиск» `maxResults=3`.
+**Шаги:**
+1. Добавить узел «Веб-поиск», выставить «Результатов» = 3.
+2. Подключить «Текст» с запросом (например, «последние новости AI») ко входу.
+3. Соединить выход `T` с LLM.
+4. Запустить сценарий, открыть узел и панель результата.
+**Ожидаемый результат:**
+- Узел `completed`; в карточке — список источников (title/url/snippet).
+- `outputs.results` содержит не более 3 элементов, `outputs.text` — нумерованный
+  список «заголовок → URL → сниппет».
+- LLM получает `text`; в `results` нет `rawContent` (KI-459).
+- Запуск завершён, ошибок в консоли нет.
+
+#### WS-02 — Пустой запрос в `web_search`
+**Приоритет:** P1
+**Предусловие:** у узла нет входящей связи, поле «Запрос» пустое.
+**Шаги:**
+1. Запустить сценарий.
+2. Открыть узел и лог запуска.
+**Ожидаемый результат:**
+- Узел `failed` с сообщением «не задан запрос: inputs.prompt пуст и
+  data.query не заполнен».
+- Провайдер не вызывается; зависимые узлы `skipped`, запуск `failed`.
+
+#### WS-03 — Веб-поиск без ключа Tavily
+**Приоритет:** P1
+**Предусловие:** `TAVILY_API_KEY` пуст; backend перезапущен.
+**Шаги:**
+1. Запустить сценарий с заполненным запросом.
+2. Проверить лог старта приложения.
+**Ожидаемый результат:**
+- Приложение стартует с warn «TAVILY_API_KEY не задан — web-search (tavily)
+  недоступен».
+- Узел `failed` с понятной ошибкой «TAVILY_API_KEY не задан».
+- Ключ не попадает в лог/ответ; остальные узлы сценария работают.
+
+#### DOC-01 — Markdown → DOCX
+**Приоритет:** P1
+**Предусловие:** `MEDIA_STORAGE_BACKEND=local`; сценарий `QA-DOCS`; в узле
+«Генерация документа» выбран Markdown и контент:
+`# Отчёт`, `## Выводы`, абзац, список, fenced code, GFM-таблица.
+**Шаги:**
+1. Подключить «Текст» с Markdown или вписать его в поле.
+2. Запустить сценарий.
+3. Нажать «Скачать DOCX», открыть файл.
+4. Проверить `node_runs.storage_key` и файл в `./data/media/<runId>/`.
+**Ожидаемый результат:**
+- Узел `completed`; в карточке ссылка «Скачать DOCX».
+- `outputs.fileUrl`/`storedUrl`, `fileName`, `mimeType` DOCX, `bytes > 0`.
+- Файл открывается в Word/LibreOffice; заголовки, список, code и таблица
+  отрисованы; `storage_key` не `null`.
+
+#### DOC-02 — JSON → DOCX и битый JSON
+**Приоритет:** P1
+**Предусловие:** тот же узел, «Формат ввода» = JSON.
+**Шаги:**
+1. Ввести JSON `{ "title": "Тест", "blocks": [ { "type": "heading",
+   "text": "Раздел", "level": 1 }, { "type": "paragraph", "text": "Текст" },
+   { "type": "list", "text": "Пункт", "ordered": true } ] }`.
+2. Запустить, открыть DOCX.
+3. Заменить JSON на `{` и запустить снова.
+**Ожидаемый результат:**
+- Валидный JSON: документ содержит title, заголовок, абзац и нумерованный
+  пункт; узел `completed`.
+- Битый JSON: узел `failed` с «некорректный JSON», документ не создаётся,
+  запуск не падает в 500.
+
+#### DOC-03 — Скачивание и `MEDIA_STORAGE_BACKEND=none`
+**Приоритет:** P2
+**Предусловие:** DOCX уже сгенерирован в local-хранилище.
+**Шаги:**
+1. Нажать «Скачать DOCX».
+2. Проверить `storedUrl`/`fileUrl` и `storage_key` в БД.
+3. Выставить `MEDIA_STORAGE_BACKEND=none`, перезапустить backend, повторить
+   запуск.
+**Ожидаемый результат:**
+- Local-ссылка открывается, файл скачивается; ключ указывает на
+  `<runId>/<nodeId>.docx`.
+- При `none` узел `failed` с ошибкой недоступного хранилища; файл не создаётся.
+
+#### FILE-01 — Запись и чтение файла в workspace
+**Приоритет:** P1
+**Предусловие:** сценарий `QA-FILES`; `write_file` с путём `notes/hello.txt` и
+контентом `hello`; `read_file` с тем же путём.
+**Шаги:**
+1. Запустить сценарий с `write_file`.
+2. Проверить файл `./data/workspace/<workflowId>/notes/hello.txt`.
+3. Запустить сценарий с `read_file`.
+4. Посмотреть превью в узле и `outputs.text`.
+**Ожидаемый результат:**
+- `write_file` — `completed`, в узле «Сохранено: notes/hello.txt», в БД
+  `outputs { success: true, path }`.
+- Файл создан, каталог `notes/` создан автоматически.
+- `read_file` — `completed`, `text = "hello"`, превью не пустое.
+
+#### FILE-02 — Чтение несуществующего файла
+**Приоритет:** P2
+**Предусловие:** `read_file` с путём `missing.txt`.
+**Шаги:**
+1. Запустить сценарий.
+2. Открыть ошибку узла.
+**Ожидаемый результат:**
+- Узел `failed` с понятной ошибкой (файл не найден / ENOENT), без падения
+  процесса.
+- Зависимые узлы `skipped`; run `failed`.
+
+#### FILE-03 — Path traversal (`../`, absolute, NUL)
+**Приоритет:** P1
+**Предусловие:** сценарий с `read_file`/`write_file`.
+**Шаги:**
+1. `read_file`: путь `../secret.txt`, запуск.
+2. `write_file`: путь `../../outside.txt`, контент `pwn`, запуск.
+3. Повторить с `/etc/passwd` и `C:\Windows\win.ini`.
+4. Вернуть нормальный путь `notes/ok.txt`, запустить.
+**Ожидаемый результат:**
+- Все опасные пути → `failed` с ошибкой path traversal; файл вне workspace не
+  создаётся и не читается.
+- Нормальный путь после этого работает.
+- В логах нет содержимого чужих файлов.
+
+#### FILE-04 — Контент из связи и перезапись
+**Приоритет:** P2
+**Предусловие:** «Текст» → `write_file` (путь `notes/x.txt`), значение `v1`.
+**Шаги:**
+1. Запустить, прочитать файл.
+2. Изменить текст на `v2`, запустить снова.
+3. Убедиться, что у `read_file` нет входного порта.
+**Ожидаемый результат:**
+- Первый запуск создаёт файл с `v1`; второй — перезаписывает на `v2`
+  (в v0.10 `overwrite` не настраивается).
+- Селект «Формат» не меняет кодировку: файл всегда UTF-8.
+- `read_file` — source-only: входной порт отсутствует.
+
+#### DOCKER-01 — Запуск prod-compose
+**Приоритет:** P1
+**Предусловие:** Docker Desktop; заполнен `.env`; свободны порты `3000`,
+`5434`, `6380`; `COOKIE_SECURE` в compose = `true`.
+**Шаги:**
+1. Выполнить `docker compose -f docker-compose.prod.yml up -d --build`.
+2. Проверить `docker compose -f docker-compose.prod.yml ps`.
+3. Открыть `docker compose -f docker-compose.prod.yml logs app`.
+4. Запросить `http://127.0.0.1:3000/` с `Accept: text/html`.
+**Ожидаемый результат:**
+- `db` и `redis` — `healthy`, `app` — `healthy` (не restart-loop).
+- В логах: `Running migrations...` → `✅ Миграции применены` →
+  `Starting application...` → `Шаблоны загружены: 3 из 3` → `started`.
+- `GET /` — 200 `text/html` (SPA), не `Hello World!`.
+
+#### DOCKER-02 — Миграции до старта приложения
+**Приоритет:** P1
+**Предусловие:** чистые volumes (`docker compose -f docker-compose.prod.yml
+down -v`), затем `up -d --build`.
+**Шаги:**
+1. Смотреть `logs app` в момент старта.
+2. Проверить таблицы:
+   `docker compose -f docker-compose.prod.yml exec db psql -U workflow -d workflow_builder -c "\d node_runs"`.
+3. Перезапустить `app` (`docker compose ... restart app`).
+**Ожидаемый результат:**
+- Порядок логов: миграции **до** `NestFactory`/`Starting application`.
+- Все миграции применены; таблицы `workflow_runs`, `node_runs` есть;
+  `node_runs.storage_key` присутствует.
+- Повторный старт не падает: миграции идемпотентны, `app` снова `healthy`.
+
+#### DOCKER-03 — SPA-маршруты и API не перехватываются
+**Приоритет:** P1
+**Предусловие:** prod-compose запущен; есть недействительный share-токен.
+**Шаги:**
+1. `curl -H "Accept: text/html" http://127.0.0.1:3000/`.
+2. То же для `/login` и `/workflow/share/<uuid>`.
+3. `curl -H "Accept: application/json" http://127.0.0.1:3000/auth/me`.
+4. `curl -H "Accept: text/html"
+   http://127.0.0.1:3000/media/file/no-such-run/no-such-file.png`.
+5. Запросить JS из `/assets/`.
+**Ожидаемый результат:**
+- `/`, `/login`, `/workflow/share/<uuid>` — 200 `text/html` (index.html).
+- `/auth/me` — 401 JSON, не HTML.
+- `/media/file/...` — 404 JSON, не SPA (прямое скачивание не перехвачено).
+- `/assets/*.js` — 200 `text/javascript`; ошибок `PathError`/500 нет.
+
+---
+
+## 12. Что НЕ тестируем в этой версии
+
+Явные ограничения v0.10.0 (не заводить как баги, но фиксировать как «ожидаемо»):
 
 1. **Маршрутизация веток условия** — выходы T/F не управляют потоком; обе
    ветки продолжают выполняться.
@@ -1712,10 +1917,23 @@ presigned-ссылки S3, `S3_PUBLIC_BUCKET`, TTL и cleanup, поведени�
 7. **Realtime-совместное редактирование** — не поддерживается.
 8. **3D/motion-генерация, MCP-инструменты, отдельный vector service** — вне
    релиза (DESIGN § 6).
+9. **PDF в `document_gen`** — не реализован, только DOCX (KI-463).
+10. **Разбор JSON/CSV в `read_file`** — селект «Формат» не применяется:
+    узел отдаёт сырой UTF-8; `json`/`rows` появятся в v0.11.
+11. **`overwrite=false` и CSV-сериализация в `write_file`** — не применяются:
+    файл всегда перезаписывается, кодировка UTF-8.
+12. **`data.title` в Markdown-режиме** — игнорируется (KI-465); в JSON-режиме
+    работает.
+13. **500 блоков и cross-origin `download`** — лимит блоков не проверяется
+    (KI-462), атрибут `download` для S3 игнорируется (KI-466).
+14. **`searchDepth`/`topic`/`includeAnswer` у `web_search`** — отложены
+    (KI-461); в v0.10 только `maxResults`.
+15. **Переподпись S3 по `storage_key`** — ключ пишется, но переподпись пока
+    идёт по URL (KI-464).
 
 ---
 
-## 12. Приёмка релиза
+## 13. Приёмка релиза
 
 Минимальный набор для «зелёного» релиза — все кейсы `P1` (smoke-ядро):
 
@@ -1733,19 +1951,23 @@ presigned-ссылки S3, `S3_PUBLIC_BUCKET`, TTL и cleanup, поведени�
 - [ ] `EDGE-01`, `EDGE-04`, `EDGE-05`, `EDGE-06`, `EDGE-07`, `EDGE-08`,
       `EDGE-09`, `EDGE-12`
 - [ ] `CONTRACT-01`, `CONTRACT-02`
+- [ ] `WS-01`, `WS-02`, `WS-03`, `DOC-01`, `DOC-02`, `FILE-01`, `FILE-03`,
+      `DOCKER-01`, `DOCKER-02`, `DOCKER-03`
 
 Дополнительно перед релизом:
 
 - [ ] `pnpm build` — 0 errors, 0 warnings.
+- [ ] `pnpm build:migrate` — `dist/migrate.js` создан.
 - [ ] `pnpm test` — все зелёные.
 - [ ] `pnpm --dir web build` — 0 errors, 0 warnings.
 - [ ] `pnpm --dir web test` — все зелёные.
+- [ ] `docker compose -f docker-compose.prod.yml config --quiet` — без ошибок.
 - [ ] В браузере нет ошибок в консоли на основном пути (вход → граф → запуск →
       share).
 
 ---
 
-## 13. Шаблон баг-репорта
+## 14. Шаблон баг-репорта
 
 ```
 ### BUG — <краткое название>
@@ -1773,10 +1995,11 @@ presigned-ссылки S3, `S3_PUBLIC_BUCKET`, TTL и cleanup, поведени�
 
 ---
 
-## 14. История документа
+## 15. История документа
 
 | Дата | Версия | Изменения |
 |---|---|---|
 | 2026-10-18 | 1.0 | Первая версия: 116 кейсов по 9 блокам, включая Edge Cases (бюджет, Redis, ключи, БД), регресс контрактов и чек-лист приёмки для v0.9.1 |
+| 2026-10-19 | 1.1 | v0.10.0: +13 кейсов (WS/DOC/FILE/DOCKER), итого 129; новые env (`TAVILY_API_KEY`, `S3_PUBLIC_BUCKET`), проверки Docker и SPA; обновлены ограничения |
 
 **Конец документа.**

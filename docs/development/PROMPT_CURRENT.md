@@ -1,8 +1,8 @@
 # PROMPT_CURRENT — актуальный стартовый промпт
 
-**Версия промпта:** 7.0
-**Дата:** 2026-10-18
-**Статус:** актуален для HEAD после релиза **v0.9.4**
+**Версия промпта:** 7.1
+**Дата:** 2026-10-19
+**Статус:** актуален для HEAD после релиза **v0.10.0**
 **Заменяет:** [`archive/prompts/PROMPT_V5_v6.4.md`](archive/prompts/PROMPT_V5_v6.4.md)
 **Правила ведения:** RULES § 2.17 (старые версии — в `archive/prompts/`)
 
@@ -15,24 +15,25 @@
 
 ---
 
-## § 1. Текущий статус (на 2026-10-18)
+## § 1. Текущий статус (на 2026-10-19)
 
 | Параметр | Значение |
 |---|---|
-| **Релиз** | `v0.9.4` (Latest на GitHub) |
+| **Релиз** | `v0.10.0` (Latest на GitHub) |
 | **HEAD** | актуальный; перед сессией сверять `git log -1` и `git status --short` |
 | **Репозиторий** | `https://github.com/iilmchat/ai-workflow-builder` |
 | **Рабочий путь** | локальный клон — **зависит от машины**; брать путь из конкретного задания, не угадывать |
-| **Backend-тесты** | **1001** (`pnpm test`) |
-| **Frontend-тесты** | **339** (`pnpm --dir web test`) |
-| **KI** | **451** — последний номер реестра (439 записей на HEAD; сводку пересчитывать по RULES 3.20) |
-| **Стек** | NestJS 12 · TypeScript 6 (strict, ESM) · React 19 · Drizzle ORM · PostgreSQL 17 + **pgvector** · BullMQ + Redis · **S3** · **OpenTelemetry** · QuickJS-WASM |
+| **Backend-тесты** | **1123** passed, 17 skipped (`pnpm test`) |
+| **Frontend-тесты** | **375** passed (`pnpm --dir web test`) |
+| **KI** | **472** — последний номер реестра (**460 записей** на HEAD; сводку пересчитывать по RULES 3.20) |
+| **Open High** | **8** (см. § 3) |
+| **Стек** | NestJS 12 · TypeScript 6 (strict, ESM) · React 19 · Drizzle ORM · PostgreSQL 17 + **pgvector** · BullMQ + Redis · **S3** · **OpenTelemetry** · QuickJS-WASM · **Docker/GHCR** |
 
-**Что уже реализовано (v0.9.4):**
+**Что уже реализовано (v0.10.0):**
 
-- **Ядро.** Визуальный редактор на `@xyflow/react` v12, **18 типов узлов**,
+- **Ядро.** Визуальный редактор на `@xyflow/react` v12, **22 типа узлов**,
   типизированные порты, undo/redo, автосохранение, импорт/экспорт,
-  шаблоны, sub-workflows, тёмная тема, i18n RU/EN.
+  шаблоны, sub-workflows, тёмная тема, i18n RU/EN, логотип и копирайт.
 - **Выполнение.** BullMQ + Redis, история в PostgreSQL (`workflow_runs`,
   `node_runs`), ретраи job'а и узлов, SSE-стриминг прогресса, панель
   результатов, миникарта со статусами.
@@ -43,9 +44,15 @@
   (Replicate, FAL, OpenAI Images); cost budget.
 - **Состояние и агенты.** pgvector / Memory (`vector_upsert`, `vector_query`,
   `memory_read`, `memory_write`), Agent node (LLM loop + 7 инструментов).
+- **v0.10 — контент и данные.** `web_search` (Tavily), `document_gen`
+  (Markdown/JSON → DOCX), `read_file`/`write_file` (безопасный workspace
+  `./data/workspace/{workflowId}/`, лимит 5 МБ).
 - **Инфраструктура.** QuickJS-WASM sandbox для `condition`, изоляция очередей
-  (`BULLMQ_PREFIX`), S3-хранилище (presigned URL, multipart, retry, TTL),
-  HTTP rate limiting, стабильный `INSTANCE_ID`, `TRUST_PROXY`.
+  (`BULLMQ_PREFIX`), S3-хранилище (presigned URL, multipart, retry, TTL,
+  `storage_key`), HTTP rate limiting, стабильный `INSTANCE_ID`, `TRUST_PROXY`.
+- **Docker/GHCR.** Multi-stage образ, `docker-compose.prod.yml`
+  (app + pgvector + redis), entrypoint с миграциями, ServeStatic для SPA,
+  публикация в GHCR (`latest`, `sha-*`, `vX.Y.Z`).
 - **Наблюдаемость.** OTel (OTLP/HTTP), Pino, аудит, стоимость запуска,
   span `agent.step`.
 
@@ -57,6 +64,7 @@
 | `v0.9.2` | jsdom + Testing Library, роли Share (owner/editor/viewer), `TRUST_PROXY`, валидация `audioUrl` |
 | `v0.9.3` | Route-level code-split (774 → 141 kB), S3 presigned/streaming, enum-домены в API-контракте |
 | `v0.9.4` | S3 retry/multipart, переподпись presigned URL, env публичного бакета; миникарта, копирайт/версия, плашка истёкшей ссылки |
+| `v0.10.0` | Web Search, DOCX-генерация, safe filesystem (22 узла), Docker/GHCR, ServeStatic, `storage_key`; KI-452..455, 459, 460, 467..471 |
 
 ---
 
@@ -76,13 +84,15 @@
 
 ---
 
-## § 3. Открытые KI (актуально на v0.9.4)
+## § 3. Открытые KI (актуально на v0.10.0)
 
 **🟠 High:**
 
 - **KI-066** — у run-аренды нет heartbeat.
 - **KI-104** — повтор узла учитывает только LLM-исключения.
-- **KI-238** — в проде reverse-proxy должен отдавать SPA для `/workflow/share/*`.
+- **KI-238** — SPA для `/workflow/share/*` в проде: Docker-поставка уже отдаёт
+  её через NestJS (KI-468), отдельный fallback в ingress больше не обязателен;
+  статус в реестре — `Open` до проверки на конкретном ingress.
 - **KI-361** — Video / Audio / Music узлы (media-generation).
 - **KI-366** — `type: 'TOOL'` у upstream не существует.
 - **KI-380** — OpenAI Images не поддерживает `applyToolAsync`.
@@ -99,9 +109,13 @@
 - **KI-436** 🟡 — Agent: hard-cap превышается на один шаг.
 - **KI-438** 🟢 — пустой `audioUrl` у lipsync не блокирует Run.
 - **KI-450** 🟢 — `GET /runs/:id` не отдаёт `node_runs`.
-- **KI-451** 🟢 — ключ объекта S3 не хранится в `node_runs`.
+- **KI-451** 🟢 — ключ объекта S3: `storage_key` уже пишется, но переподпись
+  пока идёт по URL (KI-464).
+- **KI-464** 🟡 — `storage_key` не используется для переподписи S3.
+- **KI-472** 🟢 — API-префиксы продублированы в `app.module.ts` и
+  `api-prefixes.ts`.
 
-**✅ Зарегистрированы и закрыты в v0.10.0 S0 (2026-10-18):**
+**✅ Зарегистрированы и закрыты в v0.10.0 (2026-10-19):**
 
 - **KI-452** 🟠 — `window.confirm` с именем workflow перед удалением
   (`LoadModal`, оба i18n).
@@ -110,31 +124,40 @@
   уровня из `BaseNode`; планирование — S10.
 - **KI-455** 🟡 — `PGVECTOR_ENABLED` в `VectorEnvSchema`/`.env.example`,
   проверяется `ExecutionEngineService` (default `true`).
+- **KI-459** 🟠 — `rawContent` не попадает в `node_runs.outputs`/SSE.
+- **KI-460** 🟡 — контракт портов `web_search` (`text` → LLM).
+- **KI-467** 🟠 — `exclude: ['/api*']` заменён на RegExp (path-to-regexp@8).
+- **KI-468** 🟡 — SPA-fallback для `/` и share до роутера.
+- **KI-469** 🟠 — `dist/migrate.js` собирается отдельным tsconfig.
+- **KI-470** 🟡 — `src/templates` копируются в Docker-runner.
+- **KI-471** 🟡 — `COOKIE_SECURE=true` в prod-compose.
 
 ---
 
 ## § 4. План на следующий релиз
 
-**Вариант A (рекомендуемый) — `v0.9.5` (cleanup / hardening):**
+**Вариант A (рекомендуемый) — `v0.10.1` (patch / hardening):**
 
-1. ✅ Зарегистрировать и закрыть KI-452…455 (v0.10.0 S0).
+1. Довести `storage_key` до переподписи S3 (KI-451/KI-464) и отдачу
+   `node_runs` в `GET /runs/:id` (KI-450).
 2. SSRF: redirect и DNS rebinding (KI-434, KI-435).
 3. Метрики Agent в `node_runs` (KI-433).
-4. Хранение `storage_key` (KI-451) и отдача `node_runs` в `GET /runs/:id`
-   (KI-450).
-5. Signed URL для медиа (KI-415).
+4. Signed URL для local media (KI-415).
+5. Убрать дублирование API-префиксов (KI-472).
 
-**Вариант B — `v0.10.0` (major):**
+**Вариант B — `v0.11.0` (minor):**
 
-MCP Adapter для Agent tools, multi-tenant, 3D/motion. Требует отдельного
-DESIGN-документа по RULES § 2.14 — без него в работу не брать.
+PDF-рендер и разбор JSON/CSV в `document_gen`/`read_file`, `overwrite` и
+CSV-сериализация в `write_file`, поля `web_search` (`searchDepth`/`topic`),
+MCP Adapter для Agent tools. Каждая крупная фича — отдельный DESIGN по
+RULES § 2.14.
 
 ---
 
 ## § 5. Как начать работу
 
 1. Пользователь присылает `git log -1` и `git status --short`.
-2. Ты подтверждаешь сценарий (`v0.9.5` или `v0.10.0`) и список KI.
+2. Ты подтверждаешь сценарий (`v0.10.1` или `v0.11.0`) и список KI.
 3. Ты выдаёшь **промпт для dsh** (2–3 задачи параллельно), следуя правилам § 2.
 4. Пользователь запускает dsh и присылает структурированный отчёт (RULES § 2.15).
 5. Ты даёшь коммит-сообщение, точечные diff'и на docs и следующий шаг.
