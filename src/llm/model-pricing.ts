@@ -93,9 +93,13 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
 /**
  * Извлекает короткое имя модели из id для поиска в прайс-листе (KI-176).
  *
- * В `node.data.model` модели Yandex лежат как URI
- * (`gpt://<folder>/<model>/<version>`), а ключи прайса — короткие имена.
- * Берём сегмент перед версией (`/latest`, `/rc`), то есть предпоследний.
+ * Поддерживаются два вида id:
+ * - Yandex-URI (`gpt://<folder>/<model>/<version>`) — берётся сегмент перед
+ *   версией (`/latest`, `/rc`), то есть предпоследний;
+ * - прокси-префикс (`openai/gpt-4o`, `anthropic/claude-sonnet-4`) — берётся
+ *   последний сегмент. Раньше для двух сегментов возвращался **первый**
+ *   (`openai`), что противоречило контракту «короткое имя» и скрывало цену
+ *   RouterAI за третьим fallback'ом в {@link findModelPricing} (R7.7-fix).
  *
  * @param modelId - id модели из конфигурации узла
  * @returns короткое имя модели; исходная строка, если она без `/`
@@ -107,9 +111,15 @@ export function bareModelId(modelId: string): string {
     return modelId;
   }
 
-  // `gpt://` даёт пустые сегменты — они отфильтрованы; последний сегмент —
-  // версия, поэтому имя модели — предпоследний.
-  return segments.length >= 2 ? segments[segments.length - 2] : segments[0];
+  // URI Yandex (`gpt://…`) отличаем по схеме: там последний сегмент — версия.
+  if (modelId.includes('://')) {
+    return segments.length >= 2
+      ? segments[segments.length - 2]
+      : segments[0];
+  }
+
+  // Префикс прокси-провайдера (`openai/model`): модель — последний сегмент.
+  return segments[segments.length - 1];
 }
 
 /**

@@ -29,6 +29,18 @@ export interface LlmGenerateOptions {
    * `'off'` и отсутствие значения означают «поле не отправлять».
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Включить промпт-кэш для system-промпта (R7.7, KI-414).
+   *
+   * Поддержан только Anthropic: при `true` и длине system-промпта выше порога
+   * (`PROMPT_CACHE_MIN_TOKENS`, по умолчанию 1024) последний блок `system`
+   * помечается `cache_control: { type: 'ephemeral' }`. Остальные провайдеры
+   * флаг игнорируют: у OpenAI/DeepSeek кэш включается автоматически, а
+   * неизвестное поле ломало бы запросы прокси.
+   *
+   * Отсутствие значения трактуется как `false` — поведение до R7.7.
+   */
+  promptCache?: boolean;
   /** AbortSignal для отмены/таймаута (RULES 4.19). */
   signal?: AbortSignal;
 }

@@ -24,3 +24,14 @@ export const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 
 /** Размерность вектора модели {@link DEFAULT_EMBEDDING_MODEL}. */
 export const DEFAULT_EMBEDDING_DIMENSIONS = 1536;
+
+/**
+ * Порог длины system-промпта для prompt caching Anthropic (R7.7, KI-414).
+ *
+ * Anthropic кэширует промпт только начиная с определённого размера; запрос с
+ * `cache_control` на коротком промпте завершается ошибкой 400. Порог сравнивается
+ * с длиной строки (`systemPrompt.length`), а не с числом токенов: точный
+ * tokenizer у нас недоступен, а `PROMPT_CACHE_MIN_TOKENS` — консервативная
+ * нижняя граница (для английского текста токенов обычно меньше, чем символов).
+ */
+export const DEFAULT_PROMPT_CACHE_MIN_TOKENS = 1024;

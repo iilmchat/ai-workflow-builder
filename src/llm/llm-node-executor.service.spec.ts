@@ -155,6 +155,26 @@ describe('LlmNodeExecutor', () => {
     });
   });
 
+  it('KI-414: data.promptCache=true прокидывается в options', async () => {
+    await executor.executeAsync(
+      node({ model: 'gpt-4o', system: 'длинный system', promptCache: true }),
+      { prompt: 'вопрос' },
+    );
+
+    expect(llm.generateAsync).toHaveBeenCalledWith('вопрос', 'gpt-4o', {
+      system: 'длинный system',
+      promptCache: true,
+    });
+  });
+
+  it('KI-414: без data.promptCache флаг не передаётся (поведение до R7.7)', async () => {
+    await executor.executeAsync(node({ model: 'gpt-4o' }), {
+      prompt: 'вопрос',
+    });
+
+    expect(llm.generateAsync).toHaveBeenCalledWith('вопрос', 'gpt-4o', {});
+  });
+
   it('бросает LlmProviderException на пустой prompt и не вызывает LLM', async () => {
     await expect(executor.executeAsync(node({}), {})).rejects.toThrow(
       LlmProviderException,

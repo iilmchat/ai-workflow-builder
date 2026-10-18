@@ -12,12 +12,85 @@ import {
   type ModelInfo,
 } from '../llm-provider.interface.js';
 /** Лимит токенов ответа по умолчанию. */
-import { DEFAULT_MAX_TOKENS } from '../llm-constants.js';
+import {
+  DEFAULT_MAX_TOKENS,
+  DEFAULT_PROMPT_CACHE_MIN_TOKENS,
+} from '../llm-constants.js';
 import { toProviderException } from '../provider-errors.js';
 import { readAnthropicCacheTokens } from '../token-usage.js';
 
 /** Таймаут вызова по умолчанию, если свой signal не передан (RULES 4.19). */
 const DEFAULT_TIMEOUT_MS = 60_000;
+
+/** Имя переменной окружения с порогом включения промпт-кэша (KI-414). */
+const PROMPT_CACHE_MIN_TOKENS_ENV = 'PROMPT_CACHE_MIN_TOKENS';
+
+/** Блок system-промпта с точкой кэширования Anthropic (R7.7, KI-414). */
+interface CachedSystemBlock {
+  readonly type: 'text';
+  readonly text: string;
+  readonly cache_control: { readonly type: 'ephemeral' };
+}
+
+/**
+ * Читает порог включения промпт-кэша из окружения (KI-414).
+ *
+ * `PROMPT_CACHE_MIN_TOKENS` не объявлена в `EnvSchema` (в R7.7-fix схема
+ * окружения не меняется), поэтому значение проверяется здесь: не число,
+ * `0` и отрицательные значения откатываются на
+ * {@link DEFAULT_PROMPT_CACHE_MIN_TOKENS}. Пустая строка — тоже дефолт.
+ *
+ * @param config - доступ к переменным окружения (RULES 4.6)
+ * @returns положительное целое — порог в символах system-промпта
+ */
+function readPromptCacheMinTokens(config: ConfigService): number {
+  const raw: unknown = config.get(PROMPT_CACHE_MIN_TOKENS_ENV);
+  const parsed =
+    typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string' && raw.trim().length > 0
+        ? Number(raw)
+        : Number.NaN;
+
+  return Number.isInteger(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_PROMPT_CACHE_MIN_TOKENS;
+}
+
+/**
+ * Собирает поле `system` запроса Anthropic (R7.7, KI-414).
+ *
+ * Без кэша (и для короткого промпта) возвращается исходная строка — запрос
+ * неотличим от поведения до R7.7. С кэшем system превращается в массив
+ * text-блоков: `cache_control` ставится на последний (в R7.7 он единственный)
+ * блок, и Anthropic кэширует промпт целиком.
+ *
+ * @param systemPrompt - system-промпт узла
+ * @param promptCache - запрошен ли промпт-кэш (`options.promptCache === true`)
+ * @param minChars - минимальная длина промпта для включения кэша
+ * @returns строка, массив блоков либо `undefined` — «поле не передавать»
+ */
+function buildSystemParam(
+  systemPrompt: string | undefined,
+  promptCache: boolean,
+  minChars: number,
+): string | CachedSystemBlock[] | undefined {
+  if (systemPrompt === undefined || systemPrompt.length === 0) {
+    return undefined;
+  }
+
+  if (!promptCache || systemPrompt.length <= minChars) {
+    return systemPrompt;
+  }
+
+  return [
+    {
+      type: 'text',
+      text: systemPrompt,
+      cache_control: { type: 'ephemeral' },
+    },
+  ];
+}
 
 /**
  * Извлекает метрики использования токенов из ответа Anthropic.
@@ -94,8 +167,13 @@ export class AnthropicProvider implements ILlmProvider {
   private readonly logger = new Logger(AnthropicProvider.name);
   /** Клиент SDK либо `null`, если ключ не задан (см. JSDoc класса). */
   private readonly client: Anthropic | null;
+  /** Порог длины system-промпта для prompt caching (KI-414). */
+  private readonly promptCacheMinTokens: number;
 
   constructor(config: ConfigService) {
+    // Порог читается всегда: он не зависит от наличия ключа и нужен в тестах,
+    // где провайдер создаётся без клиента.
+    this.promptCacheMinTokens = readPromptCacheMinTokens(config);
     const apiKey = config.get<string>('ANTHROPIC_API_KEY');
 
     if (!apiKey) {
@@ -144,6 +222,14 @@ export class AnthropicProvider implements ILlmProvider {
     }
 
     try {
+      // KI-414: при promptCache=true и длинном system-промпте — массив блоков
+      // с cache_control на последнем. Короткий промпт остаётся строкой.
+      const system = buildSystemParam(
+        options.system,
+        options.promptCache === true,
+        this.promptCacheMinTokens,
+      );
+
       const response = await this.client.messages.create(
         {
           model: options.model,
@@ -152,7 +238,7 @@ export class AnthropicProvider implements ILlmProvider {
             modelInfo?.defaultMaxTokens ??
             DEFAULT_MAX_TOKENS,
           temperature: options.temperature,
-          system: options.system,
+          ...(system === undefined ? {} : { system }),
           messages: [{ role: 'user', content: prompt }],
         },
         { signal },

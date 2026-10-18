@@ -79,6 +79,17 @@ describe('calculateCostUsd', () => {
     expect(bareModelId('yandexgpt-lite')).toBe('yandexgpt-lite');
     expect(bareModelId('gpt-4o')).toBe('gpt-4o');
   });
+
+  it('bareModelId: для прокси-префикса берёт последний сегмент, а не vendor (KI-406)', () => {
+    // `openai/gpt-4o` — цена лежит под `gpt-4o`, а не под `openai`.
+    expect(bareModelId('openai/gpt-4o')).toBe('gpt-4o');
+    expect(bareModelId('openai/text-embedding-3-small')).toBe(
+      'text-embedding-3-small',
+    );
+    expect(bareModelId('anthropic/claude-sonnet-4-20250514')).toBe(
+      'claude-sonnet-4-20250514',
+    );
+  });
 });
 
 describe('calculateCostUsdForProvider (KI-148)', () => {

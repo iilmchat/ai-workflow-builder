@@ -16,10 +16,16 @@ vi.mock('@anthropic-ai/sdk', () => ({
  * Создаёт заглушку `ConfigService`.
  *
  * @param apiKey - значение `ANTHROPIC_API_KEY` (или `undefined`)
+ * @param values - дополнительные переменные окружения (перекрывают apiKey)
  * @returns заглушка ConfigService
  */
-function configStub(apiKey?: string): ConfigService {
-  return { get: () => apiKey } as unknown as ConfigService;
+function configStub(
+  apiKey?: string,
+  values: Record<string, string | undefined> = {},
+): ConfigService {
+  return {
+    get: (key: string) => (key in values ? values[key] : apiKey),
+  } as unknown as ConfigService;
 }
 
 /**
@@ -96,6 +102,167 @@ describe('AnthropicProvider', () => {
     );
     // RULES 4.19: у вызова всегда есть signal (таймаут или внешний).
     expect(options.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  describe('KI-414: prompt caching', () => {
+    /** Короткий ответ SDK: тестам важен только body запроса. */
+    const ANSWER = {
+      model: 'claude-sonnet-4-20250514',
+      usage: { input_tokens: 1, output_tokens: 1 },
+      content: [{ type: 'text', text: 'ок' }],
+    };
+
+    beforeEach(() => {
+      createMock.mockResolvedValue(ANSWER);
+    });
+
+    /**
+     * Возвращает `system` из тела последнего запроса SDK.
+     *
+     * @returns поле `system` запроса
+     */
+    function lastSystem(): unknown {
+      const call = createMock.mock.calls.at(-1);
+
+      if (!call) {
+        throw new Error('messages.create не вызывался');
+      }
+
+      return (call[0] as { system?: unknown }).system;
+    }
+
+    it('длинный system + promptCache=true → блок с cache_control ephemeral', async () => {
+      const system = 's'.repeat(1025);
+      const provider = new AnthropicProvider(configStub('sk-ant-test'));
+
+      await provider.generateAsync('вопрос', {
+        model: 'claude-sonnet-4-20250514',
+        system,
+        promptCache: true,
+      });
+
+      expect(lastSystem()).toEqual([
+        {
+          type: 'text',
+          text: system,
+          cache_control: { type: 'ephemeral' },
+        },
+      ]);
+    });
+
+    it('без promptCache длинный system остаётся строкой (поведение до R7.7)', async () => {
+      const system = 's'.repeat(1025);
+      const provider = new AnthropicProvider(configStub('sk-ant-test'));
+
+      await provider.generateAsync('вопрос', {
+        model: 'claude-sonnet-4-20250514',
+        system,
+      });
+
+      expect(lastSystem()).toBe(system);
+    });
+
+    it('promptCache=false оставляет system строкой', async () => {
+      const system = 's'.repeat(1025);
+      const provider = new AnthropicProvider(configStub('sk-ant-test'));
+
+      await provider.generateAsync('вопрос', {
+        model: 'claude-sonnet-4-20250514',
+        system,
+        promptCache: false,
+      });
+
+      expect(lastSystem()).toBe(system);
+    });
+
+    it('короткий system не кэшируется даже при promptCache=true', async () => {
+      const system = 's'.repeat(1024);
+      const provider = new AnthropicProvider(configStub('sk-ant-test'));
+
+      await provider.generateAsync('вопрос', {
+        model: 'claude-sonnet-4-20250514',
+        system,
+        promptCache: true,
+      });
+
+      // Порог строгий: `length > 1024`, ровно 1024 — ещё не кэш.
+      expect(lastSystem()).toBe(system);
+    });
+
+    it('PROMPT_CACHE_MIN_TOKENS из env перекрывает дефолт 1024', async () => {
+      const system = 's'.repeat(1500);
+      const provider = new AnthropicProvider(
+        configStub('sk-ant-test', { PROMPT_CACHE_MIN_TOKENS: '2048' }),
+      );
+
+      await provider.generateAsync('вопрос', {
+        model: 'claude-sonnet-4-20250514',
+        system,
+        promptCache: true,
+      });
+
+      // 1500 < 2048 — кэш не включается.
+      expect(lastSystem()).toBe(system);
+    });
+
+    it('мусор в PROMPT_CACHE_MIN_TOKENS не ломает вызов — берётся дефолт', async () => {
+      const system = 's'.repeat(1025);
+      const provider = new AnthropicProvider(
+        configStub('sk-ant-test', { PROMPT_CACHE_MIN_TOKENS: 'не-число' }),
+      );
+
+      await provider.generateAsync('вопрос', {
+        model: 'claude-sonnet-4-20250514',
+        system,
+        promptCache: true,
+      });
+
+      expect(lastSystem()).toEqual([
+        {
+          type: 'text',
+          text: system,
+          cache_control: { type: 'ephemeral' },
+        },
+      ]);
+    });
+
+    it('без system поле не передаётся даже при promptCache=true', async () => {
+      const provider = new AnthropicProvider(configStub('sk-ant-test'));
+
+      await provider.generateAsync('вопрос', {
+        model: 'claude-sonnet-4-20250514',
+        promptCache: true,
+      });
+
+      expect(lastSystem()).toBeUndefined();
+    });
+  });
+
+  it('KI-414: Anthropic парсит cache_creation_input_tokens и cache_read_input_tokens', async () => {
+    createMock.mockResolvedValue({
+      model: 'claude-sonnet-4-20250514',
+      usage: {
+        input_tokens: 100,
+        output_tokens: 5,
+        cache_read_input_tokens: 2000,
+        cache_creation_input_tokens: 300,
+      },
+      content: [{ type: 'text', text: 'ответ' }],
+    });
+
+    const provider = new AnthropicProvider(configStub('sk-ant-test'));
+    const result = await provider.generateAsync('x', { model: 'm' });
+
+    expect(result.usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 5,
+      // Кэш-токены Anthropic не входят в input_tokens — флаг false нужен
+      // расчётчику стоимости (model-pricing.ts).
+      cacheReadTokens: 2000,
+      cacheCreationTokens: 300,
+      cacheTokensIncludedInInput: false,
+      model: 'claude-sonnet-4-20250514',
+    });
   });
 
   it('isConfigured отражает наличие ключа (KI-039)', () => {

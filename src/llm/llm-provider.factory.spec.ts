@@ -1,18 +1,24 @@
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { LlmProviderFactory } from './llm-provider.factory.js';
+import {
+  LlmProviderFactory,
+  resolveRouterAiEmbeddingModel,
+} from './llm-provider.factory.js';
 import { OpenAiCompatibleProvider } from './providers/openai-compatible.provider.js';
 
-const { openAiConstructorMock } = vi.hoisted(() => ({
+const { openAiConstructorMock, embedMock } = vi.hoisted(() => ({
   openAiConstructorMock: vi.fn(),
+  embedMock: vi.fn(),
 }));
 
 // Конструкторы провайдеров создают клиенты SDK. В юнит-тестах сеть не нужна,
 // поэтому оба SDK подменены заглушками (RULES: никаких сетевых вызовов).
-// Опции конструктора OpenAI запоминаем, чтобы проверить выбор baseURL.
+// Опции конструктора OpenAI запоминаем, чтобы проверить выбор baseURL, а
+// `embeddings.create` — чтобы проверить KI-406 (RouterAI-префикс).
 vi.mock('openai', () => ({
   default: class MockOpenAI {
     readonly chat = { completions: { create: vi.fn() } };
+    readonly embeddings = { create: embedMock };
 
     constructor(options: unknown) {
       openAiConstructorMock(options);
@@ -101,6 +107,7 @@ describe('LlmProviderFactory', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
   it('возвращает пустой список, если не задан ни один ключ', async () => {
     await expect(createProviders({})).resolves.toEqual([]);
@@ -165,6 +172,60 @@ describe('LlmProviderFactory', () => {
     expect(routerai?.models.map((model) => model.id)).toContain(
       'anthropic/claude-sonnet-4',
     );
+  });
+
+  describe('KI-406: embedding-модель RouterAI', () => {
+    beforeEach(() => {
+      embedMock.mockResolvedValue({ data: [{ index: 0, embedding: [1, 2] }] });
+    });
+
+    it('bare-имя получает префикс openai/ (RouterAI отвергает без него 400)', async () => {
+      const routerai = await byName({ ROUTERAI_API_KEY: 'sk-router' }, 'routerai');
+
+      await routerai?.embedAsync(['текст']);
+
+      // Дефолт узла — `text-embedding-3-small`, но upstream ждёт openai/.
+      expect(embedMock.mock.calls[0][0].model).toBe(
+        'openai/text-embedding-3-small',
+      );
+    });
+
+    it('явный провайдерский префикс не дублируется', async () => {
+      const routerai = await byName({ ROUTERAI_API_KEY: 'sk-router' }, 'routerai');
+
+      await routerai?.embedAsync(['текст'], {
+        model: 'openai/text-embedding-3-large',
+      });
+
+      expect(embedMock.mock.calls[0][0].model).toBe(
+        'openai/text-embedding-3-large',
+      );
+    });
+
+    it('OpenAI не получает RouterAI-префикс', async () => {
+      const openai = await byName({ OPENAI_API_KEY: 'sk-test' }, 'openai');
+
+      await openai?.embedAsync(['текст']);
+
+      expect(embedMock.mock.calls[0][0].model).toBe('text-embedding-3-small');
+    });
+
+    it('resolveRouterAiEmbeddingModel: bare/префикс/пробелы', () => {
+      expect(resolveRouterAiEmbeddingModel('text-embedding-3-small')).toBe(
+        'openai/text-embedding-3-small',
+      );
+      expect(resolveRouterAiEmbeddingModel('openai/text-embedding-3-small')).toBe(
+        'openai/text-embedding-3-small',
+      );
+      // Пробелы из `node.data` не должны превращаться в `openai/  ...`.
+      expect(resolveRouterAiEmbeddingModel('  text-embedding-3-small  ')).toBe(
+        'openai/text-embedding-3-small',
+      );
+      // Пустое значение остаётся пустым: префиксовать нечего. Такой id не
+      // должен доходить сюда — схемы узлов требуют непустую модель, — но
+      // превращать мусор в `openai/` тоже нельзя.
+      expect(resolveRouterAiEmbeddingModel('   ')).toBe('');
+    });
   });
 
   it('включает LM Studio без ключа, если задан список моделей', async () => {

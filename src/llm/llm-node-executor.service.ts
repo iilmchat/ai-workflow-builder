@@ -52,6 +52,19 @@ function readMaxTokensOverride(value: unknown): number | undefined {
 }
 
 /**
+ * Читает флаг промпт-кэша узла (R7.7, KI-414).
+ *
+ * Флаг строго булев: `data` приходит из JSON графа, и строка `'true'` не должна
+ * молча включать платную точку кэширования. Отсутствие значения — «выключено».
+ *
+ * @param value - `data.promptCache`
+ * @returns `true`, только если флаг явно включён
+ */
+function readPromptCache(value: unknown): boolean {
+  return value === true;
+}
+
+/**
  * Достаёт prompt LLM-узла (KI-180).
  *
  * Приоритет источников: связь (`inputs.prompt`) → промпт, введённый в узле
@@ -162,10 +175,13 @@ export class LlmNodeExecutor {
     // `inputs` — это настройки узла, а не данные графа.
     const reasoningEffort = readReasoningEffort(node.data.reasoningEffort);
     const maxTokensOverride = readMaxTokensOverride(node.data.maxTokensOverride);
+    // KI-414: флаг кэша — настройка узла; провайдер (Anthropic) сам решит,
+    // применять ли его по длине system-промпта.
+    const promptCache = readPromptCache(node.data.promptCache);
 
     // RULES 5.9: в лог идут только модель, длины и режимы — не тексты промптов.
     this.logger.log(
-      `LLM-узел ${node.id}: model=${model}, promptLen=${prompt.length}, systemLen=${system?.length ?? 0}, reasoning=${reasoningEffort ?? 'off'}, maxTokens=${maxTokensOverride ?? 'default'}`,
+      `LLM-узел ${node.id}: model=${model}, promptLen=${prompt.length}, systemLen=${system?.length ?? 0}, reasoning=${reasoningEffort ?? 'off'}, maxTokens=${maxTokensOverride ?? 'default'}, promptCache=${promptCache ? 'on' : 'off'}`,
     );
 
     // R7.1 (KI-048): бюджет запуска проверяется до платного вызова. Оценка не
@@ -179,6 +195,7 @@ export class LlmNodeExecutor {
       ...(system === undefined ? {} : { system }),
       ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
       ...(maxTokensOverride === undefined ? {} : { maxTokens: maxTokensOverride }),
+      ...(promptCache ? { promptCache: true } : {}),
     });
     const usage = result.usage;
     const usedModel = usage?.model ?? model;

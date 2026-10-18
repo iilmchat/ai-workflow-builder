@@ -55,6 +55,35 @@ interface EnvModelListOptions {
   labelSuffix: string;
 }
 
+/**
+ * Приводит id embedding-модели к виду, который ждёт RouterAI (KI-406).
+ *
+ * RouterAI — прокси с id вида `<vendor>/<model>`: bare-имя
+ * `text-embedding-3-small` он отвергает с 400 «Model ... not found», а
+ * `openai/text-embedding-3-small` принимает. Поэтому:
+ * - id без `/` получает префикс `openai/` (единственное семейство эмбеддингов,
+ *   которое используется по умолчанию — `DEFAULT_EMBEDDING_MODEL`);
+ * - id с `/` (`openai/...`, `google/...`) уходит как есть: префикс уже задан
+ *   вызывающим кодом или каталогом модели.
+ *
+ * `bareModelId` из `model-pricing.ts` здесь намеренно **не** применяется: он
+ * извлекает имя из Yandex-URI (`gpt://…`), а для прокси-префикса вернул бы
+ * vendor (`openai`) и потерял саму модель. Пробелы по краям срезаются: id
+ * приходит из `node.data`, куда его мог скопировать пользователь.
+ *
+ * @param model - id модели эмбеддингов из узла/дефолта
+ * @returns id, пригодный для `/embeddings` RouterAI
+ */
+export function resolveRouterAiEmbeddingModel(model: string): string {
+  const trimmed = model.trim();
+
+  if (trimmed.length === 0) {
+    return trimmed;
+  }
+
+  return trimmed.includes('/') ? trimmed : `openai/${trimmed}`;
+}
+
 /** Модели OpenAI (список фиксирован в коде). */
 const OPENAI_MODELS: readonly ModelInfo[] = [
   {
@@ -281,12 +310,11 @@ export class LlmProviderFactory {
         this.config.get<string>('ROUTERAI_BASE_URL') ?? 'https://routerai.ru/api/v1',
       models: ROUTERAI_MODELS,
       envKey: 'ROUTERAI_API_KEY',
-      // R7.4a: у RouterAI embedding-модели адресуются с префиксом провайдера
-      // (`openai/text-embedding-3-small`) — проверено живым запросом
+      // R7.4a/KI-406: у RouterAI embedding-модели адресуются с префиксом
+      // провайдера (`openai/text-embedding-3-small`) — проверено живым запросом
       // 2026-10-17: без префикса upstream отвечает 400 «Model ... not found».
       // Chat-модели уже несут свой префикс в id, поэтому их не трогаем.
-      resolveEmbeddingModel: (model) =>
-        model.includes('/') ? model : `openai/${model}`,
+      resolveEmbeddingModel: resolveRouterAiEmbeddingModel,
     });
   }
 
