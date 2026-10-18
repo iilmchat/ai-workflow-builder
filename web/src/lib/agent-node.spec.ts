@@ -24,9 +24,9 @@ import {
 } from '@/types/graph';
 
 /**
- * Заглушка i18n: настоящий модуль на импорте пишет `document.documentElement.lang`,
- * а тесты фронтенда идут в `environment: 'node'` (KI-155). Тот же приём, что в
- * `vector-memory-nodes.spec.ts` и `node-registry.spec.ts`.
+ * Заглушка i18n: jsdom настроен (KI-155), но тест проверяет реестр и чистые
+ * валидаторы, а не переводы. Подмена убирает зависимость от языка и
+ * побочных эффектов `@/i18n`.
  */
 vi.mock('@/i18n', () => {
   const t = (key: string): string => key;
@@ -37,10 +37,9 @@ vi.mock('@/i18n', () => {
 /**
  * Юнит-тесты agent-узла (R7.4b, DESIGN v0.9 § 3.4).
  *
- * Vitest фронтенда идёт без DOM (KI-155, KI-405): «рендер» проверяется как
- * контракт компонента и реестра, состояние инструментов — через чистые
- * валидаторы, timeline — через парсер шагов. Это тот же подход, что у
- * `vector-memory-nodes.spec.ts` (R7.4a).
+ * Здесь проверяется контракт компонента и реестра, состояние инструментов —
+ * через чистые валидаторы, timeline — через парсер шагов. Сам рендер и правки
+ * полей в jsdom покрыты `components/nodes/AgentNode.spec.tsx` (KI-405).
  */
 describe('AgentNode (R7.4b)', () => {
   it('компонент зарегистрирован в категории ai и вставка в связь разрешена', () => {
@@ -48,7 +47,10 @@ describe('AgentNode (R7.4b)', () => {
 
     expect(entry.category).toBe('ai');
     expect(entry.icon).toBe('🧠');
-    expect(typeof entry.component).toBe('function');
+    expect(entry.component).toHaveProperty(
+      '$$typeof',
+      Symbol.for('react.lazy'),
+    );
     // Вход `text-input` есть — узел вставляется в связь (KI-259).
     expect(entry.canBeInsertedOnEdge).toBe(true);
     // Инструменты читают/пишут состояние вне графа (KI-128).

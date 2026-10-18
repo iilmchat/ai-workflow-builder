@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -442,6 +442,20 @@ function CanvasInner({ onReady }: CanvasProps) {
           canvasMode === 'pan' ? 'cursor-grab' : 'cursor-default'
         }`}
       >
+        {/* KI-008: компоненты узлов ленивые (`React.lazy` в реестре), поэтому
+            React Flow должен рендериться под Suspense-границей. Fallback —
+            общий индикатор загрузки: он виден только пока подгружается чанк
+            первого узла, после чего холст монтируется как раньше. */}
+        <Suspense
+          fallback={
+            <div
+              role="status"
+              className="flex h-full w-full items-center justify-center text-sm text-muted-foreground"
+            >
+              {t('common.loading')}
+            </div>
+          }
+        >
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -568,6 +582,7 @@ function CanvasInner({ onReady }: CanvasProps) {
             </ViewportPortal>
           )}
         </ReactFlow>
+        </Suspense>
       </div>
 
       {/* KI-188/KI-190: панель режимов холста. Живёт вне `<ReactFlow>`, но внутри

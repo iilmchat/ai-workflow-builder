@@ -9,7 +9,10 @@ import { ShareModal } from './ShareModal';
 /** Сохранённый workflow для модалки. */
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
 
-/** Отдельный i18next-инстанс: реальный `i18n/index.ts` требует `document`. */
+/**
+ * Отдельный i18next-инстанс: серверный рендер не должен зависеть от
+ * глобального `document`/localStorage (jsdom в тестах есть, KI-155).
+ */
 const i18n = createInstance();
 
 beforeAll(async () => {

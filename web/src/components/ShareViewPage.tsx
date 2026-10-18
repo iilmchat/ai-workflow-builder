@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router-dom';
 import {
@@ -199,6 +199,18 @@ export function ShareViewPage() {
                   `fitViewOptions` передаём и ему — иначе кнопка замолчала бы
                   store-дефолт `minZoom` 0.5 (KI-306). Кнопка интерактивности
                   скрыта: на read-only странице переключать нечего. */}
+              {/* KI-008: узлы реестра ленивые — Suspense обязателен и здесь,
+                  иначе публичная страница упадёт на первом рендере узла. */}
+              <Suspense
+                fallback={
+                  <div
+                    role="status"
+                    className="flex h-full w-full items-center justify-center text-sm text-muted-foreground"
+                  >
+                    {t('common.loading')}
+                  </div>
+                }
+              >
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
@@ -227,6 +239,7 @@ export function ShareViewPage() {
                   showInteractive={false}
                 />
               </ReactFlow>
+              </Suspense>
             </ReactFlowProvider>
           </div>
         )}

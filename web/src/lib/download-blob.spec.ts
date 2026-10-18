@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { exportFileNameOf, triggerDownload } from './download-blob';
 
 afterEach(() => {
-  // `URL` и `document` подменяются на время теста: в node-окружении (KI-155)
-  // ни blob-URL, ни DOM нет.
+  // jsdom (KI-155) даёт DOM, но не `URL.createObjectURL`: подменяем `URL` и
+  // `document`, чтобы проверить порядок click → revoke без реального скачивания.
   vi.unstubAllGlobals();
 });
 

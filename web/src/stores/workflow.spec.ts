@@ -5,8 +5,9 @@ import type { AppNode } from '@/types/graph';
 import type { SnapshotMessage } from '@/types/run-stream';
 
 /**
- * Заглушка i18n: настоящий модуль на импорте пишет `document.documentElement.lang`
- * (см. `@/i18n`), а тесты идут в `environment: 'node'` — без jsdom (KI-155).
+ * Заглушка i18n: jsdom настроен (KI-155), но тест проверяет стор, а не
+ * переводы. Подмена убирает зависимость от языка и побочных эффектов
+ * `@/i18n` (`document.documentElement.lang`, localStorage).
  *
  * `vi.mock` поднимается к началу файла, поэтому реальный модуль не выполняется
  * ни при импорте стора, ни при импорте его зависимостей (`@/lib/api`).
@@ -410,8 +411,9 @@ describe('useWorkflowStore — SSE-события статуса узла (KI-28
   });
 
   it('снимок с skipped-узлом применяется целиком', () => {
-    // Снимок завершённого запуска трогает `?runId=` (`window`), а тесты идут в
-    // node-окружении (см. `vitest.config.ts`): подставляем минимальный window.
+    // Снимок завершённого запуска трогает `?runId=` (`window`). jsdom-`window`
+    // есть (KI-155), но подменяем location/history: тест не должен зависеть
+    // от адреса тестового документа.
     vi.stubGlobal('window', {
       location: { href: 'http://127.0.0.1:5173/?workflowId=w1' },
       history: { replaceState: () => undefined },
@@ -500,8 +502,8 @@ describe('useWorkflowStore — run.error в снимке (KI-347)', () => {
   const ISO_SNAPSHOT_AT = '2026-10-16T11:00:00.000Z';
 
   beforeEach(() => {
-    // Снимок завершённого запуска трогает `?runId=` (`window`), а тесты идут в
-    // node-окружении — подставляем минимальный window (как в KI-288-спеке).
+    // Снимок завершённого запуска трогает `?runId=` (`window`). jsdom-`window`
+    // есть (KI-155), но подменяем location/history ради детерминизма.
     vi.stubGlobal('window', {
       location: { href: 'http://127.0.0.1:5173/?workflowId=w1' },
       history: { replaceState: () => undefined },

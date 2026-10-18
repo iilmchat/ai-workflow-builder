@@ -1,23 +1,5 @@
-import type { ComponentType } from 'react';
+import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
 import type { NodeProps, NodeTypes } from '@xyflow/react';
-import { AgentNode } from '@/components/nodes/AgentNode';
-import { CommentNode } from '@/components/nodes/CommentNode';
-import { CompareNode } from '@/components/nodes/CompareNode';
-import { ConditionNode } from '@/components/nodes/ConditionNode';
-import { HttpNode } from '@/components/nodes/HttpNode';
-import { AudioGenNode } from '@/components/nodes/AudioGenNode';
-import { ImageGenNode } from '@/components/nodes/ImageGenNode';
-import { ImageToolNode } from '@/components/nodes/ImageToolNode';
-import { LLMNode } from '@/components/nodes/LLMNode';
-import { MemoryReadNode } from '@/components/nodes/MemoryReadNode';
-import { MemoryWriteNode } from '@/components/nodes/MemoryWriteNode';
-import { MusicGenNode } from '@/components/nodes/MusicGenNode';
-import { OutputNode } from '@/components/nodes/OutputNode';
-import { SubWorkflowNode } from '@/components/nodes/SubWorkflowNode';
-import { TextNode } from '@/components/nodes/TextNode';
-import { VectorQueryNode } from '@/components/nodes/VectorQueryNode';
-import { VectorUpsertNode } from '@/components/nodes/VectorUpsertNode';
-import { VideoGenNode } from '@/components/nodes/VideoGenNode';
 import i18n from '@/i18n';
 import type {
   AgentFlowNode,
@@ -44,6 +26,141 @@ import type {
 } from '@/types/graph';
 
 /**
+ * Ленивые компоненты узлов (KI-008).
+ *
+ * Реестр больше не тянет все 18 узлов в стартовый бандл: компоненты
+ * подгружаются при первом рендере узла отдельным ленивым чанком. До этого
+ * один `index-*.js` занимал ~775 kB (порог warning'а — 780 kB), и каждый новый
+ * тип узла приближал сборку к падению по лимиту.
+ *
+ * `lazy` требует `default`-экспорт, а компоненты узлов экспортированы
+ * именованно, поэтому модуль «переворачивается» через `.then`. Ссылка на
+ * ленивый компонент стабильна (создаётся на уровне модуля), так что React Flow
+ * не видит новый тип на каждом рендере.
+ *
+ * Suspense-границы живут у потребителей (`Canvas`, `ShareViewPage`): React Flow
+ * рендерит узлы внутри своего дерева, и граница должна быть выше `<ReactFlow>`.
+ */
+const AgentNode = lazy(() =>
+  import('@/components/nodes/AgentNode').then((module) => ({
+    default: module.AgentNode,
+  })),
+);
+
+const CommentNode = lazy(() =>
+  import('@/components/nodes/CommentNode').then((module) => ({
+    default: module.CommentNode,
+  })),
+);
+
+const CompareNode = lazy(() =>
+  import('@/components/nodes/CompareNode').then((module) => ({
+    default: module.CompareNode,
+  })),
+);
+
+const ConditionNode = lazy(() =>
+  import('@/components/nodes/ConditionNode').then((module) => ({
+    default: module.ConditionNode,
+  })),
+);
+
+const HttpNode = lazy(() =>
+  import('@/components/nodes/HttpNode').then((module) => ({
+    default: module.HttpNode,
+  })),
+);
+
+const AudioGenNode = lazy(() =>
+  import('@/components/nodes/AudioGenNode').then((module) => ({
+    default: module.AudioGenNode,
+  })),
+);
+
+const ImageGenNode = lazy(() =>
+  import('@/components/nodes/ImageGenNode').then((module) => ({
+    default: module.ImageGenNode,
+  })),
+);
+
+const ImageToolNode = lazy(() =>
+  import('@/components/nodes/ImageToolNode').then((module) => ({
+    default: module.ImageToolNode,
+  })),
+);
+
+const LLMNode = lazy(() =>
+  import('@/components/nodes/LLMNode').then((module) => ({
+    default: module.LLMNode,
+  })),
+);
+
+const MemoryReadNode = lazy(() =>
+  import('@/components/nodes/MemoryReadNode').then((module) => ({
+    default: module.MemoryReadNode,
+  })),
+);
+
+const MemoryWriteNode = lazy(() =>
+  import('@/components/nodes/MemoryWriteNode').then((module) => ({
+    default: module.MemoryWriteNode,
+  })),
+);
+
+const MusicGenNode = lazy(() =>
+  import('@/components/nodes/MusicGenNode').then((module) => ({
+    default: module.MusicGenNode,
+  })),
+);
+
+const OutputNode = lazy(() =>
+  import('@/components/nodes/OutputNode').then((module) => ({
+    default: module.OutputNode,
+  })),
+);
+
+const SubWorkflowNode = lazy(() =>
+  import('@/components/nodes/SubWorkflowNode').then((module) => ({
+    default: module.SubWorkflowNode,
+  })),
+);
+
+const TextNode = lazy(() =>
+  import('@/components/nodes/TextNode').then((module) => ({
+    default: module.TextNode,
+  })),
+);
+
+const VectorQueryNode = lazy(() =>
+  import('@/components/nodes/VectorQueryNode').then((module) => ({
+    default: module.VectorQueryNode,
+  })),
+);
+
+const VectorUpsertNode = lazy(() =>
+  import('@/components/nodes/VectorUpsertNode').then((module) => ({
+    default: module.VectorUpsertNode,
+  })),
+);
+
+const VideoGenNode = lazy(() =>
+  import('@/components/nodes/VideoGenNode').then((module) => ({
+    default: module.VideoGenNode,
+  })),
+);
+
+/**
+ * Компонент узла одного конкретного типа.
+ *
+ * `React.lazy` возвращает `LazyExoticComponent`, а не функцию-компонент,
+ * поэтому одного `ComponentType` мало: реестр принимает обе формы. Это
+ * оставляет проверку props конкретного узла (без `as unknown` и `any`).
+ */
+type NodeComponentOf<T extends AppNode> =
+  | ComponentType<NodeProps<T>>
+  | LazyExoticComponent<ComponentType<NodeProps<T>>>;
+
+/**
  * Компонент узла в реестре.
  *
  * У каждого типа узла свои props (`NodeProps<TextFlowNode>` и т. д.), а
@@ -52,24 +169,24 @@ import type {
  * `as unknown`. Объединяем конкретные типы — проверка типов сохраняется.
  */
 export type NodeComponent =
-  | ComponentType<NodeProps<TextFlowNode>>
-  | ComponentType<NodeProps<LlmFlowNode>>
-  | ComponentType<NodeProps<ImageGenFlowNode>>
-  | ComponentType<NodeProps<ImageToolFlowNode>>
-  | ComponentType<NodeProps<VideoGenFlowNode>>
-  | ComponentType<NodeProps<AudioGenFlowNode>>
-  | ComponentType<NodeProps<MusicGenFlowNode>>
-  | ComponentType<NodeProps<CommentFlowNode>>
-  | ComponentType<NodeProps<HttpFlowNode>>
-  | ComponentType<NodeProps<ConditionFlowNode>>
-  | ComponentType<NodeProps<OutputFlowNode>>
-  | ComponentType<NodeProps<CompareFlowNode>>
-  | ComponentType<NodeProps<SubWorkflowFlowNode>>
-  | ComponentType<NodeProps<VectorUpsertFlowNode>>
-  | ComponentType<NodeProps<VectorQueryFlowNode>>
-  | ComponentType<NodeProps<MemoryReadFlowNode>>
-  | ComponentType<NodeProps<MemoryWriteFlowNode>>
-  | ComponentType<NodeProps<AgentFlowNode>>;
+  | NodeComponentOf<TextFlowNode>
+  | NodeComponentOf<LlmFlowNode>
+  | NodeComponentOf<ImageGenFlowNode>
+  | NodeComponentOf<ImageToolFlowNode>
+  | NodeComponentOf<VideoGenFlowNode>
+  | NodeComponentOf<AudioGenFlowNode>
+  | NodeComponentOf<MusicGenFlowNode>
+  | NodeComponentOf<CommentFlowNode>
+  | NodeComponentOf<HttpFlowNode>
+  | NodeComponentOf<ConditionFlowNode>
+  | NodeComponentOf<OutputFlowNode>
+  | NodeComponentOf<CompareFlowNode>
+  | NodeComponentOf<SubWorkflowFlowNode>
+  | NodeComponentOf<VectorUpsertFlowNode>
+  | NodeComponentOf<VectorQueryFlowNode>
+  | NodeComponentOf<MemoryReadFlowNode>
+  | NodeComponentOf<MemoryWriteFlowNode>
+  | NodeComponentOf<AgentFlowNode>;
 
 /**
  * Описание узла в реестре: единый источник правды.
@@ -84,7 +201,7 @@ export interface NodeRegistryEntry {
   readonly icon: string;
   /** Категория для каталога (§ 5.2 DESIGN v0.7). */
   readonly category: NodeCategory;
-  /** React-компонент узла. */
+  /** Ленивый React-компонент узла (KI-008). */
   readonly component: NodeComponent;
   /**
    * Можно ли вставить узел этого типа в существующую связь (KI-259).
@@ -351,6 +468,9 @@ export function canInsertOnEdge(type: NodeType): boolean {
 /**
  * `nodeTypes` для React Flow — выводится из реестра.
  *
+ * Значения — ленивые компоненты (`React.lazy`), поэтому потребитель обязан
+ * держать `<ReactFlow>` под `<Suspense>` (см. `Canvas` и `ShareViewPage`).
+ *
  * Двойное приведение нужно из-за инвариантности `NodeProps`: конкретные
  * компоненты подходят под `NodeTypes` только после стирания их props.
  * Во время выполнения React Flow передаёт компоненту props именно его узла.
@@ -371,7 +491,10 @@ export const nodeTypes = Object.fromEntries(
  * @param fallback - запасной текст, обычно id узла
  * @returns подпись из реестра либо `fallback`
  */
-export function nodeLabelOf(node: AppNode | undefined, fallback: string): string {
+export function nodeLabelOf(
+  node: AppNode | undefined,
+  fallback: string,
+): string {
   const type = node?.type;
 
   return type !== undefined && isNodeType(type)

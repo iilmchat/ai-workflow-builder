@@ -5,8 +5,9 @@ import { canInsertOnEdge, isNodeType, NODE_REGISTRY, NODE_TYPES } from './node-r
 import { NODE_CATEGORIES, type NodeType } from '@/types/graph';
 
 /**
- * Заглушка i18n: настоящий модуль на импорте пишет `document.documentElement.lang`
- * (см. `@/i18n`), а тесты идут в `environment: 'node'` — без jsdom (KI-155).
+ * Заглушка i18n: тесты фронтенда идут в jsdom (KI-155), но реестр проверяет
+ * метаданные, а не переводы. Подмена убирает зависимость от локали и
+ * побочных эффектов `@/i18n` (`document.documentElement.lang`, localStorage).
  *
  * `vi.mock` поднимается к началу файла, поэтому реальный модуль не выполняется
  * и при импорте реестра (он резолвит подписи через глобальный i18next).
@@ -16,6 +17,19 @@ vi.mock('@/i18n', () => {
 
   return { default: { t, language: 'ru' }, setLanguage: () => undefined };
 });
+
+/** Метка `React.lazy`: реестр хранит ленивые компоненты, а не функции (KI-008). */
+const LAZY_TAG = Symbol.for('react.lazy');
+
+/**
+ * Проверяет, что в реестре лежит ленивый компонент.
+ *
+ * @param component - значение `entry.component`
+ * @param message - подпись для сообщения об ошибке
+ */
+function expectLazyComponent(component: unknown, message?: string): void {
+  expect(component, message).toHaveProperty('$$typeof', LAZY_TAG);
+}
 
 /** Типы, добавленные в R6.5.2 (KI-105, DESIGN v0.8 § 8). */
 const NEW_TYPES = ['http', 'condition', 'output', 'compare'] as const;
@@ -77,7 +91,10 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
   it('иконки и компоненты заданы: тип можно показать в каталоге', () => {
     for (const type of NEW_TYPES) {
       expect(NODE_REGISTRY[type].icon, `иконка ${type}`).not.toBe('');
-      expect(typeof NODE_REGISTRY[type].component, `компонент ${type}`).toBe('function');
+      expectLazyComponent(
+        NODE_REGISTRY[type].component,
+        `компонент ${type}`,
+      );
     }
   });
 
@@ -130,7 +147,7 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
     expect(NODE_REGISTRY.sub_workflow.category).toBe('composition');
     expect(NODE_CATEGORIES).toContain('composition');
     expect(NODE_REGISTRY.sub_workflow.icon).toBe('🧩');
-    expect(typeof NODE_REGISTRY.sub_workflow.component).toBe('function');
+    expectLazyComponent(NODE_REGISTRY.sub_workflow.component);
     // Вход `text-input` есть — узел вставляется в связь (KI-259).
     expect(canInsertOnEdge(SUB_WORKFLOW_TYPE)).toBe(true);
     // Подграф выбирают до запуска; внешнего состояния узел не держит.
@@ -155,7 +172,7 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
   it('R7.1: image_tool — категория «Медиа-инструменты» и ключи в обоих i18n', () => {
     expect(NODE_REGISTRY.image_tool.category).toBe('media_tools');
     expect(NODE_CATEGORIES).toContain('media_tools');
-    expect(typeof NODE_REGISTRY.image_tool.component).toBe('function');
+    expectLazyComponent(NODE_REGISTRY.image_tool.component);
     // Входной порт есть — узел вставляется в связь (KI-259).
     expect(canInsertOnEdge(IMAGE_TOOL_TYPE)).toBe(true);
     expect(isNodeType(IMAGE_TOOL_TYPE)).toBe(true);
@@ -185,7 +202,7 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
 
       expect(entry.category, type).toBe('media_generation');
       expect(entry.icon, `иконка ${type}`).not.toBe('');
-      expect(typeof entry.component, `компонент ${type}`).toBe('function');
+      expectLazyComponent(entry.component, `компонент ${type}`);
       // Вход `text-input` (промпт) есть — узел вставляется в связь (KI-259).
       expect(canInsertOnEdge(type), type).toBe(true);
       expect(isNodeType(type), type).toBe(true);
@@ -224,7 +241,7 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
 
       expect(entry.category, type).toBe(category);
       expect(entry.icon, `иконка ${type}`).not.toBe('');
-      expect(typeof entry.component, `компонент ${type}`).toBe('function');
+      expectLazyComponent(entry.component, `компонент ${type}`);
       // Вход `text-input` есть у всех — вставка в связь (KI-259).
       expect(canInsertOnEdge(type), type).toBe(true);
       expect(isNodeType(type), type).toBe(true);
@@ -244,7 +261,7 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
 
     expect(entry.category).toBe('ai');
     expect(entry.icon).not.toBe('');
-    expect(typeof entry.component).toBe('function');
+    expectLazyComponent(entry.component);
     expect(canInsertOnEdge(AGENT_TYPE)).toBe(true);
     expect(isNodeType(AGENT_TYPE)).toBe(true);
     // Инструменты ходят в БД и внешний мир: состояние вне графа есть.

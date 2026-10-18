@@ -79,20 +79,73 @@ export default defineConfig({
     },
   },
   build: {
-    // KI-008: бандл > 500 kB (Zod + react-i18next + @xyflow/react), и Vite
-    // роняет в лог «(!) Some chunks are larger than 500 kB». DESIGN v0.7 § 4.5
-    // выбрал вариант A — «живём с этим размером» и порог 700 kB; в конфиг он
-    // до сих пор не попал, поэтому `pnpm build` печатал warning (RULES 3.6
-    // требует «0 errors, 0 warnings»). Сборка v0.8.3-TaskB: 699.88 kB.
-    // R7.1 (KI-196): узел `image_tool` и его зеркала схем дали 711.08 kB,
-    // поэтому порог поднят до 730 kB. Системное решение (code-split) —
-    // отдельная задача KI-008, в v0.9 не входит.
-    // R7.2 (KI-361): три узла media-генерации (`video_generation`,
-    // `audio_generation`, `music_generation`), их компоненты и зеркало
-    // контрактов дали 734.19 kB → порог 750 kB. Рост +23 kB на три узла —
-    // аргумент за code-split (KI-008) до v0.10.
-    // R7.4a (KI-128): четыре vector/memory-узла дали 758.92 kB → порог 780 kB.
-    chunkSizeWarningLimit: 780,
+    /**
+     * KI-008/KI-390: код-сплит вместо повышения порога.
+     *
+     * До v0.9.3 все узлы лежали в одном `index-*.js` (~775 kB): каждый новый
+     * тип узла приближал сборку к лимиту, а порог warning'а приходилось
+     * поднимать (780 kB). Теперь компоненты узлов ленивые (`React.lazy` в
+     * `src/lib/node-registry.ts`), а `codeSplitting` раскладывает бандл так,
+     * чтобы при старте не грузились ни узлы, ни их общие зависимости:
+     *
+     * - по чанку на каждый компонент `*Node.tsx` (ленивые чанки);
+     * - `react` — React/React DOM/Scheduler (нужны всегда);
+     * - `reactflow` — `@xyflow/react` и `@xyflow/system`;
+     * - `i18n` — i18next + react-i18next;
+     * - `vendor` — остальные библиотеки (zod, zustand, router).
+     *
+     * Порог оставлен 500 kB (дефолт Vite), чтобы предупреждение снова ловило
+     * регрессию, а не маскировалось высоким лимитом.
+     */
+    chunkSizeWarningLimit: 500,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            // Только сами компоненты (`*Node.tsx`), без `nodes/index.ts`:
+            // реэкспорт реестра статически импортируется `Canvas`, и если
+            // сгруппировать его с узлами, стартовый чанк потянет ленивые
+            // модули (modulepreload). `includeDependenciesRecursively: false`
+            // обязателен: иначе группа затянет в чанк React, @xyflow и стор —
+            // ровно то, что должно остаться в стартовых чанках.
+            {
+              // Каждый узел — свой чанк: граф с одним Text-узлом не тянет
+              // LLM/media/vector-компоненты. `BaseNode` тоже попадает сюда и
+              // грузится один раз как общая зависимость.
+              debugName: 'nodes',
+              name(moduleId) {
+                const match = /nodes[\\/]([A-Za-z]+Node)\.tsx$/.exec(moduleId);
+
+                return match?.[1] ?? 'nodes';
+              },
+              test: /src[\\/]components[\\/]nodes[\\/][A-Za-z]+Node\.tsx$/,
+              priority: 50,
+              includeDependenciesRecursively: false,
+            },
+            {
+              name: 'react',
+              test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+              priority: 40,
+            },
+            {
+              name: 'reactflow',
+              test: /node_modules[\\/]@xyflow[\\/]/,
+              priority: 30,
+            },
+            {
+              name: 'i18n',
+              test: /node_modules[\\/](i18next|react-i18next)[\\/]/,
+              priority: 20,
+            },
+            {
+              name: 'vendor',
+              test: /node_modules[\\/]/,
+              priority: 10,
+            },
+          ],
+        },
+      },
+    },
   },
   server: {
     host: '127.0.0.1',

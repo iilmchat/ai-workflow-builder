@@ -15,8 +15,9 @@ import { useWorkflowStore } from './workflow';
  */
 
 /**
- * Заглушка i18n: настоящий модуль на импорте пишет `document.documentElement.lang`
- * (см. `@/i18n`), а тесты идут в `environment: 'node'` — без jsdom (KI-155).
+ * Заглушка i18n: jsdom настроен (KI-155), но тест проверяет стор, а не
+ * переводы. Подмена убирает зависимость от языка и побочных эффектов
+ * `@/i18n` (`document.documentElement.lang`, localStorage).
  */
 vi.mock('@/i18n', () => {
   const t = (key: string): string => key;
@@ -78,8 +79,9 @@ function state() {
 
 describe('useWorkflowStore — узлы media-генерации (R7.2, KI-361)', () => {
   beforeEach(() => {
-    // `loadWorkflowAsync` читает `?runId=` из адресной строки, а тесты идут в
-    // node-окружении — подставляем минимальный window.
+    // `loadWorkflowAsync` читает `?runId=` из адресной строки. jsdom-`window`
+    // есть (KI-155), но подменяем location/history: тест не должен зависеть
+    // от адреса тестового документа и трогать реальную историю.
     vi.stubGlobal('window', {
       location: { href: 'http://127.0.0.1:5173/?workflowId=w1' },
       history: { replaceState: () => undefined },

@@ -18,9 +18,9 @@ import {
 } from '@/types/graph';
 
 /**
- * Заглушка i18n: настоящий модуль на импорте пишет `document.documentElement.lang`,
- * а тесты идут в `environment: 'node'` (KI-155). Тот же приём, что в
- * `node-registry.spec.ts`.
+ * Заглушка i18n: jsdom настроен (KI-155), но тест проверяет реестр и чистые
+ * валидаторы, а не переводы. Подмена убирает зависимость от языка и
+ * побочных эффектов `@/i18n`.
  */
 vi.mock('@/i18n', () => {
   const t = (key: string): string => key;
@@ -31,18 +31,22 @@ vi.mock('@/i18n', () => {
 /**
  * Юнит-тесты четырёх vector/memory-узлов (R7.4a).
  *
- * Vitest фронтенда идёт в `environment: 'node'` (KI-155): DOM и jsdom не
- * тянутся, поэтому «рендер» здесь — проверка контракта компонента (он
- * зарегистрирован как функция, его поля и i18n-ключи существуют), а логика
- * полей вынесена в `vector-memory-node-fields.ts` и проверяется напрямую.
- * Это тот же подход, что у `http-node-fields.spec.ts` (R6.5.2).
+ * Тесты идут в jsdom (KI-155), но здесь проверяется контракт реестра (узел
+ * зарегистрирован ленивым компонентом, его поля и i18n-ключи существуют), а
+ * логика полей вынесена в `vector-memory-node-fields.ts` и проверяется
+ * напрямую. Рендер `VectorUpsertNode` — в
+ * `components/nodes/VectorUpsertNode.spec.tsx` (KI-405). Это тот же подход,
+ * что у `http-node-fields.spec.ts` (R6.5.2).
  */
 
 describe('VectorUpsertNode (R7.4a)', () => {
   it('компонент зарегистрирован и относится к категории vector', () => {
     expect(NODE_CATEGORIES).toContain('vector');
     expect(NODE_REGISTRY.vector_upsert.category).toBe('vector');
-    expect(typeof NODE_REGISTRY.vector_upsert.component).toBe('function');
+    expect(NODE_REGISTRY.vector_upsert.component).toHaveProperty(
+      '$$typeof',
+      Symbol.for('react.lazy'),
+    );
     expect(NODE_REGISTRY.vector_upsert.capabilities.externalState).toBe(true);
     expect(NODE_REGISTRY.vector_upsert.canBeInsertedOnEdge).toBe(true);
   });
@@ -75,7 +79,10 @@ describe('VectorUpsertNode (R7.4a)', () => {
 describe('VectorQueryNode (R7.4a)', () => {
   it('компонент зарегистрирован, дефолты соответствуют backend (5 / 0.7)', () => {
     expect(NODE_REGISTRY.vector_query.category).toBe('vector');
-    expect(typeof NODE_REGISTRY.vector_query.component).toBe('function');
+    expect(NODE_REGISTRY.vector_query.component).toHaveProperty(
+      '$$typeof',
+      Symbol.for('react.lazy'),
+    );
     expect(DEFAULT_VECTOR_TOPK).toBe(5);
     expect(DEFAULT_VECTOR_SCORE_THRESHOLD).toBe(0.7);
     expect(VECTOR_TOPK_LIMIT).toBe(100);
@@ -112,7 +119,10 @@ describe('MemoryReadNode (R7.4a)', () => {
   it('компонент зарегистрирован в категории state', () => {
     expect(NODE_CATEGORIES).toContain('state');
     expect(NODE_REGISTRY.memory_read.category).toBe('state');
-    expect(typeof NODE_REGISTRY.memory_read.component).toBe('function');
+    expect(NODE_REGISTRY.memory_read.component).toHaveProperty(
+      '$$typeof',
+      Symbol.for('react.lazy'),
+    );
     expect(NODE_REGISTRY.memory_read.capabilities.externalState).toBe(true);
     expect(NODE_REGISTRY.memory_read.canBeInsertedOnEdge).toBe(true);
   });
@@ -127,7 +137,10 @@ describe('MemoryReadNode (R7.4a)', () => {
 describe('MemoryWriteNode (R7.4a)', () => {
   it('компонент зарегистрирован в категории state', () => {
     expect(NODE_REGISTRY.memory_write.category).toBe('state');
-    expect(typeof NODE_REGISTRY.memory_write.component).toBe('function');
+    expect(NODE_REGISTRY.memory_write.component).toHaveProperty(
+      '$$typeof',
+      Symbol.for('react.lazy'),
+    );
     expect(NODE_REGISTRY.memory_write.capabilities.externalState).toBe(true);
     expect(NODE_REGISTRY.memory_write.canBeInsertedOnEdge).toBe(true);
   });

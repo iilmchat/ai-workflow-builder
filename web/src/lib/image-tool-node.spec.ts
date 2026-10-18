@@ -12,8 +12,8 @@ import {
 /**
  * Юнит-тесты чистой логики узла `image_tool` (R7.1, KI-196).
  *
- * Проверяется логика превью и валидации без DOM; отображение компонента
- * (jsdom, KI-155) покрыто `components/nodes/ImageToolNode.spec.tsx`.
+ * Проверяются чистые функции превью и валидации без монтирования компонента;
+ * отображение (jsdom, KI-155) покрыто `components/nodes/ImageToolNode.spec.tsx`.
  */
 describe('image_tool: превью входа (R7.1)', () => {
   it('берёт ссылку из порта url (выход image_generation)', () => {

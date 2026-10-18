@@ -5,8 +5,9 @@ import { useWorkflowStore } from './workflow';
 import type { NodeType } from '@/types/graph';
 
 /**
- * Заглушка i18n: настоящий модуль на импорте пишет `document.documentElement.lang`
- * (см. `@/i18n`), а тесты идут в `environment: 'node'` — без jsdom (KI-155).
+ * Заглушка i18n: jsdom настроен (KI-155), но тест проверяет стор, а не
+ * переводы. Подмена убирает зависимость от языка и побочных эффектов
+ * `@/i18n` (`document.documentElement.lang`, localStorage).
  */
 vi.mock('@/i18n', () => {
   const t = (key: string): string => key;
@@ -27,8 +28,9 @@ vi.mock('@/lib/api', async (importOriginal) => {
 
 /**
  * Заглушка url-sync: `loadWorkflowAsync` читает `?runId=` из адресной строки
- * (KI-271), а в node-окружении `window` нет. `null` — «страницу не
- * перезагружали посреди запуска», то есть поток не переподписывается.
+ * (KI-271). jsdom-`window` есть (KI-155), но тест не должен зависеть от
+ * адреса тестового документа. `null` — «страницу не перезагружали посреди
+ * запуска», то есть поток не переподписывается.
  */
 vi.mock('@/lib/url-sync', () => ({
   getRunIdFromUrl: () => null,
