@@ -25,13 +25,17 @@
 - **HTTP Rate Limiting (KI-206, KI-234):** `@nestjs/throttler` (5/мин на login/share, 300/мин общий).
 - **UI lipsync (KI-369):** Поле `audioUrl` в `ImageToolNode`.
 - **Медиа-дефолты (KI-367):** Дефолтные модели для upscale (FAL/Replicate) и trim (@VideoEdit).
+- **R7.8-fix:** Реализован `S3MediaStorage` (PutObjectCommand, TTL) и `MediaCleanupService` (BullMQ cron, KI-412, KI-413).
 
 ### Fixed
 - **KI-391:** Стабильный `INSTANCE_ID` (`hostname:PORT`) для BullMQ.
 - **KI-367:** Частично закрыт (остаток по chromakey — KI-418).
+- **KI-263, 330, 331:** UI-фиксы Share-страницы и вставки узлов.
+- **KI-378:** Отображение `data:image/...` в UI.
 
 ### Documented
 - **KI-418..424** — новые KI v0.9.1 (см. KNOWN_ISSUES.md).
+- **KI-425..430** — новые KI v0.9.1 (см. KNOWN_ISSUES.md).
 
 ## [0.9.0] — 2026-10-18
 

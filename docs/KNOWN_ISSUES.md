@@ -4370,7 +4370,8 @@
 ---
 
 ### KI-263 — В «тесной» раскладке вставляемый узел перекрывает соседей
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-15
+- **Исправлено в:** v0.9.1 — сдвиг перпендикулярно связи.
 - **Файлы:** `web/src/App.tsx` (шаг раскладки Toolbar),
   `web/src/components/Canvas.tsx`
 - **Описание:** Toolbar раскладывает узлы с шагом 280 px при ширине
@@ -5426,7 +5427,8 @@
 ---
 
 ### KI-330 — `elementsSelectable` на share-странице не работает
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.9.1 — onNodesChange для выделения.
 - **Файлы:** `web/src/components/ShareViewPage.tsx`
 - **Описание:** `nodes` controlled без `onNodesChange`; клик по узлу не даёт выделения.
 - **Решение:** прокинуть `onNodesChange` (хотя бы для selection) либо сделать `nodes` uncontrolled на публичной странице.
@@ -5435,7 +5437,8 @@
 ---
 
 ### KI-331 — Нельзя вернуть fit-вид на share после wheel-zoom
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.9.1 — добавлены Controls с fitViewOptions.
 - **Файлы:** `web/src/components/ShareViewPage.tsx`
 - **Описание:** `<Controls>` не рендерится; колесо зажато store-minZoom 0.5; fit даёт 0.0104.
 - **Решение:** добавить `<Controls>` (или хоткей fit) с общими `fitViewOptions`.
@@ -5842,7 +5845,7 @@ MediaModelInfo, engine-DTO
   `GET /media/file/:runId/:fileName` (uuid как capability). UI показывает
   `storedUrl ?? mediaUrl` и `ExpiredMediaPlaceholder`. Ошибка сохранения не
   роняет узел (генерация уже оплачена).
-- **Доработано в R7.8-fix (v0.9.2):** S3-загрузка через `@aws-sdk/client-s3`
+- **Доработано в R7.8-fix (v0.9.1):** S3-загрузка через `@aws-sdk/client-s3`
   (KI-412), ежедневная cron-очистка локального хранилища по TTL (KI-413).
 - **Остаток:** `/media/file` без signed URL (KI-415), приватный S3-бакет
   (KI-425), TTL объектов S3 (KI-426).
@@ -6066,7 +6069,8 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-378 — data:-URI результатов OpenAI Images не рендерятся в UI
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.9.1 — `isRenderableMediaUrl` разрешает `data:image/...`.
 - **Файлы:** `web/src/lib/media.ts`, `src/media/providers/openai-images.provider.ts`,
   `src/runs/dto/run-stream-message.dto.ts`
 - **Описание:** `gpt-image-1` отдаёт результат как `data:image/png;base64,...`;
@@ -6509,7 +6513,7 @@ MediaModelInfo, engine-DTO
 
 ### KI-412 — S3 media storage: заглушка без загрузки
 - **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
-- **Исправлено в:** v0.9.2 (R7.8-fix, коммит `<hash>`)
+- **Исправлено в:** v0.9.1 — реализован `S3MediaStorage` (PutObjectCommand).
 - **Fix:** добавлен `@aws-sdk/client-s3`; `S3MediaStorage` скачивает результат
   и кладёт объект `PutObjectCommand` (`S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`,
   ключи из env). Без ключей/бакета `createMediaStorage` откатывается на
@@ -6523,7 +6527,7 @@ MediaModelInfo, engine-DTO
 
 ### KI-413 — TTL локальных media-файлов не чистится
 - **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
-- **Исправлено в:** v0.9.2 (R7.8-fix, коммит `<hash>`)
+- **Исправлено в:** v0.9.1 — `MediaCleanupService` + BullMQ cron.
 - **Fix:** `MediaCleanupService` + `MediaCleanupProcessor`: BullMQ
   `upsertJobScheduler` с cron `0 3 * * *`; удаляются файлы
   `./data/media/{runId}/` старше `MEDIA_STORAGE_LOCAL_TTL_DAYS` (по `fs.stat`,
@@ -6689,18 +6693,41 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-429 — Неполная формула зазора при вставке узла
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `web/src/lib/graph-edit.ts`
+- **Описание:** Формула зазора `size/2 + 40` при вставке узла не учитывает
+  половину высоты соседа: для высоких узлов новый узел всё ещё перекрывает
+  соседний (остаток KI-263).
+- **Решение:** учитывать половину высоты соседа в формуле зазора при расчёте
+  сдвига.
+- **Связанные:** KI-263.
+
+---
+
+### KI-430 — Регистрозависимость схемы URL
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Файлы:** `web/src/types/media.ts`
+- **Описание:** `isRenderableMediaUrl` проверяет префикс `https://` без учёта
+  регистра и отвергает `HTTPS://...` (по RFC 3986 схема регистронезависима).
+- **Решение:** нормализовать схему (`url.protocol.toLowerCase()`) или
+  сравнивать `protocol` через `new URL(...)`.
+- **Связанные:** KI-378.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 151 |
+| Fixed | 160 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
 | Open | 249 |
 | Won't Fix | 1 |
-| **Всего** | **409** |
+| **Всего** | **418** |
 
 ---
 
