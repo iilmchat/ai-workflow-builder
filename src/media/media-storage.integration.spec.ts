@@ -29,6 +29,7 @@ import { VectorStoreService } from '../vector/vector-store.service.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
 import { WEB_SEARCH_PROVIDER } from '../web-search/web-search.module.js';
 import type { IMediaProvider } from './media-provider.interface.js';
+import { DocumentService } from '../documents/document.service.js';
 
 /**
  * Интеграция R7.8 (KI-362): media-генерация → скачивание → локальное
@@ -175,6 +176,13 @@ describe.skipIf(!process.env.DATABASE_URL)(
       const moduleRef = await Test.createTestingModule({
         providers: [
           ExecutionEngineService,
+          {
+            provide: DocumentService,
+            useValue: { 
+              generateDocxFromMarkdownAsync: vi.fn(), 
+              generateDocxFromJsonAsync: vi.fn() 
+            },
+          },          
           EngineService,
           MediaNodeExecutor,
           { provide: DRIZZLE, useValue: dbHandle },
