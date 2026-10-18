@@ -46,6 +46,11 @@ describe('executeAgentNodeAsync (R7.4b)', () => {
       ],
       iterations: 1,
       usage: { inputTokens: 1, outputTokens: 2 },
+      // KI-407: плоские метрики для `node_runs` (движок пока их не пишет —
+      // это отдельная задача вне среза R7.4b-fix).
+      tokensIn: 1,
+      tokensOut: 2,
+      costUsd: null,
     };
     const runAgentAsync = vi.fn(() => Promise.resolve(result));
     const runner: AgentRunner = { runAgentAsync };

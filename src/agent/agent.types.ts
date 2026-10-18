@@ -203,6 +203,18 @@ export interface AgentToolContext {
   };
   /** HTTP-клиент для `http_request` (в продакшене — глобальный `fetch`). */
   readonly fetchAsync: typeof fetch;
+  /**
+   * Резолвер DNS для проверки SSRF (KI-409).
+   *
+   * Инструмент `http_request` обязан проверить **фактический** адрес после
+   * резолва: строка `https://internal.example` может указывать на
+   * `10.0.0.5`. В продакшене — `dns.lookup` (`defaultDnsLookupAsync` в
+   * `agent-tools.ts`), в тестах — мок, чтобы не ходить в сеть.
+   *
+   * Отсутствие поля — «использовать реальный `dns.lookup`»: контракт остаётся
+   * обратно совместимым для тестов и альтернативных реализаций.
+   */
+  readonly dnsLookupAsync?: (hostname: string) => Promise<readonly string[]>;
 }
 
 /**
@@ -253,6 +265,32 @@ export interface AgentRunResult {
   readonly iterations: number;
   /** Суммарные токены по всем итерациям. */
   readonly usage: AgentUsage;
+  /**
+   * Входные токены для `node_runs.tokens_in` (KI-407).
+   *
+   * Дублирует `usage.inputTokens` отдельным полем: исполнителю узла нужен
+   * плоский контракт метрик (`tokensIn`/`tokensOut`/`costUsd`), как у
+   * `LlmNodeMetrics`, чтобы записать их в `node_runs` без разбора шагов.
+   * Если часть шагов не отдала токены, возвращается сумма известных;
+   * `null` — токенов не отдал ни один шаг.
+   */
+  readonly tokensIn: number | null;
+  /**
+   * Выходные токены для `node_runs.tokens_out` (KI-407).
+   *
+   * @see tokensIn
+   */
+  readonly tokensOut: number | null;
+  /**
+   * Стоимость цикла в USD для `node_runs.cost_usd` (KI-407).
+   *
+   * Сумма стоимостей LLM-шагов по прайсу (`calculateCostUsd`). `0` — вызов
+   * обслужен локальным провайдером (бесплатно), `null` — цену посчитать
+   * нельзя: модели нет в прайсе или провайдер не отдал usage (KI-052).
+   * Если часть шагов оценена, а часть — нет, возвращается сумма известных:
+   * «частичная» стоимость полезнее для бюджета, чем `null` на всё.
+   */
+  readonly costUsd: number | null;
 }
 
 /**

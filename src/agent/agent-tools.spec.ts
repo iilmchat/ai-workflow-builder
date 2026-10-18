@@ -39,6 +39,7 @@ function createContext(overrides: Partial<AgentToolContext> = {}): {
     llmGenerateAsync: ReturnType<typeof vi.fn>;
     evaluateSandboxedAsync: ReturnType<typeof vi.fn>;
     fetchAsync: ReturnType<typeof vi.fn>;
+    dnsLookupAsync: ReturnType<typeof vi.fn>;
   };
 } {
   const insertVectorAsync = vi.fn<
@@ -63,6 +64,9 @@ function createContext(overrides: Partial<AgentToolContext> = {}): {
   const fetchAsync = vi.fn(() =>
     Promise.resolve(new Response('{"ok":true}', { status: 200 })),
   );
+  // KI-409: резолвер DNS подменяется, чтобы тесты не ходили в сеть. Публичный
+  // адрес — SSRF-проверка пропускает запрос.
+  const dnsLookupAsync = vi.fn(() => Promise.resolve(['93.184.216.34']));
 
   const context: AgentToolContext = {
     runId: 'run-1',
@@ -81,6 +85,7 @@ function createContext(overrides: Partial<AgentToolContext> = {}): {
     // Мок повторяет сигнатуру fetch: достаточно, чтобы инструмент получил
     // предсказуемый ответ и тест проверил аргументы вызова.
     fetchAsync: fetchAsync as unknown as typeof fetch,
+    dnsLookupAsync,
     ...overrides,
   };
 
@@ -95,6 +100,7 @@ function createContext(overrides: Partial<AgentToolContext> = {}): {
       llmGenerateAsync,
       evaluateSandboxedAsync,
       fetchAsync,
+      dnsLookupAsync,
     },
   };
 }

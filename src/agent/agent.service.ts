@@ -26,11 +26,18 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { LlmUsage } from '../llm/llm-provider.interface.js';
+import { calculateCostUsd } from '../llm/model-pricing.js';
 import { LlmRegistryService } from '../llm/llm-registry.service.js';
 import { LlmService } from '../llm/llm.service.js';
+import { withSpanAsync } from '../observability/tracing.js';
+import { CostBudgetService } from '../runs/cost-budget.service.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
-import { TOOL_REGISTRY, isAgentToolName } from './agent-tools.js';
+import {
+  TOOL_REGISTRY,
+  defaultDnsLookupAsync,
+  isAgentToolName,
+} from './agent-tools.js';
 import {
   AGENT_DEFAULT_MAX_ITERATIONS,
   AGENT_DEFAULT_MAX_TOKENS_PER_STEP,
@@ -70,6 +77,18 @@ const WORKFLOW_SCOPED_TOOLS: ReadonlySet<AgentToolName> = new Set([
   'memory_read',
   'memory_write',
 ]);
+
+/**
+ * Итог одной итерации цикла (R7.4b, KI-416).
+ *
+ * Итерация обёрнута в span `agent.step`, а колбэк span'а не может сделать
+ * `return` из `runAgentAsync`. Поэтому тело итерации возвращает размеченный
+ * результат: `done: true` — финальный ответ получен и цикл завершается,
+ * `done: false` — переходим к следующей итерации.
+ */
+type AgentStepOutcome =
+  | { readonly done: true; readonly result: AgentRunResult }
+  | { readonly done: false };
 
 /**
  * Формат ответа, который обязан соблюдать агент.
@@ -145,6 +164,53 @@ function clampInteger(
  */
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Читает usage из результата инструмента `llm_call` (KI-407).
+ *
+ * `llm_call` — единственный инструмент, который сам делает платный вызов
+ * модели. Его usage приходит в результате (`{ model, text, usage }`), и без
+ * этой функции такой вызов не попадал бы ни в `tokens_*`, ни в бюджет.
+ *
+ * Форма проверяется по полям, а не кастуется: результат инструмента —
+ * `unknown` на границе контракта, и при изменении `TOOL_REGISTRY` агент не
+ * должен молча упасть на `usage.model`.
+ *
+ * @param toolName - имя выполненного инструмента
+ * @param output - результат инструмента (`null` при сбое)
+ * @returns метрики вызова либо `null`, если инструмент не `llm_call`, не имел
+ *   usage или вернул неожиданную форму
+ */
+function readLlmCallUsage(
+  toolName: AgentToolName,
+  output: unknown,
+): LlmUsage | null {
+  if (toolName !== 'llm_call' || !isPlainRecord(output)) {
+    return null;
+  }
+
+  const usage = output.usage;
+
+  if (!isPlainRecord(usage) || typeof usage.model !== 'string') {
+    return null;
+  }
+
+  const readTokens = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
+  const cacheReadTokens = readTokens(usage.cacheReadTokens);
+  const cacheCreationTokens = readTokens(usage.cacheCreationTokens);
+
+  return {
+    inputTokens: readTokens(usage.inputTokens),
+    outputTokens: readTokens(usage.outputTokens),
+    model: usage.model,
+    ...(cacheReadTokens === null ? {} : { cacheReadTokens }),
+    ...(cacheCreationTokens === null ? {} : { cacheCreationTokens }),
+    ...(typeof usage.cacheTokensIncludedInInput === 'boolean'
+      ? { cacheTokensIncludedInInput: usage.cacheTokensIncludedInInput }
+      : {}),
+  };
 }
 
 /**
@@ -345,6 +411,9 @@ export class AgentService {
    * @param vectorStore - хранилище векторов и памяти (R7.4a)
    * @param sandbox - QuickJS-WASM для инструмента `code_eval` (R7.5)
    * @param config - конфигурация приложения (RULES 4.6: env только через DI)
+   * @param costBudget - предохранитель по стоимости запуска (R7.1, KI-407).
+   *   Модуль `CostBudgetModule` глобальный, поэтому отдельный импорт в
+   *   `RunsModule` не нужен
    */
   constructor(
     private readonly llm: LlmService,
@@ -352,6 +421,7 @@ export class AgentService {
     private readonly vectorStore: VectorStoreService,
     private readonly sandbox: QuickJsRunnerService,
     private readonly config: ConfigService,
+    private readonly costBudget: CostBudgetService,
   ) {
     this.defaultMaxIterations = clampInteger(
       config.get<unknown>('AGENT_MAX_ITERATIONS_DEFAULT'),
@@ -374,8 +444,9 @@ export class AgentService {
    * @param inputs - собранные входы узла (уходят в первое user-сообщение JSON)
    * @param runId - uuid запуска: нужен для `workflow_id` и логов
    * @param nodeId - id узла в графе (для логов и контекста инструментов)
-   * @returns финальный ответ, шаги и суммарный usage
+   * @returns финальный ответ, шаги, суммарный usage и стоимость (KI-407)
    * @throws AgentIterationLimitException если лимит итераций исчерпан
+   * @throws BudgetExceededException если бюджет запуска превышен (KI-048/KI-407)
    * @throws Error если в узле нет ни одного известного инструмента
    * @throws LlmProviderException если вызов модели упал (ошибка провайдера)
    */
@@ -408,6 +479,31 @@ export class AgentService {
       inputTokens: null,
       outputTokens: null,
     };
+    // KI-407: стоимость копится по шагам и уходит в `AgentRunResult`, чтобы
+    // исполнитель узла записал её в `node_runs.cost_usd`.
+    let costUsd: number | null = null;
+
+    /**
+     * Собирает результат запуска (KI-407).
+     *
+     * @param answer - финальный ответ модели
+     * @param iterations - номер итерации, на которой получен ответ
+     * @returns результат с плоскими метриками для `node_runs`
+     */
+    const buildResult = (
+      answer: string,
+      iterations: number,
+    ): AgentRunResult => ({
+      answer,
+      steps,
+      iterations,
+      usage,
+      tokensIn: usage.inputTokens,
+      tokensOut: usage.outputTokens,
+      // Сумма уже округлённых шагов может дать артефакт float — для
+      // `numeric(12, 6)` в БД и сравнения с бюджетом округляем ещё раз.
+      costUsd: costUsd === null ? null : Number(costUsd.toFixed(6)),
+    });
 
     this.logger.log(
       `Агент ${nodeId || '(без id)'}: model=${node.model}, ` +
@@ -416,97 +512,162 @@ export class AgentService {
     );
 
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
-      const prompt = renderTranscript(messages);
-      const response = await this.llm.generateAsync(prompt, node.model, {
-        maxTokens,
-      });
-      // usage может отсутствовать (часть прокси не отдаёт токены): шаг всё
-      // равно должен быть валидным `LlmUsage`, иначе ломается timeline.
-      const stepUsage: LlmUsage = response.usage ?? {
-        inputTokens: null,
-        outputTokens: null,
-        model: node.model,
-      };
+      // KI-416 (DESIGN § 3.7.1): span на каждую итерацию цикла. Вложенные
+      // span'ы (`llm.call` внутри `generateAsync`) получают родителем
+      // `agent.step`, а тот — `node.execute` движка. `tool_name` до ответа
+      // модели неизвестен, поэтому выставляется через `setAttribute`.
+      const outcome = await withSpanAsync(
+        'agent.step',
+        { iteration },
+        async (span): Promise<AgentStepOutcome> => {
+          const prompt = renderTranscript(messages);
+          const response = await this.llm.generateAsync(prompt, node.model, {
+            maxTokens,
+          });
+          // usage может отсутствовать (часть прокси не отдаёт токены): шаг всё
+          // равно должен быть валидным `LlmUsage`, иначе ломается timeline.
+          const stepUsage: LlmUsage = response.usage ?? {
+            inputTokens: null,
+            outputTokens: null,
+            model: node.model,
+          };
 
-      this.addUsage(usage, stepUsage);
-      steps.push({ kind: 'llm', prompt, usage: stepUsage });
+          this.addUsage(usage, stepUsage);
+          steps.push({ kind: 'llm', prompt, usage: stepUsage });
 
-      // RULES 5.9: в Pino — только модель, длины и итерация, без текстов.
-      this.logger.log(
-        `Агент ${nodeId || '(без id)'}: итерация ${iteration}/${maxIterations}, ` +
-          `promptLen=${prompt.length}, answerLen=${response.text.length}, ` +
-          `tokens=${stepUsage.inputTokens ?? '?'}/${stepUsage.outputTokens ?? '?'}`,
+          const stepCostUsd = this.calculateStepCostUsd(response, stepUsage);
+
+          costUsd = this.addCost(costUsd, stepCostUsd);
+
+          // RULES 5.9: в Pino — только модель, длины и итерация, без текстов.
+          this.logger.log(
+            `Агент ${nodeId || '(без id)'}: итерация ${iteration}/${maxIterations}, ` +
+              `promptLen=${prompt.length}, answerLen=${response.text.length}, ` +
+              `tokens=${stepUsage.inputTokens ?? '?'}/${stepUsage.outputTokens ?? '?'}, ` +
+              `costUsd=${stepCostUsd ?? '?'}`,
+          );
+
+          // KI-407: бюджет проверяется после платного вызова — до ответа
+          // провайдера стоимость шага неизвестна. В `estimate` уходит
+          // накопленная стоимость цикла: строка `node_runs` агента ещё не
+          // обновлена (её пишет движок после завершения узла), поэтому
+          // собственные траты цикла в БД пока не видны. Проверка получается
+          // консервативной: «впишется ли всё потраченное агентом в остаток».
+          // В `hard`-режиме превышение бросает `BudgetExceededException`
+          // (контракт ошибки задаёт `cost-budget.service.ts`, KI-048).
+          await this.costBudget.assertWithinBudgetAsync(runId, {
+            usd: costUsd ?? 0,
+          });
+
+          const reply = parseAgentReply(response.text);
+
+          // Модель проигнорировала протокол — это не сбой: считаем её текст
+          // финальным ответом. Иначе любой провайдер, не любящий JSON-инструкции,
+          // делал бы узел незапускаемым.
+          if (reply === null) {
+            const answer = response.text.trim();
+
+            steps.push({ kind: 'final', answer });
+
+            return { done: true, result: buildResult(answer, iteration) };
+          }
+
+          if (reply.kind === 'final') {
+            steps.push({ kind: 'final', answer: reply.answer });
+
+            return {
+              done: true,
+              result: buildResult(reply.answer, iteration),
+            };
+          }
+
+          // Инструмент, который запросила модель: атрибут span'а и tool-шаг
+          // фиксируются и для неизвестного имени — диагностика должна
+          // показывать, что именно попросила модель.
+          span.setAttribute('tool_name', reply.name);
+
+          const call: AgentToolCall = {
+            id: `call_${iteration}`,
+            name: reply.name,
+            input: reply.input,
+          };
+          const enabled = tools.find((tool) => tool.name === reply.name);
+
+          if (enabled === undefined) {
+            // Модель попросила инструмент, которого нет в узле (или его вовсе нет
+            // в реестре). Возвращаем ошибку в транскрипт: модель сможет выбрать
+            // разрешённый инструмент, а не оборвать запуск.
+            const error = `Инструмент '${reply.name}' не подключён к узлу агента`;
+
+            steps.push({
+              kind: 'tool',
+              name: reply.name,
+              input: reply.input,
+              output: null,
+              error,
+            });
+            messages.push({
+              role: 'assistant',
+              content: null,
+              tool_calls: [call],
+            });
+            messages.push({
+              role: 'tool',
+              tool_call_id: call.id,
+              content: JSON.stringify({ error }),
+            });
+
+            return { done: false };
+          }
+
+          const { output, error } = await this.executeToolAsync(
+            enabled,
+            call,
+            context,
+          );
+
+          steps.push({
+            kind: 'tool',
+            name: enabled.name,
+            input: call.input,
+            output,
+            ...(error === undefined ? {} : { error }),
+          });
+          messages.push({
+            role: 'assistant',
+            content: null,
+            tool_calls: [call],
+          });
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: this.serializeToolResult(output, error),
+          });
+
+          // KI-407: `llm_call` — платный вызов внутри tool-шага. Его usage
+          // приходит в результате инструмента и тоже учитывается в токенах и
+          // стоимости цикла; бюджет проверяется повторно, иначе этот вызов
+          // оставался бы «чёрным ходом» мимо предохранителя.
+          const toolUsage = readLlmCallUsage(enabled.name, output);
+
+          if (toolUsage !== null) {
+            this.addUsage(usage, toolUsage);
+            costUsd = this.addCost(
+              costUsd,
+              this.calculateStepCostUsd({}, toolUsage),
+            );
+            await this.costBudget.assertWithinBudgetAsync(runId, {
+              usd: costUsd ?? 0,
+            });
+          }
+
+          return { done: false };
+        },
       );
 
-      const reply = parseAgentReply(response.text);
-
-      // Модель проигнорировала протокол — это не сбой: считаем её текст
-      // финальным ответом. Иначе любой провайдер, не любящий JSON-инструкции,
-      // делал бы узел незапускаемым.
-      if (reply === null) {
-        const answer = response.text.trim();
-
-        steps.push({ kind: 'final', answer });
-
-        return { answer, steps, iterations: iteration, usage };
+      if (outcome.done) {
+        return outcome.result;
       }
-
-      if (reply.kind === 'final') {
-        steps.push({ kind: 'final', answer: reply.answer });
-
-        return {
-          answer: reply.answer,
-          steps,
-          iterations: iteration,
-          usage,
-        };
-      }
-
-      const call: AgentToolCall = {
-        id: `call_${iteration}`,
-        name: reply.name,
-        input: reply.input,
-      };
-      const enabled = tools.find((tool) => tool.name === reply.name);
-
-      if (enabled === undefined) {
-        // Модель попросила инструмент, которого нет в узле (или его вовсе нет
-        // в реестре). Возвращаем ошибку в транскрипт: модель сможет выбрать
-        // разрешённый инструмент, а не оборвать запуск.
-        const error = `Инструмент '${reply.name}' не подключён к узлу агента`;
-
-        steps.push({
-          kind: 'tool',
-          name: reply.name,
-          input: reply.input,
-          output: null,
-          error,
-        });
-        messages.push({ role: 'assistant', content: null, tool_calls: [call] });
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: JSON.stringify({ error }),
-        });
-
-        continue;
-      }
-
-      const { output, error } = await this.executeToolAsync(enabled, call, context);
-
-      steps.push({
-        kind: 'tool',
-        name: enabled.name,
-        input: call.input,
-        output,
-        ...(error === undefined ? {} : { error }),
-      });
-      messages.push({ role: 'assistant', content: null, tool_calls: [call] });
-      messages.push({
-        role: 'tool',
-        tool_call_id: call.id,
-        content: this.serializeToolResult(output, error),
-      });
     }
 
     throw new AgentIterationLimitException(maxIterations, steps);
@@ -612,6 +773,63 @@ export class AgentService {
   }
 
   /**
+   * Считает стоимость LLM-шага по прайсу (KI-407).
+   *
+   * Пересчёт идёт по **фактической** модели из `usage`: прокси может
+   * подменить модель, и цена должна соответствовать тому, что реально
+   * вызвано. Локальный провайдер (LM Studio) бесплатен — стоимость `0`, а не
+   * `null`, как у `LlmNodeExecutor` (KI-148). Кэш-токены учитываются по
+   * отдельным тарифам (R7.7, KI-055): иначе шаг с промпт-кэшем завышал бы
+   * стоимость.
+   *
+   * @param response - ответ `LlmService` (usage + признак локального провайдера)
+   * @param usage - нормализованный usage шага (с фолбэком модели узла)
+   * @returns стоимость в USD либо `null`, если модели нет в прайсе или
+   *   провайдер не отдал usage (KI-052)
+   */
+  private calculateStepCostUsd(
+    response: { readonly isLocal?: boolean },
+    usage: LlmUsage,
+  ): number | null {
+    if (response.isLocal === true) {
+      return 0;
+    }
+
+    return calculateCostUsd(
+      usage.model,
+      usage.inputTokens,
+      usage.outputTokens,
+      {
+        cacheReadTokens: usage.cacheReadTokens,
+        cacheCreationTokens: usage.cacheCreationTokens,
+        cacheTokensIncludedInInput: usage.cacheTokensIncludedInInput,
+      },
+    );
+  }
+
+  /**
+   * Прибавляет стоимость шага к накопленной (KI-407).
+   *
+   * `null` означает «цена неизвестна» (KI-052), а не ноль: если хотя бы один
+   * шаг оценён, сумма известных шагов полезнее бюджету, чем `null` на весь
+   * цикл. Полностью неизвестная стоимость остаётся `null`.
+   *
+   * @param total - накопленная стоимость либо `null`
+   * @param stepCostUsd - стоимость шага либо `null`
+   * @returns новая накопленная стоимость
+   */
+  private addCost(total: number | null, stepCostUsd: number | null): number | null {
+    if (stepCostUsd === null) {
+      return total;
+    }
+
+    // Округление на каждом шаге, а не только в конце: в `node_runs.cost_usd`
+    // и в `numeric(12, 6)` уходит сумма без float-артефактов, а бюджет
+    // сравнивается с теми же числами, что увидит пользователь.
+    return Number(((total ?? 0) + stepCostUsd).toFixed(6));
+  }
+
+  /**
    * Собирает контекст инструментов.
    *
    * `workflowId` читается только если среди включённых инструментов есть
@@ -657,6 +875,10 @@ export class AgentService {
       // Глобальный fetch не привязан к `this`; обёртка нужна, чтобы контекст
       // оставался сериализуемым контрактом и тесты могли подменить клиент.
       fetchAsync: (url, init) => fetch(url, init),
+      // KI-409: инструмент `http_request` резолвит хост перед запросом.
+      // Системный `dns.lookup` — продакшен-реализация; тесты подставляют мок
+      // через контекст, а не через сеть.
+      dnsLookupAsync: defaultDnsLookupAsync,
     };
   }
 }

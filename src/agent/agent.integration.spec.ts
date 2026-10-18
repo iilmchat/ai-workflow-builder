@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LlmGenerateResult } from '../llm/llm-provider.interface.js';
 import { LlmRegistryService } from '../llm/llm-registry.service.js';
 import { LlmService } from '../llm/llm.service.js';
+import { CostBudgetService } from '../runs/cost-budget.service.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
 import { AgentService } from './agent.service.js';
@@ -25,7 +26,9 @@ afterEach(() => {
 describe('AgentService — интеграция: http_request → final (R7.4b)', () => {
   it('проходит полный цикл и доносит тело HTTP-ответа до модели', async () => {
     const responses: string[] = [
-      '{"tool":"http_request","input":{"method":"GET","url":"https://api.test/weather"}}',
+      // Публичный IP-литерал: SSRF-проверка (KI-409) не ходит в DNS, а fetch
+      // подменён — тест остаётся сетевым только для провайдера модели.
+      '{"tool":"http_request","input":{"method":"GET","url":"https://93.184.216.34/weather"}}',
       '{"final":"В Москве 20 градусов"}',
     ];
     const prompts: string[] = [];
@@ -87,6 +90,24 @@ describe('AgentService — интеграция: http_request → final (R7.4b)'
           },
         },
         { provide: ConfigService, useValue: { get: () => undefined } },
+        {
+          // KI-407: бюджет — внешняя граница (БД), в интеграционном тесте
+          // достаточно «пускающего» мока.
+          provide: CostBudgetService,
+          useValue: {
+            assertWithinBudgetAsync: vi.fn(() =>
+              Promise.resolve({
+                ok: true,
+                accumulated: 0,
+                estimated: 0,
+                remaining: 5,
+                maxUsd: 5,
+                maxRub: 500,
+                mode: 'hard',
+              }),
+            ),
+          },
+        },
       ],
     }).compile();
     const service = moduleRef.get(AgentService);
@@ -108,6 +129,10 @@ describe('AgentService — интеграция: http_request → final (R7.4b)'
     expect(result.answer).toBe('В Москве 20 градусов');
     expect(result.iterations).toBe(2);
     expect(result.usage).toEqual({ inputTokens: 24, outputTokens: 8 });
+    // KI-407: плоские метрики для `node_runs` (модель вне прайса → null).
+    expect(result.tokensIn).toBe(24);
+    expect(result.tokensOut).toBe(8);
+    expect(result.costUsd).toBeNull();
     expect(result.steps.map((step) => step.kind)).toEqual([
       'llm',
       'tool',
@@ -117,7 +142,9 @@ describe('AgentService — интеграция: http_request → final (R7.4b)'
 
     // Внешняя граница: ровно один HTTP-запрос на URL из ответа модели.
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.test/weather');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://93.184.216.34/weather',
+    );
 
     // Транскрипт: системная инструкция пользователя и протокол доехали до
     // модели, а тело HTTP-ответа — до второй итерации.
