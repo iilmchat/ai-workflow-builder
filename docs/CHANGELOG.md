@@ -25,11 +25,12 @@
 
 ### Fixed
 - **Share:** `GET /workflow` возвращает collaborative workflows с `accessRole` (owner/editor/viewer). Список участников включает владельца первой строкой (KI-397, 398, 399).
+- **Share:** Роль `owner` больше не проходит в инвайт: `InviteCollaboratorPayloadSchema` ограничен `viewer`/`editor` (как backend), JSDoc зеркала ролей синхронизирован (KI-437).
 - **Security:** `TRUST_PROXY` для корректного Rate Limiting за nginx (KI-419).
 - **UI:** Валидация `audioUrl` в `ImageToolNode` (KI-424).
 
 ### Documented
-- **KI-437..441** — новые KI v0.9.2.
+- **KI-438..441** — новые KI v0.9.2.
 
 ## [0.9.1] — 2026-10-18
 

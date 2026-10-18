@@ -6824,20 +6824,24 @@ MediaModelInfo, engine-DTO
 
 ---
 
-### KI-437 — Web-зеркало `CollaboratorSchema` не знает роль `owner`
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-18
+### KI-437 — Web-зеркало ролей: `owner` протекает в инвайт
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.9.2 (ограничение invite-роли)
 - **Файлы:** `web/src/types/collaborator.ts`
-- **Описание:** `fetchCollaborators` (`web/src/lib/collaborators-api.ts`)
-  валидирует каждый элемент ответа `GET /workflow/:id/collaborators` через
-  `z.array(CollaboratorSchema)`, а `role` — через `CollaboratorRoleSchema`.
-  Пока enum ролей в зеркале уже, чем домен ответа, owner-строка (KI-399) не
-  проходит `z.enum`, парсинг падает на валидации (`ZodError`), и список
-  участников в `ShareModal` не отображается — вместе с невозможностью сменить
-  роль остальным участникам.
-- **Решение:** держать `CollaboratorRoleSchema` в точном соответствии с
-  доменом ролей backend (`owner` / `viewer` / `editor`, как `accessRole` в
-  `web/src/lib/api.ts`), а домен инвайта (`viewer`/`editor`) при
-  необходимости описывать отдельной схемой.
+- **Описание:** после закрытия KI-399 `owner` появился в зеркале ролей
+  (`CollaboratorRoleSchema`), но тот же enum остался у
+  `InviteCollaboratorPayloadSchema`. Из-за этого UI пропускал `role: 'owner'` в
+  `POST /workflow/:id/collaborators`, хотя backend-инвайт допускает только
+  `viewer`/`editor` (`src/workflow/dto/collaborator.dto.ts`): запрос уходил и
+  падал на валидации. Вдобавок JSDoc над enum утверждал, что «владелец в этом
+  списке отсутствует», хотя `owner` уже был добавлен — комментарий врал и
+  подталкивал к повторному «исправлению» enum.
+- **Решение:** разделить домены: ответ (`CollaboratorSchema`) —
+  `owner`/`viewer`/`editor`, инвайт — только `viewer`/`editor` (как на backend);
+  JSDoc синхронизировать с фактическим списком.
+- **Fix:** `InviteCollaboratorPayloadSchema.role` ограничен
+  `z.enum(['viewer', 'editor'])`, `CollaboratorSchema` продолжает принимать
+  owner-строку; JSDoc переписан (коммит `de15562`).
 - **Связанные:** KI-399, KI-397, KI-440.
 
 ---
@@ -6907,12 +6911,12 @@ MediaModelInfo, engine-DTO
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 171 |
+| Fixed | 172 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 0 |
 | Documented | 7 |
-| Open | 249 |
+| Open | 248 |
 | Won't Fix | 1 |
 | **Всего** | **429** |
 
