@@ -30,6 +30,7 @@ import { WorkflowService } from '../workflow/workflow.service.js';
 import { WEB_SEARCH_PROVIDER } from '../web-search/web-search.module.js';
 import type { IMediaProvider } from './media-provider.interface.js';
 import { DocumentService } from '../documents/document.service.js';
+import { FilesystemService } from '../filesystem/filesystem.service.js';
 
 /**
  * Интеграция R7.8 (KI-362): media-генерация → скачивание → локальное
@@ -234,6 +235,13 @@ describe.skipIf(!process.env.DATABASE_URL)(
               name: 'fake',
               isConfigured: false,
               searchAsync: vi.fn(),
+            },
+          },
+          {
+            provide: FilesystemService,
+            useValue: {
+              readFileAsync: vi.fn(),
+              writeFileAsync: vi.fn(),
             },
           },
           // v0.10 S0 (KI-455): движок читает PGVECTOR_ENABLED через ConfigService.
