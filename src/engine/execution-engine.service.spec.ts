@@ -14,6 +14,8 @@ import { FilesystemService } from '../filesystem/filesystem.service.js';
 import { MEDIA_STORAGE } from '../media/media-storage.service.js';
 import type { RunEventDto } from '../runs/dto/index.js';
 import { RunEventsService } from '../runs/run-events.service.js';
+// v0.11 S9: heartbeat аренды запуска — в движке проверяется проводка.
+import { RunLeaseService } from '../runs/run-lease.service.js';
 import type { EdgeDto, GraphDto, NodeDto } from './dto/index.js';
 import { EngineService } from './engine.service.js';
 import { ExecutionEngineService } from './execution-engine.service.js';
@@ -353,6 +355,9 @@ describe('ExecutionEngineService', () => {
   /** R7.4b: цикл agent-узла (в тесте KI-433 возвращает usage). */
   let agentRun: ReturnType<typeof vi.fn>;
   let findWorkflow: ReturnType<typeof vi.fn>;
+  /** v0.11 S9: проводка heartbeat аренды запуска (RunLeaseService). */
+  let leaseStart: ReturnType<typeof vi.fn>;
+  let leaseStop: ReturnType<typeof vi.fn>;
   let fake: ReturnType<typeof createFakeDb>;
   /** Окружение для `ConfigService`-заглушки (изменяется в отдельных тестах). */
   let envConfig: Record<string, unknown>;
@@ -512,6 +517,10 @@ describe('ExecutionEngineService', () => {
         }),
     );
     fake = createFakeDb(RUN_ID);
+    // v0.11 S9: heartbeat в этом спеке не работает по-настоящему — проверяется,
+    // что движок запускает его после markRunRunningAsync и гасит в finally.
+    leaseStart = vi.fn(() => Promise.resolve());
+    leaseStop = vi.fn();
     envConfig = {
       SANDBOX_ENABLED: true,
       SANDBOX_TIMEOUT_MS: 100,
@@ -524,6 +533,16 @@ describe('ExecutionEngineService', () => {
         EngineService,
         { provide: DRIZZLE, useValue: fake.db },
         { provide: RunEventsService, useValue: { publishAsync: publish } },
+        // v0.11 S9 (KI-066): heartbeat аренды. `leaseTtlMs` читает
+        // markRunRunningAsync для стартового lease; start/stop — проводка.
+        {
+          provide: RunLeaseService,
+          useValue: {
+            leaseTtlMs: 90_000,
+            startAsync: leaseStart,
+            stop: leaseStop,
+          },
+        },
         // R3: llm-узел ходит в провайдера — в юнит-тесте он замокан.
         { provide: LlmNodeExecutor, useValue: { executeAsync: llmExecute } },
         // v0.6.0b.2.2: media-узел ходит в CreativeLab — тоже замокан.
@@ -1757,6 +1776,68 @@ describe('ExecutionEngineService', () => {
     expect(fake.run.error).toBeNull();
     // `finished_at` на завершении прогона проставляет finishRunAsync, поэтому
     // проверяется именно сброс в момент старта повтора (payload первого UPDATE).
+  });
+
+  describe('v0.11 S9: run lease / heartbeat (KI-066)', () => {
+    it('стартовый lease пишется в markRunRunningAsync (now() + TTL)', async () => {
+      await service.executeAsync(RUN_ID, {
+        nodes: [node('A', 'text', { value: 'x' })],
+        edges: [],
+      });
+
+      // Первый UPDATE workflow_runs — markRunRunningAsync.
+      expect(fake.runUpdates[0]).toEqual(
+        expect.objectContaining({
+          status: 'running',
+          leaseExpiresAt: expect.anything(),
+        }),
+      );
+    });
+
+    it('запускает heartbeat после markRunRunningAsync и гасит его в finally', async () => {
+      await service.executeAsync(RUN_ID, {
+        nodes: [node('A', 'text', { value: 'x' })],
+        edges: [],
+      });
+
+      expect(leaseStart).toHaveBeenCalledWith(RUN_ID);
+      expect(leaseStop).toHaveBeenCalledWith(RUN_ID);
+      // Аренда стартует до выполнения графа и снимается после.
+      expect(leaseStart.mock.invocationCallOrder[0]).toBeLessThan(
+        leaseStop.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('гасит heartbeat при падении узла (исключение из finally)', async () => {
+      spyRunNode(async () => {
+        throw new Error('узел упал');
+      });
+
+      await expect(
+        service.executeAsync(RUN_ID, {
+          nodes: [node('A', 'llm')],
+          edges: [],
+        }),
+      ).rejects.toThrow('узел упал');
+
+      expect(leaseStart).toHaveBeenCalledWith(RUN_ID);
+      expect(leaseStop).toHaveBeenCalledWith(RUN_ID);
+    });
+
+    it('не запускает heartbeat, если планирование упало до running', async () => {
+      // Цикл в графе — детерминированный провал фазы планирования (KI-037).
+      const graph: GraphDto = {
+        nodes: [node('A', 'text'), node('B', 'text')],
+        edges: [edge('e1', 'A', 'B'), edge('e2', 'B', 'A')],
+      };
+
+      const result = await service.executeAsync(RUN_ID, graph);
+
+      expect(result.status).toBe('failed');
+      expect(leaseStart).not.toHaveBeenCalled();
+      // catch планирования всё равно гасит возможный таймер (идемпотентно).
+      expect(leaseStop).toHaveBeenCalledWith(RUN_ID);
+    });
   });
 
   /**

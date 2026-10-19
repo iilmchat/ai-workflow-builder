@@ -22,6 +22,8 @@ import { VectorStoreService } from '../vector/vector-store.service.js';
 import { WebSearchModule } from '../web-search/web-search.module.js';
 import { WorkflowModule } from '../workflow/workflow.module.js';
 import { RunEventsService } from './run-events.service.js';
+// v0.11 S9 (DESIGN § 3.3.1, KI-066): heartbeat аренды запуска.
+import { RunLeaseService } from './run-lease.service.js';
 import { WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 import { RunsController } from './runs.controller.js';
 import { RunsProcessor } from './runs.processor.js';
@@ -95,6 +97,10 @@ import { RUNS_QUEUE_DB, RUNS_QUEUE_PREFIX } from './runs.worker-options.js';
     RunsStreamService,
     RunsProcessor,
     RunEventsService,
+    // v0.11 S9 (KI-066): продление lease запуска. ExecutionEngineService
+    // (ниже, в этом же модуле) запускает heartbeat, RunsProcessor — читает
+    // lease_expires_at для guard'а KI-023.
+    RunLeaseService,
     ExecutionEngineService,
     // R7.4a (KI-128): SQL к pgvector для узлов vector_*/memory_*.
     VectorStoreService,

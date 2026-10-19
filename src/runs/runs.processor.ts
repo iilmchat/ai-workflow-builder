@@ -1,7 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Logger } from '@nestjs/common';
 import type { Job } from 'bullmq';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { workflowRuns, type RunStatus } from '../db/schema.js';
@@ -30,8 +30,14 @@ function toMessage(error: unknown): string {
 interface RunForExecution {
   status: RunStatus;
   snapshot: GraphSnapshotDto;
-  /** Время старта выполнения — основа lease-проверки «зависшего» запуска (KI-023). */
+  /** Время старта выполнения — fallback для строк без аренды (KI-023). */
   startedAt: Date | null;
+  /** Срок аренды (v0.11 S9): `NULL` у строк, созданных до миграции 0013. */
+  leaseExpiresAt: Date | null;
+  /** Аренда истекла — worker, продлевавший её, умер (DESIGN § 3.3.1). */
+  leaseExpired: boolean;
+  /** Строка без аренды (`lease_expires_at IS NULL`) и старше порога — старый fallback. */
+  legacyStale: boolean;
 }
 
 /**
@@ -71,13 +77,16 @@ export class RunsProcessor extends WorkerHost {
   /**
    * Обрабатывает задание на выполнение workflow.
    *
-   * Идемпотентность построена на lease-логике (KI-023) и job-level retry (KI-040):
+   * Идемпотентность построена на lease-логике (KI-023, v0.11 S9) и job-level
+   * retry (KI-040):
    * - `pending` — штатный первый запуск задания;
-   * - `running` с `started_at` свежее `RUN_STALE_THRESHOLD_MS` — запуск живой
+   * - `running` с живой арендой (`lease_expires_at > now()`) — запуск живой
    *   (его выполняет этот или другой worker), задание пропускается;
-   * - `running` с истёкшим `started_at` — worker умер и BullMQ перезапустил
-   *   задание, поэтому граф выполняется заново;
-   * - `running` без `started_at` — судить о живости нельзя, поэтому
+   * - `running` с истёкшей арендой (`lease_expires_at <= now()`) — worker умер,
+   *   BullMQ перезапустил задание, поэтому граф выполняется заново;
+   * - `running` без аренды (`lease_expires_at IS NULL` — строки, созданные до
+   *   миграции 0013) — прежний fallback по `started_at` + `RUN_STALE_THRESHOLD_MS`;
+   * - `running` без `started_at` и без аренды — судить о живости нельзя, поэтому
    *   консервативно пропускаем;
    * - `failed` + `job.attemptsMade > 0` — предыдущая попытка упала, а это retry
    *   от BullMQ (`attempts`/backoff, KI-016): граф переигрывается, идемпотентность
@@ -139,10 +148,12 @@ export class RunsProcessor extends WorkerHost {
       throw new Error(`Запуск ${runId} не найден`);
     }
 
+    // v0.11 S9 (DESIGN § 3.3.1): «завис» — это истёкшая аренда, а не возраст
+    // `started_at`. Heartbeat продлевает `lease_expires_at`, пока worker жив,
+    // поэтому легитимно долгий запуск больше не переигрывается параллельно.
+    // `legacyStale` сохраняет прежнее поведение для строк без аренды.
     const isStale =
-      run.status === 'running' &&
-      run.startedAt !== null &&
-      Date.now() - run.startedAt.getTime() > RUN_STALE_THRESHOLD_MS;
+      run.status === 'running' && (run.leaseExpired || run.legacyStale);
 
     // KI-040: повторная доставка от BullMQ (`attemptsMade > 0`) переигрывает
     // только заведомо провалившийся запуск. `completed`/`cancelled` терминальны,
@@ -152,7 +163,8 @@ export class RunsProcessor extends WorkerHost {
     if (run.status !== 'pending' && !isStale && !isJobRetry) {
       this.logger.warn(
         `Запуск ${runId} в статусе ${run.status} ` +
-          `(started_at=${run.startedAt?.toISOString() ?? 'null'}, ` +
+          `(lease_expires_at=${run.leaseExpiresAt?.toISOString() ?? 'null'}, ` +
+          `started_at=${run.startedAt?.toISOString() ?? 'null'}, ` +
           `attemptsMade=${job.attemptsMade}) — задание пропущено`,
       );
 
@@ -168,8 +180,11 @@ export class RunsProcessor extends WorkerHost {
 
     if (isStale) {
       this.logger.warn(
-        `Запуск ${runId} завис в running дольше ${RUN_STALE_THRESHOLD_MS} мс — ` +
-          'выполняем граф заново (KI-023)',
+        `Запуск ${runId}: аренда истекла (lease_expires_at=` +
+          `${run.leaseExpiresAt?.toISOString() ?? 'null'}, ` +
+          `started_at=${run.startedAt?.toISOString() ?? 'null'}, ` +
+          `fallback-порог ${RUN_STALE_THRESHOLD_MS} мс) — ` +
+          'выполняем граф заново (KI-023, v0.11 S9)',
       );
     }
 
@@ -263,9 +278,16 @@ export class RunsProcessor extends WorkerHost {
   }
 
   /**
-   * Достаёт статус, время старта и снимок графа запуска.
+   * Достаёт статус, время старта, аренду и снимок графа запуска.
    *
-   * `startedAt` нужен для lease-проверки «зависшего» запуска (KI-023).
+   * `leaseExpired`/`legacyStale` вычисляются **по часам БД** (`now()`), как и
+   * продление аренды в `RunLeaseService.renewAsync` (v0.11 S9, DESIGN § 3.3.1):
+   * часы приложения и PostgreSQL могут расходиться, а решение «жив ли запуск»
+   * должно быть единым для всех worker'ов.
+   *
+   * - `leaseExpired` — аренда есть и уже истекла: worker, продлевавший её, умер;
+   * - `legacyStale` — аренды нет (`NULL`, строка до миграции 0013), поэтому
+   *   работает прежний fallback по `started_at` + `RUN_STALE_THRESHOLD_MS`.
    *
    * @param runId - uuid запуска
    * @returns данные запуска либо `null`, если строки нет
@@ -276,6 +298,17 @@ export class RunsProcessor extends WorkerHost {
         status: workflowRuns.status,
         snapshot: workflowRuns.snapshot,
         startedAt: workflowRuns.startedAt,
+        leaseExpiresAt: workflowRuns.leaseExpiresAt,
+        leaseExpired: sql<boolean>`
+          ${workflowRuns.leaseExpiresAt} IS NOT NULL
+          AND ${workflowRuns.leaseExpiresAt} <= now()
+        `,
+        legacyStale: sql<boolean>`
+          ${workflowRuns.leaseExpiresAt} IS NULL
+          AND ${workflowRuns.startedAt} IS NOT NULL
+          AND ${workflowRuns.startedAt} <
+            now() - ${RUN_STALE_THRESHOLD_MS} * interval '1 millisecond'
+        `,
       })
       .from(workflowRuns)
       .where(eq(workflowRuns.id, runId))

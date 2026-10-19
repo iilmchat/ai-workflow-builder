@@ -74,7 +74,8 @@ export class RunLeaseService implements OnApplicationShutdown {
     // § 3.3.1 задаёт те же дефолты, что и Zod-схема env).
     this.#heartbeatMs =
       config.get<number>('WORKFLOW_RUN_HEARTBEAT_MS') ?? 30_000;
-    this.#leaseTtlMs = config.get<number>('WORKFLOW_RUN_LEASE_TTL_MS') ?? 90_000;
+    this.#leaseTtlMs =
+      config.get<number>('WORKFLOW_RUN_LEASE_TTL_MS') ?? 90_000;
   }
 
   /**
@@ -156,7 +157,9 @@ export class RunLeaseService implements OnApplicationShutdown {
       .set({
         leaseExpiresAt: sql`now() + ${this.#leaseTtlMs} * interval '1 millisecond'`,
       })
-      .where(and(eq(workflowRuns.id, runId), eq(workflowRuns.status, 'running')))
+      .where(
+        and(eq(workflowRuns.id, runId), eq(workflowRuns.status, 'running')),
+      )
       .returning({ id: workflowRuns.id });
 
     return row !== undefined;
@@ -225,7 +228,9 @@ export class RunLeaseService implements OnApplicationShutdown {
    * Останавливает все heartbeat-таймеры при завершении приложения (RULES 4.12).
    */
   onApplicationShutdown(): void {
-    for (const runId of [...this.#timers.keys()]) {
+    // Удаление текущего элемента Map во время `for…of` безопасно: итератор
+    // продолжит обход остальных записей.
+    for (const runId of this.#timers.keys()) {
       this.stop(runId);
     }
   }

@@ -24,6 +24,8 @@ import { MEDIA_PROVIDERS, MediaRegistryService } from './media-registry.service.
 import { LocalMediaStorage, MEDIA_STORAGE } from './media-storage.service.js';
 import { CostBudgetService } from '../runs/cost-budget.service.js';
 import { RunEventsService } from '../runs/run-events.service.js';
+// v0.11 S9 (KI-066): heartbeat аренды запуска (в интеграции — заглушка).
+import { RunLeaseService } from '../runs/run-lease.service.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
@@ -190,6 +192,16 @@ describe.skipIf(!process.env.DATABASE_URL)(
           EngineService,
           MediaNodeExecutor,
           { provide: DRIZZLE, useValue: dbHandle },
+          // v0.11 S9 (KI-066): движок запускает heartbeat аренды. В интеграции
+          // проверяется media-пайплайн, поэтому достаточно заглушки.
+          {
+            provide: RunLeaseService,
+            useValue: {
+              leaseTtlMs: 90_000,
+              startAsync: vi.fn(() => Promise.resolve()),
+              stop: vi.fn(),
+            },
+          },
           { provide: MediaRegistryService, useValue: registry },
           // Провайдеры инструментов не нужны: узел — генерация.
           { provide: MEDIA_PROVIDERS, useValue: [] as IMediaProvider[] },

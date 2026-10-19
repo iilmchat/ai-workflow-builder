@@ -171,7 +171,14 @@ describe('RunsProcessor', () => {
 
   it('пропускает свежий running-запуск: аренда ещё жива (KI-023)', async () => {
     selectChain.limit.mockImplementation(() => [
-      { status: 'running', snapshot, startedAt: new Date(Date.now() - 60_000) },
+      {
+        status: 'running',
+        snapshot,
+        startedAt: new Date(Date.now() - 60_000),
+        leaseExpiresAt: new Date(Date.now() + 30_000),
+        leaseExpired: false,
+        legacyStale: false,
+      },
     ]);
 
     await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
@@ -185,6 +192,9 @@ describe('RunsProcessor', () => {
         status: 'running',
         snapshot,
         startedAt: new Date(Date.now() - 10 * 60_000),
+        leaseExpiresAt: new Date(Date.now() - 60_000),
+        leaseExpired: true,
+        legacyStale: false,
       },
     ]);
 
@@ -196,9 +206,89 @@ describe('RunsProcessor', () => {
     );
   });
 
+  it('v0.11 S9: leaseExpired сам по себе переигрывает запуск (независимо от started_at)', async () => {
+    // `started_at` свежий (60 с), но аренда истекла — worker умер.
+    selectChain.limit.mockImplementation(() => [
+      {
+        status: 'running',
+        snapshot,
+        startedAt: new Date(Date.now() - 60_000),
+        leaseExpiresAt: new Date(Date.now() - 1_000),
+        leaseExpired: true,
+        legacyStale: false,
+      },
+    ]);
+
+    await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
+
+    expect(executor.executeAsync).toHaveBeenCalledWith(RUN_ID, snapshot);
+  });
+
+  it('v0.11 S9: живая аренда блокирует переигрывание даже при старом started_at', async () => {
+    // Heartbeat продлил аренду: запуск живой, хотя started_at очень старый,
+    // иначе легитимно долгий запуск переигрывался бы параллельно (KI-066).
+    selectChain.limit.mockImplementation(() => [
+      {
+        status: 'running',
+        snapshot,
+        startedAt: new Date(Date.now() - 30 * 60_000),
+        leaseExpiresAt: new Date(Date.now() + 60_000),
+        leaseExpired: false,
+        legacyStale: false,
+      },
+    ]);
+
+    await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
+
+    expect(executor.executeAsync).not.toHaveBeenCalled();
+  });
+
+  it('v0.11 S9: legacyStale переигрывает старую строку без аренды (fallback)', async () => {
+    // Строка создана до миграции 0013: lease_expires_at = NULL, поэтому
+    // работает прежний порог по started_at.
+    selectChain.limit.mockImplementation(() => [
+      {
+        status: 'running',
+        snapshot,
+        startedAt: new Date(Date.now() - 10 * 60_000),
+        leaseExpiresAt: null,
+        leaseExpired: false,
+        legacyStale: true,
+      },
+    ]);
+
+    await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
+
+    expect(executor.executeAsync).toHaveBeenCalledWith(RUN_ID, snapshot);
+  });
+
+  it('v0.11 S9: legacy-строка без аренды и со свежим started_at не переигрывается', async () => {
+    selectChain.limit.mockImplementation(() => [
+      {
+        status: 'running',
+        snapshot,
+        startedAt: new Date(Date.now() - 60_000),
+        leaseExpiresAt: null,
+        leaseExpired: false,
+        legacyStale: false,
+      },
+    ]);
+
+    await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
+
+    expect(executor.executeAsync).not.toHaveBeenCalled();
+  });
+
   it('пропускает running-запуск без started_at (консервативно, KI-023)', async () => {
     selectChain.limit.mockImplementation(() => [
-      { status: 'running', snapshot, startedAt: null },
+      {
+        status: 'running',
+        snapshot,
+        startedAt: null,
+        leaseExpiresAt: null,
+        leaseExpired: false,
+        legacyStale: false,
+      },
     ]);
 
     await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
@@ -259,7 +349,14 @@ describe('RunsProcessor', () => {
 
   it('KI-040: живой lease важнее job-level retry для running-запуска', async () => {
     selectChain.limit.mockImplementation(() => [
-      { status: 'running', snapshot, startedAt: new Date(Date.now() - 60_000) },
+      {
+        status: 'running',
+        snapshot,
+        startedAt: new Date(Date.now() - 60_000),
+        leaseExpiresAt: new Date(Date.now() + 30_000),
+        leaseExpired: false,
+        legacyStale: false,
+      },
     ]);
 
     await expect(

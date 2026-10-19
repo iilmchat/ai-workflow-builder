@@ -19,8 +19,17 @@
 
 ### Added
 
+- **Run Lease / Heartbeat (v0.11 S9, DESIGN § 3.3.1, KI-066)** ([отчёт](development/reports/v0.11.0/S9-run-lease.md)):
+  новый `RunLeaseService` (`src/runs/run-lease.service.ts`): `startAsync`/`renewAsync`/`stop`,
+  продление `workflow_runs.lease_expires_at` через `UPDATE … WHERE status = 'running'`
+  (`WORKFLOW_RUN_HEARTBEAT_MS` = 30 с, `WORKFLOW_RUN_LEASE_TTL_MS` = 90 с, `timer.unref()`),
+  сбой БД в тике — `warn` без падения запуска, `onApplicationShutdown` гасит все таймеры.
+  `ExecutionEngineService` ставит стартовый lease в `markRunRunningAsync`, запускает heartbeat
+  после перевода в `running` и гасит его в `finally`. `RunsProcessor` считает запуск зависшим
+  по `lease_expires_at` (`leaseExpired`) с fallback на `started_at` для строк без аренды
+  (`legacyStale`): легитимно долгий запуск больше не переигрывается параллельно.
 - **MCP Adapter (S6+S7, DESIGN § 3.2):** `src/mcp` — `McpClientService` (connect-mutex, HTTP/SSE, TTL-кэш каталога, reconnect), `McpToolAdapter` (имена `mcp__server__tool`, JSON Schema → Zod, нормализация контента). `AgentService`: preflight MCP до LLM, side-effect retry-guard, правило про недоверенный контент. Зависимость `@modelcontextprotocol/sdk`.
-- **Docs:** Создан DESIGN v0.11.0 (шаблоны DOCX, MCP Adapter, Reliability fixes). Отчёты сессий: [S0-S1](development/reports/v0.11.0/S0-S1-foundation.md), [S2-S3](development/reports/v0.11.0/S2-S3-document-templates.md), [S4-S5](development/reports/v0.11.0/S4-S5-document-templates-engine.md), [S6-S7](development/reports/v0.11.0/S6-S7-mcp-adapter.md).
+- **Docs:** Создан DESIGN v0.11.0 (шаблоны DOCX, MCP Adapter, Reliability fixes). Отчёты сессий: [S0-S1](development/reports/v0.11.0/S0-S1-foundation.md), [S2-S3](development/reports/v0.11.0/S2-S3-document-templates.md), [S4-S5](development/reports/v0.11.0/S4-S5-document-templates-engine.md), [S6-S7](development/reports/v0.11.0/S6-S7-mcp-adapter.md), [S9](development/reports/v0.11.0/S9-run-lease.md).
 - **Docs:** Зарегистрированы KI-478..480.
 - **API и метрики (KI-077/450, KI-433, KI-472):** `GET /runs/:id` отдаёт `nodes` —
   проекцию `node_runs`, общую с SSE (`src/runs/run-node-snapshots.ts`), чтобы

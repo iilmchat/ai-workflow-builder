@@ -402,6 +402,10 @@ export class ExecutionEngineService {
       plan = await this.engineService.buildExecutionPlanAsync(graph);
 
       await this.markRunRunningAsync(runId);
+      // v0.11 S9 (DESIGN § 3.3.1): стартовая аренда уже проставлена UPDATE'ом
+      // выше, `startAsync` сразу продлевает её и планирует heartbeat. Если
+      // строка уже не `running` (запуск успели отменить), таймер не появится.
+      await this.runLease.startAsync(runId);
       await this.runEvents.publishAsync(runId, {
         type: 'run_started',
         runId,
@@ -410,6 +414,10 @@ export class ExecutionEngineService {
     } catch (error: unknown) {
       // KI-037: запуск не должен остаться в 'pending'. Планирование падает до
       // простановки любого статуса, поэтому закрываем запуск явно.
+      // v0.11 S9: ошибка могла произойти уже после `startAsync` — гасим
+      // heartbeat, иначе его таймер переживёт этот запуск.
+      this.runLease.stop(runId);
+
       const message = describePlanError(error);
 
       this.logger.error(`Запуск ${runId}: планирование не удалось — ${message}`);
@@ -424,6 +432,34 @@ export class ExecutionEngineService {
       };
     }
 
+    // v0.11 S9 (DESIGN § 3.3.1): основной блок выполнения — под `finally`:
+    // heartbeat обязан остановиться и на успехе, и при исключении (включая
+    // KI-036-проброс упавшего узла).
+    try {
+      return await this.executePlannedGraphAsync(runId, graph, plan);
+    } finally {
+      this.runLease.stop(runId);
+    }
+  }
+
+  /**
+   * Выполняет граф по уже построенному плану (тело {@link executeRunAsync}).
+   *
+   * Вынесено отдельным методом, чтобы `executeRunAsync` держал heartbeat в
+   * `try/finally` вокруг всего выполнения, не теряя читаемости: планирование с
+   * собственным `catch` (KI-037) остаётся снаружи.
+   *
+   * @param runId - uuid запуска
+   * @param graph - граф из `workflow_runs.snapshot`
+   * @param plan - план выполнения, построенный `EngineService`
+   * @returns итог выполнения: статус, число отработавших узлов, outputs
+   * @throws Error если узел исчерпал попытки (KI-036)
+   */
+  private async executePlannedGraphAsync(
+    runId: string,
+    graph: GraphDto,
+    plan: ExecutionPlanDto,
+  ): Promise<ExecutionResult> {
     const outputs: Record<string, Record<string, unknown>> = {};
     const failures: Array<{ nodeId: string; error: string; reason: unknown }> = [];
 
