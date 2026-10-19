@@ -10,6 +10,7 @@ import { CostBudgetService } from './cost-budget.service.js';
 import { RunsController } from './runs.controller.js';
 import { RunsService, type RunResponse } from './runs.service.js';
 import { RunsStreamService } from './runs-stream.service.js';
+import type { NodeRunSnapshot } from './dto/index.js';
 
 /** Владелец, которого guard подставляет при `AUTH_DISABLED=true`. */
 const USER = { sub: DEMO_USER_ID, email: DEMO_USER_EMAIL };
@@ -23,8 +24,26 @@ const runResponse: RunResponse = {
   workflowId: WORKFLOW_ID,
   status: 'pending',
   createdAt: new Date('2024-01-01T00:00:00.000Z'),
-  // KI-450: `GET /runs/:id` отдаёт узлы; в контроллерном тесте они не важны.
-  nodes: [],
+  // v0.11 S12 (KI-347): причина падения запуска — аддитивное поле RunResponse.
+  error: null,
+};
+
+/** Снимок узла для `GET /runs/:id/nodes` (v0.11 S12, KI-077). */
+const nodeSnapshot: NodeRunSnapshot = {
+  nodeId: 'A',
+  nodeType: 'text',
+  status: 'completed',
+  inputs: {},
+  outputs: { text: 'привет' },
+  error: null,
+  logs: null,
+  tokensIn: null,
+  tokensOut: null,
+  costUsd: null,
+  costRub: null,
+  durationMs: 5,
+  startedAt: '2024-01-01T00:00:01.000Z',
+  finishedAt: '2024-01-01T00:00:01.005Z',
 };
 
 describe('RunsController', () => {
@@ -34,6 +53,7 @@ describe('RunsController', () => {
     createRunAsync: ReturnType<typeof vi.fn>;
     getRunAsync: ReturnType<typeof vi.fn>;
     getRunRowAsync: ReturnType<typeof vi.fn>;
+    listNodeRunsAsync: ReturnType<typeof vi.fn>;
   };
   let stream: {
     assertRunExistsAsync: ReturnType<typeof vi.fn>;
@@ -65,6 +85,8 @@ describe('RunsController', () => {
           finishedAt: null,
         }),
       ),
+      // v0.11 S12 (KI-077): история узлов запуска.
+      listNodeRunsAsync: vi.fn(() => Promise.resolve([nodeSnapshot])),
     };
     costBudget = {
       checkBudgetAsync: vi.fn(() =>
@@ -165,6 +187,49 @@ describe('RunsController', () => {
         { workflowId: WORKFLOW_ID },
         USER.sub,
       );
+    });
+  });
+
+  // v0.11 S12 (DESIGN § 3.4.2, KI-077): история узлов запуска для F5.
+  describe('findNodes', () => {
+    it('GET /runs/:id/nodes отвечает 200 массивом NodeRunSnapshot и делегирует в сервис', async () => {
+      const response = await request(app.getHttpServer())
+        .get(`/runs/${RUN_ID}/nodes`)
+        .expect(200)
+        // Данные авторизованные и меняются во время запуска — кэш запрещён.
+        .expect('Cache-Control', 'no-store');
+
+      expect(service.listNodeRunsAsync).toHaveBeenCalledWith(RUN_ID, USER.sub);
+      expect(response.body).toEqual([nodeSnapshot]);
+    });
+
+    it('GET /runs/:id/nodes чужого/несуществующего запуска отвечает 404', async () => {
+      service.listNodeRunsAsync.mockRejectedValue(
+        new NotFoundException('Запуск не найден'),
+      );
+
+      await request(app.getHttpServer()).get(`/runs/${RUN_ID}/nodes`).expect(404);
+    });
+
+    it('GET /runs/:id/nodes отвечает 400 на невалидный uuid и не читает узлы', async () => {
+      await request(app.getHttpServer()).get('/runs/not-a-uuid/nodes').expect(400);
+
+      expect(service.listNodeRunsAsync).not.toHaveBeenCalled();
+    });
+
+    it('GET /runs/:id/nodes отвечает 401 без токена при AUTH_DISABLED=false', async () => {
+      authDisabled = false;
+
+      await request(app.getHttpServer()).get(`/runs/${RUN_ID}/nodes`).expect(401);
+      expect(service.listNodeRunsAsync).not.toHaveBeenCalled();
+    });
+
+    it('маршрут /nodes не перехватывается как часть :id (порядок объявления)', async () => {
+      // Регрессия порядка роутов: `:id/nodes` объявлен до `:id`, поэтому
+      // `GET /runs/:id/nodes` не должен попасть в `findOne` с id = `…/nodes`.
+      await request(app.getHttpServer()).get(`/runs/${RUN_ID}/nodes`).expect(200);
+
+      expect(service.getRunAsync).not.toHaveBeenCalled();
     });
   });
 

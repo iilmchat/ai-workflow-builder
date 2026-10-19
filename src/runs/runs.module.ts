@@ -24,6 +24,8 @@ import { WorkflowModule } from '../workflow/workflow.module.js';
 import { RunEventsService } from './run-events.service.js';
 // v0.11 S9 (DESIGN § 3.3.1, KI-066): heartbeat аренды запуска.
 import { RunLeaseService } from './run-lease.service.js';
+// v0.11 S12 (DESIGN § 3.4.2): единый маппер node_runs для SSE и REST.
+import { NodeRunSnapshotMapper } from './node-run-snapshot.mapper.js';
 import { WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 import { RunsController } from './runs.controller.js';
 import { RunsProcessor } from './runs.processor.js';
@@ -95,6 +97,9 @@ import { RUNS_QUEUE_DB, RUNS_QUEUE_PREFIX } from './runs.worker-options.js';
   providers: [
     RunsService,
     RunsStreamService,
+    // v0.11 S12 (DESIGN § 3.4.2): один маппер `node_runs` для SSE-снимка и
+    // `GET /runs/:id/nodes` — проекция не может разойтись между транспортами.
+    NodeRunSnapshotMapper,
     RunsProcessor,
     RunEventsService,
     // v0.11 S9 (KI-066): продление lease запуска. ExecutionEngineService

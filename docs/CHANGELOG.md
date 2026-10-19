@@ -19,6 +19,20 @@
 
 ### Added
 
+- **История запусков — API и восстановление после F5 (v0.11 S12+S13, DESIGN § 3.4.2/§ 3.4.3, KI-077)** ([отчёт](development/reports/v0.11.0/S12-S13-history.md)):
+  новый `NodeRunSnapshotMapper` (`src/runs/node-run-snapshot.mapper.ts`) — единый
+  маппер `node_runs` для SSE-снимка и `GET /runs/:id/nodes` (переподпись
+  `stored_url`, `cacheSavingsUsd` по модели узла, ISO-даты), его используют
+  `RunsStreamService` и `RunsService`; `RunResponse` получил аддитивное поле
+  `error: string | null`. Ручка `GET /runs/:id/nodes` отдаёт массив
+  `NodeRunSnapshot` (тот же формат, что в SSE-снимке), чужой запуск → 404,
+  `Cache-Control: no-store`. Фронтенд: `fetchRunAsync`/`fetchRunNodesAsync`
+  (`web/src/lib/api.ts`), `restoreRunAsync` в `stores/workflow.ts` —
+  параллельно восстанавливает статус и карты `nodeStatuses`/`nodeOutputs`/
+  `nodeErrors`/`nodeLogs`/`nodeMetrics`; SSE открывается только для
+  `pending`/`running`, для финального запуска `?runId=` убирается; 404 сбрасывает
+  состояние запуска и показывает toast. Общий маппинг с `applySnapshot`
+  вынесен в `mapsFromNodes`.
 - **Метрики Agent-узла (v0.11 S11, DESIGN § 3.4.1, KI-433)** ([отчёт](development/reports/v0.11.0/S10-S11-retry-metrics.md)):
   `AgentService` агрегирует кэш-токены шагов (`cacheReadTokens`/`cacheCreationTokens`),
   `AgentRunResult` и `AgentNodeMetrics` (`src/agent/agent.types.ts`) отдают их
@@ -45,10 +59,13 @@
 - **MCP Adapter (S6+S7, DESIGN § 3.2):** `src/mcp` — `McpClientService` (connect-mutex, HTTP/SSE, TTL-кэш каталога, reconnect), `McpToolAdapter` (имена `mcp__server__tool`, JSON Schema → Zod, нормализация контента). `AgentService`: preflight MCP до LLM, side-effect retry-guard, правило про недоверенный контент. Зависимость `@modelcontextprotocol/sdk`.
 - **Docs:** Создан DESIGN v0.11.0 (шаблоны DOCX, MCP Adapter, Reliability fixes). Отчёты сессий: [S0-S1](development/reports/v0.11.0/S0-S1-foundation.md), [S2-S3](development/reports/v0.11.0/S2-S3-document-templates.md), [S4-S5](development/reports/v0.11.0/S4-S5-document-templates-engine.md), [S6-S7](development/reports/v0.11.0/S6-S7-mcp-adapter.md), [S9](development/reports/v0.11.0/S9-run-lease.md), [S10-S11](development/reports/v0.11.0/S10-S11-retry-metrics.md), [S17](development/reports/v0.11.0/S17-docs-sync.md).
 - **Docs:** Зарегистрированы KI-478..480.
-- **API и метрики (KI-077/450, KI-433, KI-472):** `GET /runs/:id` отдаёт `nodes` —
-  проекцию `node_runs`, общую с SSE (`src/runs/run-node-snapshots.ts`), чтобы
-  UI восстанавливался после F5 без SSE; `docs/development/api-contract.json`
-  дополнен полем `nodes`. Метрики Agent (токены и `cost_usd` цикла) пишутся в
+- **API и метрики (KI-077/450, KI-433, KI-472):** история узлов запуска отдаётся
+  ручкой `GET /runs/:id/nodes` — массивом `NodeRunSnapshot`, общей проекцией с
+  SSE (`src/runs/node-run-snapshot.mapper.ts`), чтобы UI восстанавливался после
+  F5 без SSE; `docs/development/api-contract.json` дополнен `NodeRunSnapshot`
+  и аддитивным `error` в `RunResponse` (в v0.10.2 `nodes` отдавался прямо в
+  `GET /runs/:id`; в v0.11 S12 вынесен в отдельную ручку — см. Changed).
+  Метрики Agent (токены и `cost_usd` цикла) пишутся в
   `node_runs` наравне с LLM-узлами. API-префиксы сведены в единый
   `api-prefixes.json`: из него строятся RegExp SPA-fallback'а backend'а и
   Vite-прокси, дублирование списков устранено.
@@ -89,6 +106,16 @@
   связи), удаление шаблона (disabled для `viewer`), жёлтая подсказка
   `Не заполнено: …` по `missingVariables` после Run; i18n-ключи в `ru.json`/
   `en.json`, data-атрибуты для smoke.
+
+### Changed
+
+- **`GET /runs/:id` больше не отдаёт `nodes` (v0.11 S12, DESIGN § 3.4.2, KI-077).**
+  Поле было добавлено в v0.10.2 (KI-450) и дублировало SSE-снимок; теперь
+  история узлов приходит из `GET /runs/:id/nodes` — массива `NodeRunSnapshot`
+  в том же формате, что SSE. `docs/development/api-contract.json` обновлён:
+  у `RunResponse` `nodes` заменён на `error` (`string | null`), добавлен
+  `NodeRunSnapshot`; паритет-спеки backend и web синхронизированы.
+  Клиенты, читавшие `run.nodes`, должны использовать новую ручку.
 
 ### Fixed
 

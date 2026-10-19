@@ -36,6 +36,7 @@ import { ApiDocumentTemplateSchema, ApiRunBudgetSchema, ApiRunSchema } from './a
 import { CollaboratorSchema } from './collaborators-api';
 import { ExportWorkflowSchema } from './export-import-api';
 import { ShareTokenSchema, SharedWorkflowSchema } from './share-api';
+import { NodeRunSnapshotSchema } from '@/types/run-stream';
 
 /**
  * Путь к контракту для сообщений об ошибке (в виде ссылки на файл).
@@ -71,6 +72,9 @@ const MIRROR_SCHEMAS: Record<string, MirrorSchema> = {
   // v0.11 S3: публичное представление DOCX-шаблона (document-templates API).
   DocumentTemplateSummary: ApiDocumentTemplateSchema,
   ExportWorkflowDto: ExportWorkflowSchema,
+  // v0.11 S12 (DESIGN § 3.4.2): `GET /runs/:id/nodes` отдаёт массив снимков
+  // узлов той же Zod-схемой, что и SSE-снимок.
+  NodeRunSnapshot: NodeRunSnapshotSchema,
   RunResponse: ApiRunSchema,
   // R7.1 (KI-048): бюджет запуска — новое зеркало REST-ответа.
   RunBudgetResponse: ApiRunBudgetSchema,
@@ -246,14 +250,28 @@ describe('REST-контракт: web-зеркала ↔ docs/development/api-con
 
     // KI-352: именно эта пара (backend `RunResponse` ↔ `ApiRunSchema`) раньше
     // расходилась молча — поле обязано быть в контракте и в зеркале.
-    // KI-450: `nodes` — строки `node_runs` для восстановления после F5 без SSE.
+    // v0.11 S12: узлов в `RunResponse` больше нет (история — отдельная ручка
+    // `GET /runs/:id/nodes`), зато добавлен `error` для failed-запуска.
     expect(contract.responses.RunResponse).toEqual([
       'createdAt',
+      'error',
       'id',
-      'nodes',
       'status',
       'workflowId',
     ]);
     expect(actualContract().RunResponse).toEqual(contract.responses.RunResponse);
+  });
+
+  it('NodeRunSnapshot зеркалит общую с SSE схему снимка узла (v0.11 S12)', () => {
+    const contract = readContract();
+
+    // Один и тот же `NodeRunSnapshotSchema` используется SSE-снимком
+    // (`NodeRunSnapshotSchema` в `types/run-stream.ts`) и ответом
+    // `GET /runs/:id/nodes`; гейт не даст формату разойтись.
+    expect(actualContract().NodeRunSnapshot).toEqual(
+      contract.responses.NodeRunSnapshot,
+    );
+    expect(contract.responses.NodeRunSnapshot).toContain('outputs');
+    expect(contract.responses.NodeRunSnapshot).toContain('error');
   });
 });

@@ -15,10 +15,6 @@ import {
   type RunStatus,
   type WorkflowRun,
 } from '../db/schema.js';
-import {
-  MEDIA_STORAGE,
-  type IMediaStorage,
-} from '../media/media-storage.service.js';
 import type { NodeRunSnapshot } from './dto/index.js';
 import type { CreateRunDto, ExecuteRunJobDto } from './dto/index.js';
 import {
@@ -27,7 +23,7 @@ import {
 } from '../workflow/workflow-access.js';
 import { EXECUTE_RUN_JOB, WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 import { RUNS_INSTANCE_ID } from './runs.worker-options.js';
-import { loadRunNodeSnapshotsAsync } from './run-node-snapshots.js';
+import { NodeRunSnapshotMapper } from './node-run-snapshot.mapper.js';
 
 /**
  * Публичное представление запуска workflow, которое отдаёт API.
@@ -36,18 +32,22 @@ import { loadRunNodeSnapshotsAsync } from './run-node-snapshots.js';
  * DEFAULT now()`, поэтому дата создания всегда есть и не зависит от старта
  * выполнения (`started_at`).
  *
- * **`nodes` (v0.10.2, KI-450).** `GET /runs/:id` теперь отдаёт строки
- * `node_runs` той же проекцией, что SSE-снимок (`NodeRunSnapshot`), — UI может
- * восстановить результаты после F5 без открытия SSE. У `POST /runs` массив
- * всегда пуст: у только что созданного запуска узлов ещё нет.
+ * **`error` (v0.11 S12, DESIGN § 3.4.2).** Причина падения запуска —
+ * аддитивное поле: без него восстановленный после F5 `failed`-запуск не
+ * показывал причину (SSE-снимок её отдаёт, а `GET /runs/:id` — нет).
+ *
+ * **Узлов здесь больше нет.** До v0.11 S12 поле `nodes` (v0.10.2, KI-450)
+ * дублировало SSE-снимок в ответе запуска; теперь история узлов живёт в
+ * отдельной ручке `GET /runs/:id/nodes` (KI-077), чтобы `GET /runs/:id`
+ * оставался дешёвым.
  */
 export interface RunResponse {
   id: string;
   workflowId: string;
   status: RunStatus;
   createdAt: Date;
-  /** Узлы запуска (KI-450): проекция `node_runs`, как в SSE-снимке. */
-  nodes: NodeRunSnapshot[];
+  /** Текст ошибки запуска (`workflow_runs.error`); `null` — ошибки не было. */
+  error: string | null;
 }
 
 /**
@@ -64,9 +64,10 @@ export class RunsService {
   constructor(
     @Inject(DRIZZLE) private readonly db: Database,
     @InjectQueue(WORKFLOW_RUNS_QUEUE) private readonly queue: Queue<ExecuteRunJobDto>,
-    // v0.10.2 (KI-450): `GET /runs/:id` отдаёт `node_runs` той же проекцией,
-    // что SSE-снимок, — переподпись `stored_url` живёт в общем загрузчике.
-    @Inject(MEDIA_STORAGE) private readonly mediaStorage: IMediaStorage,
+    // v0.11 S12 (DESIGN § 3.4.2): `GET /runs/:id/nodes` отдаёт `node_runs`
+    // той же проекцией, что SSE-снимок, — переподпись `stored_url` и ISO-даты
+    // живут в общем маппере.
+    private readonly snapshotMapper: NodeRunSnapshotMapper,
   ) {}
 
   /**
@@ -144,37 +145,52 @@ export class RunsService {
    * KI-202: если передан `userId`, чужой запуск неотличим от несуществующего —
    * отдаём 404, а не 403, чтобы не раскрывать факт существования.
    *
-   * v0.10.2 (KI-450): ответ содержит `nodes` — строки `node_runs` в проекции
-   * SSE-снимка (`loadRunNodeSnapshotsAsync`). Это позволяет UI восстановить
-   * результаты после F5 без SSE и переподписать просроченные media-ссылки.
+   * v0.11 S12 (DESIGN § 3.4.2): узлов в ответе нет — история узлов вынесена в
+   * {@link listNodeRunsAsync} (`GET /runs/:id/nodes`). Здесь отдаётся только
+   * статус и причина падения (`error`), поэтому ручка остаётся дешёвой для
+   * поллинга.
    *
    * @param id - uuid запуска
    * @param userId - владелец из access-токена (необязательный)
-   * @returns публичное представление запуска вместе с узлами
+   * @returns публичное представление запуска
    * @throws NotFoundException если запуск не найден или принадлежит другому
    */
   async getRunAsync(id: string, userId?: string): Promise<RunResponse> {
     const run = await this.getRunRowAsync(id, userId);
-    // KI-450: узлы читаются после проверки доступа — чужой запуск уже
-    // отсечён 404 в `getRunRowAsync`, лишнего SELECT наружу не уходит.
-    const nodes = await loadRunNodeSnapshotsAsync(
-      this.db,
-      id,
-      run.snapshot,
-      this.mediaStorage,
-    );
 
-    return this.toRunResponse(run, nodes);
+    return this.toRunResponse(run);
+  }
+
+  /**
+   * Возвращает историю узлов запуска (`GET /runs/:id/nodes`, KI-077).
+   *
+   * Сначала проверяется доступ к запуску: чужой/несуществующий отдаёт 404
+   * (KI-202), и только затем читаются `node_runs`. Проекция — та же, что в
+   * SSE-снимке ({@link NodeRunSnapshotMapper}), поэтому после F5 без SSE UI
+   * получает идентичные `outputs`/`error`/`logs`/метрики и переподписанные
+   * media-ссылки (KI-443/KI-464).
+   *
+   * @param runId - uuid запуска
+   * @param userId - владелец из access-токена: чужой запуск → 404
+   * @returns снимки всех узлов запуска (порядок — по `nodeId`)
+   * @throws NotFoundException если запуск не найден или принадлежит другому
+   */
+  async listNodeRunsAsync(
+    runId: string,
+    userId?: string,
+  ): Promise<NodeRunSnapshot[]> {
+    const run = await this.getRunRowAsync(runId, userId);
+
+    return this.snapshotMapper.listAsync(runId, run.snapshot);
   }
 
   /**
    * Возвращает строку `workflow_runs` целиком — без проекции в публичный ответ.
    *
-   * Нужна SSE-снимку (KI-347): он отдаёт `error` запуска, которого нет в
-   * {@link RunResponse}. С v0.10.2 (KI-450) публичный `GET /runs/:id` тоже
-   * строится из этой строки, но его проекция (`RunResponse`) по-прежнему
-   * ограничена публичными полями; `snapshot`/`inputs`/`outputs` запуска наружу
-   * не отдаются.
+   * Нужна SSE-снимку (KI-347) и `GET /runs/:id/nodes`: первый отдаёт `error`
+   * запуска, второй — граф для пересчёта `cacheSavingsUsd`/подписи ссылок.
+   * Публичная проекция запуска (`RunResponse`) ограничена публичными полями;
+   * `snapshot`/`inputs`/`outputs` запуска наружу не отдаются.
    *
    * KI-202: если передан `userId`, чужой запуск неотличим от несуществующего —
    * отдаём 404, а не 403, чтобы не раскрывать факт существования.
@@ -238,20 +254,17 @@ export class RunsService {
    * Преобразует строку `workflow_runs` в публичное представление.
    *
    * @param run - строка таблицы `workflow_runs`
-   * @param nodes - узлы запуска (KI-450); у `POST /runs` — пустой массив
    * @returns публичное представление запуска
    */
-  private toRunResponse(
-    run: WorkflowRun,
-    nodes: readonly NodeRunSnapshot[] = [],
-  ): RunResponse {
+  private toRunResponse(run: WorkflowRun): RunResponse {
     return {
       id: run.id,
       workflowId: run.workflowId,
       status: run.status,
       createdAt: run.createdAt,
-      // KI-450: у нового запуска узлов нет — пустой массив вместо лишнего SELECT.
-      nodes: [...nodes],
+      // KI-347: причина падения запуска нужна панели результата после F5;
+      // SSE-снимок отдаёт её же, поэтому REST и SSE совпадают (DESIGN § 3.4.2).
+      error: run.error,
     };
   }
 }

@@ -341,6 +341,7 @@
   "toast.import.error": "Не удалось импортировать workflow: {{reason}}",
   "toast.import.invalid_file": "Файл не похож на workflow JSON",
   "toast.import.success": "Workflow импортирован: {{name}}",
+  "toast.run_not_found": "Запуск не найден: история запуска недоступна",
   "toast.stream_stalled": "Поток запуска не отвечает (ошибок подряд: {{count}})",
   "toast.template.error": "Не удалось создать workflow из шаблона: {{reason}}",
   "toast.template.success": "Workflow создан из шаблона: {{name}}",

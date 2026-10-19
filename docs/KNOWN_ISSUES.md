@@ -1648,7 +1648,7 @@
 ---
 
 ### KI-104 — Повтор узла учитывает только LLM-исключения
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-14
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Исправлено в:** v0.11.0 (S10) | **Обнаружено:** 2026-10-14
 - **Файлы:** `src/engine/execution-engine.service.ts`
 - **Описание:** В `executeNodeAsync` условие повтора:
   `error instanceof LlmProviderException && error.retryable`. Для
@@ -7882,18 +7882,58 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-500 — Двойной retry SDK + движок (High)
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/llm/providers/*.ts`
+- **Описание:** OpenAI/Anthropic SDK повторяют 429/5xx сами (`maxRetries=2`), движок — до 3 раз. Worst case — 9 upstream-вызовов/оплат на узел.
+- **Решение:** `maxRetries: 0` в SDK или env-флаг.
+
+---
+
+### KI-501 — Одноимённые guard'ы `isRetryableProviderError`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/llm/provider-errors.ts`, `src/common/errors/retryable-provider.error.ts`
+- **Описание:** Два экспорта с одинаковым именем и разной сигнатурой.
+- **Решение:** переименовать SDK-классификатор в `isRetryableSdkError`.
+
+---
+
+### KI-502 — Нет DB-интеграционного спека на кэш-колонки
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/engine/execution-engine.service.spec.ts`
+- **Описание:** UPDATE с кэш-колонками проверяется только in-memory двойником, не на живой PostgreSQL.
+- **Решение:** добавить в `test:parity` или отдельный интеграционный тест.
+
+---
+
+### KI-503 — `cacheSavingsUsd` агента не в SSE
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/runs/run-node-snapshots.ts`
+- **Описание:** `node_completed` для агента не содержит `cacheSavingsUsd`, в отличие от LLM-узлов.
+- **Решение:** передать модель в `AgentNodeMetrics` или считать экономию в движке.
+
+---
+
+### KI-504 — Нет теста на env-переопределение retry в движке
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/engine/execution-engine.service.spec.ts`
+- **Описание:** Чтение `NODE_RETRY_*` в конструкторе проверяется только дефолтами и Zod-схемой.
+- **Решение:** вынести список провайдеров engine-спека в фабрику.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 219 |
+| Fixed | 220 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 1 |
 | Documented | 6 |
-| Open | 256 |
+| Open | 261 |
 | Won't Fix | 4 |
-| **Всего** | **487** |
+| **Всего** | **492** |
 
 ---
 

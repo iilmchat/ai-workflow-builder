@@ -53,6 +53,7 @@ import {
   WORKFLOW_RUN_STATUSES,
 } from '../../db/schema.js';
 import { ExportWorkflowSchema } from '../../workflow/dto/export-workflow.dto.js';
+import { NodeRunSnapshotSchema } from './run-stream-message.dto.js';
 
 /** Каталог этого spec'а (`src/runs/dto`). */
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
@@ -127,6 +128,13 @@ type DtoSource =
  * read-scope KI-352, KI-357), `LlmModelInfo`/`MediaModelInfo` (зеркала живут в
  * `src/llm/**` и `src/media/**` — вне scope KI-352, KI-357).
  */const DTO_SOURCES: Record<string, DtoSource> = {
+  // v0.11 S12 (DESIGN § 3.4.2): ответ `GET /runs/:id/nodes` — массив снимков
+  // узлов. Zod-схема общая со SSE-снимком, поэтому REST и SSE не расходятся.
+  NodeRunSnapshot: {
+    kind: 'zod',
+    schema: NodeRunSnapshotSchema,
+    label: 'src/runs/dto/run-stream-message.dto.ts',
+  },
   RunResponse: {
     kind: 'interface',
     path: RUNS_SERVICE_PATH,

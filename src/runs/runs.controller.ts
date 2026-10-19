@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   Param,
@@ -18,7 +19,11 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.js';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import { CostBudgetService } from './cost-budget.service.js';
-import { CreateRunSchema, type CreateRunDto } from './dto/index.js';
+import {
+  CreateRunSchema,
+  type CreateRunDto,
+  type NodeRunSnapshot,
+} from './dto/index.js';
 import type { RunBudgetResponse } from './dto/run-budget.dto.js';
 import { RunsService, type RunResponse } from './runs.service.js';
 import { RunsStreamService } from './runs-stream.service.js';
@@ -68,6 +73,36 @@ export class RunsController {
   }
 
   /**
+   * `GET /runs/:id/nodes` — история узлов запуска (v0.11 S12, KI-077).
+   *
+   * Отдельная ручка, а не расширение `RunResponse` полем `nodes`: `GET /runs/:id`
+   * остаётся дешёвым для поллинга, а массив `node_runs` запрашивается только
+   * при восстановлении старого запуска после F5. Ответ — массив
+   * `NodeRunSnapshot`, **тот же**, что приходит в SSE-снимке (DESIGN § 3.4.2),
+   * поэтому фронтенду не нужен второй формат.
+   *
+   * Маршрут объявлен до `:id`: порядок фиксируем явно, чтобы Nest не пытался
+   * матчить `nodes` как часть `:id` (сейчас спасает число сегментов, но
+   * полагаться на это не стоит).
+   *
+   * `Cache-Control: no-store` — данные авторизованные и меняются во время
+   * запуска, кэшировать их нельзя.
+   *
+   * @param params - path-параметр `id` (uuid)
+   * @param user - владелец из access-токена
+   * @returns узлы запуска (пустой массив — у запуска ещё нет строк в `node_runs`)
+   * @throws NotFoundException если запуск не найден или чужой (KI-202)
+   */
+  @Get(':id/nodes')
+  @Header('Cache-Control', 'no-store')
+  async findNodes(
+    @Param(ZodValidationPipe.create(RunIdParamSchema)) params: RunIdParamDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<NodeRunSnapshot[]> {
+    return this.runsService.listNodeRunsAsync(params.id, user.sub);
+  }
+
+  /**
    * `GET /runs/:id` — текущее состояние запуска.
    *
    * @param params - path-параметр `id` (uuid)
@@ -90,9 +125,10 @@ export class RunsController {
    * Отдельная ручка вместо поля в SSE-снимке: контракт потока
    * (`docs/development/sse-contract.json`, KI-348) в R7.1 не расширяется.
    * Владелец проверяется через {@link RunsService.getRunRowAsync} — чужой
-   * запуск отдаёт 404, а не свои траты (KI-202). Узлы (`nodes`, KI-450) здесь
-   * не нужны: бюджет обновляется после каждого узла, лишний SELECT + подпись
-   * ссылок были бы работой на каждый поллинг.
+   * запуск отдаёт 404, а не свои траты (KI-202). История узлов
+   * (`GET /runs/:id/nodes`, v0.11 S12) здесь не нужна: бюджет обновляется
+   * после каждого узла, лишний SELECT + подпись ссылок были бы работой на
+   * каждый поллинг.
    *
    * @param params - path-параметр `id` (uuid)
    * @param user - владелец из access-токена

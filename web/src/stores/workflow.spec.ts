@@ -1,8 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkflowStore, type GraphSnapshot } from './workflow';
-import { ApiWorkflowSchema } from '@/lib/api';
+import {
+  ApiError,
+  ApiWorkflowSchema,
+  fetchRunAsync,
+  fetchRunBudgetAsync,
+  fetchRunNodesAsync,
+  type ApiRun,
+} from '@/lib/api';
 import type { AppNode } from '@/types/graph';
-import type { SnapshotMessage } from '@/types/run-stream';
+import type { NodeRunSnapshot, SnapshotMessage } from '@/types/run-stream';
 
 /**
  * Заглушка i18n: jsdom настроен (KI-155), но тест проверяет стор, а не
@@ -18,6 +25,58 @@ vi.mock('@/i18n', () => {
   return {
     default: { t, language: 'ru' },
     setLanguage: () => undefined,
+  };
+});
+
+/**
+ * Счетчик подписок на SSE: `restoreRunAsync` открывает поток только для
+ * незавершённого запуска (v0.11 S12, DESIGN § 3.4.3). Настоящий
+ * `subscribeToRunStream` пошёл бы в сеть через `fetch`, поэтому модуль
+ * подменяется.
+ *
+ * `vi.hoisted` нужен, чтобы мок-фабрика могла обратиться к переменной: она
+ * вычисляется раньше импортов, а обычная `const` была бы в temporal dead zone.
+ */
+const { subscribeToRunStreamMock } = vi.hoisted(() => ({
+  // Аргументы объявлены, чтобы `mock.calls` был типизирован: тест проверяет,
+  // с каким `runId` открыт поток, а не только факт подписки.
+  subscribeToRunStreamMock: vi.fn(
+    (_runId: string, _handlers: unknown) => vi.fn(),
+  ),
+}));
+
+vi.mock('@/lib/run-stream', () => ({
+  subscribeToRunStream: subscribeToRunStreamMock,
+  RunStreamUnavailableError: class RunStreamUnavailableError extends Error {},
+}));
+
+/**
+ * Подмена двух API-функций восстановления запуска (v0.11 S12).
+ *
+ * `restoreRunAsync` ходит в сеть, поэтому ответы задаёт тест. Остальные
+ * экспорты берутся из оригинала: `ApiWorkflowSchema` разбирается в других
+ * describe'ах этого файла, а `ApiError` — тот же класс, что проверяет `instanceof`.
+ */
+vi.mock('@/lib/api', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/lib/api')>();
+
+  return {
+    ...original,
+    fetchRunAsync: vi.fn(),
+    fetchRunNodesAsync: vi.fn(),
+    // `restoreRunAsync` после подписки на SSE обновляет прогресс-бар бюджета;
+    // без заглушки тест ждал бы реальный `fetch` (jsdom, относительный URL).
+    fetchRunBudgetAsync: vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        accumulated: 0,
+        estimated: 0,
+        remaining: 5,
+        maxUsd: 5,
+        maxRub: 500,
+        mode: 'soft' as const,
+      }),
+    ),
   };
 });
 
@@ -605,3 +664,210 @@ describe('ApiWorkflowSchema — роль доступа (KI-397)', () => {
     ).toThrow();
   });
 });
+
+describe('useWorkflowStore — восстановление запуска после F5 (v0.11 S12)', () => {
+  /** ISO-время в тестовых ответах. */
+  const ISO_AT = '2026-10-19T10:00:00.000Z';
+
+  /** uuid восстанавливаемого запуска. */
+  const RUN_ID = '55555555-5555-4555-8555-555555555555';
+
+  /** Шпион `history.replaceState`: `clearRunIdFromUrl` правит адресную строку. */
+  let replaceState: ReturnType<typeof vi.fn>;
+
+  /**
+   * Собирает снимок узла, как его отдаёт `GET /runs/:id/nodes`.
+   *
+   * @param overrides - поля, которые нужно переопределить
+   * @returns снимок узла
+   */
+  function nodeSnapshot(
+    overrides: Partial<NodeRunSnapshot> = {},
+  ): NodeRunSnapshot {
+    return {
+      nodeId: 'A',
+      nodeType: 'llm',
+      status: 'completed',
+      inputs: {},
+      outputs: { text: 'готово' },
+      error: null,
+      logs: null,
+      tokensIn: 10,
+      tokensOut: 20,
+      costUsd: '0.000300',
+      costRub: '0.600000',
+      durationMs: 42,
+      startedAt: ISO_AT,
+      finishedAt: ISO_AT,
+      ...overrides,
+    };
+  }
+
+  /**
+   * Собирает ответ `GET /runs/:id`.
+   *
+   * @param overrides - поля, которые нужно переопределить
+   * @returns публичное представление запуска
+   */
+  function apiRun(overrides: Partial<ApiRun> = {}): ApiRun {
+    return {
+      id: RUN_ID,
+      workflowId: 'w1',
+      status: 'completed',
+      createdAt: ISO_AT,
+      error: null,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    // Адресная строка «как после F5»: `?runId=` уже есть.
+    replaceState = vi.fn();
+    vi.stubGlobal('window', {
+      location: { href: `http://127.0.0.1:5173/?workflowId=w1&runId=${RUN_ID}` },
+      history: { replaceState },
+    });
+    useWorkflowStore.setState({
+      ...EMPTY_STATE,
+      runId: null,
+      runStatus: null,
+      runError: null,
+      nodeStatuses: {},
+      nodeOutputs: {},
+      nodeErrors: {},
+      nodeLogs: {},
+      nodeMetrics: {},
+      notice: null,
+    });
+    subscribeToRunStreamMock.mockClear();
+    vi.mocked(fetchRunAsync).mockReset();
+    vi.mocked(fetchRunNodesAsync).mockReset();
+    vi.mocked(fetchRunBudgetAsync).mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('restoreRunAsync восстанавливает nodeOutputs и nodeMetrics из GET /runs/:id/nodes', async () => {
+    vi.mocked(fetchRunAsync).mockResolvedValue(apiRun());
+    vi.mocked(fetchRunNodesAsync).mockResolvedValue([
+      nodeSnapshot(),
+      nodeSnapshot({
+        nodeId: 'B',
+        nodeType: 'http',
+        status: 'failed',
+        outputs: null,
+        error: 'HTTP 404',
+        tokensIn: null,
+        tokensOut: null,
+        costUsd: null,
+        costRub: null,
+        cacheReadTokens: 100,
+        cacheSavingsUsd: 0.00125,
+        storedUrl: 'https://s3.test/run-1/B.png',
+        storedExpiresAt: ISO_AT,
+      }),
+    ]);
+
+    await state().restoreRunAsync(RUN_ID);
+
+    expect(fetchRunAsync).toHaveBeenCalledWith(RUN_ID);
+    expect(fetchRunNodesAsync).toHaveBeenCalledWith(RUN_ID);
+    expect(state().runId).toBe(RUN_ID);
+    expect(state().runStatus).toBe('completed');
+    // Выходы и метрики — то, ради чего история и запрашивается: после F5
+    // панель результата показывает их без SSE.
+    expect(state().nodeStatuses).toEqual({ A: 'completed', B: 'failed' });
+    expect(state().nodeOutputs.A).toEqual({ text: 'готово' });
+    expect(state().nodeErrors.B).toBe('HTTP 404');
+    expect(state().nodeMetrics.A).toEqual({
+      durationMs: 42,
+      tokensIn: 10,
+      tokensOut: 20,
+      costUsd: '0.000300',
+      costRub: '0.600000',
+      cacheReadTokens: null,
+      cacheCreationTokens: null,
+      cacheSavingsUsd: null,
+      storedUrl: null,
+      storedExpiresAt: null,
+    });
+    expect(state().nodeMetrics.B).toMatchObject({
+      tokensIn: null,
+      costUsd: null,
+      cacheReadTokens: 100,
+      cacheSavingsUsd: 0.00125,
+      storedUrl: 'https://s3.test/run-1/B.png',
+    });
+  });
+
+  it('при финальном статусе SSE не открывается, а ?runId= убирается из адреса', async () => {
+    vi.mocked(fetchRunAsync).mockResolvedValue(
+      apiRun({ status: 'failed', error: 'Узел B упал: HTTP 404' }),
+    );
+    vi.mocked(fetchRunNodesAsync).mockResolvedValue([]);
+
+    await state().restoreRunAsync(RUN_ID);
+
+    // Событий больше не будет: подписка на поток не нужна (KI-060/KI-271).
+    expect(subscribeToRunStreamMock).not.toHaveBeenCalled();
+    // `?runId=` убран — следующий F5 не станет восстанавливать тот же запуск.
+    expect(replaceState).toHaveBeenCalledTimes(1);
+    expect(String(replaceState.mock.calls[0]?.[2])).not.toContain('runId=');
+    // KI-347: причина падения восстановлена из GET /runs/:id.
+    expect(state().runError).toBe('Узел B упал: HTTP 404');
+    expect(state().runStatus).toBe('failed');
+  });
+
+  it('при running подписывается на SSE: снимок потока свежее REST', async () => {
+    vi.mocked(fetchRunAsync).mockResolvedValue(
+      apiRun({ status: 'running' }),
+    );
+    vi.mocked(fetchRunNodesAsync).mockResolvedValue([nodeSnapshot()]);
+
+    await state().restoreRunAsync(RUN_ID);
+
+    expect(subscribeToRunStreamMock).toHaveBeenCalledTimes(1);
+    expect(subscribeToRunStreamMock.mock.calls[0]?.[0]).toBe(RUN_ID);
+    // `?runId=` остаётся: после повторного F5 подписка должна восстановиться.
+    expect(replaceState).not.toHaveBeenCalled();
+    // R7.1 (KI-048): прогресс-бар бюджета тоже восстанавливается.
+    expect(fetchRunBudgetAsync).toHaveBeenCalledWith(RUN_ID);
+  });
+
+  it('404 сбрасывает состояние запуска, убирает ?runId= и показывает toast', async () => {
+    vi.mocked(fetchRunAsync).mockRejectedValue(
+      new ApiError('Запуск не найден', 404),
+    );
+    vi.mocked(fetchRunNodesAsync).mockResolvedValue([]);
+
+    await state().restoreRunAsync(RUN_ID);
+
+    expect(state().runId).toBeNull();
+    expect(state().runStatus).toBeNull();
+    expect(replaceState).toHaveBeenCalledTimes(1);
+    // i18n в этом спеке замокан (`t` возвращает ключ) — проверяем ключ.
+    expect(state().notice).toEqual({
+      kind: 'error',
+      text: 'toast.run_not_found',
+    });
+    expect(subscribeToRunStreamMock).not.toHaveBeenCalled();
+  });
+
+  it('прочие ошибки не ломают загрузку графа — только уведомление', async () => {
+    vi.mocked(fetchRunAsync).mockRejectedValue(new ApiError('Сеть недоступна'));
+    vi.mocked(fetchRunNodesAsync).mockResolvedValue([]);
+
+    await expect(state().restoreRunAsync(RUN_ID)).resolves.toBeUndefined();
+
+    expect(state().notice).toEqual({
+      kind: 'error',
+      text: 'Сеть недоступна',
+    });
+    // Состояние запуска не заполнено, но `?runId=` не тронут: следующий F5
+    // попробует восстановить его снова.
+    expect(replaceState).not.toHaveBeenCalled();
+  });
+});
+

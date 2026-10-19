@@ -34,7 +34,6 @@ import {
 } from '../agent/agent.types.js';
 import {
   DocumentStorageUnavailableException,
-  DocumentTemplateNotFoundException,
   DocumentTooLargeException,
 } from '../documents/document.errors.js';
 import { DOCX_MIME_TYPE } from '../documents/document.service.js';

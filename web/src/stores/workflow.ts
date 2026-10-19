@@ -10,11 +10,14 @@ import {
 import { create } from 'zustand';
 import i18n from '@/i18n';
 import {
+  ApiError,
   createRunAsync,
   createWorkflowAsync,
   fetchLlmModelsAsync,
   fetchMediaModelsAsync,
+  fetchRunAsync,
   fetchRunBudgetAsync,
+  fetchRunNodesAsync,
   getWorkflowAsync,
   updateWorkflowAsync,
   type ApiGraphEdge,
@@ -118,6 +121,7 @@ import {
 } from '@/lib/graph-payload';
 import { invalidateWorkflowListCache } from '@/lib/workflow-list-cache';
 import type {
+  NodeRunSnapshot,
   NodeRunStatus,
   RunEventMessage,
   RunStatus,
@@ -313,6 +317,70 @@ function withNodeLogs(
   return logs !== null && logs !== undefined && logs.length > 0
     ? { nodeLogs: { ...state.nodeLogs, [nodeId]: [...logs] } }
     : {};
+}
+
+/** Карты состояния запуска, построенные из снимков узлов. */
+interface NodeRunMaps {
+  nodeStatuses: Record<string, NodeRunStatus>;
+  nodeOutputs: Record<string, Record<string, unknown>>;
+  nodeErrors: Record<string, string>;
+  nodeLogs: Record<string, string[]>;
+  nodeMetrics: Record<string, NodeRunMetrics>;
+}
+
+/**
+ * Строит карты состояния запуска из снимков узлов (v0.11 S12, DESIGN § 3.4.3).
+ *
+ * Один и тот же маппинг нужен двум источникам: SSE-снимку (`applySnapshot`) и
+ * REST-истории после F5 (`restoreRunAsync`, `GET /runs/:id/nodes`). Схема
+ * `NodeRunSnapshot` у них общая, поэтому карты обязаны строиться одинаково —
+ * иначе живой прогон и восстановленный показывали бы разные данные.
+ *
+ * Пустые значения не кладутся в карты: `outputs`/`error`/`logs` узла, который
+ * не завершался, отсутствуют, а не перетирают `null`-ом уже известное
+ * (ср. `withNodeLogs`).
+ *
+ * @param nodes - снимки узлов (SSE-снимок или `GET /runs/:id/nodes`)
+ * @returns карты статусов, выходов, ошибок, логов и метрик по `nodeId`
+ */
+function mapsFromNodes(nodes: readonly NodeRunSnapshot[]): NodeRunMaps {
+  const nodeStatuses: Record<string, NodeRunStatus> = {};
+  const nodeOutputs: Record<string, Record<string, unknown>> = {};
+  const nodeErrors: Record<string, string> = {};
+  const nodeLogs: Record<string, string[]> = {};
+  const nodeMetrics: Record<string, NodeRunMetrics> = {};
+
+  for (const node of nodes) {
+    nodeStatuses[node.nodeId] = node.status;
+
+    if (node.outputs) {
+      nodeOutputs[node.nodeId] = node.outputs;
+    }
+
+    if (node.error) {
+      nodeErrors[node.nodeId] = node.error;
+    }
+
+    if (node.logs !== null && node.logs.length > 0) {
+      nodeLogs[node.nodeId] = node.logs;
+    }
+
+    nodeMetrics[node.nodeId] = {
+      durationMs: node.durationMs,
+      tokensIn: node.tokensIn,
+      tokensOut: node.tokensOut,
+      costUsd: node.costUsd,
+      // Поле в снимке необязательное (backend пока его не отдаёт, KI-114).
+      costRub: node.costRub ?? null,
+      cacheReadTokens: node.cacheReadTokens ?? null,
+      cacheCreationTokens: node.cacheCreationTokens ?? null,
+      cacheSavingsUsd: node.cacheSavingsUsd ?? null,
+      storedUrl: node.storedUrl ?? null,
+      storedExpiresAt: node.storedExpiresAt ?? null,
+    };
+  }
+
+  return { nodeStatuses, nodeOutputs, nodeErrors, nodeLogs, nodeMetrics };
 }
 
 /** Владелец графа: авторизации пока нет, поэтому значение фиксированное. */
@@ -735,6 +803,23 @@ export interface WorkflowState extends HistorySlice {
    * @param snapshot - сообщение-снимок из потока
    */
   applySnapshot: (snapshot: SnapshotMessage) => void;
+  /**
+   * Восстанавливает состояние старого запуска из REST (v0.11 S12, DESIGN
+   * § 3.4.3).
+   *
+   * Вызывается при загрузке страницы с `?runId=` (F5): параллельно
+   * запрашиваются `GET /runs/:id` (статус и `error`) и `GET /runs/:id/nodes`
+   * (выходы, метрики, логи), после чего заполняются карты узлов. Для
+   * завершённого запуска SSE не открывается (событий больше не будет), а
+   * `?runId=` убирается из адреса; для `pending`/`running` подписка на поток
+   * восстанавливается — её снимок свежее REST и заменит карты целиком.
+   *
+   * 404 (запуск удалён или чужой) сбрасывает состояние запуска и `?runId=`;
+   * прочие ошибки не ломают загрузку графа — только уведомление.
+   *
+   * @param runId - uuid запуска из адресной строки
+   */
+  restoreRunAsync: (runId: string) => Promise<void>;
   /**
    * Применяет событие прогресса запуска.
    *
@@ -2432,15 +2517,16 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         // Загружен другой граф: состояние прошлого запуска сбрасываем.
         get().resetRunState();
       } else {
+        // v0.11 S12 (DESIGN § 3.4.3): сначала восстанавливаем состояние из
+        // REST (статус + история узлов), и только для незавершённого запуска
+        // открываем SSE. Раньше поток открывался сразу: для уже финального
+        // запуска он не давал ни outputs, ни метрик.
         // Поток от прошлого монтирования (StrictMode вызывает эффект дважды)
-        // закрываем, состояние до прихода snapshot — «выполняется»: так Run
-        // недоступен, пока факт запуска не подтверждён снимком.
+        // закрываем; состояние до ответа — «выполняется»: Run недоступен, пока
+        // факт запуска не подтверждён.
         closeStreamIfAny();
         set({ runId: runIdFromUrl, runStatus: 'pending' });
-        closeRunStream = subscribeToRunStream(
-          runIdFromUrl,
-          buildRunStreamHandlers(set, get),
-        );
+        await get().restoreRunAsync(runIdFromUrl);
       }
     } catch (error) {
       const message = messageOf(error);
@@ -2479,44 +2565,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   },
 
   applySnapshot: (snapshot) => {
-    const nodeStatuses: Record<string, NodeRunStatus> = {};
-    const nodeOutputs: Record<string, Record<string, unknown>> = {};
-    const nodeErrors: Record<string, string> = {};
-    const nodeLogs: Record<string, string[]> = {};
-    const nodeMetrics: Record<string, NodeRunMetrics> = {};
-
-    for (const node of snapshot.nodes) {
-      nodeStatuses[node.nodeId] = node.status;
-
-      if (node.outputs) {
-        nodeOutputs[node.nodeId] = node.outputs;
-      }
-
-      if (node.error) {
-        nodeErrors[node.nodeId] = node.error;
-      }
-
-      if (node.logs !== null && node.logs.length > 0) {
-        nodeLogs[node.nodeId] = node.logs;
-      }
-
-      nodeMetrics[node.nodeId] = {
-        durationMs: node.durationMs,
-        tokensIn: node.tokensIn,
-        tokensOut: node.tokensOut,
-        costUsd: node.costUsd,
-        // Поле в снимке необязательное (backend пока его не отдаёт, KI-114).
-        costRub: node.costRub ?? null,
-        cacheReadTokens: node.cacheReadTokens ?? null,
-        cacheCreationTokens: node.cacheCreationTokens ?? null,
-        cacheSavingsUsd: node.cacheSavingsUsd ?? null,
-        storedUrl: node.storedUrl ?? null,
-        storedExpiresAt: node.storedExpiresAt ?? null,
-      };
-    }
-
     // Snapshot — источник истины на момент подключения: карты заменяются
-    // целиком, а не сливаются с прошлым состоянием.
+    // целиком, а не сливаются с прошлым состоянием. Маппинг общий с REST-
+    // восстановлением (`restoreRunAsync`): SSE и `GET /runs/:id/nodes` отдают
+    // один и тот же `NodeRunSnapshot` (DESIGN § 3.4.3).
     set((state) => ({
       runId: snapshot.run.id,
       runStatus: snapshot.run.status,
@@ -2525,11 +2577,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       // известную ошибку (KI-271): снимок промежуточной попытки мог быть собран
       // до того, как `workflow_runs.error` заполнился.
       runError: snapshot.run.error ?? state.runError,
-      nodeStatuses,
-      nodeOutputs,
-      nodeErrors,
-      nodeLogs,
-      nodeMetrics,
+      ...mapsFromNodes(snapshot.nodes),
     }));
 
     // R7.1 (KI-048): после переподключения (F5 посреди запуска) прогресс-бар
@@ -2543,6 +2591,66 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     // оставшейся попытки job'а (KI-070).
     if (isFinalStatus(snapshot.run.status)) {
       clearRunIdFromUrl();
+    }
+  },
+
+  restoreRunAsync: async (runId) => {
+    // Повторный mount (StrictMode) не должен оставить двух подписчиков:
+    // сначала закрываем прежний поток, только потом открываем новый.
+    closeStreamIfAny();
+
+    try {
+      // Запросы независимы — идут параллельно (RULES 4.17).
+      const [run, nodes] = await Promise.all([
+        fetchRunAsync(runId),
+        fetchRunNodesAsync(runId),
+      ]);
+
+      set((state) => ({
+        runId: run.id,
+        runStatus: run.status,
+        // `null` не перетирает уже известную ошибку (принцип KI-271/347):
+        // снимок промежуточной попытки мог быть собран до заполнения `error`.
+        runError: run.error ?? state.runError,
+        ...mapsFromNodes(nodes),
+      }));
+
+      if (isFinalStatus(run.status)) {
+        // KI-060/KI-271: финальный запуск — событий больше не будет. SSE не
+        // открываем, `?runId=` убираем: подписываться не на что.
+        clearRunIdFromUrl();
+
+        return;
+      }
+
+      // pending/running: REST дал стартовую точку на момент запроса, дальше
+      // подписка на поток. SSE-снимок заменит карты целиком (applySnapshot) —
+      // это нормально, он свежее.
+      closeRunStream = subscribeToRunStream(
+        runId,
+        buildRunStreamHandlers(set, get),
+      );
+
+      // R7.1 (KI-048): прогресс-бар бюджета тоже восстанавливается.
+      void get().loadRunBudgetAsync();
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.status === 404) {
+        // Запуск удалён или чужой (KI-202): восстановить нечего.
+        clearRunIdFromUrl();
+        get().resetRunState();
+        set({
+          notice: { kind: 'error', text: i18n.t('toast.run_not_found') },
+        });
+
+        return;
+      }
+
+      // Сеть/5xx/битый ответ: граф уже загружен, поэтому падение
+      // восстановления не должно отменять загрузку workflow. Состояние запуска
+      // остаётся пустым, пользователь видит уведомление.
+      const message = messageOf(error);
+
+      set({ notice: { kind: 'error', text: message } });
     }
   },
 

@@ -5,7 +5,11 @@ import {
   type MediaModelInfo,
   type MediaModelType,
 } from '@/types/media';
-import { RunStatusSchema, NodeRunSnapshotSchema } from '@/types/run-stream';
+import {
+  RunStatusSchema,
+  NodeRunSnapshotSchema,
+  type NodeRunSnapshot,
+} from '@/types/run-stream';
 // Циклический импорт `api -> auth-api -> api` безопасен: `refreshAsync`
 // вызывается в рантайме, а не на этапе оценки модулей.
 import { refreshAsync } from './auth-api';
@@ -75,18 +79,24 @@ export interface ExecutionPlan {
  *
  * Поля совпадают с backend `RunResponse`; `createdAt` приходит ISO-строкой
  * после сериализации `Date`, `status` — тот же набор значений, что и в SSE.
+ * Паритет состава полей проверяет `api-contract.spec.ts` через
+ * `docs/development/api-contract.json`.
  *
- * **`nodes` (v0.10.2, KI-450).** `GET /runs/:id` отдаёт строки `node_runs` той
- * же схемой, что SSE-снимок (`NodeRunSnapshotSchema`), — после F5 результаты
- * узлов можно восстановить без SSE. У `POST /runs` массив всегда пуст; поле
- * имеет `default([])`, чтобы старые ответы без `nodes` не ломали разбор.
+ * **`error` (v0.11 S12, DESIGN § 3.4.2).** Причина падения запуска: без неё
+ * восстановленный после F5 `failed`-запуск показывал «причина недоступна».
+ * Поле обязательное (`null` — ошибки не было): расхождение контракта должно
+ * ловиться Zod'ом, а не молча превращаться в `undefined` (RULES 1.17).
+ *
+ * **Узлов здесь больше нет.** До S12 ответ содержал `nodes` (v0.10.2,
+ * KI-450); история узлов теперь приходит из `GET /runs/:id/nodes`
+ * ({@link fetchRunNodesAsync}, KI-077). `GET /runs/:id` остаётся дешёвым.
  */
 export const ApiRunSchema = z.object({
   id: z.string(),
   workflowId: z.string(),
   status: RunStatusSchema,
   createdAt: z.string(),
-  nodes: z.array(NodeRunSnapshotSchema).default([]),
+  error: z.string().nullable(),
 });
 
 /** Запуск в терминах API. */
@@ -555,6 +565,51 @@ export async function createRunAsync(workflowId: string): Promise<ApiRun> {
   });
 
   return ApiRunSchema.parse(data);
+}
+
+/**
+ * Возвращает текущее состояние запуска (`GET /runs/:id`, v0.11 S12).
+ *
+ * Тонкая обёртка над уже существующей ручкой: нужна восстановлению старого
+ * запуска после F5 ({@link restoreRunAsync} в сторе), которое сначала узнаёт
+ * статус, а затем — историю узлов. Отдельная функция, а не inline-запрос в
+ * сторе, чтобы Zod-разбор ответа жил рядом с остальными API-вызовами.
+ *
+ * @param runId - uuid запуска
+ * @returns публичное представление запуска (статус, `error`)
+ * @throws ApiError при сетевой ошибке, 404 (запуск удалён/чужой) или
+ *   неожиданном формате ответа
+ */
+export async function fetchRunAsync(runId: string): Promise<ApiRun> {
+  const data = await requestAsync<unknown>(
+    `/runs/${encodeURIComponent(runId)}`,
+  );
+
+  return ApiRunSchema.parse(data);
+}
+
+/**
+ * Возвращает историю узлов запуска (`GET /runs/:id/nodes`, v0.11 S12, KI-077).
+ *
+ * Ответ — массив `NodeRunSnapshot` в **той же** форме, что приходит в
+ * SSE-снимке (`SnapshotMessage.nodes`), поэтому восстановление после F5 без
+ * SSE не вводит второй формат данных (DESIGN § 3.4.2/§ 3.4.3). Backend
+ * переподписывает просроченные media-ссылки, так что `storedUrl` годится для
+ * скачивания и после часа жизни presigned URL (KI-443/KI-464).
+ *
+ * @param runId - uuid запуска
+ * @returns снимки всех узлов запуска (пустой массив — узлы ещё не выполнялись)
+ * @throws ApiError при сетевой ошибке, 404 (запуск удалён/чужой) или
+ *   неожиданном формате ответа
+ */
+export async function fetchRunNodesAsync(
+  runId: string,
+): Promise<NodeRunSnapshot[]> {
+  const data = await requestAsync<unknown>(
+    `/runs/${encodeURIComponent(runId)}/nodes`,
+  );
+
+  return z.array(NodeRunSnapshotSchema).parse(data);
 }
 
 /**

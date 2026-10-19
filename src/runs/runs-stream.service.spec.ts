@@ -9,6 +9,7 @@ import {
   type IMediaStorage,
 } from '../media/media-storage.service.js';
 import { buildSignedMediaPath } from '../media/media-url-signer.js';
+import { NodeRunSnapshotMapper } from './node-run-snapshot.mapper.js';
 import { RunEventsService } from './run-events.service.js';
 import { RunsService } from './runs.service.js';
 import { RunsStreamService } from './runs-stream.service.js';
@@ -303,6 +304,9 @@ describe('RunsStreamService', () => {
         RunsStreamService,
         { provide: RunsService, useValue: runs },
         { provide: RunEventsService, useValue: events },
+        // v0.11 S12 (DESIGN § 3.4.2): SSE-снимок строит общий маппер
+        // `node_runs`; ему нужны БД и хранилище media.
+        NodeRunSnapshotMapper,
         { provide: DRIZZLE, useValue: dbStub(options.rows ?? []) },
         // KI-443: снимок переподписывает просроченный stored_url.
         { provide: MEDIA_STORAGE, useValue: storage },

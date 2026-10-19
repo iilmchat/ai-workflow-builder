@@ -1,17 +1,12 @@
 import type { MessageEvent } from '@nestjs/common';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Observable, type Subscriber } from 'rxjs';
-import { DRIZZLE, type Database } from '../db/db.module.js';
-import {
-  MEDIA_STORAGE,
-  type IMediaStorage,
-} from '../media/media-storage.service.js';
 import {
   RunStreamMessageSchema,
   type RunEventDto,
   type SnapshotMessage,
 } from './dto/index.js';
-import { loadRunNodeSnapshotsAsync } from './run-node-snapshots.js';
+import { NodeRunSnapshotMapper } from './node-run-snapshot.mapper.js';
 import { RunEventsService } from './run-events.service.js';
 import { RunsService } from './runs.service.js';
 
@@ -39,15 +34,14 @@ export class RunsStreamService {
   /**
    * @param runsService - чтение запуска (даёт NotFoundException для 404)
    * @param runEvents - подписка на события запуска
-   * @param db - соединение Drizzle (чтение `node_runs` для снимка)
-   * @param mediaStorage - хранилище media-результатов: переподписывает
-   *   просроченный `stored_url` в снимке (KI-443)
+   * @param snapshotMapper - проекция `node_runs` в снимок: тот же маппер
+   *   использует `GET /runs/:id/nodes`, поэтому SSE и REST не расходятся
+   *   (DESIGN v0.11 § 3.4.2)
    */
   constructor(
     private readonly runsService: RunsService,
     private readonly runEvents: RunEventsService,
-    @Inject(DRIZZLE) private readonly db: Database,
-    @Inject(MEDIA_STORAGE) private readonly mediaStorage: IMediaStorage,
+    private readonly snapshotMapper: NodeRunSnapshotMapper,
   ) {}
 
   /**
@@ -198,14 +192,9 @@ export class RunsStreamService {
         // после F5 вместо «причина недоступна».
         error: run.error,
       },
-      // KI-450: та же проекция `node_runs`, что отдаёт `GET /runs/:id`:
-      // переподпись ссылок и ISO-даты живут в одном месте.
-      nodes: await loadRunNodeSnapshotsAsync(
-        this.db,
-        runId,
-        run.snapshot,
-        this.mediaStorage,
-      ),
+      // KI-450: та же проекция `node_runs`, что отдаёт `GET /runs/:id/nodes`:
+      // переподпись ссылок и ISO-даты живут в одном маппере (DESIGN § 3.4.2).
+      nodes: await this.snapshotMapper.listAsync(runId, run.snapshot),
     };
   }
 

@@ -6,15 +6,12 @@ import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   workflowRuns,
   workflows,
-  type NodeRun,
   type Workflow,
   type WorkflowRun,
 } from '../db/schema.js';
-import {
-  MEDIA_STORAGE,
-  type IMediaStorage,
-} from '../media/media-storage.service.js';
 import { EXECUTE_RUN_JOB, WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
+import { NodeRunSnapshotMapper } from './node-run-snapshot.mapper.js';
+import type { NodeRunSnapshot } from './dto/index.js';
 import { RunsService } from './runs.service.js';
 import { RUNS_INSTANCE_ID } from './runs.worker-options.js';
 
@@ -55,12 +52,10 @@ const baseRun: WorkflowRun = {
 };
 
 /**
- * Строка `node_runs` для KI-450: `GET /runs/:id` отдаёт узлы проекцией
- * SSE-снимка. Поля совпадают со схемой `NodeRun`, включая nullable-колонки.
+ * Снимок узла, который отдаёт `NodeRunSnapshotMapper.listAsync`
+ * (v0.11 S12, KI-077). Сами `node_runs` сервис не читает — это делает маппер.
  */
-const baseNodeRun: NodeRun = {
-  id: '33333333-3333-4333-8333-333333333333',
-  runId: RUN_ID,
+const nodeSnapshot: NodeRunSnapshot = {
   nodeId: 'n1',
   nodeType: 'text',
   status: 'completed',
@@ -72,14 +67,9 @@ const baseNodeRun: NodeRun = {
   tokensOut: null,
   costUsd: null,
   costRub: null,
-  cacheReadTokens: null,
-  cacheCreationTokens: null,
-  storedUrl: null,
-  storedExpiresAt: null,
-  storageKey: null,
   durationMs: 5,
-  startedAt: STARTED_AT,
-  finishedAt: STARTED_AT,
+  startedAt: STARTED_AT.toISOString(),
+  finishedAt: STARTED_AT.toISOString(),
 };
 
 /**
@@ -121,30 +111,16 @@ describe('RunsService', () => {
   let updateChain: ReturnType<typeof chain>;
   let db: Record<string, ReturnType<typeof vi.fn>>;
   let queue: { add: ReturnType<typeof vi.fn> };
-  let mediaStorage: {
-    backend: 'local';
-    uploadAsync: ReturnType<typeof vi.fn>;
-    saveGeneratedAsync: ReturnType<typeof vi.fn>;
-    openAsync: ReturnType<typeof vi.fn>;
-    refreshStoredUrlAsync: ReturnType<typeof vi.fn>;
-    refreshStoredUrlByKeyAsync: ReturnType<typeof vi.fn>;
-  };
+  let snapshotMapper: { listAsync: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     selectChain = chain([baseWorkflow]);
     insertChain = chain([baseRun]);
     updateChain = chain([{ id: RUN_ID }]);
-    mediaStorage = {
-      backend: 'local',
-      // RunsService читает только переподпись ссылок; остальные методы
-      // IMediaStorage существуют, чтобы мок соответствовал интерфейсу.
-      uploadAsync: vi.fn(() => Promise.resolve(null)),
-      saveGeneratedAsync: vi.fn(() =>
-        Promise.resolve({ url: null, key: null }),
-      ),
-      openAsync: vi.fn(() => Promise.resolve(null)),
-      refreshStoredUrlAsync: vi.fn(() => Promise.resolve(null)),
-      refreshStoredUrlByKeyAsync: vi.fn(() => Promise.resolve(null)),
+    snapshotMapper = {
+      // Сервис не читает `node_runs` сам: проекция и подпись ссылок живут
+      // в маппере (DESIGN § 3.4.2), поэтому в спеке достаточно заглушки.
+      listAsync: vi.fn(() => Promise.resolve([nodeSnapshot])),
     };
 
     db = {
@@ -163,8 +139,9 @@ describe('RunsService', () => {
           provide: getQueueToken(WORKFLOW_RUNS_QUEUE),
           useValue: queue as unknown as Queue,
         },
-        // KI-450: проекция узлов переподписывает media-ссылки (KI-443/464).
-        { provide: MEDIA_STORAGE, useValue: mediaStorage as IMediaStorage },
+        // v0.11 S12 (DESIGN § 3.4.2): `GET /runs/:id/nodes` строит ответ
+        // общим маппером с SSE-снимком.
+        { provide: NodeRunSnapshotMapper, useValue: snapshotMapper },
       ],
     }).compile();
 
@@ -211,8 +188,8 @@ describe('RunsService', () => {
         workflowId: WORKFLOW_ID,
         status: 'pending',
         createdAt: CREATED_AT,
-        // KI-450: у только что созданного запуска узлов ещё нет.
-        nodes: [],
+        // v0.11 S12: у запуска нет ошибки — поле присутствует и равно null.
+        error: null,
       });
     });
 
@@ -273,22 +250,16 @@ describe('RunsService', () => {
 
   describe('getRunAsync', () => {
     /**
-     * Настраивает двойник БД на два SELECT: `workflow_runs`, затем `node_runs`
-     * (KI-450 — публичный ответ читает узлы).
+     * Настраивает двойник БД на SELECT строки `workflow_runs`.
      *
-     * @param nodeRows - строки `node_runs`, которые вернёт второй запрос
+     * @param run - строка, которую вернёт запрос
      */
-    function stubRunAndNodes(nodeRows: NodeRun[] = []): void {
-      selectChain.limit.mockImplementation(() => [baseRun]);
-      const rowsChain = chain(nodeRows);
-
-      db.select
-        .mockReturnValueOnce(selectChain)
-        .mockReturnValueOnce(rowsChain);
+    function stubRun(run: WorkflowRun = baseRun): void {
+      selectChain.limit.mockImplementation(() => [run]);
     }
 
-    it('возвращает запуск в публичном представлении', async () => {
-      stubRunAndNodes();
+    it('возвращает запуск в публичном представлении — без узлов', async () => {
+      stubRun();
 
       const result = await service.getRunAsync(RUN_ID);
 
@@ -299,28 +270,31 @@ describe('RunsService', () => {
         workflowId: WORKFLOW_ID,
         status: 'pending',
         createdAt: CREATED_AT,
-        nodes: [],
+        error: null,
       });
+      // v0.11 S12: история узлов — отдельная ручка `GET /runs/:id/nodes`,
+      // `GET /runs/:id` остаётся дешёвым и в `node_runs` не ходит.
+      expect(snapshotMapper.listAsync).not.toHaveBeenCalled();
+      expect(selectChain.orderBy).not.toHaveBeenCalled();
     });
 
-    it('KI-450: отдаёт node_runs в поле nodes (проекция SSE-снимка)', async () => {
-      stubRunAndNodes([baseNodeRun]);
+    it('v0.11 S12: отдаёт error запуска (KI-347)', async () => {
+      stubRun({
+        ...baseRun,
+        status: 'failed',
+        error: 'Узел B упал: HTTP 404',
+      });
 
       const result = await service.getRunAsync(RUN_ID);
 
-      expect(result.nodes).toHaveLength(1);
-      expect(result.nodes[0]).toMatchObject({
-        nodeId: 'n1',
-        nodeType: 'text',
-        status: 'completed',
-        // `outputs` — как в SSE-снимке: null-safe объект.
-        outputs: { text: 'привет' },
-        startedAt: STARTED_AT.toISOString(),
-      });
+      // Без поля восстановленный после F5 failed-запуск не показывал причину:
+      // SSE-снимок её отдаёт, REST — теперь тоже (DESIGN § 3.4.2).
+      expect(result.error).toBe('Узел B упал: HTTP 404');
+      expect(result.status).toBe('failed');
     });
 
     it('берёт createdAt из created_at, а не из started_at (KI-015)', async () => {
-      stubRunAndNodes();
+      stubRun();
 
       const result = await service.getRunAsync(RUN_ID);
 
@@ -334,15 +308,56 @@ describe('RunsService', () => {
       await expect(service.getRunAsync(RUN_ID)).rejects.toThrow(NotFoundException);
     });
 
-    it('KI-450: чужой запуск отдаёт 404 и не читает node_runs', async () => {
+    it('чужой запуск отдаёт 404 и не читает узлы (KI-202)', async () => {
       selectChain.limit.mockImplementation(() => []);
 
       await expect(
         service.getRunAsync(RUN_ID, '44444444-4444-4444-8444-444444444444'),
       ).rejects.toThrow(NotFoundException);
-      // `SELECT node_runs` (единственный запрос с `orderBy`) не выполнялся:
-      // доступ проверен до чтения узлов.
-      expect(selectChain.orderBy).not.toHaveBeenCalled();
+
+      expect(snapshotMapper.listAsync).not.toHaveBeenCalled();
+    });
+  });
+
+  // v0.11 S12 (DESIGN § 3.4.2, KI-077): история узлов для восстановления после F5.
+  describe('listNodeRunsAsync', () => {
+    it('возвращает снимки узлов общим маппером (тот же, что у SSE)', async () => {
+      selectChain.limit.mockImplementation(() => [baseRun]);
+
+      const result = await service.listNodeRunsAsync(RUN_ID);
+
+      expect(snapshotMapper.listAsync).toHaveBeenCalledWith(
+        RUN_ID,
+        baseRun.snapshot,
+      );
+      expect(result).toEqual([nodeSnapshot]);
+    });
+
+    it('проверяет доступ и передаёт владельца в getRunRowAsync', async () => {
+      selectChain.limit.mockImplementation(() => [baseRun]);
+
+      await service.listNodeRunsAsync(
+        RUN_ID,
+        '44444444-4444-4444-8444-444444444444',
+      );
+
+      // Для чужого запуска фильтр вернул бы пустую строку — 404 (KI-202).
+      expect(selectChain.where).toHaveBeenCalled();
+      expect(snapshotMapper.listAsync).toHaveBeenCalledWith(
+        RUN_ID,
+        baseRun.snapshot,
+      );
+    });
+
+    it('чужой/несуществующий запуск отдаёт 404 и не читает node_runs', async () => {
+      selectChain.limit.mockImplementation(() => []);
+
+      await expect(
+        service.listNodeRunsAsync(RUN_ID, '44444444-4444-4444-8444-444444444444'),
+      ).rejects.toThrow(NotFoundException);
+
+      // Доступ проверен до чтения узлов: маппер не вызывался.
+      expect(snapshotMapper.listAsync).not.toHaveBeenCalled();
     });
   });
 });
