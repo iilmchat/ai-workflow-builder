@@ -7744,6 +7744,46 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-484 — `WORKFLOW_RUN_LEASE_TTL_MS` без верхней границы
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/config/env.schema.ts`
+- **Описание:** В S0 задана только нижняя граница TTL. Значение порядка 10^12 фактически отключает обнаружение падения worker'а.
+- **Решение:** добавить `max` и связать со `WORKFLOW_RUNS_STALE_THRESHOLD_MS` в S3.
+
+---
+
+### KI-485 — `schema-parity` маппит все `PgCustomColumn` в `bytea`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/db/schema-parity.spec.ts`
+- **Описание:** Второй custom-тип с другим SQL-типом пройдёт гейт молча.
+- **Решение:** брать `column.getSQLType()` или маппинг по `dataType()`.
+
+---
+
+### KI-486 — `drizzle-kit` кавычит custom SQL-тип
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `drizzle/0012_document_templates.sql`
+- **Описание:** Drizzle рендерит `"bytea"`. Для `bytea` ок, но для алиасов (`"integer"`) DDL упадёт.
+- **Решение:** проверить генерацию при следующем custom-типе.
+
+---
+
+### KI-487 — Конфликт `heartbeat < staleThreshold` с верхней границей heartbeat
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `docs/development/v0.11/DESIGN_V011_FEATURES.md`, `src/config/env.schema.ts`
+- **Описание:** DESIGN § 3.3.1 требует `heartbeat < staleThreshold`, но с дефолтным `stale=300000` это делает недостижимой верхнюю границу `heartbeat=300000`.
+- **Решение:** в S3 либо поднять stale, либо убрать условие, либо уменьшить max heartbeat.
+
+---
+
+### KI-488 — Дублирование константы `MCP_MAX_TOOLS_PER_NODE_LIMIT`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/config/env.schema.ts`, `web/src/types/graph.ts`
+- **Описание:** Константа продублирована на фронте, пока нет shared-типов.
+- **Решение:** вынести в shared-типы в S6/S8.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
