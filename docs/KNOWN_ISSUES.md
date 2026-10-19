@@ -1332,17 +1332,19 @@
 ---
 
 ### KI-077 — Результат запуска недоступен без SSE
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
-- **Файлы:** `src/runs/runs.controller.ts`,
-  `src/runs/runs.service.ts`, `web/src/stores/workflow.ts`
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-13
+- **Исправлено в:** v0.10.2 — `GET /runs/:id` отдаёт `nodes` (проекция
+  `node_runs`, общая с SSE); `RunResponse` в `docs/development/api-contract.json`
+  дополнен полем `nodes`.
+- **Файлы:** `src/runs/runs.controller.ts`, `src/runs/runs.service.ts`,
+  `src/runs/run-node-snapshots.ts`, `web/src/stores/workflow.ts`
 - **Описание:** `GET /runs/:id` отдаёт только `id`/`workflowId`/
   `status`/`createdAt`; `node_runs` API нет. После F5 (или при
   открытии старого запуска) панель **пуста** — данных о
   `outputs`/метриках/логах взять негде.
 - **Решение:** `GET /runs/:id/nodes` (или расширение ответа
-  запуска).
-- **Когда чинить:** R4.4.
-- **Дубль-учёт:** KI-450 — историческая запись; статус и исправление ведутся здесь.
+  запуска). Реализовано расширение ответа: поле `nodes`.
+- **Дубль-учёт:** KI-450 — историческая запись; закрыта вместе с этой.
 - **Связанные:** KI-061, KI-450.
 
 ---
@@ -6607,6 +6609,9 @@ MediaModelInfo, engine-DTO
 ### KI-412 — S3 media storage: заглушка без загрузки
 - **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
 - **Исправлено в:** v0.9.1 — реализован `S3MediaStorage` (PutObjectCommand).
+- **Дополнено в:** v0.10.2 — S3 SDK грузится лениво (`src/media/s3-sdk.ts`);
+  при отсутствии пакета или конфигурации хранилище откатывается на `local`,
+  не роняя старт процесса.
 - **Fix:** добавлен `@aws-sdk/client-s3`; `S3MediaStorage` скачивает результат
   и кладёт объект `PutObjectCommand` (`S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`,
   ключи из env). Без ключей/бакета `createMediaStorage` откатывается на
@@ -6621,6 +6626,9 @@ MediaModelInfo, engine-DTO
 ### KI-413 — TTL локальных media-файлов не чистится
 - **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
 - **Исправлено в:** v0.9.1 — `MediaCleanupService` + BullMQ cron.
+- **Дополнено в:** v0.10.2 — очистка по TTL из БД (`storage_key`, а не только
+  mtime) и очистка файлов workspace (`WORKSPACE_TTL_DAYS`, default 30;
+  `0` — выключено).
 - **Fix:** `MediaCleanupService` + `MediaCleanupProcessor`: BullMQ
   `upsertJobScheduler` с cron `0 3 * * *`; удаляются файлы
   `./data/media/{runId}/` старше `MEDIA_STORAGE_LOCAL_TTL_DAYS` (по `fs.stat`,
@@ -6647,8 +6655,13 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-415 — `/media/file/:runId/:fileName` публичен
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
-- **Файлы:** `src/media/media-storage.controller.ts`
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.2 — HMAC-подписанные ссылки `?expires=&sign=`
+  (`src/media/media-url-signer.ts`), контроллер проверяет подпись и срок;
+  секрет — `MEDIA_URL_SIGNING_SECRET` (fallback `JWT_SECRET`), TTL —
+  `MEDIA_URL_TTL_SECONDS` (default 3600).
+- **Файлы:** `src/media/media-storage.controller.ts`,
+  `src/media/media-url-signer.ts`, `.env.example`
 - **Описание:** `<img src>` не несёт `Authorization` → ручка без auth.
   Защита: непредсказуемый `runId` (uuid) + sanitize key. Нет signed URL.
 - **Решение:** signed URL (HMAC параметр `?sign=...`) или JWT в cookie.
@@ -6857,8 +6870,13 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-433 — Метрики `AgentRunResult` не пишутся в `node_runs`
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-18
-- **Файлы:** `src/engine/node-executors.ts`
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.2 — `executeAgentNodeAsync` возвращает `usage`
+  (`AgentNodeExecutionMetrics`: суммарные токены и `cost_usd` цикла), движок
+  пишет `tokens_in`/`tokens_out`/`cost_usd` в `node_runs` и в SSE-проекцию
+  наравне с LLM-узлами.
+- **Файлы:** `src/engine/node-executors.ts`,
+  `src/engine/execution-engine.service.ts`, `src/agent/agent.types.ts`
 - **Описание:** `executeAgentNodeAsync` возвращает только `outputs` и `steps`;
   `tokensIn` / `tokensOut` / `costUsd` из `AgentRunResult` до движка не
   доходят. У узла `agent` колонки `node_runs.tokens_in`, `tokens_out`,
@@ -6871,8 +6889,11 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-434 — SSRF: `http_request` следует за redirect на приватный адрес
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
-- **Файлы:** `src/agent/agent-tools.ts`
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.2 — `fetchWithSsrfGuardAsync` в
+  `src/common/utils/network-safety.ts`: `redirect: 'manual'`, повторная
+  проверка каждого `Location` и лимит хопов (`HTTP_MAX_REDIRECTS = 5`).
+- **Файлы:** `src/agent/agent-tools.ts`, `src/common/utils/network-safety.ts`
 - **Описание:** `assertPublicHttpUrlAsync` проверяет только исходный URL, а
   `fetch` вызывается без `redirect: 'manual'` и по умолчанию идёт по 3xx.
   Публичный хост может ответить `302 Location: http://169.254.169.254/…`, и
@@ -6886,7 +6907,10 @@ MediaModelInfo, engine-DTO
 
 ### KI-435 — SSRF: DNS rebinding между проверкой и fetch
 - **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
-- **Файлы:** `src/agent/agent-tools.ts`
+- **Прогресс v0.10.2:** ручной обход редиректов (KI-434) убирает самый дешёвый
+  вектор, но pinning IP не реализован — риск DNS rebinding остаётся открытым
+  (см. JSDoc `src/common/utils/network-safety.ts`).
+- **Файлы:** `src/agent/agent-tools.ts`, `src/common/utils/network-safety.ts`
 - **Описание:** адрес резолвится один раз в проверке, а `fetch` резолвит имя
   повторно. При TTL=0 злоумышленник отдаёт публичный IP на первом запросе и
   приватный на втором. Остаточный риск зафиксирован в JSDoc
@@ -7136,10 +7160,13 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-450 — `GET /runs/:id` не отдаёт `node_runs` (дубль KI-077)
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.2 — `GET /runs/:id` отдаёт поле `nodes`; исправлено
+  вместе с KI-077 (каноническая запись).
 - **Дубль:** KI-077 — та же проблема; отдельная запись не ведётся, статус и
   исправление отслеживаются в KI-077. Запись сохранена для истории и ссылок.
-- **Файлы:** `src/runs/runs.controller.ts`, `src/runs/runs.service.ts`
+- **Файлы:** `src/runs/runs.controller.ts`, `src/runs/runs.service.ts`,
+  `src/runs/run-node-snapshots.ts`
 - **Описание:** дубль KI-077. `RunResponse` содержит только `id`,
   `workflowId`, `status`, `createdAt`; строки `node_runs` (включая
   `stored_url`/`stored_expires_at`) читаются только в SSE-снимке. Поэтому
@@ -7155,8 +7182,13 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-451 — ключ объекта S3 не хранится в `node_runs`
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
-- **Файлы:** `src/db/schema.ts`, `src/media/media-storage.service.ts`
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.2 — media-узлы возвращают `storage_key` в метриках
+  шага, движок сохраняет ключ в `node_runs.storage_key`, а снимок
+  переподписывает ссылку по ключу, а не по разбору URL (KI-464).
+- **Файлы:** `src/db/schema.ts`, `src/media/media-storage.service.ts`,
+  `src/media/media-node-executor.service.ts`,
+  `src/engine/execution-engine.service.ts`
 - **Описание:** при переподписи (KI-443) ключ объекта восстанавливается из
   `stored_url` как path-style `<endpoint>/<bucket>/<runId>/<fileName>`. При
   virtual-hosted style (`<bucket>.endpoint/key`), endpoint с префиксом пути
@@ -7378,10 +7410,15 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-464 — `storage_key` пишется, но переподпись S3 всё ещё идёт по URL (Medium)
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
-- **Запланировано:** v0.10.x
-- **Файлы:** `src/runs/runs-stream.service.ts`,
-  `src/media/media-storage.service.ts`, `src/db/schema.ts`
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.2 — `refreshStoredUrlByKeyAsync(storageKey)` в
+  `IMediaStorage`; снимок (`src/runs/run-node-snapshots.ts`) выбирает
+  `storage_key` и перевыпускает ссылку по нему, media-узлы пишут ключ в
+  `node_runs`; для старых строк сохранён fallback по URL.
+- **Файлы:** `src/runs/run-node-snapshots.ts`,
+  `src/media/media-storage.service.ts`,
+  `src/media/media-node-executor.service.ts`,
+  `src/engine/execution-engine.service.ts`, `src/db/schema.ts`
 - **Описание:** S6 пишет ключ сгенерированного документа в
   `node_runs.storage_key`, но снимок SSE не читает эту колонку, а
   `IMediaStorage.refreshStoredUrlAsync` принимает **ссылку** и извлекает ключ
@@ -7527,9 +7564,14 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-472 — API-префиксы продублированы в `app.module.ts` и `web/src/lib/api-prefixes.ts` (Low)
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
-- **Файлы:** `src/app.module.ts`, `web/src/lib/api-prefixes.ts`,
-  `src/engine/node-ports.ts`
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.10.2 — единый реестр `api-prefixes.json` в корне
+  репозитория; backend (`src/common/api-prefixes.ts`) строит из него RegExp
+  SPA-fallback'а, frontend (`web/src/lib/api-prefixes.ts`) — Vite-прокси.
+  Паритет-спека `src/common/api-prefixes.spec.ts` читает JSON напрямую.
+- **Файлы:** `src/app.module.ts`, `src/common/api-prefixes.ts`,
+  `api-prefixes.json`, `src/common/api-prefixes.spec.ts`,
+  `web/src/lib/api-prefixes.ts`
 - **Описание:** `API_ROUTE_PATTERN` в `app.module.ts` перечисляет префиксы
   (`api`, `auth`, `llm`, `media`, `workflow`, `engine`, `runs`, `templates`,
   `nodes`) вручную. Источник правды для frontend/Vite — `api-prefixes.ts`,
@@ -7607,8 +7649,16 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-478 — Узел `http` уязвим к SSRF (High)
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-19
-- **Файлы:** `src/engine/node-executors.ts`
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-19
+- **Исправлено в:** v0.10.2 — узел `http` использует общий
+  `fetchWithSsrfGuardAsync` (`src/common/utils/network-safety.ts`):
+  блокировка приватных, loopback, link-local (включая metadata
+  `169.254.169.254`) и служебных IPv4/IPv6, DNS-резолв с проверкой всех
+  адресов, `redirect: 'manual'` с проверкой каждого `Location`. Аварийное
+  выключение — `ALLOW_PRIVATE_IPS=true` (default `false`).
+- **Файлы:** `src/engine/node-executors.ts`,
+  `src/common/utils/network-safety.ts`,
+  `src/engine/execution-engine.service.ts`, `.env.example`
 - **Описание:** `executeHttpNode` вызывает `fetch` напрямую: нет проверки схемы
   и приватных IPv4/IPv6, нет блокировки metadata-адресов и нет
   `redirect: 'manual'`. В отличие от `http_request` (KI-409), где
@@ -7658,12 +7708,12 @@ MediaModelInfo, engine-DTO
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 205 |
+| Fixed | 214 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 1 |
 | Documented | 6 |
-| Open | 251 |
+| Open | 242 |
 | Won't Fix | 4 |
 | **Всего** | **468** |
 

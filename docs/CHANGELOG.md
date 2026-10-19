@@ -21,6 +21,35 @@
 
 - **Docs:** Создан DESIGN v0.11.0 (шаблоны DOCX, MCP Adapter, Reliability fixes).
 - **Docs:** Зарегистрированы KI-478..480.
+- **API и метрики (KI-077/450, KI-433, KI-472):** `GET /runs/:id` отдаёт `nodes` —
+  проекцию `node_runs`, общую с SSE (`src/runs/run-node-snapshots.ts`), чтобы
+  UI восстанавливался после F5 без SSE; `docs/development/api-contract.json`
+  дополнен полем `nodes`. Метрики Agent (токены и `cost_usd` цикла) пишутся в
+  `node_runs` наравне с LLM-узлами. API-префиксы сведены в единый
+  `api-prefixes.json`: из него строятся RegExp SPA-fallback'а backend'а и
+  Vite-прокси, дублирование списков устранено.
+
+### Fixed
+
+- **Media и S3 (KI-412, 413, 415, 451, 464):** HMAC-подписи ссылок локального
+  хранилища (`?expires=&sign=`, env `MEDIA_URL_SIGNING_SECRET`,
+  `MEDIA_URL_TTL_SECONDS`); переподпись по `storage_key`
+  (`refreshStoredUrlByKeyAsync`), media-узлы пишут ключ в `node_runs`, для
+  старых строк сохранён fallback по URL; ленивая загрузка S3 SDK
+  (`src/media/s3-sdk.ts`) с откатом на `local`, если пакет или конфигурация
+  недоступны; TTL-очистка media и workspace (`WORKSPACE_TTL_DAYS`) через
+  BullMQ cron.
+
+### Security
+
+- **SSRF-защита (KI-478, KI-434):** единый `src/common/utils/network-safety.ts`
+  для узла `http` и tool'а `http_request`: блокировка приватных, loopback,
+  link-local (включая metadata `169.254.169.254`) и служебных IPv4/IPv6,
+  DNS-резолв с проверкой всех адресов, `redirect: 'manual'` с повторной
+  проверкой каждого `Location` и лимитом хопов. Защита выключается только
+  явно — `ALLOW_PRIVATE_IPS=true` (default `false`, строгий разбор строки).
+  DNS rebinding (KI-435) остаётся открытым: без pinning IP на уровне
+  HTTP-клиента риск не закрыть.
 
 ### Docs
 

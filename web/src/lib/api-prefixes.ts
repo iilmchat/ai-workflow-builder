@@ -35,7 +35,7 @@ export interface ApiPrefix {
  * backend-spec'у (`controller`, `spaExclude`) и Vite (`proxy`).
  */
 interface ApiPrefixRegistryEntry extends ApiPrefix {
-  /** Проксируется ли префикс Vite (дефолт `true`; legacy `/api` — `false`). */
+  /** Проксируется ли префикс Vite (дефолт `true`; legacy `api` — `false`). */
   readonly proxy?: boolean;
   /** Исключать ли префикс из SPA-fallback backend'а (дефолт `true`). */
   readonly spaExclude?: boolean;
@@ -55,8 +55,8 @@ const REGISTRY = registry as { prefixes: readonly ApiPrefixRegistryEntry[] };
 /**
  * Реестр префиксов: единственный источник правды для Vite-прокси и тестов.
  *
- * Записи с `proxy: false` отфильтрованы: `/api` — legacy-префикс backend'а
- * (он отвечает с корня, `/api` нужен только SPA-fallback'у в `app.module.ts`),
+ * Записи с `proxy: false` отфильтрованы: `api` — legacy-префикс backend'а
+ * (он отвечает с корня, `api` нужен только SPA-fallback'у в `app.module.ts`),
  * проксировать его в dev-сервере незачем.
  */
 export const API_PREFIXES: readonly ApiPrefix[] = REGISTRY.prefixes
