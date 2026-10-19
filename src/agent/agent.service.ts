@@ -25,6 +25,7 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { defaultDnsLookupAsync } from '../common/utils/network-safety.js';
 import type { LlmUsage } from '../llm/llm-provider.interface.js';
 import { calculateCostUsd } from '../llm/model-pricing.js';
 import { LlmRegistryService } from '../llm/llm-registry.service.js';
@@ -33,11 +34,7 @@ import { withSpanAsync } from '../observability/tracing.js';
 import { CostBudgetService } from '../runs/cost-budget.service.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
-import {
-  TOOL_REGISTRY,
-  defaultDnsLookupAsync,
-  isAgentToolName,
-} from './agent-tools.js';
+import { TOOL_REGISTRY, isAgentToolName } from './agent-tools.js';
 import {
   AGENT_DEFAULT_MAX_ITERATIONS,
   AGENT_DEFAULT_MAX_TOKENS_PER_STEP,
@@ -406,6 +403,14 @@ export class AgentService {
   private readonly defaultMaxTokensPerStep: number;
 
   /**
+   * Пропускать ли приватные IP в `http_request` (env `ALLOW_PRIVATE_IPS`).
+   *
+   * Читается один раз в конструкторе (RULES 4.6): значение — аварийный
+   * переключатель SSRF-защиты (KI-478/434), а не настройка на каждый вызов.
+   */
+  private readonly allowPrivateIps: boolean;
+
+  /**
    * @param llm - вызов модели по id (провайдер резолвится внутри)
    * @param registry - выбор провайдера эмбеддингов для vector-инструментов
    * @param vectorStore - хранилище векторов и памяти (R7.4a)
@@ -435,6 +440,13 @@ export class AgentService {
       1,
       AGENT_MAX_TOKENS_PER_STEP_LIMIT,
     );
+    // Строка `'false'` из сырого окружения не должна включать защиту наоборот:
+    // как и у остальных флагов, истина — только boolean `true`/строка `'true'`
+    // (после `EnvSchema` приходит boolean).
+    const allowPrivateIps = config.get<unknown>('ALLOW_PRIVATE_IPS');
+
+    this.allowPrivateIps =
+      allowPrivateIps === true || allowPrivateIps === 'true';
   }
 
   /**
@@ -879,6 +891,9 @@ export class AgentService {
       // Системный `dns.lookup` — продакшен-реализация; тесты подставляют мок
       // через контекст, а не через сеть.
       dnsLookupAsync: defaultDnsLookupAsync,
+      // v0.10.2 (KI-478/434): тот же env-флаг, что у узла `http`; агент и узел
+      // проверяют адреса одинаково.
+      allowPrivateIps: this.allowPrivateIps,
     };
   }
 }

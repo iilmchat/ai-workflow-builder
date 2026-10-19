@@ -1,0 +1,15 @@
+{
+  "$comment": "ЕДИНЫЙ источник правды по HTTP-префиксам API (v0.10.2, KI-472). Читают: backend (src/common/api-prefixes.ts — RegExp SPA-fallback'а в app.module.ts) и frontend (web/src/lib/api-prefixes.ts — server.proxy в vite.config.ts, тест-паритеты). Поле prefix — первый сегмент маршрута без слэша. sse: true — потоковая ручка (Vite proxy с timeout: 0). htmlFallback: true — HTML-deep-link получает index.html (R6.2.2). proxy: false — не проксируется Vite (legacy /api: бэкенд отдаёт с корня). spaExclude: false — не исключать из SPA-fallback'а. controller: false — у префикса нет @Controller (проверка паритета на backend). Порядок не важен; дубли запрещены.",
+  "version": 1,
+  "prefixes": [
+    { "prefix": "api", "controller": false, "proxy": false },
+    { "prefix": "auth" },
+    { "prefix": "engine" },
+    { "prefix": "llm" },
+    { "prefix": "media" },
+    { "prefix": "nodes" },
+    { "prefix": "runs", "sse": true },
+    { "prefix": "templates" },
+    { "prefix": "workflow", "htmlFallback": true }
+  ]
+}

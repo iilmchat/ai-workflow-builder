@@ -89,8 +89,10 @@ export class RunsController {
    *
    * Отдельная ручка вместо поля в SSE-снимке: контракт потока
    * (`docs/development/sse-contract.json`, KI-348) в R7.1 не расширяется.
-   * Владелец проверяется через {@link RunsService.getRunAsync} — чужой запуск
-   * отдаёт 404, а не свои траты (KI-202).
+   * Владелец проверяется через {@link RunsService.getRunRowAsync} — чужой
+   * запуск отдаёт 404, а не свои траты (KI-202). Узлы (`nodes`, KI-450) здесь
+   * не нужны: бюджет обновляется после каждого узла, лишний SELECT + подпись
+   * ссылок были бы работой на каждый поллинг.
    *
    * @param params - path-параметр `id` (uuid)
    * @param user - владелец из access-токена
@@ -102,7 +104,10 @@ export class RunsController {
     @Param(ZodValidationPipe.create(RunIdParamSchema)) params: RunIdParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<RunBudgetResponse> {
-    await this.runsService.getRunAsync(params.id, user.sub);
+    // KI-450: для проверки существования достаточно строки запуска.
+    // `getRunAsync` теперь читает ещё и `node_runs` с переподписью ссылок —
+    // для поллинга бюджета (после каждого узла) это лишняя работа.
+    await this.runsService.getRunRowAsync(params.id, user.sub);
 
     const check = await this.costBudget.checkBudgetAsync(params.id);
 

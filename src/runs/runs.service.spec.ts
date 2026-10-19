@@ -6,9 +6,14 @@ import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   workflowRuns,
   workflows,
+  type NodeRun,
   type Workflow,
   type WorkflowRun,
 } from '../db/schema.js';
+import {
+  MEDIA_STORAGE,
+  type IMediaStorage,
+} from '../media/media-storage.service.js';
 import { EXECUTE_RUN_JOB, WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 import { RunsService } from './runs.service.js';
 import { RUNS_INSTANCE_ID } from './runs.worker-options.js';
@@ -48,6 +53,34 @@ const baseRun: WorkflowRun = {
 };
 
 /**
+ * Строка `node_runs` для KI-450: `GET /runs/:id` отдаёт узлы проекцией
+ * SSE-снимка. Поля совпадают со схемой `NodeRun`, включая nullable-колонки.
+ */
+const baseNodeRun: NodeRun = {
+  id: '33333333-3333-4333-8333-333333333333',
+  runId: RUN_ID,
+  nodeId: 'n1',
+  nodeType: 'text',
+  status: 'completed',
+  inputs: {},
+  outputs: { text: 'привет' },
+  error: null,
+  logs: null,
+  tokensIn: null,
+  tokensOut: null,
+  costUsd: null,
+  costRub: null,
+  cacheReadTokens: null,
+  cacheCreationTokens: null,
+  storedUrl: null,
+  storedExpiresAt: null,
+  storageKey: null,
+  durationMs: 5,
+  startedAt: STARTED_AT,
+  finishedAt: STARTED_AT,
+};
+
+/**
  * Создаёт цепочку-заглушку Drizzle query builder.
  *
  * Каждый метод (`from`/`where`/`limit`/`values`/`set`) возвращает саму
@@ -70,7 +103,7 @@ function chain(resolveWith: unknown): Record<string, ReturnType<typeof vi.fn>> {
     },
   });
 
-  for (const method of ['from', 'where', 'limit', 'values', 'set']) {
+  for (const method of ['from', 'where', 'limit', 'values', 'set', 'orderBy']) {
     link[method] = vi.fn(() => proxy);
   }
 
@@ -86,11 +119,31 @@ describe('RunsService', () => {
   let updateChain: ReturnType<typeof chain>;
   let db: Record<string, ReturnType<typeof vi.fn>>;
   let queue: { add: ReturnType<typeof vi.fn> };
+  let mediaStorage: {
+    backend: 'local';
+    uploadAsync: ReturnType<typeof vi.fn>;
+    saveGeneratedAsync: ReturnType<typeof vi.fn>;
+    openAsync: ReturnType<typeof vi.fn>;
+    refreshStoredUrlAsync: ReturnType<typeof vi.fn>;
+    refreshStoredUrlByKeyAsync: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
     selectChain = chain([baseWorkflow]);
     insertChain = chain([baseRun]);
     updateChain = chain([{ id: RUN_ID }]);
+    mediaStorage = {
+      backend: 'local',
+      // RunsService читает только переподпись ссылок; остальные методы
+      // IMediaStorage существуют, чтобы мок соответствовал интерфейсу.
+      uploadAsync: vi.fn(() => Promise.resolve(null)),
+      saveGeneratedAsync: vi.fn(() =>
+        Promise.resolve({ url: null, key: null }),
+      ),
+      openAsync: vi.fn(() => Promise.resolve(null)),
+      refreshStoredUrlAsync: vi.fn(() => Promise.resolve(null)),
+      refreshStoredUrlByKeyAsync: vi.fn(() => Promise.resolve(null)),
+    };
 
     db = {
       select: vi.fn(() => selectChain),
@@ -108,6 +161,8 @@ describe('RunsService', () => {
           provide: getQueueToken(WORKFLOW_RUNS_QUEUE),
           useValue: queue as unknown as Queue,
         },
+        // KI-450: проекция узлов переподписывает media-ссылки (KI-443/464).
+        { provide: MEDIA_STORAGE, useValue: mediaStorage as IMediaStorage },
       ],
     }).compile();
 
@@ -154,6 +209,8 @@ describe('RunsService', () => {
         workflowId: WORKFLOW_ID,
         status: 'pending',
         createdAt: CREATED_AT,
+        // KI-450: у только что созданного запуска узлов ещё нет.
+        nodes: [],
       });
     });
 
@@ -213,8 +270,23 @@ describe('RunsService', () => {
   });
 
   describe('getRunAsync', () => {
-    it('возвращает запуск в публичном представлении', async () => {
+    /**
+     * Настраивает двойник БД на два SELECT: `workflow_runs`, затем `node_runs`
+     * (KI-450 — публичный ответ читает узлы).
+     *
+     * @param nodeRows - строки `node_runs`, которые вернёт второй запрос
+     */
+    function stubRunAndNodes(nodeRows: NodeRun[] = []): void {
       selectChain.limit.mockImplementation(() => [baseRun]);
+      const rowsChain = chain(nodeRows);
+
+      db.select
+        .mockReturnValueOnce(selectChain)
+        .mockReturnValueOnce(rowsChain);
+    }
+
+    it('возвращает запуск в публичном представлении', async () => {
+      stubRunAndNodes();
 
       const result = await service.getRunAsync(RUN_ID);
 
@@ -225,11 +297,28 @@ describe('RunsService', () => {
         workflowId: WORKFLOW_ID,
         status: 'pending',
         createdAt: CREATED_AT,
+        nodes: [],
+      });
+    });
+
+    it('KI-450: отдаёт node_runs в поле nodes (проекция SSE-снимка)', async () => {
+      stubRunAndNodes([baseNodeRun]);
+
+      const result = await service.getRunAsync(RUN_ID);
+
+      expect(result.nodes).toHaveLength(1);
+      expect(result.nodes[0]).toMatchObject({
+        nodeId: 'n1',
+        nodeType: 'text',
+        status: 'completed',
+        // `outputs` — как в SSE-снимке: null-safe объект.
+        outputs: { text: 'привет' },
+        startedAt: STARTED_AT.toISOString(),
       });
     });
 
     it('берёт createdAt из created_at, а не из started_at (KI-015)', async () => {
-      selectChain.limit.mockImplementation(() => [baseRun]);
+      stubRunAndNodes();
 
       const result = await service.getRunAsync(RUN_ID);
 
@@ -241,6 +330,17 @@ describe('RunsService', () => {
       selectChain.limit.mockImplementation(() => []);
 
       await expect(service.getRunAsync(RUN_ID)).rejects.toThrow(NotFoundException);
+    });
+
+    it('KI-450: чужой запуск отдаёт 404 и не читает node_runs', async () => {
+      selectChain.limit.mockImplementation(() => []);
+
+      await expect(
+        service.getRunAsync(RUN_ID, '44444444-4444-4444-8444-444444444444'),
+      ).rejects.toThrow(NotFoundException);
+      // `SELECT node_runs` (единственный запрос с `orderBy`) не выполнялся:
+      // доступ проверен до чтения узлов.
+      expect(selectChain.orderBy).not.toHaveBeenCalled();
     });
   });
 });

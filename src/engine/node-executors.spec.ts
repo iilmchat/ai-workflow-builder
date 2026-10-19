@@ -27,7 +27,20 @@ import { NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import type { GraphDto } from './dto/index.js';
+import { SsrfBlockedException } from '../common/utils/network-safety.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
+
+/**
+ * v0.10.2 (KI-478): узел `http` проверяет адрес до запроса, поэтому для
+ * доменов нужен DNS-резолв. В юнит-тестах он подменяется: реальная сеть в
+ * тестах запрещена, а `example.com` — публичный адрес, который guard
+ * пропускает.
+ */
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(() =>
+    Promise.resolve([{ address: '93.184.216.34', family: 4 }]),
+  ),
+}));
 
 /** Предельный размер тела ответа, байт (совпадает с константой исполнителя). */
 const MAX_BODY_BYTES = 1_000_000;
@@ -296,6 +309,100 @@ describe('node-executors', () => {
           timeoutMs: 120_001,
         }),
       ).rejects.toThrow('Некорректные данные узла http');
+    });
+
+    it('KI-478: блокирует loopback-адрес и не делает сетевой вызов', async () => {
+      const fetchMock = mockFetch(() => Promise.resolve(response('ok')));
+
+      await expect(
+        executeHttpNode({ method: 'GET', url: 'http://127.0.0.1:3000/admin' }),
+      ).rejects.toBeInstanceOf(SsrfBlockedException);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('KI-478: блокирует metadata-адрес 169.254.169.254', async () => {
+      const fetchMock = mockFetch(() => Promise.resolve(response('ok')));
+
+      await expect(
+        executeHttpNode({
+          method: 'GET',
+          url: 'http://169.254.169.254/latest/meta-data/',
+        }),
+      ).rejects.toMatchObject({
+        name: 'SsrfBlockedException',
+        hostname: '169.254.169.254',
+      });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('KI-434: блокирует редирект на приватный адрес (redirect: manual)', async () => {
+      const fetchMock = mockFetch(() =>
+        Promise.resolve(
+          response('', 302, { location: 'http://10.0.0.5/internal' }),
+        ),
+      );
+
+      await expect(
+        executeHttpNode({ method: 'GET', url: 'https://example.com/go' }),
+      ).rejects.toBeInstanceOf(SsrfBlockedException);
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+      // Без manual fetch пошёл бы по 3xx сам, минуя SSRF-проверку.
+      expect(init.redirect).toBe('manual');
+    });
+
+    it('KI-434: идёт по безопасному редиректу и возвращает финальный ответ', async () => {
+      const fetchMock = mockFetch(() => Promise.resolve(response('')));
+
+      // Первый ответ — безопасный редирект, второй — финальный.
+      fetchMock
+        .mockResolvedValueOnce(
+          response('', 301, { location: 'https://example.com/final' }),
+        )
+        .mockResolvedValueOnce(response('{"ok":true}', 200));
+
+      const result = await executeHttpNode({
+        method: 'GET',
+        url: 'https://example.com/start',
+      });
+
+      expect(result).toEqual({ status: 200, body: '{"ok":true}' });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[1]?.[0]).toBe('https://example.com/final');
+    });
+
+    it('ALLOW_PRIVATE_IPS: опция пропускает приватный адрес', async () => {
+      const fetchMock = mockFetch(() => Promise.resolve(response('ok')));
+
+      const result = await executeHttpNode(
+        { method: 'GET', url: 'http://127.0.0.1:1234/v1/models' },
+        {},
+        { allowPrivateIps: true },
+      );
+
+      expect(result).toEqual({ status: 200, body: 'ok' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('добавляет к ошибке источник редиректа (диагностика node_runs)', async () => {
+      mockFetch(() =>
+        Promise.resolve(
+          response('', 307, { location: 'http://192.168.1.10/secret' }),
+        ),
+      );
+
+      await expect(
+        executeHttpNode({ method: 'GET', url: 'https://example.com/go' }),
+      ).rejects.toMatchObject({
+        name: 'SsrfBlockedException',
+        hostname: '192.168.1.10',
+        redirectFrom: 'https://example.com/go',
+      });
     });
   });
 

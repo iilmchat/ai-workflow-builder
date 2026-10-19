@@ -1,8 +1,9 @@
 import type { Dirent, Stats } from 'node:fs';
 import { readdir, rmdir, stat, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { Queue } from 'bullmq';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Database } from '../db/db.module.js';
 import {
   MEDIA_CLEANUP_CRON,
   MEDIA_CLEANUP_SCHEDULER_ID,
@@ -26,6 +27,14 @@ vi.mock('node:fs/promises', () => ({
 
 /** Корень хранилища в тестах (путь не существует — всё подменено). */
 const BASE_DIR = join('virtual', 'data', 'media');
+
+/**
+ * Корень workspace в тестах.
+ *
+ * Сервис нормализует путь через `resolve`, поэтому и ключи мок-дерева должны
+ * быть абсолютными — иначе `readdir` не найдёт «каталог».
+ */
+const WORKSPACE_BASE = resolve('virtual', 'data', 'workspace');
 
 /** Миллисекунд в сутках. */
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -142,10 +151,12 @@ describe('MediaCleanupService: удаление по TTL (R7.8, KI-413)', () => 
     expect(vi.mocked(unlink)).not.toHaveBeenCalledWith(freshFile);
     // Каталог пытались убрать, но он не опустел — это не ошибка.
     expect(vi.mocked(rmdir)).toHaveBeenCalledWith(runDir);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       scannedFiles: 2,
       removedFiles: 1,
       removedDirectories: 0,
+      removedExpiredDbFiles: 0,
+      removedWorkspaceFiles: 0,
       skipped: false,
     });
   });
@@ -184,10 +195,12 @@ describe('MediaCleanupService: удаление по TTL (R7.8, KI-413)', () => 
     const service = new MediaCleanupService(BASE_DIR, 30);
     const result = await service.cleanupAsync(NOW);
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       scannedFiles: 0,
       removedFiles: 0,
       removedDirectories: 0,
+      removedExpiredDbFiles: 0,
+      removedWorkspaceFiles: 0,
       skipped: false,
     });
     expect(vi.mocked(unlink)).not.toHaveBeenCalled();
@@ -225,6 +238,92 @@ describe('MediaCleanupService: удаление по TTL (R7.8, KI-413)', () => 
     expect(result.removedFiles).toBe(0);
     // rmdir не вызывается: удалять из каталога нечего было.
     expect(vi.mocked(rmdir)).not.toHaveBeenCalled();
+  });
+
+  it('KI-413: удаляет файлы по истёкшему stored_expires_at из БД (storage_key)', async () => {
+    vi.mocked(readdir).mockRejectedValue(fsError('ENOENT'));
+    const db = {
+      select: () => ({
+        from: () => ({
+          where: () =>
+            Promise.resolve([{ storageKey: 'run-db/expired.png' }]),
+        }),
+      }),
+    } as unknown as Database;
+
+    const service = new MediaCleanupService(BASE_DIR, 0, {
+      db,
+      mediaBackend: 'local',
+    });
+    const result = await service.cleanupAsync(NOW);
+
+    expect(vi.mocked(unlink)).toHaveBeenCalledWith(
+      // `resolveMediaStoragePath` нормализует базовый каталог через `resolve`.
+      resolve(BASE_DIR, 'run-db', 'expired.png'),
+    );
+    expect(result.removedExpiredDbFiles).toBe(1);
+  });
+
+  it('KI-413: для бэкенда s3 удаление локальных файлов по БД не выполняется', async () => {
+    vi.mocked(readdir).mockRejectedValue(fsError('ENOENT'));
+    const db = {
+      select: () => ({
+        from: () => ({
+          where: () =>
+            Promise.resolve([{ storageKey: 'run-db/expired.png' }]),
+        }),
+      }),
+    } as unknown as Database;
+
+    const service = new MediaCleanupService(BASE_DIR, 0, {
+      db,
+      mediaBackend: 's3',
+    });
+    const result = await service.cleanupAsync(NOW);
+
+    expect(vi.mocked(unlink)).not.toHaveBeenCalled();
+    expect(result.removedExpiredDbFiles).toBe(0);
+  });
+
+  it('KI-413: чистит workspace по TTL рекурсивно и убирает опустевшие каталоги', async () => {
+    const workflowDir = join(WORKSPACE_BASE, 'wf-1');
+    const notesDir = join(workflowDir, 'notes');
+    const oldFile = join(workflowDir, 'old.txt');
+    const freshFile = join(workflowDir, 'fresh.txt');
+    const nestedOld = join(notesDir, 'nested-old.txt');
+
+    mockTree({
+      [WORKSPACE_BASE]: [dirent('wf-1', 'dir')],
+      [workflowDir]: [
+        dirent('old.txt', 'file'),
+        dirent('fresh.txt', 'file'),
+        dirent('notes', 'dir'),
+      ],
+      [notesDir]: [dirent('nested-old.txt', 'file')],
+    });
+    mockMtimes({
+      [oldFile]: NOW.getTime() - 40 * DAY_MS,
+      [freshFile]: NOW.getTime() - 1 * DAY_MS,
+      [nestedOld]: NOW.getTime() - 50 * DAY_MS,
+    });
+    // `notes` опустел и удаляется; `wf-1` содержит свежий файл — ENOTEMPTY.
+    vi.mocked(rmdir).mockImplementation((async (path: string) => {
+      if (path === workflowDir) {
+        throw fsError('ENOTEMPTY');
+      }
+    }) as unknown as typeof rmdir);
+
+    const service = new MediaCleanupService(BASE_DIR, 0, {
+      workspacePath: WORKSPACE_BASE,
+      workspaceTtlDays: 30,
+    });
+    const result = await service.cleanupAsync(NOW);
+
+    expect(vi.mocked(unlink)).toHaveBeenCalledWith(oldFile);
+    expect(vi.mocked(unlink)).toHaveBeenCalledWith(nestedOld);
+    expect(vi.mocked(unlink)).not.toHaveBeenCalledWith(freshFile);
+    expect(result.removedWorkspaceFiles).toBe(2);
+    expect(result.removedWorkspaceDirectories).toBe(1);
   });
 });
 
@@ -282,6 +381,9 @@ describe('MediaCleanupProcessor: расписание (R7.8, KI-413)', () => {
         scannedFiles: 0,
         removedFiles: 0,
         removedDirectories: 0,
+        removedExpiredDbFiles: 0,
+        removedWorkspaceFiles: 0,
+        removedWorkspaceDirectories: 0,
         skipped: false,
       });
     const processor = new MediaCleanupProcessor(cleanup, queue);

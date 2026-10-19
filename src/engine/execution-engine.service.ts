@@ -57,6 +57,7 @@ import {
   executeWebSearchNodeAsync,
   executeWriteFileNodeAsync,
   prefixSubWorkflowGraph,
+  type AgentNodeExecutionMetrics,
   type SubWorkflowContext,
   type VectorMemoryContext,
 } from './node-executors.js';
@@ -183,6 +184,16 @@ type NodeStepResult = (
       outputs: Record<string, unknown>;
       metrics: MediaNodeMetrics;
     }
+  | {
+      /**
+       * Агент (v0.10.2, KI-433): стоимость/токены относятся к USD, как у
+       * LLM-узла, но набор метрик уже — только суммарные токены и стоимость
+       * цикла (кэш-полей цикл не отдаёт).
+       */
+      kind: 'agent';
+      outputs: Record<string, unknown>;
+      metrics: AgentNodeExecutionMetrics;
+    }
 ) & {
   /**
    * Дополнительные строки в `node_runs.logs` (R7.4b).
@@ -229,6 +240,14 @@ export interface ExecutionResult {
 export class ExecutionEngineService {
   private readonly logger = new Logger(ExecutionEngineService.name);
 
+  /**
+   * Пропускать ли приватные IP в узле `http` (env `ALLOW_PRIVATE_IPS`).
+   *
+   * `false` — SSRF-защита включена (дефолт), `true` — осознанное выключение
+   * для локальной разработки/тестов (v0.10.2, KI-478/434).
+   */
+  private readonly allowPrivateIps: boolean;
+
   constructor(
     @Inject(DRIZZLE) private readonly db: Database,
     private readonly engineService: EngineService,
@@ -262,7 +281,15 @@ export class ExecutionEngineService {
     // workspace workflow. Узлы получают только относительный путь, сервис
     // проверяет path traversal и лимит 5 МБ (RULES 4.38).
     private readonly filesystemService: FilesystemService,
-  ) {}
+  ) {
+    // v0.10.2 (KI-478/434): аварийный переключатель SSRF-защиты узла `http`.
+    // Читается один раз (RULES 4.6); строка `'false'` из сырого окружения не
+    // должна трактоваться как включение — истина только `true`/`'true'`.
+    const allowPrivateIps = config.get<unknown>('ALLOW_PRIVATE_IPS');
+
+    this.allowPrivateIps =
+      allowPrivateIps === true || allowPrivateIps === 'true';
+  }
 
   /**
    * Выполняет граф workflow в рамках запуска.
@@ -858,6 +885,24 @@ export class ExecutionEngineService {
             logs.push(...step.logs);
           }
 
+          // KI-433: у LLM-узла и агента метрики в USD, у media — в рублях.
+          // Сводим их к двум «срезам», чтобы ветки записи в БД и события не
+          // дублировали `step.kind === …` по восемь раз. Имена полей у веток
+          // разные (`inputTokens` у LLM, `tokensIn` у агента) — разводим здесь.
+          const llmMetrics = step.kind === 'llm' ? step.metrics : null;
+          const agentMetrics = step.kind === 'agent' ? step.metrics : null;
+          const mediaMetrics = step.kind === 'media' ? step.metrics : null;
+          const usageTokensIn =
+            llmMetrics?.inputTokens ?? agentMetrics?.tokensIn ?? null;
+          const usageTokensOut =
+            llmMetrics?.outputTokens ?? agentMetrics?.tokensOut ?? null;
+          const usageCostUsd =
+            llmMetrics !== null
+              ? toNumericString(llmMetrics.costUsd)
+              : agentMetrics !== null
+                ? toNumericString(agentMetrics.costUsd)
+                : null;
+
           await this.db
             .update(nodeRuns)
             .set({
@@ -868,24 +913,29 @@ export class ExecutionEngineService {
               // KI-038: метрики провайдера раздельно по валютам. У LLM-узла
               // заполняется cost_usd, у media-узла — cost_rub, у чистого
               // преобразования обе колонки остаются NULL (RULES 4.23).
-              tokensIn: step.kind === 'llm' ? step.metrics.inputTokens : null,
-              tokensOut: step.kind === 'llm' ? step.metrics.outputTokens : null,
-              costUsd:
-                step.kind === 'llm' ? toNumericString(step.metrics.costUsd) : null,
+              // KI-433: у узла `agent` те же USD-колонки заполняются суммой
+              // по шагам цикла (`kind: 'agent'`).
+              tokensIn: usageTokensIn,
+              tokensOut: usageTokensOut,
+              costUsd: usageCostUsd,
               costRub:
-                step.kind === 'media' ? toNumericString(step.metrics.costRub) : null,
+                mediaMetrics === null
+                  ? null
+                  : toNumericString(mediaMetrics.costRub),
               // R7.7 (KI-055/KI-150): кэш-токены — только у LLM-узла.
-              cacheReadTokens:
-                step.kind === 'llm' ? step.metrics.cacheReadTokens : null,
-              cacheCreationTokens:
-                step.kind === 'llm' ? step.metrics.cacheCreationTokens : null,
+              cacheReadTokens: llmMetrics?.cacheReadTokens ?? null,
+              cacheCreationTokens: llmMetrics?.cacheCreationTokens ?? null,
               // R7.8 (KI-362): своя ссылка на media-результат — только у media.
-              storedUrl: step.kind === 'media' ? step.metrics.storedUrl : null,
-              storedExpiresAt:
-                step.kind === 'media' ? step.metrics.storedExpiresAt : null,
-              // v0.10 S6 (KI-451): ключ сгенерированного документа. Для
-              // остальных типов узлов поля нет — колонка остаётся NULL.
-              storageKey: step.storageKey ?? null,
+              storedUrl: mediaMetrics?.storedUrl ?? null,
+              storedExpiresAt: mediaMetrics?.storedExpiresAt ?? null,
+              // v0.10 S6 (KI-451): ключ сгенерированного документа. Для media
+              // (KI-464) ключ лежит в метриках шага — local/HMAC и S3
+              // переподписывают ссылку по нему (KI-415). У остальных типов узлов
+              // поля нет — колонка остаётся NULL.
+              storageKey:
+                step.kind === 'media'
+                  ? step.metrics.storageKey
+                  : (step.storageKey ?? null),
               finishedAt: new Date(),
             })
             .where(eq(nodeRuns.id, nodeRun.id));
@@ -899,27 +949,24 @@ export class ExecutionEngineService {
             // KI-075: метрики кладём и в событие — панель показывает стоимость
             // сразу, а не только после F5 (из snapshot). Те же значения, что
             // записаны в node_runs выше (RULES 4.23: раздельно по валютам).
+            // KI-433: для узла `agent` — суммарные токены/стоимость цикла.
             costRub:
-              step.kind === 'media' ? toNumericString(step.metrics.costRub) : null,
-            tokensIn: step.kind === 'llm' ? step.metrics.inputTokens : null,
-            tokensOut: step.kind === 'llm' ? step.metrics.outputTokens : null,
-            costUsd:
-              step.kind === 'llm' ? toNumericString(step.metrics.costUsd) : null,
+              mediaMetrics === null
+                ? null
+                : toNumericString(mediaMetrics.costRub),
+            tokensIn: usageTokensIn,
+            tokensOut: usageTokensOut,
+            costUsd: usageCostUsd,
             // R7.7 (KI-055/KI-365): кэш-токены и экономия — панель показывает
             // их сразу, не дожидаясь F5. Экономия не хранится в БД: в снимке
             // пересчитывается по прайсу (`runs-stream.service.ts`).
-            cacheReadTokens:
-              step.kind === 'llm' ? step.metrics.cacheReadTokens : null,
-            cacheCreationTokens:
-              step.kind === 'llm' ? step.metrics.cacheCreationTokens : null,
-            cacheSavingsUsd:
-              step.kind === 'llm' ? step.metrics.cacheSavingsUsd : null,
+            cacheReadTokens: llmMetrics?.cacheReadTokens ?? null,
+            cacheCreationTokens: llmMetrics?.cacheCreationTokens ?? null,
+            cacheSavingsUsd: llmMetrics?.cacheSavingsUsd ?? null,
             // R7.8 (KI-362): своя ссылка на результат media-узла.
-            storedUrl: step.kind === 'media' ? step.metrics.storedUrl : null,
+            storedUrl: mediaMetrics?.storedUrl ?? null,
             storedExpiresAt:
-              step.kind === 'media'
-                ? (step.metrics.storedExpiresAt?.toISOString() ?? null)
-                : null,
+              mediaMetrics?.storedExpiresAt?.toISOString() ?? null,
             logs,
             finishedAt: new Date().toISOString(),
           });
@@ -1073,7 +1120,10 @@ export class ExecutionEngineService {
         return { kind: 'plain', outputs, metrics: null };
       }
       case 'http': {
-        const outputs = await executeHttpNode(node.data, inputs);
+        const outputs = await executeHttpNode(node.data, inputs, {
+          // v0.10.2 (KI-478/434): SSRF-защита; env читается в конструкторе.
+          allowPrivateIps: this.allowPrivateIps,
+        });
 
         return { kind: 'plain', outputs, metrics: null };
       }
@@ -1197,9 +1247,10 @@ export class ExecutionEngineService {
       // (DI: LLM, эмбеддинги, хранилище, песочница); исполнитель узла только
       // валидирует `data` и раскладывает результат по выходам. Шаги цикла
       // уходят и в `outputs.steps` (timeline в панели), и в `node_runs.logs`
-      // JSON-строками — по одной на шаг.
+      // JSON-строками — по одной на шаг. KI-433: `usage` (токены и стоимость
+      // цикла) возвращается отдельно и пишется в `node_runs` веткой `agent`.
       case 'agent': {
-        const { outputs, steps } = await executeAgentNodeAsync(
+        const { outputs, steps, usage } = await executeAgentNodeAsync(
           node,
           inputs,
           runId,
@@ -1207,9 +1258,9 @@ export class ExecutionEngineService {
         );
 
         return {
-          kind: 'plain',
+          kind: 'agent',
           outputs,
-          metrics: null,
+          metrics: usage,
           logs: steps.map((step) => JSON.stringify(step)),
         };
       }

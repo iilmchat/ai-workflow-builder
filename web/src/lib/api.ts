@@ -5,7 +5,7 @@ import {
   type MediaModelInfo,
   type MediaModelType,
 } from '@/types/media';
-import { RunStatusSchema } from '@/types/run-stream';
+import { RunStatusSchema, NodeRunSnapshotSchema } from '@/types/run-stream';
 // Циклический импорт `api -> auth-api -> api` безопасен: `refreshAsync`
 // вызывается в рантайме, а не на этапе оценки модулей.
 import { refreshAsync } from './auth-api';
@@ -71,16 +71,22 @@ export interface ExecutionPlan {
 }
 
 /**
- * Схема запуска, возвращаемого `POST /runs`.
+ * Схема запуска, возвращаемого `POST /runs` и `GET /runs/:id`.
  *
  * Поля совпадают с backend `RunResponse`; `createdAt` приходит ISO-строкой
  * после сериализации `Date`, `status` — тот же набор значений, что и в SSE.
+ *
+ * **`nodes` (v0.10.2, KI-450).** `GET /runs/:id` отдаёт строки `node_runs` той
+ * же схемой, что SSE-снимок (`NodeRunSnapshotSchema`), — после F5 результаты
+ * узлов можно восстановить без SSE. У `POST /runs` массив всегда пуст; поле
+ * имеет `default([])`, чтобы старые ответы без `nodes` не ломали разбор.
  */
 export const ApiRunSchema = z.object({
   id: z.string(),
   workflowId: z.string(),
   status: RunStatusSchema,
   createdAt: z.string(),
+  nodes: z.array(NodeRunSnapshotSchema).default([]),
 });
 
 /** Запуск в терминах API. */

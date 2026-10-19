@@ -244,7 +244,14 @@ describe('REST-контракт: web-зеркала ↔ docs/development/api-con
 
     // KI-352: именно эта пара (backend `RunResponse` ↔ `ApiRunSchema`) раньше
     // расходилась молча — поле обязано быть в контракте и в зеркале.
-    expect(contract.responses.RunResponse).toEqual(['createdAt', 'id', 'status', 'workflowId']);
+    // KI-450: `nodes` — строки `node_runs` для восстановления после F5 без SSE.
+    expect(contract.responses.RunResponse).toEqual([
+      'createdAt',
+      'id',
+      'nodes',
+      'status',
+      'workflowId',
+    ]);
     expect(actualContract().RunResponse).toEqual(contract.responses.RunResponse);
   });
 });

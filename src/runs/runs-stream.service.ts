@@ -1,21 +1,17 @@
 import type { MessageEvent } from '@nestjs/common';
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
 import { Observable, type Subscriber } from 'rxjs';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { nodeRuns, type NodeRun } from '../db/schema.js';
-import type { GraphSnapshotDto } from '../engine/dto/index.js';
-import { calculateCacheSavingsUsd } from '../llm/model-pricing.js';
 import {
   MEDIA_STORAGE,
   type IMediaStorage,
 } from '../media/media-storage.service.js';
 import {
   RunStreamMessageSchema,
-  type NodeRunSnapshot,
   type RunEventDto,
   type SnapshotMessage,
 } from './dto/index.js';
+import { loadRunNodeSnapshotsAsync } from './run-node-snapshots.js';
 import { RunEventsService } from './run-events.service.js';
 import { RunsService } from './runs.service.js';
 
@@ -191,14 +187,6 @@ export class RunsStreamService {
     // читать его повторным запросом к БД незачем (RULES 4.17).
     const run = await this.runsService.getRunRowAsync(runId, userId);
 
-    // Порядок по `nodeId` детерминирован (в отличие от nullable `started_at`);
-    // UI сортирует узлы так, как ему нужно.
-    const rows = await this.db
-      .select()
-      .from(nodeRuns)
-      .where(eq(nodeRuns.runId, runId))
-      .orderBy(nodeRuns.nodeId);
-
     return {
       type: 'snapshot',
       run: {
@@ -210,106 +198,15 @@ export class RunsStreamService {
         // после F5 вместо «причина недоступна».
         error: run.error,
       },
-      // Ссылки переподписываются параллельно: независимые подписи не должны
-      // выполняться в цикле (RULES 4.17).
-      nodes: await Promise.all(
-        rows.map((row) => this.toNodeSnapshotAsync(row, run.snapshot)),
+      // KI-450: та же проекция `node_runs`, что отдаёт `GET /runs/:id`:
+      // переподпись ссылок и ISO-даты живут в одном месте.
+      nodes: await loadRunNodeSnapshotsAsync(
+        this.db,
+        runId,
+        run.snapshot,
+        this.mediaStorage,
       ),
     };
   }
 
-  /**
-   * Приводит строку `node_runs` к узлу снимка (даты — ISO, `cost_usd` — строка,
-   * как её отдаёт колонка `numeric`).
-   *
-   * **R7.7 (KI-055):** `cacheSavingsUsd` в БД не хранится — он пересчитывается
-   * здесь по модели узла из снимка графа и `cacheReadTokens` (тарифы живут
-   * только в `model-pricing.ts`). Без модели (узел удалён/тип без модели)
-   * экономия — `null`, токены при этом всё равно отдаются.
-   *
-   * **KI-443:** просроченный `stored_url` приватного S3 — presigned GET,
-   * который живёт час. Если `stored_expires_at` уже прошёл, ссылка
-   * переподписывается здесь, на чтении: UI получает рабочую ссылку и новый
-   * `storedExpiresAt` (иначе `resolveMediaSource` показал бы плейсхолдер
-   * «ссылка истекла» даже при свежем URL). В БД ссылка не обновляется:
-   * снимок — это проекция, а подпись стоит дёшево и не требует записи.
-   *
-   * @param row - строка таблицы `node_runs`
-   * @param snapshot - снимок графа запуска (нужен `data.model` узла)
-   * @returns узел снимка состояния
-   */
-  private async toNodeSnapshotAsync(
-    row: NodeRun,
-    snapshot: GraphSnapshotDto,
-  ): Promise<NodeRunSnapshot> {
-    const model = snapshot.nodes.find((node) => node.id === row.nodeId)?.data.model;
-    const stored = await this.resolveStoredUrlAsync(row);
-
-    return {
-      nodeId: row.nodeId,
-      nodeType: row.nodeType,
-      status: row.status,
-      inputs: row.inputs ?? {},
-      outputs: row.outputs ?? null,
-      error: row.error,
-      logs: row.logs ?? null,
-      tokensIn: row.tokensIn,
-      tokensOut: row.tokensOut,
-      costUsd: row.costUsd,
-      costRub: row.costRub ?? null,
-      cacheReadTokens: row.cacheReadTokens,
-      cacheCreationTokens: row.cacheCreationTokens,
-      cacheSavingsUsd:
-        typeof model === 'string'
-          ? calculateCacheSavingsUsd(model, row.cacheReadTokens)
-          : null,
-      storedUrl: stored.storedUrl,
-      storedExpiresAt: stored.storedExpiresAt?.toISOString() ?? null,
-      durationMs: row.durationMs,
-      startedAt: row.startedAt?.toISOString() ?? null,
-      finishedAt: row.finishedAt?.toISOString() ?? null,
-    };
-  }
-
-  /**
-   * Отдаёт актуальные ссылку и срок её жизни для media-узла (KI-443).
-   *
-   * Свежая ссылка возвращается как есть. Просроченную просит переподписать
-   * хранилище: local вернёт `null` (относительный URL не истекает), S3 —
-   * новый presigned GET и новый срок. Любая ошибка хранилища не должна
-   * ломать снимок: остаётся исходная пара, UI покажет плейсхолдер.
-   *
-   * @param row - строка `node_runs`
-   * @returns ссылка и срок (исходные, если обновление не удалось/не нужно)
-   */
-  private async resolveStoredUrlAsync(
-    row: NodeRun,
-  ): Promise<{ storedUrl: string | null; storedExpiresAt: Date | null }> {
-    if (
-      row.storedUrl === null ||
-      row.storedExpiresAt === null ||
-      row.storedExpiresAt.getTime() > Date.now()
-    ) {
-      return { storedUrl: row.storedUrl, storedExpiresAt: row.storedExpiresAt };
-    }
-
-    try {
-      const refreshed = await this.mediaStorage.refreshStoredUrlAsync(
-        row.storedUrl,
-      );
-
-      if (refreshed !== null) {
-        return refreshed;
-      }
-    } catch (error: unknown) {
-      // RULES 4.18: внешняя граница (S3) не должна ронять SSE-снимок.
-      const message = error instanceof Error ? error.message : String(error);
-
-      this.logger.warn(
-        `Не удалось переподписать stored_url узла ${row.nodeId}: ${message}`,
-      );
-    }
-
-    return { storedUrl: row.storedUrl, storedExpiresAt: row.storedExpiresAt };
-  }
 }

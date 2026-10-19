@@ -38,6 +38,11 @@ import {
 } from '../documents/document.errors.js';
 import { DOCX_MIME_TYPE } from '../documents/document.service.js';
 import {
+  defaultDnsLookupAsync,
+  fetchWithSsrfGuardAsync,
+  type DnsLookupAsync,
+} from '../common/utils/network-safety.js';
+import {
   DEFAULT_EMBEDDING_DIMENSIONS,
   DEFAULT_EMBEDDING_MODEL,
 } from '../llm/llm-constants.js';
@@ -969,6 +974,24 @@ const HTTP_MIN_TIMEOUT_MS = 1;
 const HTTP_MAX_BODY_BYTES = 1_000_000;
 
 /**
+ * Опции исполнителя узла `http`, которые приходят из окружения (v0.10.2).
+ *
+ * Вынесены отдельным параметром, а не читаются из `process.env` внутри
+ * чистой функции: env доступен через `ConfigService` только движку (RULES 4.6),
+ * а тесты подставляют резолвер DNS и флаг без глобального состояния.
+ */
+export interface HttpNodeExecutionOptions {
+  /**
+   * Пропускать приватные/локальные адреса (env `ALLOW_PRIVATE_IPS`, default
+   * `false`). `true` — осознанное выключение SSRF-защиты для локальной
+   * разработки; см. `common/utils/network-safety.ts`.
+   */
+  readonly allowPrivateIps?: boolean;
+  /** Резолвер DNS для SSRF-проверки (в тестах — мок, без сети). */
+  readonly dnsLookupAsync?: DnsLookupAsync;
+}
+
+/**
  * Zod-схема данных узла `http`.
  *
  * `url` необязателен: узел умеет брать адрес из входа (`inputs.prompt`), поэтому
@@ -1078,14 +1101,19 @@ function truncateToBytes(value: string, maxBytes: number): string {
  *
  * @param data - распарсенные данные узла (`method`/`url`/`headers`/`body`/`timeoutMs`/`failOnHttpError`)
  * @param inputs - входы узла; `inputs.prompt` используется как URL-фолбэк
+ * @param options - SSRF-опции из окружения (v0.10.2): `allowPrivateIps` и
+ *   резолвер DNS для тестов
  * @returns `{ status, body }`, где `body` обрезано до 1 МБ
  * @throws NodeDataValidationException если данные не проходят Zod-схему
+ * @throws SsrfBlockedException если URL/редирект ведёт на приватный адрес
+ *   (KI-478/434) и `ALLOW_PRIVATE_IPS` не включён
  * @throws Error если URL не задан, запрос прерван по таймауту либо
  *   `failOnHttpError=true` и сервер ответил кодом ≥ 400 (`HTTP <код>`)
  */
 export async function executeHttpNode(
   data: unknown,
   inputs: Record<string, unknown> = {},
+  options: HttpNodeExecutionOptions = {},
 ): Promise<{ status: number; body: string }> {
   const parsed = parseNodeData('http', HttpNodeDataSchema, data);
 
@@ -1120,7 +1148,14 @@ export async function executeHttpNode(
   let response: Response;
 
   try {
-    response = await fetch(url, init);
+    // v0.10.2 (KI-478/434): тот же guard, что у `http_request` агента:
+    // проверка адреса до вызова, `redirect: 'manual'` и повторная проверка
+    // каждого `Location`. Иначе узел мог дёрнуть metadata/internal-сервис или
+    // уйти на приватный адрес по цепочке редиректов.
+    response = await fetchWithSsrfGuardAsync(fetch, url, init, {
+      lookupAsync: options.dnsLookupAsync ?? defaultDnsLookupAsync,
+      allowPrivateIps: options.allowPrivateIps === true,
+    });
   } catch (error: unknown) {
     if (isAbortLikeError(error)) {
       throw new Error(`Узел http: запрос прерван по таймауту ${timeoutMs} мс`);
@@ -2427,12 +2462,34 @@ export interface AgentRunner {
   ): Promise<AgentRunResult>;
 }
 
-/** Результат исполнителя узла `agent`: выходы и шаги для timeline/логов. */
+/**
+ * Суммарные метрики LLM-шагов цикла агента для `node_runs` (KI-433).
+ *
+ * У агента нет отдельного вызова провайдера «на узел»: токены и стоимость
+ * копятся по шагам (`llm` и `llm_call`) внутри цикла, а движку нужен плоский
+ * контракт — тот же, что у `LlmNodeMetrics`, но без кэш-полей, которых цикл не
+ * отдаёт.
+ */
+export interface AgentNodeExecutionMetrics {
+  /** Сумма входных токенов по шагам (`null` — ни один шаг их не отдал). */
+  readonly tokensIn: number | null;
+  /** Сумма выходных токенов по шагам (`null` — ни один шаг их не отдал). */
+  readonly tokensOut: number | null;
+  /** Стоимость в USD (`0` — локальный провайдер, `null` — цена неизвестна). */
+  readonly costUsd: number | null;
+}
+
+/** Результат исполнителя узла `agent`: выходы, шаги и суммарные метрики. */
 export interface AgentNodeExecution {
   /** Выходы узла: `{ result: answer, steps }` (DESIGN § 3.4). */
   outputs: Record<string, unknown>;
   /** Шаги в порядке выполнения — они же пишутся в `node_runs.logs`. */
   steps: AgentStep[];
+  /**
+   * Суммарные метрики цикла (KI-433): движок пишет их в
+   * `node_runs.tokens_in`/`tokens_out`/`cost_usd`, как у LLM-узла.
+   */
+  usage: AgentNodeExecutionMetrics;
 }
 
 /**
@@ -2446,7 +2503,7 @@ export interface AgentNodeExecution {
  * @param inputs - нормализованные входы узла (после KI-034 ключ — `prompt`)
  * @param runId - uuid запуска
  * @param runner - цикл агента (`AgentService` в продакшене)
- * @returns `{ outputs: { result, steps }, steps }`
+ * @returns `{ outputs: { result, steps }, steps, usage }`
  * @throws NodeDataValidationException если `data` не проходят Zod-схему
  * @throws AgentIterationLimitException если лимит итераций исчерпан
  * @throws LlmProviderException если вызов модели упал
@@ -2463,6 +2520,13 @@ export async function executeAgentNodeAsync(
   return {
     outputs: { result: result.answer, steps: result.steps },
     steps: result.steps,
+    // KI-433: токены и стоимость цикла доходят до движка отдельным полем и
+    // пишутся в `node_runs` наравне с `LlmNodeExecutor`.
+    usage: {
+      tokensIn: result.tokensIn,
+      tokensOut: result.tokensOut,
+      costUsd: result.costUsd,
+    },
   };
 }
 

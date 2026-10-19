@@ -1,15 +1,21 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { Upload } from '@aws-sdk/lib-storage';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import type { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { dirname, extname, resolve, sep } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import { pipeline } from 'node:stream/promises';
+import {
+  buildSignedMediaPath,
+  parseLocalMediaStorageKey,
+  resolveMediaSigningOptions,
+  type MediaSigningOptions,
+} from './media-url-signer.js';
+import type { S3Sdk } from './s3-sdk.js';
 
 /**
  * Хранилище media-результатов (R7.8, KI-362).
@@ -166,6 +172,24 @@ export interface IMediaStorage {
    *   поддерживается или невозможно
    */
   refreshStoredUrlAsync(storedUrl: string): Promise<MediaRefreshedUrl | null>;
+
+  /**
+   * Переподписывает ссылку на сохранённый файл **по ключу объекта** (KI-464).
+   *
+   * Основной путь для `RunsStreamService`: ключ лежит в
+   * `node_runs.storage_key`, поэтому ссылку можно перевыпустить, не разбирая
+   * URL. Это важно для virtual-hosted style S3 (`<bucket>.endpoint/<key>`),
+   * endpoint'а с префиксом пути и внешних URL-rewrite: прежний разбор
+   * path-style URL (`<endpoint>/<bucket>/<key>`) на них не работает (KI-451).
+   * Для local-хранилища метод заново подписывает HMAC-ссылку (KI-415).
+   *
+   * @param storageKey - ключ объекта `<runId>/<fileName>` из БД
+   * @returns свежая ссылка с новым сроком либо `null`, если переподпись не
+   *   поддерживается (публичный бакет, local без секрета, файла нет)
+   */
+  refreshStoredUrlByKeyAsync(
+    storageKey: string,
+  ): Promise<MediaRefreshedUrl | null>;
 }
 
 /** Таймаут скачивания результата провайдера (мс). */
@@ -191,6 +215,51 @@ export const S3_SIGNED_URL_TTL_SECONDS = 3600;
 
 /** Миллисекунд в сутках — TTL бакета задаётся в днях. */
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Кеш динамического импорта S3 SDK (KI-412).
+ *
+ * Пакет подгружается один раз на процесс и только при первом реальном
+ * обращении к S3. `undefined` — попытки ещё не было, `null` — SDK недоступен
+ * (повторные попытки не нужны: отсутствующий модуль сам не появится).
+ */
+let s3SdkPromise: Promise<S3Sdk | null> | undefined;
+
+/**
+ * Проверяет, установлен ли `@aws-sdk/client-s3` (KI-412).
+ *
+ * `createRequire(...).resolve` не загружает модуль, а только ищет его в
+ * `node_modules`: проверку можно делать синхронно при сборке хранилища. Если
+ * пакета нет, `createMediaStorage` откатывается на local **до** первого
+ * запроса — приложение стартует без S3, а не падает на импорте.
+ *
+ * @returns `true`, если пакет резолвится (не загружаясь)
+ */
+export function isS3SdkAvailable(): boolean {
+  try {
+    createRequire(import.meta.url).resolve('@aws-sdk/client-s3');
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Лениво загружает значения S3 SDK (KI-412).
+ *
+ * Ошибка импорта не пробрасывается: S3 — необязательный слой, и вызывающий код
+ * узнаёт о проблеме по `null` (warn + ссылка провайдера/локальное хранилище).
+ *
+ * @returns набор SDK либо `null`, если пакет недоступен
+ */
+async function loadS3SdkAsync(): Promise<S3Sdk | null> {
+  s3SdkPromise ??= import('./s3-sdk.js')
+    .then((module) => module.s3Sdk)
+    .catch(() => null);
+
+  return s3SdkPromise;
+}
 
 /** MIME-тип → расширение файла. */
 const EXTENSION_BY_CONTENT_TYPE: Readonly<Record<string, string>> = {
@@ -354,12 +423,41 @@ function resolveInsideBase(baseDir: string, storageKey: string): string {
 }
 
 /**
+ * Строит абсолютный путь к файлу локального хранилища по его ключу (KI-413).
+ *
+ * Экспортируется для cron-очистки: она удаляет файлы, найденные в БД по
+ * `node_runs.storage_key`, и обязана пройти ту же проверку «не выйти за
+ * пределы каталога», что и запись/чтение (RULES 1.9). Дублировать логику
+ * `resolveInsideBase` в уборщике нельзя — расхождение открыло бы path traversal.
+ *
+ * @param baseDir - корневой каталог хранилища (`MEDIA_STORAGE_LOCAL_PATH`)
+ * @param storageKey - ключ объекта `<runId>/<fileName>`
+ * @returns абсолютный путь внутри каталога
+ * @throws Error если ключ ведёт за пределы каталога
+ */
+export function resolveMediaStoragePath(
+  baseDir: string,
+  storageKey: string,
+): string {
+  return resolveInsideBase(baseDir, storageKey);
+}
+
+/**
  * Локальное хранилище media-файлов на диске (DESIGN § 3.8, слой 1).
  *
  * Файлы лежат вне `dist/` (в `./data/media`), поэтому переживают пересборку.
- * Каталог создаётся при загрузке; TTL считается от момента записи и только
- * записывается в `stored_expires_at` — физическое удаление файлов по TTL в
- * этом срезе не выполняется (см. отчёт R7.8; отдельная задача — cron).
+ * Каталог создаётся при загрузке; TTL хранения считается от момента записи и
+ * записывается в `stored_expires_at` — физическое удаление выполняет
+ * `MediaCleanupService` по расписанию (KI-413).
+ *
+ * **Подписанные ссылки (KI-415).** Если задан секрет подписи
+ * (`MEDIA_URL_SIGNING_SECRET` или `JWT_SECRET`), `storedUrl`/`url` содержат
+ * `?expires=...&sign=...`, а `GET /media/file/...` без валидной подписи отдаёт
+ * 403. Срок подписи — `MEDIA_URL_TTL_SECONDS` (час); `storedExpiresAt` при этом
+ * остаётся сроком **хранения файла**, потому что по нему cron удаляет файлы, а
+ * снимок запуска перевыпускает ссылку по `storage_key` (KI-464). Без секрета
+ * (dev/CI без env) ссылки остаются прежними, относительными — прежнее
+ * поведение сохраняется.
  *
  * Сгенерированные документы (`saveGeneratedAsync`, v0.10 S5) лежат в том же
  * каталоге с префиксом `generated-` и отдаются той же HTTP-ручкой.
@@ -372,13 +470,15 @@ export class LocalMediaStorage implements IMediaStorage {
 
   /**
    * @param baseDir - корневой каталог файлов (`MEDIA_STORAGE_LOCAL_PATH`)
-   * @param ttlDays - TTL ссылки в днях (`0` — без срока)
+   * @param ttlDays - TTL хранения файла в днях (`0` — без срока)
    * @param publicPrefix - префикс URL отдачи (по умолчанию `/media/file`)
+   * @param signing - параметры HMAC-подписи ссылок (KI-415); `null` — без подписи
    */
   constructor(
     private readonly baseDir: string,
     private readonly ttlDays: number,
     private readonly publicPrefix = '/media/file',
+    private readonly signing: MediaSigningOptions | null = null,
   ) {}
 
   /**
@@ -468,7 +568,10 @@ export class LocalMediaStorage implements IMediaStorage {
     );
 
     return {
-      storedUrl: `${this.publicPrefix}/${storageKey}`,
+      // KI-415: ссылка подписывается, если настроен секрет; иначе — прежний
+      // относительный путь. `storedExpiresAt` остаётся сроком хранения файла:
+      // по нему cron удаляет файлы (KI-413), а снимок перевыпускает подпись.
+      storedUrl: this.buildStoredUrl(storageKey),
       storedExpiresAt,
       storageKey,
       bytes,
@@ -519,7 +622,8 @@ export class LocalMediaStorage implements IMediaStorage {
     );
 
     return {
-      url: `${this.publicPrefix}/${storageKey}`,
+      // KI-415: подписанный URL, если секрет задан; иначе относительный путь.
+      url: this.buildStoredUrl(storageKey),
       key: storageKey,
     };
   }
@@ -553,20 +657,82 @@ export class LocalMediaStorage implements IMediaStorage {
   }
 
   /**
-   * Локальная ссылка не переподписывается.
+   * Локальная подпись перевыпускается по ключу объекта (KI-415, KI-464).
    *
-   * `storedUrl` локального хранилища — относительный путь
-   * `/media/file/<runId>/<fileName>`: у него нет подписи, и 403 он не отдаёт.
-   * `storedExpiresAt` здесь означает срок хранения файла, а не срок жизни
-   * ссылки, поэтому обновлять нечего.
+   * Для local `storedUrl` — подписанная HMAC-ссылка (если задан секрет). Срок
+   * подписи (час) короче срока хранения файла (дни), поэтому снимок запуска
+   * перевыпускает ссылку, не дожидаясь удаления файла. Без секрета подписи нет,
+   * и обновлять нечего — `null` (прежнее поведение).
    *
-   * @param _storedUrl - сохранённая ссылка (не используется)
-   * @returns всегда `null`
+   * @param storedUrl - сохранённая локальная ссылка
+   * @returns свежая подписанная ссылка либо `null`, если подпись не настроена
+   *   или URL не от этого хранилища
    */
   async refreshStoredUrlAsync(
-    _storedUrl: string,
+    storedUrl: string,
   ): Promise<MediaRefreshedUrl | null> {
-    return null;
+    if (this.signing === null) {
+      return null;
+    }
+
+    // Строки, созданные до `storage_key` (KI-451), знают только URL — ключ
+    // восстанавливается из пути; подписанные query-параметры отбрасываются.
+    const storageKey = parseLocalMediaStorageKey(storedUrl, this.publicPrefix);
+
+    if (storageKey === null) {
+      return null;
+    }
+
+    return this.refreshStoredUrlByKeyAsync(storageKey);
+  }
+
+  /**
+   * Перевыпускает HMAC-подпись по ключу объекта (KI-464).
+   *
+   * Проверяет, что файл ещё на диске: переподписывать удалённый файл незачем —
+   * ссылка всё равно отдала бы 404, а UI показал бы её рабочей.
+   *
+   * @param storageKey - ключ `<runId>/<fileName>` из `node_runs.storage_key`
+   * @returns свежая подписанная ссылка со сроком подписи либо `null`, если
+   *   подпись не настроена или файла нет
+   */
+  async refreshStoredUrlByKeyAsync(
+    storageKey: string,
+  ): Promise<MediaRefreshedUrl | null> {
+    if (this.signing === null) {
+      return null;
+    }
+
+    const target = resolveInsideBase(this.baseDir, storageKey);
+
+    try {
+      const info = await stat(target);
+
+      if (!info.isFile()) {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+
+    const signed = buildSignedMediaPath(storageKey, this.signing, new Date(), this.publicPrefix);
+
+    return { storedUrl: signed.path, storedExpiresAt: signed.expiresAt };
+  }
+
+  /**
+   * Строит публичную ссылку на файл: подписанную либо относительную.
+   *
+   * @param storageKey - ключ `<runId>/<fileName>`
+   * @returns путь для `node_runs.stored_url` и UI
+   */
+  private buildStoredUrl(storageKey: string): string {
+    if (this.signing === null) {
+      return `${this.publicPrefix}/${storageKey}`;
+    }
+
+    return buildSignedMediaPath(storageKey, this.signing, new Date(), this.publicPrefix)
+      .path;
   }
 }
 
@@ -663,6 +829,12 @@ interface ResolvedS3Config {
  * нельзя. При старте такой конфиг откатывается на local —
  * см. {@link createMediaStorage}.
  *
+ * **SDK загружается лениво (KI-412).** Значения `@aws-sdk/*` приходят из
+ * динамического импорта (`./s3-sdk.js`) при первом обращении. Если пакета нет
+ * в `node_modules`, приложение стартует, а `uploadAsync`/`saveGeneratedAsync`
+ * пишут предупреждение и возвращают `null` (узел живёт на ссылке провайдера).
+ * Статический импорт SDK уронил бы процесс на старте — до любого fallback.
+ *
  * @see https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html
  * @see https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
  */
@@ -685,10 +857,24 @@ export class S3MediaStorage implements IMediaStorage {
    */
   private signingClient: S3Client | null = null;
 
+  /** Промис динамического импорта SDK: одна попытка на процесс (KI-412). */
+  private sdkLoad: Promise<S3Sdk | null> | null = null;
+
   /**
    * @param options - параметры из env (`S3_*`, KI-412)
    */
   constructor(private readonly options: S3MediaStorageOptions = {}) {}
+
+  /**
+   * Отдаёт лениво загруженный S3 SDK.
+   *
+   * @returns набор SDK либо `null`, если пакет не установлен
+   */
+  private getSdkAsync(): Promise<S3Sdk | null> {
+    this.sdkLoad ??= loadS3SdkAsync();
+
+    return this.sdkLoad;
+  }
 
   /**
    * Заданы ли все обязательные параметры S3.
@@ -719,6 +905,19 @@ export class S3MediaStorage implements IMediaStorage {
           `accessKeyId=${this.options.accessKeyId ? 'задан' : 'не задан'}, ` +
           `secretAccessKey=${this.options.secretAccessKey ? 'задан' : 'не задан'}) — ` +
           'используется ссылка провайдера',
+      );
+
+      return null;
+    }
+
+    // KI-412: без установленного SDK грузить нечем — предупреждение и ссылка
+    // провайдера, приложение при этом продолжает работать.
+    const sdk = await this.getSdkAsync();
+
+    if (sdk === null) {
+      this.logger.warn(
+        'MEDIA_STORAGE_BACKEND=s3, но @aws-sdk/client-s3 не установлен — ' +
+          'используется ссылка провайдера (KI-412)',
       );
 
       return null;
@@ -803,10 +1002,13 @@ export class S3MediaStorage implements IMediaStorage {
       const body = source.pipe(counter);
 
       try {
-        const upload = new Upload({
+        // SDK загружен выше (`sdk !== null`); клиент — подменный в тестах либо
+        // реальный, собранный из `S3_*`-параметров.
+        const client = await this.getClientAsync(config);
+        const upload = new sdk.Upload({
           // `client` в тестах — объект с `send` и `config` реального клиента;
           // `Upload` читает из `config` endpoint/path-style/checksums.
-          client: this.getClient(config) as unknown as S3Client,
+          client: client as unknown as S3Client,
           params: {
             Bucket: config.bucket,
             Key: storageKey,
@@ -908,14 +1110,27 @@ export class S3MediaStorage implements IMediaStorage {
       return { url: null, key: null };
     }
 
+    // KI-412: отсутствие SDK — не падение, а «документ не сохранён».
+    const sdk = await this.getSdkAsync();
+
+    if (sdk === null) {
+      this.logger.warn(
+        'MEDIA_STORAGE_BACKEND=s3, но @aws-sdk/client-s3 не установлен — ' +
+          'сгенерированный документ не сохранён (KI-412)',
+      );
+
+      return { url: null, key: null };
+    }
+
     const storageKey = buildGeneratedStorageKey(runId, nodeId, extension);
     const normalizedExtension = normalizeGeneratedExtension(extension);
     const contentType =
       CONTENT_TYPE_BY_EXTENSION[normalizedExtension] ?? 'application/octet-stream';
 
     try {
-      const upload = new Upload({
-        client: this.getClient(config) as unknown as S3Client,
+      const client = await this.getClientAsync(config);
+      const upload = new sdk.Upload({
+        client: client as unknown as S3Client,
         params: {
           Bucket: config.bucket,
           Key: storageKey,
@@ -971,11 +1186,12 @@ export class S3MediaStorage implements IMediaStorage {
   /**
    * Переподписывает просроченный `stored_url` приватного бакета (KI-443).
    *
-   * В БД хранится только сама ссылка (отдельной колонки с ключом объекта
-   * нет), поэтому ключ восстанавливается из URL: path-style
-   * `<endpoint>/<bucket>/<runId>/<fileName>`. Для публичного бакета ссылка
-   * прямая и не истекает как presigned — обновлять нечего; TTL там относится
-   * к удалению объекта, поэтому возвращается `null`.
+   * **Fallback для старых строк (KI-464):** если `node_runs.storage_key` ещё
+   * `NULL` (запись сделана до v0.10), ключ восстанавливается из URL: path-style
+   * `<endpoint>/<bucket>/<runId>/<fileName>`. Новые строки снимок переподписывает
+   * по ключу через {@link refreshStoredUrlByKeyAsync} и сюда не попадает. Для
+   * публичного бакета ссылка прямая и не истекает как presigned — обновлять
+   * нечего; TTL там относится к удалению объекта, поэтому возвращается `null`.
    *
    * Метод не бросает: снимок запуска не должен ломаться из-за недоступного
    * S3 — вызывающий код оставит старую ссылку и плейсхолдер «ссылка истекла»
@@ -1005,10 +1221,35 @@ export class S3MediaStorage implements IMediaStorage {
       return null;
     }
 
-    try {
-      const refreshedUrl = await this.signGetUrlAsync(config, key);
+    return this.refreshStoredUrlByKeyAsync(key);
+  }
 
-      this.logger.debug(`stored_url переподписан: ${key}`);
+  /**
+   * Переподписывает ссылку **по ключу объекта** из `node_runs.storage_key`
+   * (KI-464).
+   *
+   * Основной путь для снимка запуска: не нужно разбирать URL, поэтому метод
+   * работает и для virtual-hosted style, и для endpoint'а с префиксом пути —
+   * ровно те случаи, где `storageKeyFromUrl` бессилен (KI-451). Подпись —
+   * локальная криптография SigV4, сеть не используется.
+   *
+   * @param storageKey - ключ объекта `<runId>/<fileName>`
+   * @returns свежий presigned URL и срок его жизни либо `null` (публичный
+   *   бакет, S3 не настроен, ошибка подписи)
+   */
+  async refreshStoredUrlByKeyAsync(
+    storageKey: string,
+  ): Promise<MediaRefreshedUrl | null> {
+    const config = this.resolveConfig();
+
+    if (config === null || this.options.publicBucket === true) {
+      return null;
+    }
+
+    try {
+      const refreshedUrl = await this.signGetUrlAsync(config, storageKey);
+
+      this.logger.debug(`stored_url переподписан по storage_key: ${storageKey}`);
 
       return {
         storedUrl: refreshedUrl,
@@ -1018,7 +1259,7 @@ export class S3MediaStorage implements IMediaStorage {
       };
     } catch (error: unknown) {
       this.logger.warn(
-        `Не удалось переподписать stored_url для ${key} ` +
+        `Не удалось переподписать ссылку по ключу ${storageKey} ` +
           `(${toErrorMessage(error)})`,
       );
 
@@ -1078,9 +1319,10 @@ export class S3MediaStorage implements IMediaStorage {
    *
    * @param config - проверенные параметры подключения
    * @returns клиент S3 (в тестах — подменный объект с `send`)
+   * @throws Error если SDK не установлен (проверяется до вызова)
    */
-  private getClient(config: ResolvedS3Config): S3ClientLike {
-    this.client ??= this.options.client ?? this.createClient(config);
+  private async getClientAsync(config: ResolvedS3Config): Promise<S3ClientLike> {
+    this.client ??= this.options.client ?? (await this.createClientAsync(config));
 
     return this.client;
   }
@@ -1090,9 +1332,12 @@ export class S3MediaStorage implements IMediaStorage {
    *
    * @param config - проверенные параметры подключения
    * @returns клиент `S3Client`
+   * @throws Error если SDK не установлен (подписывать нечем)
    */
-  private getSigningClient(config: ResolvedS3Config): S3Client {
-    this.signingClient ??= this.createClient(config);
+  private async getSigningClientAsync(
+    config: ResolvedS3Config,
+  ): Promise<S3Client> {
+    this.signingClient ??= await this.createClientAsync(config);
 
     return this.signingClient;
   }
@@ -1140,11 +1385,25 @@ export class S3MediaStorage implements IMediaStorage {
    * @param config - проверенные параметры подключения
    * @param key - ключ объекта
    * @returns presigned URL
+   * @throws Error если S3 не настроен или SDK не установлен
    */
-  private signGetUrlAsync(config: ResolvedS3Config, key: string): Promise<string> {
-    return getSignedUrl(
-      this.getSigningClient(config),
-      new GetObjectCommand({ Bucket: config.bucket, Key: key }),
+  private async signGetUrlAsync(
+    config: ResolvedS3Config,
+    key: string,
+  ): Promise<string> {
+    const sdk = await this.getSdkAsync();
+
+    if (sdk === null) {
+      throw new Error(
+        'S3 SDK (@aws-sdk/client-s3) не установлен: presigned URL построить нельзя',
+      );
+    }
+
+    const client = await this.getSigningClientAsync(config);
+
+    return sdk.getSignedUrl(
+      client,
+      new sdk.GetObjectCommand({ Bucket: config.bucket, Key: key }),
       { expiresIn: S3_SIGNED_URL_TTL_SECONDS },
     );
   }
@@ -1158,9 +1417,18 @@ export class S3MediaStorage implements IMediaStorage {
    *
    * @param config - проверенные параметры подключения
    * @returns новый клиент `S3Client`
+   * @throws Error если SDK не установлен
    */
-  private createClient(config: ResolvedS3Config): S3Client {
-    return new S3Client({
+  private async createClientAsync(config: ResolvedS3Config): Promise<S3Client> {
+    const sdk = await this.getSdkAsync();
+
+    if (sdk === null) {
+      throw new Error(
+        'S3 SDK (@aws-sdk/client-s3) не установлен: клиент создать нельзя',
+      );
+    }
+
+    return new sdk.S3Client({
       region: config.region,
       endpoint: config.endpoint,
       forcePathStyle: true,
@@ -1303,23 +1571,52 @@ export class NoopMediaStorage implements IMediaStorage {
   ): Promise<MediaRefreshedUrl | null> {
     return null;
   }
+
+  /**
+   * Ссылок нет — переподписывать нечего.
+   *
+   * @param _storageKey - ключ объекта (не используется)
+   * @returns всегда `null`
+   */
+  async refreshStoredUrlByKeyAsync(
+    _storageKey: string,
+  ): Promise<MediaRefreshedUrl | null> {
+    return null;
+  }
 }
 
 /** Логгер выбора бэкенда: живёт вне классов, потому что решает фабрика. */
 const storageFactoryLogger = new Logger('MediaStorageFactory');
 
 /**
+ * Точки подмены фабрики хранилища в тестах.
+ *
+ * Единственная причина существования — проверить откат `s3 → local`, когда
+ * пакета SDK нет: в репозитории он установлен, и «выключить» его иначе нельзя.
+ */
+export interface MediaStorageFactoryDeps {
+  /** Доступен ли `@aws-sdk/client-s3` (по умолчанию — реальная проверка). */
+  sdkAvailable?: boolean;
+}
+
+/**
  * Собирает хранилище по env (R7.8, KI-412).
  *
  * `MEDIA_STORAGE_BACKEND=s3` — это **предпочтение**, а не жёсткое требование:
- * без `S3_ENDPOINT`/`S3_BUCKET`/ключей бакет физически недоступен, поэтому
+ * без `S3_ENDPOINT`/`S3_BUCKET`/ключей бакет физически недоступен, а если не
+ * установлен `@aws-sdk/client-s3`, его нечем и загружать. В обоих случаях
  * фабрика откатывается на {@link LocalMediaStorage} с предупреждением в лог.
- * Иначе приложение стартовало бы и молча теряло результаты генерации.
+ * Иначе приложение стартовало бы и молча теряло результаты генерации, а
+ * отсутствующий SDK ронял бы процесс на импорте.
  *
  * @param config - доступ к env (RULES 4.6); без него — `local` с дефолтами
+ * @param deps - точки подмены для тестов (по умолчанию — реальная проверка SDK)
  * @returns реализация хранилища
  */
-export function createMediaStorage(config?: ConfigService): IMediaStorage {
+export function createMediaStorage(
+  config?: ConfigService,
+  deps: MediaStorageFactoryDeps = {},
+): IMediaStorage {
   const backend =
     config?.get<MediaStorageBackend>('MEDIA_STORAGE_BACKEND') ?? 'local';
 
@@ -1328,31 +1625,43 @@ export function createMediaStorage(config?: ConfigService): IMediaStorage {
   }
 
   if (backend === 's3') {
-    const s3 = new S3MediaStorage({
-      endpoint: config?.get<string>('S3_ENDPOINT'),
-      bucket: config?.get<string>('S3_BUCKET'),
-      accessKeyId: config?.get<string>('S3_ACCESS_KEY_ID'),
-      secretAccessKey: config?.get<string>('S3_SECRET_ACCESS_KEY'),
-      region: config?.get<string>('S3_REGION'),
-      ttlDays: config?.get<number>('S3_TTL_DAYS'),
-      // KI-444: флаг публичного бакета приходит из env, как остальные `S3_*`.
-      publicBucket: config?.get<boolean>('S3_PUBLIC_BUCKET') === true,
-    });
+    const sdkAvailable = deps.sdkAvailable ?? isS3SdkAvailable();
 
-    if (s3.isConfigured) {
-      return s3;
+    if (!sdkAvailable) {
+      storageFactoryLogger.warn(
+        'MEDIA_STORAGE_BACKEND=s3, но @aws-sdk/client-s3 не установлен — ' +
+          'используется local (KI-412)',
+      );
+    } else {
+      const s3 = new S3MediaStorage({
+        endpoint: config?.get<string>('S3_ENDPOINT'),
+        bucket: config?.get<string>('S3_BUCKET'),
+        accessKeyId: config?.get<string>('S3_ACCESS_KEY_ID'),
+        secretAccessKey: config?.get<string>('S3_SECRET_ACCESS_KEY'),
+        region: config?.get<string>('S3_REGION'),
+        ttlDays: config?.get<number>('S3_TTL_DAYS'),
+        // KI-444: флаг публичного бакета приходит из env, как остальные `S3_*`.
+        publicBucket: config?.get<boolean>('S3_PUBLIC_BUCKET') === true,
+      });
+
+      if (s3.isConfigured) {
+        return s3;
+      }
+
+      storageFactoryLogger.warn(
+        'MEDIA_STORAGE_BACKEND=s3, но S3 не настроен ' +
+          '(нужны S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY) — ' +
+          'используется local',
+      );
     }
-
-    storageFactoryLogger.warn(
-      'MEDIA_STORAGE_BACKEND=s3, но S3 не настроен ' +
-        '(нужны S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY) — ' +
-        'используется local',
-    );
   }
 
   return new LocalMediaStorage(
     config?.get<string>('MEDIA_STORAGE_LOCAL_PATH') ?? './data/media',
     config?.get<number>('MEDIA_STORAGE_LOCAL_TTL_DAYS') ?? 30,
+    undefined,
+    // KI-415: local-ссылки подписываются, если есть секрет (явный или JWT).
+    resolveMediaSigningOptions(config),
   );
 }
 

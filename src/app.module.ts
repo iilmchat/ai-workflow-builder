@@ -14,6 +14,9 @@ import {
   HTTP_THROTTLE_DEFAULT_LIMIT,
   HTTP_THROTTLE_TTL_MS,
 } from './common/http-throttle.constants.js';
+// v0.10.2 (KI-472): единый источник HTTP-префиксов API — общий `api-prefixes.json`
+// с frontend/Vite. Локального списка здесь больше нет.
+import { API_ROUTE_PATTERN } from './common/api-prefixes.js';
 import { validateEnv } from './config/env.schema.js';
 import { DbModule } from './db/db.module.js';
 // v0.10 S6: генерация документов (DocumentService).
@@ -57,18 +60,13 @@ const WEB_DIST_PATH = join(
 /**
  * HTTP-префиксы API, которые SPA-fallback не должен перехватывать.
  *
- * Список синхронизирован с `web/src/lib/api-prefixes.ts` (KI-299): backend
- * отвечает с корня (`/auth`, `/workflow`, …), а не под `/api`, поэтому одного
- * `'/api*'` мало — запрос к несуществующей ручке возвращал бы `200 text/html`
- * вместо JSON-404.
- *
- * Почему RegExp, а не строка из ТЗ: `@nestjs/serve-static@12` использует
- * `path-to-regexp@8`, где `'/api*'` — синтаксическая ошибка
- * (`PathError: Missing parameter name at index 5`), и каждый SPA-запрос
- * падал бы с 500.
+ * Список больше не живёт здесь (v0.10.2, KI-472): единственный источник —
+ * `api-prefixes.json` в корне репозитория, из которого `common/api-prefixes.ts`
+ * строит {@link API_ROUTE_PATTERN}. Раньше список дублировался с
+ * `web/src/lib/api-prefixes.ts` (KI-299), и при добавлении контроллера его
+ * забывали. Почему RegExp, а не строка: `@nestjs/serve-static@12` использует
+ * `path-to-regexp@8`, где `'/api*'` — синтаксическая ошибка (KI-467).
  */
-const API_ROUTE_PATTERN =
-  /^\/(?:api|auth|llm|media|workflow|engine|runs|templates|nodes)(?:\/|$)/;
 
 @Module({
   imports: [

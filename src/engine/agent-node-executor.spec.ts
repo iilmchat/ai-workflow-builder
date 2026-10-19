@@ -46,8 +46,8 @@ describe('executeAgentNodeAsync (R7.4b)', () => {
       ],
       iterations: 1,
       usage: { inputTokens: 1, outputTokens: 2 },
-      // KI-407: плоские метрики для `node_runs` (движок пока их не пишет —
-      // это отдельная задача вне среза R7.4b-fix).
+      // KI-407/KI-433: плоские метрики для `node_runs`; с v0.10.2 движок
+      // получает их отдельным полем `usage` и записывает в колонки.
       tokensIn: 1,
       tokensOut: 2,
       costUsd: null,
@@ -80,6 +80,12 @@ describe('executeAgentNodeAsync (R7.4b)', () => {
     });
     // Шаги продублированы отдельным полем: движок пишет их в node_runs.logs.
     expect(execution.steps).toBe(result.steps);
+    // KI-433: суммарные метрики цикла доходят до движка для `node_runs`.
+    expect(execution.usage).toEqual({
+      tokensIn: 1,
+      tokensOut: 2,
+      costUsd: null,
+    });
   });
 
   it('tools обязателен и непуст: пустой список — ошибка валидации', async () => {

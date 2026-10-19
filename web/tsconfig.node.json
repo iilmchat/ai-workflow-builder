@@ -5,6 +5,9 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+    // v0.10.2 (KI-472): vite.config.ts берёт реестр префиксов из общего
+    // `api-prefixes.json` в корне репозитория (см. src/lib/api-prefixes.ts).
+    "resolveJsonModule": true,
     "types": ["node"],
     "noEmit": true,
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",

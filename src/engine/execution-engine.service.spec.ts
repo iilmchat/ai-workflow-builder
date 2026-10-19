@@ -24,6 +24,17 @@ import { WEB_SEARCH_PROVIDER } from '../web-search/web-search.module.js';
 import { UnsupportedNodeTypeException, type SubWorkflowRecord } from './node-executors.js';
 import { RetryableNodeException, VectorDisabledException } from './errors.js';
 
+/**
+ * v0.10.2 (KI-478): узел `http` проверяет адрес (SSRF) и для доменов резолвит
+ * DNS. В тестах резолвер подменён: реальная сеть в юнит-тестах запрещена,
+ * адрес публичный, guard его пропускает.
+ */
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(() =>
+    Promise.resolve([{ address: '93.184.216.34', family: 4 }]),
+  ),
+}));
+
 /** Стабильный uuid запуска. */
 const RUN_ID = '22222222-2222-4222-8222-222222222222';
 
@@ -331,6 +342,8 @@ describe('ExecutionEngineService', () => {
   let documentFromJson: ReturnType<typeof vi.fn>;
   /** v0.10 S6: сохранение документа в хранилище. */
   let saveGenerated: ReturnType<typeof vi.fn>;
+  /** R7.4b: цикл agent-узла (в тесте KI-433 возвращает usage). */
+  let agentRun: ReturnType<typeof vi.fn>;
   let findWorkflow: ReturnType<typeof vi.fn>;
   let fake: ReturnType<typeof createFakeDb>;
   /** Окружение для `ConfigService`-заглушки (изменяется в отдельных тестах). */
@@ -419,6 +432,11 @@ describe('ExecutionEngineService', () => {
     publish = vi.fn((_runId: string, _event: RunEventDto) => Promise.resolve());
     llmExecute = vi.fn((_node: NodeDto, _inputs: Record<string, unknown>) =>
       Promise.resolve(llmNodeResult('ответ модели')),
+    );
+    // R7.4b/KI-433: цикл агента. По умолчанию не вызывается — тест метрик
+    // подменяет реализацию на возврат usage.
+    agentRun = vi.fn(() =>
+      Promise.reject(new Error('агент не вызывается в этом спеке')),
     );
     mediaExecute = vi.fn((_node: NodeDto, _inputs: Record<string, unknown>, _runId: string) =>
       Promise.resolve(mediaNodeResult('https://cdn/img.png')),
@@ -553,14 +571,12 @@ describe('ExecutionEngineService', () => {
             writeMemoryAsync: vi.fn(),
           },
         },
-        // R7.4b: цикл agent-узла. В этом спеке узел `agent` не выполняется —
-        // заглушка нужна только чтобы Nest собрал граф зависимостей.
+        // R7.4b: цикл agent-узла. По умолчанию не вызывается (KI-433-тест
+        // переопределяет поведение), заглушка нужна, чтобы Nest собрал граф.
         {
           provide: AgentService,
           useValue: {
-            runAgentAsync: vi.fn(() =>
-              Promise.reject(new Error('агент не вызывается в этом спеке')),
-            ),
+            runAgentAsync: agentRun,
           },
         },
         // R7.5 (KI-364): режим `sandbox` узла condition. Здесь — настоящий
@@ -1887,6 +1903,49 @@ describe('ExecutionEngineService', () => {
     expect(row?.tokensOut).toBeNull();
     expect(row?.costUsd).toBeNull();
     expect(row?.costRub).toBeNull();
+  });
+
+  it('KI-433: метрики цикла agent пишутся в node_runs (tokens_in/out, cost_usd)', async () => {
+    agentRun.mockResolvedValue({
+      answer: 'готово',
+      steps: [{ kind: 'final', answer: 'готово' }],
+      iterations: 2,
+      usage: { inputTokens: 300, outputTokens: 40 },
+      tokensIn: 300,
+      tokensOut: 40,
+      costUsd: 0.001234,
+    });
+
+    await service.executeAsync(RUN_ID, {
+      nodes: [
+        node('A', 'agent', {
+          kind: 'agent',
+          model: 'claude-test',
+          tools: ['code_eval'],
+        }),
+      ],
+      edges: [],
+    });
+
+    const row = fake.rows.find((candidate) => candidate.nodeId === 'A');
+
+    // До KI-433 у узла `agent` эти колонки оставались NULL: usage копился в
+    // памяти, но движок его не получал.
+    expect(row?.nodeType).toBe('agent');
+    expect(row?.tokensIn).toBe(300);
+    expect(row?.tokensOut).toBe(40);
+    // numeric(12,6): Drizzle отдаёт строку с 6 знаками, как и у LLM-узла.
+    expect(row?.costUsd).toBe('0.001234');
+    expect(row?.outputs).toMatchObject({ result: 'готово' });
+
+    // KI-075/KI-433: те же метрики уходят в событие — панель показывает их
+    // сразу, не дожидаясь F5.
+    expect(lastEventOfType('node_completed')).toMatchObject({
+      nodeId: 'A',
+      tokensIn: 300,
+      tokensOut: 40,
+      costUsd: '0.001234',
+    });
   });
 
   it('v0.6.0b.2.2: media-узел пишет cost_rub, а не cost_usd', async () => {

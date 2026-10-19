@@ -283,6 +283,36 @@ export const AgentEnvSchema = z.object({
 export type AgentEnv = z.infer<typeof AgentEnvSchema>;
 
 /**
+ * Zod-схема сетевой безопасности исходящих HTTP-запросов (v0.10.2).
+ *
+ * `ALLOW_PRIVATE_IPS` — единственный аварийный переключатель SSRF-защиты узла
+ * `http` и инструмента агента `http_request` (KI-478/434). По умолчанию
+ * `false`: приватные, loopback и link-local адреса блокируются, редиректы на
+ * них — тоже. `true` нужен только для локальной разработки/тестов (LM Studio,
+ * внутренние сервисы); в prod-подобных окружениях он не запрещён схемой, но
+ * выключает защиту осознанно.
+ *
+ * Разбор строгий, как у `SANDBOX_ENABLED`/`PGVECTOR_ENABLED` (RULES 4.35):
+ * `z.coerce.boolean()` превратил бы строку `'false'` в `true`, и защита
+ * выключилась бы «сама».
+ */
+export const NetworkSafetyEnvSchema = z.object({
+  /** Пропускать ли приватные IP в исходящих HTTP-запросах (default false). */
+  ALLOW_PRIVATE_IPS: z
+    .preprocess(
+      emptyToUndefined,
+      z
+        .union([z.boolean(), z.enum(['true', 'false'])])
+        .transform((value) => value === true || value === 'true')
+        .optional(),
+    )
+    .default(false),
+});
+
+/** Валидированные настройки сетевой безопасности (v0.10.2). */
+export type NetworkSafetyEnv = z.infer<typeof NetworkSafetyEnvSchema>;
+
+/**
  * Zod-схема наблюдаемости (R7.7, KI-365).
  *
  * `OTEL_ENABLED` — аварийный выключатель: по умолчанию `false`, потому что
@@ -343,6 +373,31 @@ export const MediaStorageEnvSchema = z.object({
   MEDIA_STORAGE_LOCAL_TTL_DAYS: z
     .preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(3650).optional())
     .default(30),
+  /**
+   * Секрет HMAC-подписи локальных media-ссылок (KI-415).
+   *
+   * `GET /media/file/:runId/:fileName` не может требовать JWT (браузерный
+   * `<img src>` не шлёт `Authorization`), поэтому ссылка подписывается
+   * `?expires=...&sign=...`. Не задан — берётся `JWT_SECRET`: он обязателен, и
+   * подпись работает «из коробки»; отдельный секрет нужен, чтобы ротация
+   * подписей не ломала авторизацию. Короче 16 символов — подпись выключена.
+   */
+  MEDIA_URL_SIGNING_SECRET: z.preprocess(
+    emptyToUndefined,
+    z.string().min(16).max(256).optional(),
+  ),
+  /**
+   * Время жизни подписанной локальной ссылки, секунды (default 3600, KI-415).
+   *
+   * Снимок запуска перевыпускает подпись по `storage_key` (KI-464), поэтому
+   * час — компромисс между безопасностью и лишними переподписями.
+   */
+  MEDIA_URL_TTL_SECONDS: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(60).max(31_536_000).optional(),
+    )
+    .default(3600),
   /** S3-совместимый endpoint (AWS S3, MinIO, R2, Yandex Object Storage). */
   S3_ENDPOINT: z.preprocess(emptyToUndefined, httpUrl.optional()),
   /** Бакет для media-файлов. */
@@ -379,6 +434,21 @@ export const MediaStorageEnvSchema = z.object({
 
 /** Валидированные настройки хранилища media-результатов (R7.8). */
 export type MediaStorageEnv = z.infer<typeof MediaStorageEnvSchema>;
+
+/**
+ * Zod-схема TTL файлового workspace (KI-413).
+ *
+ * `read_file`/`write_file` пишут в `./data/workspace/<workflowId>/` (RULES 4.38),
+ * но до v0.10.2 у этих файлов не было срока жизни: workspace рос вечно. Cron
+ * очистки удаляет файлы старше `WORKSPACE_TTL_DAYS` (и опустевшие каталоги).
+ * `0` — очистка workspace выключена (файлы хранятся вечно).
+ */
+export const WorkspaceEnvSchema = z.object({
+  /** TTL файлов workspace в днях (default 30; `0` — не удалять). */
+  WORKSPACE_TTL_DAYS: z
+    .preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(3650).optional())
+    .default(30),
+});
 
 /**
  * Zod-схема лимитов одновременных вызовов на провайдера LLM (R7.7, KI-067).
@@ -701,12 +771,16 @@ export const EnvSchema = z.object({
   ...ObservabilityEnvSchema.shape,
   // Хранилище media-результатов: local/S3/TTL (R7.8, KI-362).
   ...MediaStorageEnvSchema.shape,
+  // TTL файлов workspace (KI-413): cron-очистка ./data/workspace.
+  ...WorkspaceEnvSchema.shape,
   // Лимиты одновременных вызовов на провайдера LLM (R7.7, KI-067).
   ...ProviderConcurrencyEnvSchema.shape,
   // Аварийный выключатель vector/memory-узлов (v0.10 S0, KI-455).
   ...VectorEnvSchema.shape,
   // Web-search-провайдер: ключ Tavily и выбор провайдера (v0.10 S1).
   ...WebSearchEnvSchema.shape,
+  // v0.10.2: SSRF-защита исходящих HTTP-запросов (ALLOW_PRIVATE_IPS).
+  ...NetworkSafetyEnvSchema.shape,
 })
   /**
    * Fail-fast: отказ старта при `AUTH_DISABLED=true` в production.

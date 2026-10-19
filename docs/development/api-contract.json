@@ -5,7 +5,7 @@
     "CollaboratorResponse": ["email", "invitedAt", "invitedBy", "role", "userId"],
     "ExportWorkflowDto": ["edges", "exportedAt", "name", "nodes", "version"],
     "RunBudgetResponse": ["accumulated", "estimated", "maxRub", "maxUsd", "mode", "ok", "remaining"],
-    "RunResponse": ["createdAt", "id", "status", "workflowId"],
+    "RunResponse": ["createdAt", "id", "nodes", "status", "workflowId"],
     "ShareTokenDto": ["shareToken", "shareUrl"],
     "SharedWorkflow": ["createdAt", "edges", "id", "name", "nodes"]
   },

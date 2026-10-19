@@ -868,3 +868,156 @@ describe('Нормализация ключа сгенерированного �
     );
   });
 });
+
+/** Параметры HMAC-подписи для тестов (не API-ключ). */
+const LOCAL_SIGNING = {
+  secret: 'unit-test-media-signing-secret',
+  ttlSeconds: 3600,
+};
+
+describe('LocalMediaStorage: подписанные ссылки (KI-415, KI-464)', () => {
+  it('uploadAsync отдаёт подписанный URL; storedExpiresAt остаётся файловым TTL', async () => {
+    const body = new Uint8Array([137, 80, 78, 71, 1]);
+    stubFetch(body, { headers: { 'content-type': 'image/png' } });
+
+    const storage = new LocalMediaStorage(baseDir, 30, '/media/file', LOCAL_SIGNING);
+    const saved = await storage.uploadAsync({
+      runId: 'run-1',
+      nodeId: 'node-signed',
+      sourceUrl: 'https://provider.test/out.png',
+    });
+
+    expect(saved.storedUrl).toContain('/media/file/run-1/node-signed.png?');
+    expect(saved.storedUrl).toContain('expires=');
+    expect(saved.storedUrl).toContain('sign=');
+    // По этому полю cron удаляет файлы (KI-413): это срок хранения, не подписи.
+    const days = (saved.storedExpiresAt?.getTime() ?? 0) - Date.now();
+    expect(days).toBeGreaterThan(29 * 24 * 60 * 60 * 1000);
+  });
+
+  it('refreshStoredUrlByKeyAsync перевыпускает HMAC-подпись по ключу', async () => {
+    const body = new Uint8Array([1, 2, 3]);
+    stubFetch(body);
+    const storage = new LocalMediaStorage(baseDir, 30, '/media/file', LOCAL_SIGNING);
+    const saved = await storage.uploadAsync({
+      runId: 'run-2',
+      nodeId: 'node-a',
+      sourceUrl: 'https://provider.test/out',
+    });
+
+    const refreshed = await storage.refreshStoredUrlByKeyAsync(saved.storageKey);
+
+    expect(refreshed?.storedUrl).toContain(`/media/file/${saved.storageKey}?`);
+    expect(refreshed?.storedUrl).toContain('sign=');
+    expect(refreshed?.storedExpiresAt).toBeInstanceOf(Date);
+    // Срок перевыпущенной ссылки — час подписи, а не 30 дней хранения.
+    const seconds = (refreshed?.storedExpiresAt?.getTime() ?? 0) - Date.now();
+    expect(seconds).toBeGreaterThan(3500 * 1000);
+    expect(seconds).toBeLessThan(3700 * 1000);
+  });
+
+  it('refreshStoredUrlAsync перевыпускает legacy-URL без storage_key (KI-451)', async () => {
+    const body = new Uint8Array([4, 5, 6]);
+    stubFetch(body);
+    const storage = new LocalMediaStorage(baseDir, 30, '/media/file', LOCAL_SIGNING);
+    const saved = await storage.uploadAsync({
+      runId: 'run-3',
+      nodeId: 'node-legacy',
+      sourceUrl: 'https://provider.test/out',
+    });
+
+    // Строка до v0.10: в БД только относительный URL без подписи.
+    const refreshed = await storage.refreshStoredUrlAsync(
+      `/media/file/${saved.storageKey}`,
+    );
+
+    expect(refreshed?.storedUrl).toContain(`/media/file/${saved.storageKey}?`);
+    expect(refreshed?.storedUrl).toContain('sign=');
+  });
+
+  it('без секрета подписи переподпись не поддерживается (прежнее поведение)', async () => {
+    const body = new Uint8Array([7]);
+    stubFetch(body);
+    const storage = new LocalMediaStorage(baseDir, 30);
+    const saved = await storage.uploadAsync({
+      runId: 'run-4',
+      nodeId: 'node-plain',
+      sourceUrl: 'https://provider.test/out',
+    });
+
+    expect(saved.storedUrl).toBe('/media/file/run-4/node-plain.bin');
+    await expect(
+      storage.refreshStoredUrlByKeyAsync(saved.storageKey),
+    ).resolves.toBeNull();
+    await expect(storage.refreshStoredUrlAsync(saved.storedUrl)).resolves.toBeNull();
+  });
+
+  it('переподпись отсутствующего файла — null (удалённый файл не выдаём)', async () => {
+    const storage = new LocalMediaStorage(baseDir, 30, '/media/file', LOCAL_SIGNING);
+
+    await expect(
+      storage.refreshStoredUrlByKeyAsync('run-missing/no-file.png'),
+    ).resolves.toBeNull();
+  });
+});
+
+describe('createMediaStorage: отсутствие S3 SDK (KI-412)', () => {
+  it('s3 без установленного @aws-sdk/client-s3 откатывается на local', () => {
+    const config = (values: Record<string, unknown>): ConfigService =>
+      ({ get: (key: string) => values[key] }) as unknown as ConfigService;
+
+    const storage = createMediaStorage(
+      config({
+        MEDIA_STORAGE_BACKEND: 's3',
+        S3_ENDPOINT: 'https://s3.test',
+        S3_BUCKET: 'media',
+        S3_ACCESS_KEY_ID: 'access',
+        S3_SECRET_ACCESS_KEY: 'secret',
+        S3_REGION: 'us-east-1',
+      }),
+      { sdkAvailable: false },
+    );
+
+    expect(storage.backend).toBe('local');
+  });
+});
+
+describe('S3MediaStorage: переподпись по storage_key (KI-464)', () => {
+  it('refreshStoredUrlByKeyAsync подписывает GetObject по ключу', async () => {
+    const send = vi.fn(() => Promise.resolve({}));
+    const storage = new S3MediaStorage({
+      endpoint: 'https://s3.test/',
+      bucket: 'media',
+      accessKeyId: 'access',
+      secretAccessKey: 'secret',
+      region: 'us-east-1',
+      ttlDays: 30,
+      client: { send, config: REAL_S3_CONFIG } as unknown as S3ClientLike,
+    });
+
+    const refreshed = await storage.refreshStoredUrlByKeyAsync('run-1/node-a.png');
+
+    expect(refreshed?.storedUrl).toContain(
+      'https://s3.test/media/run-1/node-a.png?',
+    );
+    expect(refreshed?.storedUrl).toContain('X-Amz-Signature=');
+    expect(refreshed?.storedExpiresAt).toBeInstanceOf(Date);
+    // Подпись локальная: команды в S3 не отправляются.
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('refreshStoredUrlByKeyAsync публичного бакета — null (ссылка не истекает)', async () => {
+    const storage = new S3MediaStorage({
+      endpoint: 'https://s3.test/',
+      bucket: 'media',
+      accessKeyId: 'access',
+      secretAccessKey: 'secret',
+      region: 'us-east-1',
+      publicBucket: true,
+    });
+
+    await expect(
+      storage.refreshStoredUrlByKeyAsync('run-1/node-a.png'),
+    ).resolves.toBeNull();
+  });
+});

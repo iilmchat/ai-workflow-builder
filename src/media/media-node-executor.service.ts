@@ -82,6 +82,14 @@ export interface MediaNodeMetrics {
   storedUrl: string | null;
   /** Когда `storedUrl` перестанет быть доступной (`null` — без TTL/не сохранено). */
   storedExpiresAt: Date | null;
+  /**
+   * Ключ объекта в хранилище (`<runId>/<fileName>`, KI-451/KI-464).
+   *
+   * `null` — файл не сохранён (бэкенд `none`, S3/local недоступны). Движок
+   * пишет ключ в `node_runs.storage_key`, чтобы снимок запуска перевыпускал
+   * подпись/ссылку по ключу, а не разбирал URL.
+   */
+  storageKey: string | null;
 }
 
 /** Результат выполнения media-узла: выходы + метрики. */
@@ -422,6 +430,8 @@ export class MediaNodeExecutor {
       taskId: finished.taskId,
       storedUrl: stored?.storedUrl ?? null,
       storedExpiresAt: stored?.storedExpiresAt ?? null,
+      // KI-451/KI-464: ключ объекта — чтобы переподпись шла по нему, а не по URL.
+      storageKey: stored?.storageKey ?? null,
     };
 
     this.logger.log(
@@ -537,6 +547,8 @@ export class MediaNodeExecutor {
       taskId: finished.taskId,
       storedUrl: stored?.storedUrl ?? null,
       storedExpiresAt: stored?.storedExpiresAt ?? null,
+      // KI-451/KI-464: ключ объекта — чтобы переподпись шла по нему, а не по URL.
+      storageKey: stored?.storageKey ?? null,
     };
 
     this.logger.log(
@@ -769,6 +781,8 @@ export class MediaNodeExecutor {
       taskId: finished.taskId,
       storedUrl: stored?.storedUrl ?? null,
       storedExpiresAt: stored?.storedExpiresAt ?? null,
+      // KI-451/KI-464: ключ объекта — чтобы переподпись шла по нему, а не по URL.
+      storageKey: stored?.storageKey ?? null,
     };
 
     this.logger.log(

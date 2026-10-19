@@ -209,12 +209,20 @@ export interface AgentToolContext {
    * Инструмент `http_request` обязан проверить **фактический** адрес после
    * резолва: строка `https://internal.example` может указывать на
    * `10.0.0.5`. В продакшене — `dns.lookup` (`defaultDnsLookupAsync` в
-   * `agent-tools.ts`), в тестах — мок, чтобы не ходить в сеть.
+   * `common/utils/network-safety.ts`), в тестах — мок, чтобы не ходить в сеть.
    *
    * Отсутствие поля — «использовать реальный `dns.lookup`»: контракт остаётся
    * обратно совместимым для тестов и альтернативных реализаций.
    */
   readonly dnsLookupAsync?: (hostname: string) => Promise<readonly string[]>;
+  /**
+   * Пропускать ли приватные/локальные адреса в `http_request` (v0.10.2).
+   *
+   * Читается из env `ALLOW_PRIVATE_IPS` (default `false`). `true` — осознанное
+   * выключение SSRF-защиты для локальной разработки/тестов; отсутствие поля
+   * трактуется как `false` (fail closed).
+   */
+  readonly allowPrivateIps?: boolean;
 }
 
 /**

@@ -23,6 +23,8 @@ const runResponse: RunResponse = {
   workflowId: WORKFLOW_ID,
   status: 'pending',
   createdAt: new Date('2024-01-01T00:00:00.000Z'),
+  // KI-450: `GET /runs/:id` отдаёт узлы; в контроллерном тесте они не важны.
+  nodes: [],
 };
 
 describe('RunsController', () => {
@@ -31,6 +33,7 @@ describe('RunsController', () => {
   let service: {
     createRunAsync: ReturnType<typeof vi.fn>;
     getRunAsync: ReturnType<typeof vi.fn>;
+    getRunRowAsync: ReturnType<typeof vi.fn>;
   };
   let stream: {
     assertRunExistsAsync: ReturnType<typeof vi.fn>;
@@ -46,6 +49,22 @@ describe('RunsController', () => {
     service = {
       createRunAsync: vi.fn(() => Promise.resolve(runResponse)),
       getRunAsync: vi.fn(() => Promise.resolve(runResponse)),
+      // KI-450: ручка бюджета проверяет существование строкой запуска, не
+      // читая `node_runs` (поллинг после каждого узла).
+      getRunRowAsync: vi.fn(() =>
+        Promise.resolve({
+          id: RUN_ID,
+          workflowId: WORKFLOW_ID,
+          status: 'pending',
+          inputs: {},
+          outputs: {},
+          error: null,
+          snapshot: { nodes: [], edges: [] },
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: null,
+          finishedAt: null,
+        }),
+      ),
     };
     costBudget = {
       checkBudgetAsync: vi.fn(() =>
@@ -191,7 +210,7 @@ describe('RunsController', () => {
         .get(`/runs/${RUN_ID}/budget`)
         .expect(200);
 
-      expect(service.getRunAsync).toHaveBeenCalledWith(RUN_ID, USER.sub);
+      expect(service.getRunRowAsync).toHaveBeenCalledWith(RUN_ID, USER.sub);
       expect(costBudget.checkBudgetAsync).toHaveBeenCalledWith(RUN_ID);
       expect(response.body).toEqual({
         ok: true,
@@ -205,7 +224,7 @@ describe('RunsController', () => {
     });
 
     it('GET /runs/:id/budget чужого/несуществующего запуска отвечает 404 и не считает бюджет', async () => {
-      service.getRunAsync.mockRejectedValue(new NotFoundException('Запуск не найден'));
+      service.getRunRowAsync.mockRejectedValue(new NotFoundException('Запуск не найден'));
 
       await request(app.getHttpServer()).get(`/runs/${RUN_ID}/budget`).expect(404);
 
@@ -215,7 +234,7 @@ describe('RunsController', () => {
     it('GET /runs/:id/budget отвечает 400 на невалидный uuid', async () => {
       await request(app.getHttpServer()).get('/runs/not-a-uuid/budget').expect(400);
 
-      expect(service.getRunAsync).not.toHaveBeenCalled();
+      expect(service.getRunRowAsync).not.toHaveBeenCalled();
     });
   });
 

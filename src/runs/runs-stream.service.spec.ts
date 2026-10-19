@@ -8,6 +8,7 @@ import {
   MEDIA_STORAGE,
   type IMediaStorage,
 } from '../media/media-storage.service.js';
+import { buildSignedMediaPath } from '../media/media-url-signer.js';
 import { RunEventsService } from './run-events.service.js';
 import { RunsService } from './runs.service.js';
 import { RunsStreamService } from './runs-stream.service.js';
@@ -291,6 +292,7 @@ describe('RunsStreamService', () => {
       uploadAsync: vi.fn(() => Promise.resolve(null)),
       openAsync: vi.fn(() => Promise.resolve(null)),
       refreshStoredUrlAsync: vi.fn(() => Promise.resolve(null)),
+      refreshStoredUrlByKeyAsync: vi.fn(() => Promise.resolve(null)),
       ...options.storage,
     };
 
@@ -431,6 +433,121 @@ describe('RunsStreamService', () => {
 
     // RULES 4.18: внешняя ошибка логируется, снимок отдаётся как есть.
     expect(snapshot.nodes[0]?.storedUrl).toBe(oldUrl);
+  });
+
+  it('KI-464: переподписывает по storage_key, а не разбирая URL', async () => {
+    const oldUrl = 'https://s3.test/media/run-1/A.png?X-Amz-Signature=old';
+    const freshUrl = 'https://s3.test/media/run-1/A.png?X-Amz-Signature=new';
+    const freshExpiresAt = new Date(Date.now() + 3_600_000);
+    const refreshStoredUrlByKeyAsync = vi.fn(() =>
+      Promise.resolve({ storedUrl: freshUrl, storedExpiresAt: freshExpiresAt }),
+    );
+    const refreshStoredUrlAsync = vi.fn(() => Promise.resolve(null));
+
+    const { service } = await createService({
+      rows: [
+        nodeRun({
+          storedUrl: oldUrl,
+          storedExpiresAt: new Date(Date.now() - 60_000),
+          // v0.10 (KI-451): ключ пишется в БД, поэтому URL не парсится.
+          storageKey: 'run-1/A.png',
+        }),
+      ],
+      storage: { refreshStoredUrlByKeyAsync, refreshStoredUrlAsync },
+    });
+    const messages = await collectAsync(
+      service.streamAsync(RUN_ID, new AbortController().signal),
+    );
+    const snapshot = payloads(messages)[0] as {
+      nodes: Array<{ storedUrl: string | null; storedExpiresAt: string | null }>;
+    };
+
+    expect(refreshStoredUrlByKeyAsync).toHaveBeenCalledWith('run-1/A.png');
+    expect(refreshStoredUrlAsync).not.toHaveBeenCalled();
+    expect(snapshot.nodes[0]?.storedUrl).toBe(freshUrl);
+  });
+
+  it('KI-464: обновляет копию ссылки в outputs document_gen (кнопка «Скачать»)', async () => {
+    const oldUrl = 'https://s3.test/doc/run-1/generated-A.docx?X-Amz-Signature=old';
+    const freshUrl =
+      'https://s3.test/doc/run-1/generated-A.docx?X-Amz-Signature=new';
+
+    const { service } = await createService({
+      rows: [
+        nodeRun({
+          nodeType: 'document_gen',
+          outputs: {
+            fileUrl: oldUrl,
+            storedUrl: oldUrl,
+            fileName: 'report.docx',
+          },
+          storedUrl: oldUrl,
+          storedExpiresAt: new Date(Date.now() - 60_000),
+          storageKey: 'run-1/generated-A.docx',
+        }),
+      ],
+      storage: {
+        refreshStoredUrlByKeyAsync: vi.fn(() =>
+          Promise.resolve({
+            storedUrl: freshUrl,
+            storedExpiresAt: new Date(Date.now() + 3_600_000),
+          }),
+        ),
+      },
+    });
+    const messages = await collectAsync(
+      service.streamAsync(RUN_ID, new AbortController().signal),
+    );
+    const snapshot = payloads(messages)[0] as {
+      nodes: Array<{ outputs: Record<string, unknown> | null }>;
+    };
+
+    // Обе копии обновлены, посторонние поля не потеряны.
+    expect(snapshot.nodes[0]?.outputs).toMatchObject({
+      fileUrl: freshUrl,
+      storedUrl: freshUrl,
+      fileName: 'report.docx',
+    });
+  });
+
+  it('KI-415: истёкшая HMAC-подпись перевыпускается, хотя файловый TTL ещё не вышел', async () => {
+    const key = 'run-1/A.png';
+    const expired = buildSignedMediaPath(
+      key,
+      { secret: 'unit-test-media-signing-secret', ttlSeconds: 3600 },
+      new Date(Date.now() - 2 * 60 * 60 * 1000),
+    );
+    const freshUrl = buildSignedMediaPath(
+      key,
+      { secret: 'unit-test-media-signing-secret', ttlSeconds: 3600 },
+    ).path;
+    const refreshStoredUrlByKeyAsync = vi.fn(() =>
+      Promise.resolve({
+        storedUrl: freshUrl,
+        storedExpiresAt: new Date(Date.now() + 3_600_000),
+      }),
+    );
+
+    const { service } = await createService({
+      rows: [
+        nodeRun({
+          storedUrl: expired.path,
+          // Файл хранится 30 дней: по этому полю ссылку перевыпускать рано.
+          storedExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          storageKey: key,
+        }),
+      ],
+      storage: { refreshStoredUrlByKeyAsync },
+    });
+    const messages = await collectAsync(
+      service.streamAsync(RUN_ID, new AbortController().signal),
+    );
+    const snapshot = payloads(messages)[0] as {
+      nodes: Array<{ storedUrl: string | null }>;
+    };
+
+    expect(refreshStoredUrlByKeyAsync).toHaveBeenCalledWith(key);
+    expect(snapshot.nodes[0]?.storedUrl).toBe(freshUrl);
   });
 
   it('KI-347: отдаёт error запуска из workflow_runs в snapshot', async () => {
