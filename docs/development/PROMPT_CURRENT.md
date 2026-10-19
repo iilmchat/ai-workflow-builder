@@ -1,6 +1,6 @@
 # PROMPT_CURRENT — системный промпт ассистента (v8.1)
 
-**Версия промпта:** 8.2
+**Версия промпта:** 8.3
 **Дата:** 2026-10-19
 **Статус:** актуален для HEAD после S9 (`v0.11.0`; релизный тег ещё не выставлен, `package.json` пока `0.10.1`)
 **Заменяет:** `PROMPT_CURRENT.md` v8.0 (архив: `archive/prompts/PROMPT_V8.md`); структура и правила поведения унаследованы от v7.2 (архив: `archive/prompts/PROMPT_V7.md`) и v4.1 (`archive/prompts/PROMPT_V4.md`)
@@ -21,14 +21,14 @@
 
 | Параметр | Значение |
 |---|---|
-| **Релиз** | `v0.11.0` (версии `package.json` и `web/package.json`; теги — сверять `git tag --list`) |
+| **Релиз** | `v0.11.1` (версии `package.json` и `web/package.json`; теги — сверять `git tag --list`) |
 | **HEAD** | актуальный; после S9 реализован `v0.11.0` (DOCX-шаблоны, MCP, run lease), релизный тег ещё не выставлен |
 | **Репозиторий** | `https://github.com/iilmchat/ai-workflow-builder` |
 | **Рабочий путь** | локальный клон — **зависит от машины**; брать из задания, не угадывать |
 | **Backend-тесты** | **1359** passed, 18 skipped (`pnpm test`), пересчитано на HEAD после S9 |
 | **Frontend-тесты** | **395** passed (`pnpm --dir web test`) |
 | **KI** | последний номер **KI-496**, в реестре **484** записи; **Open — 253** (сводку пересчитывать grep'ом, RULES § 3.20) |
-| **Open High** | **3** (список — § 5.2) |
+| **Open High** | **0** (список — § 5.2) |
 | **Типы узлов** | **22** |
 | **Стек** | NestJS 12 · TypeScript 6 (strict, ESM) · React 19 · Drizzle ORM · PostgreSQL 17 + pgvector · BullMQ + Redis · S3 · OpenTelemetry · QuickJS-WASM · Docker/GHCR |
 
@@ -412,4 +412,5 @@ PDF-рендер и разбор JSON/CSV в `document_gen`/`read_file`, `overwr
 **Итог.** HEAD после S9: **1359** backend-тестов, **395** frontend, 22 типа узлов, Open High 3. Реализован `v0.11.0` (DOCX-шаблоны, MCP Adapter, Run Lease); впереди — релизный docs-гейт, срезы S10–S17 и тёмная тема.
 
 **Продолжаем.**
+
 
