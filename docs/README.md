@@ -3,7 +3,7 @@
 > **Навигационный хаб проекта.** Здесь собраны все документы: от руководства
 > пользователя до правил разработки и чек-листа релиза.
 >
-> **Версия продукта:** `v0.10.1` · **Обновлено:** 2026-10-19 · **HEAD:** актуальный
+> **Версия продукта:** `v0.11.0` · **Обновлено:** 2026-10-19 · **HEAD:** актуальный
 
 ---
 
@@ -55,7 +55,7 @@
 
 | Документ | Что внутри | Когда читать |
 |---|---|---|
-| [**MANUAL_TESTING_GUIDE.md**](qa/MANUAL_TESTING_GUIDE.md) | **129 ручных кейсов** с приоритетами P1–P3, предусловиями, шагами и ожидаемым результатом; чек-лист приёмки и шаблон баг-репорта | Перед каждым релизом и при регрессе |
+| [**MANUAL_TESTING_GUIDE.md**](qa/MANUAL_TESTING_GUIDE.md) | **137 ручных кейсов** с приоритетами P1–P3, предусловиями, шагами и ожидаемым результатом; чек-лист приёмки и шаблон баг-репорта | Перед каждым релизом и при регрессе |
 | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | Реестр KI: приоритет, статус, файлы, решения | Перед тестированием — что уже известно |
 | [RELEASES.md](development/RELEASES.md) | Пошаговый чек-лист выпуска версии | При подготовке релиза |
 
@@ -106,7 +106,7 @@
 
 | Версия | Документ | Статус | О чём |
 |---|---|---|---|
-| v0.11 | [DESIGN_V011_FEATURES.md](development/v0.11/DESIGN_V011_FEATURES.md) | In progress (S0–S9 реализованы) | DOCX-шаблоны, MCP Adapter, Run Lease/Reliability, History, dark theme |
+| v0.11 | [DESIGN_V011_FEATURES.md](development/v0.11/DESIGN_V011_FEATURES.md) | Release prep (S0–S17; тег не выставлен) | DOCX-шаблоны, MCP Adapter, Run Lease/Reliability, History, dark theme |
 | v0.10 | [DESIGN_V010_FEATURES.md](development/v0.10/DESIGN_V010_FEATURES.md) | Released (v0.10.0) | Web Search, Document Generation, safe filesystem, Docker/GHCR |
 | v0.9 | [DESIGN_V09_FEATURES.md](development/v0.9/DESIGN_V09_FEATURES.md) | Released (v0.9.0) | медиа, состояние (pgvector/Memory), агенты, sandbox, наблюдаемость |
 | v0.8 | [DESIGN_V08_FEATURES.md](development/v0.8/DESIGN_V08_FEATURES.md) | Approved | Auth, Share, sub-workflows, Canvas UX, LLM upgrade |
@@ -141,12 +141,12 @@
 
 | Показатель | Значение |
 |---|---|
-| Версия продукта | **v0.10.1** |
-| Backend-тесты | **1123** (17 skipped) |
-| Frontend-тесты | **375** |
+| Версия продукта | **v0.11.0** |
+| Backend-тесты | **1417** (18 skipped, 102 файла) |
+| Frontend-тесты | **412** (50 файлов) |
 | Типов узлов | **22** |
-| KI-реестр | **KI-480** — последний номер; всего **468** записей |
-| Открытых High KI | **6** |
+| KI-реестр | **KI-519** — последний номер; всего **507** записей |
+| Открытых High KI | **4** |
 | Языки интерфейса | RU / EN |
 | Стек | NestJS 12 · React 19 · PostgreSQL 17 + pgvector · S3 · OTel · Docker/GHCR |
 
@@ -198,4 +198,4 @@ docs/
 
 ---
 
-**© 2026 RuChating (iilmchat) · IIChatTools AI Workflow Builder v0.10.1**
+**© 2026 RuChating (iilmchat) · IIChatTools AI Workflow Builder v0.11.0**

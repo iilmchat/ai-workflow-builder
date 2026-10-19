@@ -1333,19 +1333,25 @@
 
 ### KI-077 — Результат запуска недоступен без SSE
 - **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-13
-- **Исправлено в:** v0.10.2 — `GET /runs/:id` отдаёт `nodes` (проекция
-  `node_runs`, общая с SSE); `RunResponse` в `docs/development/api-contract.json`
-  дополнен полем `nodes`.
+- **Исправлено в:** v0.11.0 (S12+S13) — история узлов вынесена в отдельную
+  ручку `GET /runs/:id/nodes` (массив `NodeRunSnapshot`, та же проекция, что в
+  SSE-снимке); `RunResponse.nodes` заменён аддитивным `error`. Фронтенд
+  `restoreRunAsync` восстанавливает `nodeStatuses`/`nodeOutputs`/`nodeErrors`/
+  `nodeLogs`/`nodeMetrics` после F5. Ранее было частичное исправление в v0.10.2
+  (`GET /runs/:id` отдавал `nodes`). Отчёт:
+  [S12-S13-history.md](development/reports/v0.11.0/S12-S13-history.md).
 - **Файлы:** `src/runs/runs.controller.ts`, `src/runs/runs.service.ts`,
-  `src/runs/run-node-snapshots.ts`, `web/src/stores/workflow.ts`
-- **Описание:** `GET /runs/:id` отдаёт только `id`/`workflowId`/
-  `status`/`createdAt`; `node_runs` API нет. После F5 (или при
+  `src/runs/node-run-snapshot.mapper.ts`, `web/src/stores/workflow.ts`,
+  `web/src/lib/api.ts`
+- **Описание:** `GET /runs/:id` отдавал только `id`/`workflowId`/
+  `status`/`createdAt`; `node_runs` API не было. После F5 (или при
   открытии старого запуска) панель **пуста** — данных о
   `outputs`/метриках/логах взять негде.
-- **Решение:** `GET /runs/:id/nodes` (или расширение ответа
-  запуска). Реализовано расширение ответа: поле `nodes`.
+- **Решение:** `GET /runs/:id/nodes` с `Cache-Control: no-store`; SSE
+  открывается только для `pending`/`running`, для финального запуска `?runId=`
+  убирается; 404 сбрасывает состояние запуска.
 - **Дубль-учёт:** KI-450 — историческая запись; закрыта вместе с этой.
-- **Связанные:** KI-061, KI-450.
+- **Связанные:** KI-061, KI-450, KI-505…508.
 
 ---
 
@@ -6718,11 +6724,14 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-420 — In-memory ThrottlerStorage не общий между инстансами
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
-- **Файлы:** `src/app.module.ts`
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Исправлено в:** v0.11.0 (S15) | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/app.module.ts`, `src/common/throttler/redis-throttler.storage.ts`
 - **Описание:** При N инстансах лимит умножается на N.
-- **Решение:** Redis-storage для throttler.
-- **Связанные:** KI-387, KI-419.
+- **Решение:** `RedisThrottlerStorage` (атомарный `EVAL` Lua, отдельное fail-fast
+  соединение, fallback в память при недоступном Redis); `AppModule` собирает
+  `ThrottlerModule.forRootAsync`. `THROTTLER_STORAGE=memory` — аварийный режим.
+  Отчёт: [S14-S15-security-infra.md](development/reports/v0.11.0/S14-S15-security-infra.md).
+- **Связанные:** KI-387, KI-419, KI-513…516.
 
 ---
 
@@ -6906,18 +6915,17 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-435 — SSRF: DNS rebinding между проверкой и fetch
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
-- **Прогресс v0.10.2:** ручной обход редиректов (KI-434) убирает самый дешёвый
-  вектор, но pinning IP не реализован — риск DNS rebinding остаётся открытым
-  (см. JSDoc `src/common/utils/network-safety.ts`).
-- **Файлы:** `src/agent/agent-tools.ts`, `src/common/utils/network-safety.ts`
-- **Описание:** адрес резолвится один раз в проверке, а `fetch` резолвит имя
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Исправлено в:** v0.11.0 (S14) | **Обнаружено:** 2026-10-18
+- **Файлы:** `src/common/http/safe-http.client.ts`, `src/agent/agent-tools.ts`
+- **Описание:** адрес резолвился один раз в проверке, а `fetch` резолвил имя
   повторно. При TTL=0 злоумышленник отдаёт публичный IP на первом запросе и
-  приватный на втором. Остаточный риск зафиксирован в JSDoc
-  `assertPublicHttpUrlAsync`; сбой DNS намеренно не блокирует запрос.
-- **Решение:** резолвить один раз и подключаться к выбранному IP (pinning через
-  `undici` dispatcher/`lookup`), проверяя адрес в момент соединения.
-- **Связанные:** KI-409, KI-434.
+  приватный на втором.
+- **Решение:** `SafeHttpClient` на `undici`: **один** `dns.lookup` с проверкой
+  всех адресов и pinning выбранного IP через `Agent({ connect: { lookup } })`
+  (TLS SNI и `Host` остаются исходными); `redirect: 'manual'` с перепроверкой
+  каждого `Location`. Прежние `fetchWithSsrfGuardAsync`/`assertPublicHttpUrlAsync`
+  удалены. Отчёт: [S14-S15-security-infra.md](development/reports/v0.11.0/S14-S15-security-infra.md).
+- **Связанные:** KI-409, KI-434, KI-478.
 
 ---
 
@@ -7870,6 +7878,9 @@ MediaModelInfo, engine-DTO
 - **Файлы:** `docs/KNOWN_ISSUES.md`
 - **Описание:** Ручной подсчёт при добавлении KI привёл к расхождению таблицы (479) с фактическим числом заголовков (484).
 - **Решение:** добавить в CI шаг, проверяющий `(Select-String -Pattern '^### KI-').Count` == сумме статусов.
+- **Прогресс v0.11.0 (S17):** сводка и статусы пересчитаны вручную по grep
+  (RULES § 3.20): заголовков — 507, сумма статусов — 507. CI-гейта пока нет,
+  поэтому KI остаётся открытым.
 
 ---
 
@@ -8035,18 +8046,93 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-513 — Хрупкий deep-import `ThrottlerStorageRecord`
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/common/throttler/redis-throttler.storage.ts`
+- **Описание:** Тип берется из `@nestjs/throttler/dist/...`, что сломается при смене exports в пакете.
+- **Решение:** объявить локальный структурный тип.
+
+---
+
+### KI-514 — Нет валидации ответа Lua в Redis Throttler
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/common/throttler/redis-throttler.storage.ts`
+- **Описание:** `increment` кастует ответ `EVAL` без проверки длины и типов (RULES 1.17).
+- **Решение:** проверять `Number.isFinite` и длину массива, при ошибке — fallback.
+
+---
+
+### KI-515 — `THROTTLER_STORAGE=memory` создает Redis-соединение
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/common/throttler/redis-throttler.storage.ts`
+- **Описание:** `RedisThrottlerStorage` инжектится всегда и делает `duplicate()`, даже если выбран in-memory режим.
+- **Решение:** создавать хранилище лениво.
+
+---
+
+### KI-516 — Нет CI-гейта на два инстанса (Throttler)
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `.github/workflows/ci.yml`
+- **Описание:** Проверка общего лимита между инстансами только в ручном smoke.
+- **Решение:** добавить CI-job с Redis и двумя инстансами.
+
+---
+
+### KI-517 — `Dockerfile` не пинит версию Node (>= 22.19)
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `Dockerfile`
+- **Описание:** `undici@8` требует Node >= 22.19, а используется плавающий `node:22-alpine`.
+- **Решение:** запинить тег `node:22.19-alpine`.
+
+---
+
+### KI-518 — MCP API/UI (S8) отсутствует в релизе v0.11.0
+- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/mcp/mcp.module.ts`, `src/app.module.ts`,
+  `web/src/components/nodes/AgentNode.tsx`, `web/src/i18n/ru.json`,
+  `docs/development/v0.11/DESIGN_V011_FEATURES.md` (§ 5, S8)
+- **Описание:** backend MCP-адаптера (S6/S7) реализован: схема `agent.mcpTools`,
+  `McpClientService`, `McpToolAdapter`, preflight до LLM, retry-guard. Срез
+  **S8** — ручка `GET /mcp/servers`, UI выбора MCP-инструментов в `AgentNode`,
+  i18n-подключение и тесты — на HEAD **отсутствует**: i18n-ключи
+  `node.agent.mcp.*` и тип `McpToolRef` есть, но компонент их не использует;
+  `McpModule` не подключён к `AppModule`. Пользователь не может выбрать
+  MCP-инструмент из UI — только через JSON сценария/API. DESIGN § 5 включает
+  S8 в план v0.11, CHANGELOG и USER_GUIDE описывают MCP как вошедшую фичу.
+- **Решение:** до тега `v0.11.0` реализовать S8 (контроллер каталога, UI-секция
+  в `AgentNode`, i18n-тесты, e2e на «секреты не утекают»); либо выпустить
+  `v0.11.0` как «MCP backend-only», перенеся API/UI в `v0.11.1` и явно указав
+  это в Release Notes.
+- **Связанные:** DESIGN v0.11 § 5 (S8), S17-docs-sync § 5.7, KI-488, KI-492,
+  KI-497.
+
+---
+
+### KI-519 — Ожидаемые метрики в `RELEASES.md` не сверяются с фактом
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `docs/development/RELEASES.md`
+- **Описание:** В чек-листе релиза были зашиты ожидания `1001`/`339` тестов,
+  хотя на HEAD v0.11.0 фактические — `1417`/`412`. Числа живут отдельно от
+  прогонов и разъезжаются при каждом пакете; `pnpm build`/`test` при этом
+  зелёные, поэтому расхождение не видно.
+- **Решение:** в S17 числа обновлены; на будущее — не дублировать метрики в
+  чек-листе (ссылаться на отчёт/CI) либо генерировать их из прогона. Связано с
+  KI-498 (дублирование метрик в README/docs/PROMPT) и KI-497 (сводка KI).
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 221 |
+| Fixed | 223 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 1 |
 | Documented | 7 |
-| Open | 266 |
+| Open | 271 |
 | Won't Fix | 4 |
-| **Всего** | **500** |
+| **Всего** | **507** |
 
 ---
 

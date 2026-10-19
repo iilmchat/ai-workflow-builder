@@ -1,12 +1,13 @@
 # Гайд по ручному тестированию — IIChatTools AI Workflow Builder
 
 **Файл:** `docs/qa/MANUAL_TESTING_GUIDE.md`
-**Версия документа:** 1.1 (2026-10-19)
-**Версия продукта:** 0.10.0
-**Область:** ручная проверка релиза v0.10.0 — Auth, Canvas UI, Engine, LLM/Media,
-Vector/Agent, Share/Access, S3/Storage, Edge Cases, Web Search / Documents /
-Files, Docker.
-**Источники требований:** [`DESIGN v0.10`](../development/v0.10/DESIGN_V010_FEATURES.md),
+**Версия документа:** 1.2 (2026-10-19)
+**Версия продукта:** 0.11.0
+**Область:** ручная проверка релиза v0.11.0 — Auth, Canvas UI, Engine,
+LLM/Media, Vector/Agent, Share/Access, S3/Storage, Edge Cases, Web Search /
+Documents / Files, Docker, V0.11 (DOCX-шаблоны, MCP, heartbeat, история, тема).
+**Источники требований:** [`DESIGN v0.11`](../development/v0.11/DESIGN_V011_FEATURES.md),
+[`DESIGN v0.10`](../development/v0.10/DESIGN_V010_FEATURES.md),
 [`DESIGN v0.9`](../development/v0.9/DESIGN_V09_FEATURES.md),
 [`ARCHITECTURE`](../development/ARCHITECTURE.md),
 [`api-contract.json`](../development/api-contract.json),
@@ -18,7 +19,7 @@ Files, Docker.
 ## 0. Как пользоваться этим документом
 
 1. **Кейсы идут блоками** (AUTH, CANVAS, ENGINE, LLM/MEDIA, VECTOR/AGENT,
-   SHARE/ACCESS, STORAGE, EDGE, CONTRACT, V0.10). Внутри блока — сквозная
+   SHARE/ACCESS, STORAGE, EDGE, CONTRACT, V0.10, V0.11). Внутри блока — сквозная
    нумерация, например `CANVAS-07` или `DOCKER-01`.
 2. **У каждого кейса есть:** название, приоритет, предусловие, шаги, ожидаемый
    результат. Если шаг требует данных — они указаны в предусловии или прямо в шаге.
@@ -27,7 +28,7 @@ Files, Docker.
    - **P2** — важный: выпуск возможен с записью в KI;
    - **P3** — косметика/редкий сценарий.
 4. **Результат фиксируется** коротко: `PASS` / `FAIL` + путь к скриншоту или
-   JSON-файлу. Для FAIL — баг-репорт по шаблону из § 14 и ссылка на KI.
+   JSON-файлу. Для FAIL — баг-репорт по шаблону из § 15 и ссылка на KI.
 5. **Правило «до/после» (RULES 4.33).** Для проверок вида «закрылось /
    не открылось / не изменилось» сначала зафиксируйте состояние **до**
    действия, иначе «после» неотличимо от исходного.
@@ -48,7 +49,8 @@ Files, Docker.
 | [EDGE CASES](#9-edge-cases) | 18 | бюджет, Redis, ключи, БД, нагрузка |
 | [CONTRACT](#10-регресс-контрактов) | 4 | api/sse/prefixes/enums |
 | [V0.10](#11-web-search--documents--files--docker) | 13 | Web Search, DOCX, workspace, Docker |
-| **Итого** | **129** | |
+| [V0.11](#12-v011--docx-templates--mcp--reliability--history) | 8 | DOCX-шаблоны, MCP, heartbeat, история после F5, тёмная тема |
+| **Итого** | **137** | |
 
 ---
 
@@ -80,6 +82,17 @@ Files, Docker.
 | `SANDBOX_TIMEOUT_MS` | `100` | лимит времени песочницы |
 | `SANDBOX_MEMORY_MB` | `16` | лимит памяти песочницы |
 | `AGENT_MAX_ITERATIONS_DEFAULT` | `5` | дефолт итераций агента |
+| `NODE_RETRY_MAX_ATTEMPTS` | `3` | попытки узла при retryable-ошибке (v0.11) |
+| `WORKFLOW_RUN_HEARTBEAT_MS` | `30000` | период продления аренды запуска (v0.11) |
+| `WORKFLOW_RUN_LEASE_TTL_MS` | `90000` | TTL аренды; должно быть ≥ 2×heartbeat (v0.11) |
+| `THROTTLER_STORAGE` | `redis` / `memory` | общий лимит между инстансами или память (v0.11) |
+| `HTTP_NODE_ALLOW_PRIVATE_NETWORKS` | `false` / `true` | приватные адреса только для узла `http` (v0.11); `http_request` агента блокирует всегда |
+| `MCP_ENABLED` | `false` (default) / `true` | включает MCP-адаптер (v0.11) |
+| `MCP_SERVERS` | `{}` / JSON-реестр | серверы MCP: `transport`, `url`, `tokenEnv` (v0.11) |
+| `MCP_MAX_TOOLS_PER_NODE` | `20` | лимит MCP-инструментов на agent-узел (v0.11) |
+| `DOCUMENT_TEMPLATE_MAX_BYTES` | `5242880` | лимит файла DOCX-шаблона, 5 МБ (v0.11) |
+| `DOCUMENT_TEMPLATE_MAX_PER_WORKFLOW` | `50` | шаблонов на workflow (v0.11) |
+| `DOCUMENT_TEMPLATE_MAX_VARIABLES_BYTES` | `262144` | лимит JSON-переменных шаблона (v0.11) |
 | `MEDIA_STORAGE_BACKEND` | `local` / `s3` / `none` | куда сохраняются медиа |
 | `MEDIA_STORAGE_LOCAL_PATH` | `./data/media` | каталог local |
 | `MEDIA_STORAGE_LOCAL_TTL_DAYS` | `30` | TTL local (0 — бессрочно) |
@@ -87,7 +100,7 @@ Files, Docker.
 | `S3_TTL_DAYS` | `30` | TTL ссылок S3 |
 | `S3_PUBLIC_BUCKET` | `false` (default) / `true` | прямые ссылки вместо presigned |
 | `TAVILY_API_KEY` | валидный ключ Tavily / пусто | web-search; без ключа — негативный кейс `WS-03` |
-| `WEB_SEARCH_PROVIDER` | `tavily` (default) | провайдер поиска, v0.10 — только Tavily |
+| `WEB_SEARCH_PROVIDER` | `tavily` (default) | провайдер поиска, v0.11 — только Tavily |
 | `REDIS_URL`, `DATABASE_URL` | см. `.env` | зависимости выполнения |
 | `COOKIE_SECURE` | `false` (dev) / `true` (prod) | secure-cookie; в production `false` запрещён |
 | `AUTH_DISABLED` | `false` (default) | отключение авторизации (только dev) |
@@ -95,6 +108,15 @@ Files, Docker.
 > `WORKSPACE_ROOT` в v0.10 **не читается**: workspace жёстко привязан к
 > `./data/workspace/{workflowId}` (от `process.cwd()`). Переменная появится
 > вместе с настраиваемым корнем в следующих версиях.
+>
+> `ALLOW_PRIVATE_IPS` **удалён в v0.11**: он отключал SSRF-защиту сразу и у
+> узла `http`, и у инструмента `http_request` агента. Приватные адреса узлу
+> `http` теперь разрешает только `HTTP_NODE_ALLOW_PRIVATE_NETWORKS=true`;
+> `http_request` не отключается (DESIGN v0.11 § 3.5.1, KI-434/435/478).
+>
+> `MCP_ENABLED=false` по умолчанию: MCP-адаптер не ходит в сеть и не влияет
+> на старт. При `true` реестр `MCP_SERVERS` валидируется fail-fast; секреты
+> серверов задаются только через `tokenEnv` (имя env-переменной), не в JSON.
 
 Ключи LLM- и media-провайдеров задаются в `.env` администратором. **Никогда** не
 вставляйте ключи в этот документ, в скриншоты и в тикеты — только название
@@ -128,6 +150,17 @@ UUID участников нужны для приглашений: `GET /auth/m
 7. `QA-SEARCH` — `Текст → Веб-поиск → LLM → Вывод`.
 8. `QA-DOCS` — `Текст (Markdown) → Генерация документа → Вывод` и вариант с JSON.
 9. `QA-FILES` — `Запись файла → Чтение файла` (два запуска) и `Чтение файла → LLM`.
+10. `QA-TPL` — `Текст (JSON-переменные) → Генерация документа (режим «Шаблон»)` →
+    `Вывод`; шаблон `contract.docx` с плейсхолдерами `{client}`, `{amount}`,
+    `{date}` и циклом `{#items}…{/items}`.
+11. `QA-MCP` — `Текст (задача) → Агент` с `mcpTools` в JSON определения узла;
+    mock MCP-сервер поднят локально (см. `MCP-01`). **UI выбора MCP-инструментов
+    в v0.11.0 нет** (S8 не входит в релиз, KI-518) — узел готовится через
+    JSON/API.
+12. `QA-LONG` — `Текст → HTTP (медленный локальный endpoint, ответ через
+    150 с) → Вывод`; нужен для проверки heartbeat (`HB-01`).
+13. `QA-HIST` — уже завершённый `QA-BASE` с сохранённым `?runId=…`; нужен для
+    проверки восстановления после F5 (`HIST-01`).
 
 ### 1.4. Полезные адреса API
 
@@ -144,6 +177,10 @@ UUID участников нужны для приглашений: `GET /auth/m
 | `POST/DELETE` | `/workflow/:id/share` | публичная ссылка |
 | `GET` | `/workflow/share/:token` | публичное чтение (5 req/min) |
 | `POST` | `/runs`, `GET /runs/:id`, `GET /runs/:id/budget`, `GET /runs/:id/stream` | запуски |
+| `GET` | `/runs/:id/nodes` | история узлов запуска (`NodeRunSnapshot[]`, v0.11) |
+| `GET/POST` | `/workflow/:id/document-templates` | список / загрузка DOCX-шаблона (multipart, v0.11) |
+| `GET` | `/workflow/:id/document-templates/:templateId/file` | скачать файл шаблона (v0.11) |
+| `DELETE` | `/workflow/:id/document-templates/:templateId` | удалить шаблон (owner/editor, v0.11) |
 | `GET` | `/media/file/:runId/:fileName` | локальные медиа |
 | `GET` | `/templates`, `POST /templates/:id/instantiate` | шаблоны |
 
@@ -158,7 +195,10 @@ UUID участников нужны для приглашений: `GET /auth/m
 | Статусы | `[data-run-status]`, `[data-run-badge]`, `[data-run-budget]`, `[data-dirty-indicator]` |
 | Версия | `[data-app-version]` |
 | Холст | `[data-catalog-toggle]`, `[data-node-catalog="open"]`, `[data-canvas-mode]`, `[data-canvas-minimap-toggle]`, `[data-canvas-fit-selection]` |
-| Узлы | `[data-http-node]`, `[data-condition-node]`, `[data-compare-node]`, `[data-output-node]`, `[data-agent-node]`, `[data-vector-upsert-node]`, `[data-vector-query-node]`, `[data-memory-read-node]`, `[data-memory-write-node]`, `[data-sub-workflow-node]`, `[data-comment-node]` |
+| Узлы | `[data-http-node]`, `[data-condition-node]`, `[data-compare-node]`, `[data-output-node]`, `[data-agent-node]`, `[data-vector-upsert-node]`, `[data-vector-query-node]`, `[data-memory-read-node]`, `[data-memory-write-node]`, `[data-sub-workflow-node]`, `[data-comment-node]`, `[data-document-gen-node]` |
+| DOCX-шаблоны | `[data-document-gen-mode]`, `[data-document-gen-source]`, `[data-document-gen-content]`, `[data-document-template-panel]`, `[data-document-template-select]`, `[data-document-template-upload]`, `[data-document-template-file]`, `[data-document-template-placeholders]`, `[data-document-template-variables]`, `[data-document-template-variables-error]`, `[data-document-template-delete]`, `[data-document-gen-download]`, `[data-document-gen-missing]` |
+| Агент / MCP | `[data-agent-model]`, `[data-agent-system-prompt]`, `[data-agent-tools]`, `[data-agent-tool="<name>"]`, `[data-agent-iterations]` (UI выбора MCP в v0.11.0 нет — KI-518) |
+| История запуска | `[data-result-panel]`, `[data-agent-timeline]`, `[data-agent-step]`, `[data-cache-read]`, `[data-node-skipped-reason]` |
 | Медиа | `[data-media-expired]`, `[data-reasoning]`, `[data-max-tokens]`, `[data-system-toggle]` |
 | Панель результата | `[data-result-panel]`, `[data-panel-toggle]` |
 | Share | `[data-share-modal]`, `[data-share-tab]`, `[data-share-create]`, `[data-share-url]`, `[data-share-copy]`, `[data-share-revoke]`, `[data-share-allow-copy]`, `[data-collaborator-user-id]`, `[data-collaborator-role]`, `[data-collaborator-invite]`, `[data-collaborator-row]`, `[data-collaborator-remove]`, `[data-share-participants-empty]` |
@@ -187,7 +227,7 @@ UUID участников нужны для приглашений: `GET /auth/m
 - `POST /auth/register` → 2xx; в ответе есть `accessToken` и `user`.
 - Refresh-cookie выставлена (`HttpOnly`, `SameSite`), access-токен в ответе.
 - В шапке отображается строка копирайта с версией (`[data-app-version]`), и она
-  совпадает с `version` из `web/package.json` (на момент релиза — `0.10.0`,
+  совпадает с `version` из `web/package.json` (на момент релиза — `0.11.0`,
   KI-446).
 
 #### AUTH-02 — Регистрация на существующий email
@@ -1850,7 +1890,7 @@ ARCHITECTURE § 7.2, KI-459, KI-460, KI-467..KI-471.
 3. Убедиться, что у `read_file` нет входного порта.
 **Ожидаемый результат:**
 - Первый запуск создаёт файл с `v1`; второй — перезаписывает на `v2`
-  (в v0.10 `overwrite` не настраивается).
+  (в v0.11 `overwrite` не настраивается).
 - Селект «Формат» не меняет кодировку: файл всегда UTF-8.
 - `read_file` — source-only: входной порт отсутствует.
 
@@ -1902,9 +1942,205 @@ down -v`), затем `up -d --build`.
 
 ---
 
-## 12. Что НЕ тестируем в этой версии
+## 12. V0.11 — DOCX TEMPLATES / MCP / RELIABILITY / HISTORY
 
-Явные ограничения v0.10.0 (не заводить как баги, но фиксировать как «ожидаемо»):
+**Что проверяем:** режим «Шаблон» узла `document_gen` (загрузка `.docx`,
+плейсхолдеры, переменные, `missingVariables`), MCP-инструменты агента на
+mock-сервере, heartbeat/аренду запуска (запуск дольше 2 минут), восстановление
+панели результата после F5 через `GET /runs/:id/nodes`, а также статусы узлов в
+тёмной теме. Требования — DESIGN v0.11 § 3.1, § 3.2, § 3.3.1, § 3.4, § 3.6;
+KI-077, KI-489, KI-518.
+
+> **Границы релиза.** MCP-адаптер в v0.11.0 реализован на backend (S6/S7), но
+> UI выбора MCP-инструментов и ручка `GET /mcp/servers` (S8) в релиз **не
+> входят** — KI-518. Поэтому `MCP-01`/`MCP-02` проверяют backend-поведение
+> через JSON сценария/API; отсутствие UI — ожидаемое, а не баг.
+
+#### TPL-01 — Загрузка DOCX-шаблона в узле `document_gen`
+**Приоритет:** P1 · **Тип:** smoke
+**Предусловие:** workflow сохранён; пользователь — `owner` или `editor`;
+подготовлен `contract.docx` (до 5 МБ) с плейсхолдерами `{client}`, `{amount}`,
+`{date}`; backend и БД доступны.
+**Шаги:**
+1. Добавить узел «Генерация документа» и переключить «Режим» на «Шаблон»
+   (`[data-document-gen-mode]`).
+2. Нажать «Загрузить .docx» (`[data-document-template-upload]`), выбрать
+   `contract.docx`.
+3. В DevTools → Network проверить `POST /workflow/:id/document-templates`.
+4. Проверить селект шаблона и чипы плейсхолдеров
+   (`[data-document-template-placeholders]`).
+5. Перезагрузить страницу (F5) и снова открыть узел.
+**Ожидаемый результат:**
+- Запрос multipart (`FormData`) → **201**; шаблон появляется в селекте и
+  становится выбранным у узла.
+- Чипы плейсхолдеров показывают `{amount}`, `{client}`, `{date}` (и `items`,
+  если в шаблоне есть цикл); дублей и пустых тегов нет.
+- После F5 шаблон и выбранный `templateId` сохраняются; повторная загрузка не
+  требуется.
+- Ошибок в консоли нет; размер/`sha256` в списке соответствуют файлу.
+
+#### TPL-02 — Генерация документа по шаблону
+**Приоритет:** P1
+**Предусловие:** TPL-01 выполнен; сценарий `QA-TPL`; у узла **нет** входящей
+связи; «Переменные (JSON)» =
+`{ "client": "ООО Ромашка", "amount": "125 000 ₽", "date": "19.10.2026" }`.
+**Шаги:**
+1. Запустить сценарий, дождаться статуса «Готово».
+2. Нажать «Скачать DOCX» (`[data-document-gen-download]`), открыть файл в
+   Word/LibreOffice.
+3. Проверить `GET /runs/:id/nodes`: `outputs.mode = 'template'`, `templateId`,
+   `templateName`, `missingVariables`, `bytes > 0`.
+4. Повторить сценарий с входящей связью: «Текст» отдаёт JSON-объект с
+   `client`/`amount`/`date`, поле «Переменные» скрыто
+   (`[data-document-template-variables-input]`).
+**Ожидаемый результат:**
+- Узел `completed`, скачивание работает; значения подставлены, бланк,
+  форматирование и колонтитулы шаблона сохранены.
+- `missingVariables = []`, жёлтой плашки
+  (`[data-document-gen-missing]`) нет, в `logs` запуска нет warning.
+- При входящей связи переменные берутся из `inputs.prompt` (вход важнее
+  fallback); JSON-массив автоматически доступен как `items` для цикла.
+- Обычная проза вместо JSON → узел `failed` с «режим template ожидает
+  JSON-объект переменных» (не вставляет текст целиком).
+
+#### TPL-03 — Плейсхолдеры, чужой шаблон, права
+**Приоритет:** P2
+**Предусловие:** TPL-01/TPL-02; второй workflow для проверки чужого
+`templateId`; аккаунт с ролью «Просмотр» (`QA-B`).
+**Шаги:**
+1. Убрать `date` из «Переменные (JSON)», запустить сценарий.
+2. Проверить жёлтую плашку, `missingVariables` и `logs` запуска.
+3. Через API (`PATCH /workflow/:id`) вставить во второй workflow `templateId`
+   первого и запустить его.
+4. Войти под `QA-B` (viewer), открыть узел: проверить селект, чипы и кнопки
+   «Загрузить .docx» / «Удалить шаблон».
+5. Попробовать загрузить `.txt`, `macroEnabled .docm` и файл > 5 МБ.
+**Ожидаемый результат:**
+- Незаполненный плейсхолдер рендерится пустой строкой, документ создаётся;
+  плашка «Не заполнено: date», в `logs` — warning.
+- Чужой шаблон → узел `failed` с «Шаблон документа … не найден в workflow»,
+  **без повторов** (non-retryable), run `failed`.
+- Viewer видит список/чипы, но обе кнопки `disabled`; на сервере — 403 на
+  загрузку/удаление.
+- Невалидные файлы отвергаются (400/413) с понятной ошибкой backend; узел и
+  список шаблонов не меняются.
+
+#### MCP-01 — Agent с MCP-инструментом (mock-сервер)
+**Приоритет:** P1
+**Предусловие:** `MCP_ENABLED=true`; в `MCP_SERVERS` зарегистрирован
+`{"mock":{"transport":"http","url":"http://127.0.0.1:<port>/mcp"}}`; backend
+перезапущен; поднят mock MCP-сервер (SDK `McpServer.registerTool`, инструмент
+`echo`, например `node .smoke/mcp-mock-server.mjs`); LLM-модель доступна;
+workflow `QA-MCP`: `Текст → Агент`, в JSON узла
+`"mcpTools": [{"server":"mock","tool":"echo"}]`, `"tools": []`.
+**Шаги:**
+1. Поднять mock-сервер, проверить, что backend стартует без ошибок конфигурации.
+2. Создать workflow с `mcpTools` через API (`POST /workflow` / импорт JSON) —
+   UI выбора MCP в v0.11.0 нет (KI-518).
+3. Запустить сценарий, открыть раздел «Шаги агента»
+   (`[data-agent-timeline]`, `[data-agent-step]`).
+4. Найти шаг вызова MCP-инструмента и его результат.
+5. Проверить, что URL/токен сервера не попали в JSON workflow, ответы API, SSE
+   и логи.
+6. Остановить mock-сервер и запустить снова.
+**Ожидаемый результат:**
+- Preflight MCP выполняется **до** вызова LLM; шаг агента содержит вызов
+  `mcp__mock__echo` и нормализованный результат.
+- Узел `completed`; run `completed`; в `node_runs`/SSE — только имя сервера и
+  инструмента, без секретов и URL.
+- При недоступном сервере узел `failed` до LLM с понятной ошибкой; для
+  side-effect MCP-инструментов повторов нет (retry-guard).
+- При `MCP_ENABLED=false` узел с `mcpTools` падает preflight'ом; узел без MCP
+  работает как раньше.
+
+#### MCP-02 — Конфигурация MCP: выключено, битый JSON, недоступный сервер
+**Приоритет:** P2
+**Предусловие:** доступ к `.env` и перезапуску backend.
+**Шаги:**
+1. `MCP_ENABLED=false`, перезапуск; запустить `QA-MCP`.
+2. `MCP_ENABLED=true`, `MCP_SERVERS={битый JSON`, перезапуск.
+3. `MCP_ENABLED=true` с валидным, но недоступным `url`; запустить `QA-MCP`.
+4. `MCP_ENABLED=true` без `mcpTools` у агента; запустить обычный `QA-AGENT`.
+**Ожидаемый результат:**
+- `false`: MCP-инструменты недоступны, узел падает preflight'ом без обращения к
+  LLM; приложение стартует штатно.
+- Битый `MCP_SERVERS` при `true` — fail-fast на старте (понятная ошибка
+  конфигурации); при `false` — только warn, приложение работает.
+- Недоступный сервер: таймаут/ошибка подключения, узел `failed`, остальные
+  узлы и запуски не затронуты.
+- Агент без `mcpTools` работает идентично v0.10 (7 встроенных инструментов).
+
+#### HB-01 — Heartbeat: запуск дольше 2 минут не считается зависшим
+**Приоритет:** P1
+**Предусловие:** `WORKFLOW_RUN_HEARTBEAT_MS=30000`,
+`WORKFLOW_RUN_LEASE_TTL_MS=90000`; локальный «медленный» endpoint (например,
+`node -e` с ответом через 150 с) на loopback; сценарий `QA-LONG`
+(`Текст → HTTP → Вывод`), созданный через UI/API; запущенный воркер.
+**Шаги:**
+1. Запустить медленный endpoint и сценарий `QA-LONG`.
+2. В течение > 2 минут раз в 30 с смотреть БД:
+   `SELECT status, lease_expires_at FROM workflow_runs WHERE id = '<runId>'`.
+3. Убедиться, что `lease_expires_at` сдвигается вперёд, а `status = 'running'`.
+4. Дождаться завершения узла и всего запуска.
+5. Посчитать число фактических вызовов медленного endpoint по его логу.
+**Ожидаемый результат:**
+- Аренда продлевается каждые ~30 с (`lease_expires_at` > now всё время);
+  запуск не переводится в `failed`/`pending` и не выполняется повторно.
+- Через 150 с узел `completed`, run `completed`; endpoint вызван **ровно один
+  раз** (дублей нет).
+- В логах нет «зависший запуск»/повторной доставки job'а; при падении worker'а
+  запуск обнаруживается за TTL (не проверяется в этом кейсе, см. KI-066).
+- `legacy`-строки без `lease_expires_at` обрабатываются fallback'ом по
+  `started_at` (код, не UI).
+
+#### HIST-01 — Восстановление после F5 (History UI)
+**Приоритет:** P1
+**Предусловие:** сценарий `QA-HIST` уже завершён; адрес содержит `?runId=…`;
+backend и БД доступны.
+**Шаги:**
+1. Открыть `?runId=…`, зафиксировать «до»: статусы узлов, панель результата,
+   метрики, логи, ошибка/пропуск узла.
+2. Нажать F5 и дождаться загрузки.
+3. В DevTools → Network проверить `GET /runs/:id` и `GET /runs/:id/nodes`
+   (SSE для финального запуска не открывается).
+4. Кликнуть по узлам и сравнить данные с зафиксированными «до».
+5. Открыть `?runId=<несуществующий>`.
+**Ожидаемый результат:**
+- После F5 восстановлены `nodeStatuses`, `nodeOutputs`, `nodeErrors`,
+  `nodeLogs`, `nodeMetrics`; панель не пустая (KI-077).
+- `GET /runs/:id/nodes` — 200, массив `NodeRunSnapshot` (тот же формат, что
+  SSE-снимок), `Cache-Control: no-store`; лишних SSE-подключений нет.
+- Для `pending`/`running` запуска SSE открывается, для финального — нет,
+  `?runId=` не теряется.
+- Несуществующий/чужой run → 404, состояние запуска сбрасывается, показывается
+  toast; страница не зависает.
+
+#### THEME-01 — Тёмная тема: читаемость статусов узлов
+**Приоритет:** P2
+**Предусловие:** S16-токены в сборке; небольшой граф, где одновременно есть
+`pending`, `running`, `completed`, `failed`, `skipped`.
+**Шаги:**
+1. В светлой теме запустить граф так, чтобы часть узлов была в разных статусах;
+   зафиксировать скриншот «до» (RULES 4.33).
+2. Включить тёмную тему (🌙) и повторить/открыть тот же запуск; снять скриншот
+   «после».
+3. В DevTools вычислить `background-color`/`border-color` карточек статусов.
+4. Проверить статусный текст в панели результата и подсказку
+   «Не заполнено: …» у DOCX-шаблона.
+**Ожидаемый результат:**
+- В тёмной теме заливки статусов тёмные, рамки `running`/`completed`/`failed`
+  контрастны; `skipped` — серый пунктир; светлых плашек `bg-*-50/100` на
+  карточках нет.
+- Текст статусов и предупреждений читается (контраст ≥ 4.5:1); в светлой теме
+  статусы не «поплыли».
+- Известные исключения (не баги этого кейса): бейджи TopBar/LLMNode остаются
+  светлыми (KI-509), рамка `pending` малоконтрастна (KI-512).
+
+---
+
+## 13. Что НЕ тестируем в этой версии
+
+Явные ограничения v0.11.0 (не заводить как баги, но фиксировать как «ожидаемо»):
 
 1. **Маршрутизация веток условия** — выходы T/F не управляют потоком; обе
    ветки продолжают выполняться.
@@ -1915,11 +2151,12 @@ down -v`), затем `up -d --build`.
 5. **«Скопировать к себе» по публичной ссылке** — кнопка неактивна.
 6. **Флажок «Разрешить копирование»** — не влияет на доступ.
 7. **Realtime-совместное редактирование** — не поддерживается.
-8. **3D/motion-генерация, MCP-инструменты, отдельный vector service** — вне
-   релиза (DESIGN § 6).
+8. **3D/motion-генерация и отдельный vector service** — вне релиза
+   (DESIGN § 6). MCP: backend-адаптер есть (S6/S7), но UI выбора инструментов
+   и `GET /mcp/servers` в v0.11.0 не входят (S8, KI-518).
 9. **PDF в `document_gen`** — не реализован, только DOCX (KI-463).
 10. **Разбор JSON/CSV в `read_file`** — селект «Формат» не применяется:
-    узел отдаёт сырой UTF-8; `json`/`rows` появятся в v0.11.
+    узел отдаёт сырой UTF-8; `json`/`rows` появятся в следующих версиях.
 11. **`overwrite=false` и CSV-сериализация в `write_file`** — не применяются:
     файл всегда перезаписывается, кодировка UTF-8.
 12. **`data.title` в Markdown-режиме** — игнорируется (KI-465); в JSON-режиме
@@ -1927,13 +2164,23 @@ down -v`), затем `up -d --build`.
 13. **500 блоков и cross-origin `download`** — лимит блоков не проверяется
     (KI-462), атрибут `download` для S3 игнорируется (KI-466).
 14. **`searchDepth`/`topic`/`includeAnswer` у `web_search`** — отложены
-    (KI-461); в v0.10 только `maxResults`.
-15. **Переподпись S3 по `storage_key`** — ключ пишется, но переподпись пока
-    идёт по URL (KI-464).
+    (KI-461); в v0.11 только `maxResults`.
+15. **Браузера истории запусков нет** — `GET /workflow/:id/runs` и UI
+    списка/сравнения запусков не реализованы; после F5 восстанавливается
+    запуск по `?runId=…` (KI-077 закрыт, но список — v0.12+).
+16. **Редактор и preview DOCX-шаблонов в браузере** — не реализованы; шаблон
+    готовится в Word и загружается файлом.
+17. **PDF-шаблоны и DOCX→PDF** — вне релиза (KI-463).
+18. **MCP stdio-транспорт, OAuth 2.1, resources/prompts/sampling** — вне
+    релиза; поддерживаются только HTTP/SSE и tools (DESIGN § 6).
+19. **Стоимость MCP-вызовов в бюджете** — не тарифицируется: в `cost_usd`
+    MCP-вызов даёт 0, а не цену внешнего сервера.
+20. **Ошибки загрузки/удаления DOCX-шаблона в UI — общие** (KI-489): точную
+    причину (`invalid-docx`, 413, 403) видно только в ответе API/логах.
 
 ---
 
-## 13. Приёмка релиза
+## 14. Приёмка релиза
 
 Минимальный набор для «зелёного» релиза — все кейсы `P1` (smoke-ядро):
 
@@ -1953,21 +2200,24 @@ down -v`), затем `up -d --build`.
 - [ ] `CONTRACT-01`, `CONTRACT-02`
 - [ ] `WS-01`, `WS-02`, `WS-03`, `DOC-01`, `DOC-02`, `FILE-01`, `FILE-03`,
       `DOCKER-01`, `DOCKER-02`, `DOCKER-03`
+- [ ] `TPL-01`, `TPL-02`, `MCP-01`, `HB-01`, `HIST-01` (v0.11.0)
 
 Дополнительно перед релизом:
 
 - [ ] `pnpm build` — 0 errors, 0 warnings.
 - [ ] `pnpm build:migrate` — `dist/migrate.js` создан.
-- [ ] `pnpm test` — все зелёные.
+- [ ] `pnpm test` — все зелёные (на момент v0.11.0: **1417 passed / 18 skipped**,
+      102 файла).
 - [ ] `pnpm --dir web build` — 0 errors, 0 warnings.
-- [ ] `pnpm --dir web test` — все зелёные.
+- [ ] `pnpm --dir web test` — все зелёные (v0.11.0: **412 passed**, 50 файлов).
+- [ ] `pnpm test:parity` — зелёный при доступной БД (RULES § 3.19).
 - [ ] `docker compose -f docker-compose.prod.yml config --quiet` — без ошибок.
 - [ ] В браузере нет ошибок в консоли на основном пути (вход → граф → запуск →
-      share).
+      share), в тёмной и светлой теме.
 
 ---
 
-## 14. Шаблон баг-репорта
+## 15. Шаблон баг-репорта
 
 ```
 ### BUG — <краткое название>
@@ -1995,11 +2245,12 @@ down -v`), затем `up -d --build`.
 
 ---
 
-## 15. История документа
+## 16. История документа
 
 | Дата | Версия | Изменения |
 |---|---|---|
 | 2026-10-18 | 1.0 | Первая версия: 116 кейсов по 9 блокам, включая Edge Cases (бюджет, Redis, ключи, БД), регресс контрактов и чек-лист приёмки для v0.9.1 |
 | 2026-10-19 | 1.1 | v0.10.0: +13 кейсов (WS/DOC/FILE/DOCKER), итого 129; новые env (`TAVILY_API_KEY`, `S3_PUBLIC_BUCKET`), проверки Docker и SPA; обновлены ограничения |
+| 2026-10-19 | 1.2 | v0.11.0: +8 кейсов блока V0.11 (DOCX-шаблоны, MCP, heartbeat, история после F5, тёмная тема), итого 137; новые env (`MCP_*`, `DOCUMENT_TEMPLATE_*`, `WORKFLOW_RUN_*`, `THROTTLER_STORAGE`), ручки шаблонов и `/runs/:id/nodes`; обновлены границы релиза и приёмка |
 
 **Конец документа.**

@@ -23,8 +23,8 @@ pnpm install --frozen-lockfile
 pnpm --dir web install --frozen-lockfile
 pnpm lint
 pnpm typecheck
-pnpm test                 # backend: 1001
-pnpm --dir web test       # frontend: 339
+pnpm test                 # backend: 1417
+pnpm --dir web test       # frontend: 412
 pnpm build                # 0 errors, 0 warnings
 pnpm --dir web build
 
@@ -108,8 +108,8 @@ pnpm --dir web test
 
 | Пакет | Ожидание | Факт |
 |---|---|---|
-| Backend | **1001** passed, 0 failed | ☐ |
-| Frontend | **339** passed, 0 failed | ☐ |
+| Backend | **1417** passed (18 skipped), 0 failed | ☐ |
+| Frontend | **412** passed, 0 failed | ☐ |
 
 - [ ] Все тесты зелёные (RULES § 3.7).
 - [ ] Новые фичи покрыты тестами; исправленные KI — регрессионным тестом.
@@ -398,8 +398,8 @@ gh release create vX.Y.Z `
 
 Релиз считается выпущенным, когда одновременно выполнено:
 
-- [ ] `pnpm test` — **1001** зелёных.
-- [ ] `pnpm --dir web test` — **339** зелёных.
+- [ ] `pnpm test` — **1417** зелёных (18 skipped).
+- [ ] `pnpm --dir web test` — **412** зелёных.
 - [ ] `pnpm build` и `pnpm --dir web build` — **0 warnings**.
 - [ ] `USER_GUIDE.md` и `MANUAL_TESTING_GUIDE.md` актуализированы (RULES § 2.16).
 - [ ] `PROMPT_CURRENT.md` обновлён, старая версия — в `archive/prompts/`
@@ -424,8 +424,8 @@ gh release create vX.Y.Z `
 - [ ] pnpm lint
 - [ ] pnpm typecheck
 - [ ] pnpm db:generate — без неожиданных миграций
-- [ ] pnpm test — 1001
-- [ ] pnpm --dir web test — 339
+- [ ] pnpm test — 1417 (18 skipped)
+- [ ] pnpm --dir web test — 412
 - [ ] pnpm build — 0 warnings
 - [ ] pnpm --dir web build
 - [ ] P1-кейсы QA пройдены

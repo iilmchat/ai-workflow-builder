@@ -12,3 +12,4 @@
 | v0.11.0 | S14-S15 | Security & Infra: SafeHttpClient (SSRF) + Redis Throttler + Nest assets | 2026-10-19 | [S14-S15-security-infra.md](v0.11.0/S14-S15-security-infra.md) |
 | v0.11.0 | S16 | Dark theme: токены статусов узлов, UI polish (KI-448) | 2026-10-19 | [S16-dark-theme.md](v0.11.0/S16-dark-theme.md) |
 | v0.11.0 | S17 | Docs Sync (README, ARCHITECTURE, GETTING_STARTED, PROMPT v8.1, RELEASES) | 2026-10-19 | [S17-docs-sync.md](v0.11.0/S17-docs-sync.md) |
+| v0.11.0 | S17 | Release Prep (версии 0.11.0, USER_GUIDE/QA, CHANGELOG, метрики, гейты) | 2026-10-19 | [S17-release.md](v0.11.0/S17-release.md) |

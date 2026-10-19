@@ -1,16 +1,16 @@
 # IIChatTools AI Workflow Builder
 
 [![CI](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml/badge.svg)](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.10.1-blue.svg)](docs/CHANGELOG.md)
-[![Backend tests](https://img.shields.io/badge/backend_tests-1123-brightgreen.svg)](docs/development/RELEASES.md)
-[![Frontend tests](https://img.shields.io/badge/frontend_tests-375-brightgreen.svg)](docs/development/RELEASES.md)
+[![Version](https://img.shields.io/badge/version-0.11.0-blue.svg)](docs/CHANGELOG.md)
+[![Backend tests](https://img.shields.io/badge/backend_tests-1417-brightgreen.svg)](docs/development/RELEASES.md)
+[![Frontend tests](https://img.shields.io/badge/frontend_tests-412-brightgreen.svg)](docs/development/RELEASES.md)
 [![License](https://img.shields.io/badge/license-proprietary-lightgrey.svg)](#лицензия)
 
 > **Визуальный конструктор AI-сценариев.** Собирайте LLM-, медиа- и агентные
 > workflow на холсте, запускайте их в фоне и наблюдайте за результатом в
 > реальном времени.
 
-**Версия:** `v0.10.1` · **Стек:** NestJS 12 · React 19 · PostgreSQL 17 + pgvector ·
+**Версия:** `v0.11.0` · **Стек:** NestJS 12 · React 19 · PostgreSQL 17 + pgvector ·
 S3 · OpenTelemetry · Docker/GHCR
 **© 2026 RuChating (iilmchat)**
 
@@ -41,7 +41,9 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 - **Canvas UX:** undo/redo, мультивыделение, копирование/дублирование, горячие
   клавиши, автопозиционирование, миникарта со статусами узлов.
 - **Тёмная тема и i18n** (RU / EN), импорт и экспорт workflow, галерея шаблонов,
-  вложенные сценарии (sub-workflows).
+  вложенные сценарии (sub-workflows). С v0.11 статусы узлов, медиа-плейсхолдеры и
+  предупреждения используют семантические токены темы — карточки остаются
+  читаемыми в светлой и тёмной теме (KI-448).
 - **Производительность:** route-level code-split для всех 22 узлов — основной
   чанк уменьшен с **774 kB до 141 kB**.
 
@@ -56,7 +58,12 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
   обнаруживается за TTL, а для старых строк без аренды сохранён fallback по
   `started_at`.
 - **История в PostgreSQL:** `workflow_runs`, `node_runs`, версии workflow,
-  аудит действий.
+  аудит действий. С v0.11 (S12+S13) `GET /runs/:id/nodes` отдаёт снимок узлов,
+  и после F5 панель результата восстанавливает статусы, выходы, ошибки, логи и
+  метрики узлов без SSE (KI-077).
+- **Ретраи и надёжность:** повторы узлов при 429/5xx/таймаутах провайдеров
+  (LLM и media) с экспоненциальной задержкой и `Retry-After`; в шапке — бейдж
+  «попытка N/M», в панели результата — логи ретраев.
 - **SSE-стриминг:** snapshot состояния и события узлов в реальном времени.
 - **Панель результата:** outputs (JSON), длительность, токены, стоимость,
   ошибки и логи ретраев.
@@ -82,6 +89,8 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
   Streamable HTTP/SSE через `MCP_SERVERS`; каталог инструментов с TTL-кэшем,
   JSON Schema → Zod, preflight до LLM и retry-guard для side-effect
   инструментов. `MCP_ENABLED=false` по умолчанию — фича не влияет на старт.
+  Выбор MCP-инструментов в UI и `GET /mcp/servers` (S8) **не входят** в
+  v0.11.0 — инструменты задаются в JSON сценария (KI-518).
 
 ### 🔎 Контент и файлы
 
@@ -109,7 +118,13 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 - **Share:** публичные read-only ссылки и collaborative-доступ с ролями
   **owner / editor / viewer**.
 - **Rate limiting:** 5 запросов/мин на login и share, 300/мин общий лимит;
-  корректная работа за reverse proxy (`TRUST_PROXY`).
+  корректная работа за reverse proxy (`TRUST_PROXY`). С v0.11 счётчики хранятся
+  в Redis (`THROTTLER_STORAGE=redis`), поэтому лимит общий для всех backend-
+  инстансов; при недоступном Redis — fallback в память (KI-420).
+- **SSRF-защита:** единый `SafeHttpClient` для узла `http` и инструмента
+  `http_request` агента — проверка всех DNS-адресов, защита от DNS rebinding,
+  ручная перепроверка редиректов, лимит тела; `http_request` всегда блокирует
+  приватные адреса (v0.11 S14, KI-434/435/478).
 - **Секреты:** ключи провайдеров шифруются AES-256-GCM; Husky блокирует
   коммиты с паттернами реальных ключей.
 
@@ -205,7 +220,7 @@ backend должен быть запущен первым.
 |---|---|---|
 | [**docs/README.md**](docs/README.md) | все | Навигационный хаб документации |
 | [USER_GUIDE.md](docs/user_guide/USER_GUIDE.md) | пользователи | Быстрый старт, интерфейс, 22 узла, Share, бюджет |
-| [MANUAL_TESTING_GUIDE.md](docs/qa/MANUAL_TESTING_GUIDE.md) | QA | 129 ручных кейсов и чек-лист приёмки |
+| [MANUAL_TESTING_GUIDE.md](docs/qa/MANUAL_TESTING_GUIDE.md) | QA | 137 ручных кейсов и чек-лист приёмки |
 | [GETTING_STARTED.md](docs/development/GETTING_STARTED.md) | разработчики | Разворачивание проекта за ~20 минут |
 | [ARCHITECTURE.md](docs/development/ARCHITECTURE.md) | разработчики | Архитектура, контракты и Docker-развёртывание |
 | [DESIGN v0.11](docs/development/v0.11/DESIGN_V011_FEATURES.md) | разработчики | DOCX-шаблоны, MCP Adapter, Reliability/History |
@@ -221,11 +236,11 @@ backend должен быть запущен первым.
 
 | Показатель | Значение |
 |---|---|
-| Версия | **v0.10.1** |
-| Backend-тесты | **1123** (17 skipped) |
-| Frontend-тесты | **375** |
+| Версия | **v0.11.0** |
+| Backend-тесты | **1417** (18 skipped, 102 файла) |
+| Frontend-тесты | **412** (50 файлов) |
 | Типов узлов | **22** |
-| KI-реестр | **KI-480** — последний номер; всего **468** записей |
+| KI-реестр | **KI-519** — последний номер; всего **507** записей (4 Open High) |
 | CI | GitHub Actions: build, typecheck, migrations, tests (backend + web) |
 | Docker | multi-stage образ + `docker-compose.prod.yml`, публикация в GHCR |
 
