@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { isDeepStrictEqual } from 'node:util';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
@@ -26,6 +26,9 @@ import {
   type IMediaStorage,
 } from '../media/media-storage.service.js';
 import { RunEventsService } from '../runs/run-events.service.js';
+// v0.11 S9 (DESIGN § 3.3.1, KI-066): heartbeat аренды запуска. Движок
+// запускает его после перевода запуска в `running` и гасит в `finally`.
+import { RunLeaseService } from '../runs/run-lease.service.js';
 import { withSpanAsync } from '../observability/tracing.js';
 import { AgentService } from '../agent/agent.service.js';
 import { LlmNodeExecutor, type LlmNodeMetrics } from '../llm/llm-node-executor.service.js';
@@ -256,6 +259,9 @@ export class ExecutionEngineService {
     @Inject(DRIZZLE) private readonly db: Database,
     private readonly engineService: EngineService,
     private readonly runEvents: RunEventsService,
+    // v0.11 S9 (DESIGN § 3.3.1, KI-066): продление аренды запуска.
+    // `startAsync` — после markRunRunningAsync, `stop` — в `finally`.
+    private readonly runLease: RunLeaseService,
     private readonly llmExecutor: LlmNodeExecutor,
     private readonly mediaExecutor: MediaNodeExecutor,
     // R7.5 (KI-364): режим `sandbox` узла condition — QuickJS-WASM.
@@ -1669,6 +1675,13 @@ export class ExecutionEngineService {
    * видел бы «выполняется» вместе с ошибкой и временем завершения прошлого
    * прогона, а при повторном падении процесса они бы так и остались в строке.
    *
+   * Заодно ставит **стартовую аренду** `lease_expires_at` (v0.11 S9, DESIGN
+   * § 3.3.1): heartbeat продлевает её, а временное окно до первого продления
+   * уже покрыто. Время считается по часам БД (`now()`), как и в
+   * {@link RunLeaseService.renewAsync}, — расхождение часов приложения и
+   * PostgreSQL не влияет на «живость» запуска. TTL читается из
+   * `RunLeaseService`, чтобы стартовый lease и heartbeat не разошлись.
+   *
    * @param runId - uuid запуска
    * @returns промис без значения
    * @throws InternalServerErrorException если обновление не удалось
@@ -1681,6 +1694,7 @@ export class ExecutionEngineService {
           .set({
             status: 'running',
             startedAt: new Date(),
+            leaseExpiresAt: sql`now() + ${this.runLease.leaseTtlMs} * interval '1 millisecond'`,
             error: null,
             finishedAt: null,
           })
