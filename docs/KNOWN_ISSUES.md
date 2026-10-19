@@ -6170,14 +6170,22 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-380 — OpenAI Images не поддерживает applyToolAsync
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-16
-- **Файлы:** `src/media/providers/openai-images.provider.ts`, DESIGN v0.9 § 3.1
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-16
+- **Исправлено в:** v0.11.1 (S2) — отчёт
+  [S2-openai-images.md](development/reports/v0.11.1/S2-openai-images.md).
+- **Файлы:** `src/media/providers/openai-images.provider.ts`,
+  `src/media/providers/openai-images.provider.spec.ts`, DESIGN v0.9 § 3.1/§ 3.8
 - **Описание:** `/v1/images/edits` требует `multipart/form-data` с файлом, а
   `IMediaProvider.applyToolAsync` принимает URL. Passthrough через
   `createTaskAsync` — не upscale, а «перерисуй по описанию».
-- **Решение:** скачивать вход в буфер + multipart в `/images/edits` (в R7.8
-  storage уже даст https-ссылку для скачивания).
-- **Связанные:** KI-371, KI-378, DESIGN v0.9 § 3.8.
+- **Fix:** метод скачивает вход в буфер (лимит 25 МБ, проверка формата
+  PNG/JPEG/WebP), собирает `FormData` с `image` (Blob), `prompt`, `model` и
+  скалярными параметрами и отправляет POST в `/v1/images/edits`. Ответ
+  разбирается тем же `toTaskResult`, что и генерация, — поддерживаются и
+  `url`, и `b64_json`. Работают `upscale` и `bg_removal`; для остальных
+  операций и для `dall-e-3` — понятная ошибка до платного запроса.
+  Идемпотентность сохраняется в памяти по `idempotencyKey`.
+- **Связанные:** KI-371, KI-378, KI-525, DESIGN v0.9 § 3.8.
 
 ---
 
@@ -6745,7 +6753,7 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-421 — АвтоINSTANCE_ID нестабилен при пересоздании контейнера
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Исправлено в:** v0.11.1 (S1) | **Обнаружено:** 2026-10-18
 - **Файлы:** `src/runs/runs.worker-options.ts`
 - **Описание:** `hostname:PORT` меняется в Docker/K8s при пересоздании.
 - **Решение:** явный `INSTANCE_ID` в манифесте.
@@ -7926,7 +7934,7 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-501 — Одноимённые guard'ы `isRetryableProviderError`
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Исправлено в:** v0.11.1 (S1) | **Обнаружено:** 2026-10-19
 - **Файлы:** `src/llm/provider-errors.ts`, `src/common/errors/retryable-provider.error.ts`
 - **Описание:** Два экспорта с одинаковым именем и разной сигнатурой.
 - **Решение:** переименовать SDK-классификатор в `isRetryableSdkError`.
@@ -8228,18 +8236,33 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-525 — Скачивание входа OpenAI Images без pinning DNS
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/media/providers/openai-images.provider.ts`
+- **Описание:** `applyToolAsync` скачивает входное изображение обычным `fetch`.
+  До вызова проверяются metadata/локальные имена, приватные IP-литералы,
+  учётные данные в URL и запрещены редиректы, но DNS-резолв делает уже сам
+  `fetch`: окно DNS rebinding между проверкой и соединением остаётся.
+  `SafeHttpClient` закрывает это, но отдаёт тело строкой и портит бинарные
+  данные.
+- **Решение:** добавить в `SafeHttpClient` бинарный метод с тем же pinned DNS
+  и лимитом байт, затем перевести скачивание на него.
+- **Связанные:** KI-380, KI-434, KI-435, KI-478.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 226 |
+| Fixed | 229 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 1 |
 | Documented | 8 |
-| Open | 272 |
+| Open | 270 |
 | Won't Fix | 4 |
-| **Всего** | **512** |
+| **Всего** | **513** |
 
 ---
 

@@ -15,11 +15,13 @@
  * ### Почему `fetch`, а не SDK, и что с `client !== null`
  *
  * DESIGN § 3.3 говорит «уже знакомый SDK». SDK (`openai`) в проекте есть, но
- * он даёт только типизированную обёртку над тем же HTTP-запросом, тянет
- * `multipart`-ветку (в этом срезе не нужна) и прячет URL, по которому реально
- * ушёл запрос. Здесь используется `fetch`: тело и URL видны в логе, поведение
- * совпадает с `client.images.generate(...)` байт-в-байт, а новых зависимостей
- * не появляется — `applyToolAsync` идемпотентен.
+ * он даёт только типизированную обёртку над тем же HTTP-запросом и прячет URL,
+ * по которому реально ушёл запрос. Здесь используется `fetch`: тело и URL видны
+ * в логе, поведение совпадает с `client.images.generate(...)` байт-в-байт, а
+ * новых зависимостей не появляется. Для `applyToolAsync` (KI-380) нужен уже
+ * `multipart/form-data` в `/v1/images/edits`; он собирается вручную через
+ * стандартный `FormData`, поэтому Content-Type с boundary выставляет сам
+ * `fetch`, а не наш код.
  *
  * `isConfigured === client !== null` в терминах R7.3 = «ключ задан»: клиент —
  * это `{ apiKey, baseUrl }`, собранный в конструкторе, и он `null`, если ключа
@@ -39,6 +41,14 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { isIP } from 'node:net';
+import {
+  isBlockedHostname,
+  isBlockedIpAddress,
+  isMetadataHostname,
+  isMetadataIpAddress,
+  normalizeHostname,
+} from '../../common/utils/network-safety.js';
 import type { MediaTaskResult } from '../dto/media-task.mapper.js';
 import {
   IMAGE_TOOL_RESERVED_PARAM_KEYS,
@@ -78,6 +88,35 @@ const REQUEST_TIMEOUT_MS = 30_000;
  * лимит с запасом, иначе клиент оборвал бы соединение раньше готового ответа.
  */
 const CREATE_TASK_TIMEOUT_MS = 180_000;
+/** Таймаут скачивания входного изображения для `/images/edits`. */
+const TOOL_DOWNLOAD_TIMEOUT_MS = 30_000;
+/**
+ * Максимальный размер входного изображения.
+ *
+ * OpenAI Images принимает файлы до 25 МБ; проверяем и `Content-Length`, и
+ * фактический размер, потому что chunked-ответ может не объявлять длину.
+ */
+const MAX_TOOL_IMAGE_BYTES = 25 * 1024 * 1024;
+/**
+ * Модели, для которых OpenAI поддерживает `/v1/images/edits`.
+ *
+ * `dall-e-3` редактирование не поддерживает: его наличие в каталоге генерации
+ * не означает поддержку инструментов. Неподдерживаемая модель отвергается до
+ * скачивания и платного запроса.
+ */
+const EDIT_MODELS: ReadonlySet<string> = new Set(['gpt-image-1', 'dall-e-2']);
+/** Операции, которые действительно являются редактированием файла. */
+const EDIT_OPERATIONS: ReadonlySet<ImageToolOperation> = new Set([
+  'upscale',
+  'bg_removal',
+]);
+/** MIME-типы, которые принимает `/v1/images/edits`. */
+const EDIT_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+};
 /** Дефолтный TTL кэша каталога и записей идемпотентности (15 минут). */
 const DEFAULT_CACHE_TTL_MS = 900_000;
 /** Тип содержимого `data:`-URI по имени формата ответа. */
@@ -368,35 +407,44 @@ export class OpenAiImagesProvider implements IMediaProvider {
   }
 
   /**
-   * Применяет media-инструмент к готовому файлу (KI-371, R7.1).
+   * Применяет media-инструмент к готовому файлу через `/v1/images/edits`
+   * (KI-380, R7.1).
    *
-   * У OpenAI Images **нет tool-режима** (нет `upscale`, `bg_removal` и
-   * липсинка), и редактирование по ссылке тоже не поддерживается: `/v1/images/edits`
-   * принимает только `multipart/form-data` с самим файлом. Поэтому метод
-   * реализован как **passthrough**: он принимает `kind` (`tool`), проверяет
-   * вход и переадресует вызов в {@link createTaskAsync} с промптом операции —
-   * «перерисуй по описанию», а не преобразование исходного файла.
+   * OpenAI Images не принимает ссылку на вход: эндпоинт редактирования ждёт
+   * `multipart/form-data` с самим файлом. Поэтому метод:
+   * 1. проверяет `http(s)`-ссылку и скачивает изображение в буфер (лимит 25 МБ);
+   * 2. собирает `FormData` с `image` (Blob), `prompt`, `model` и скалярными
+   *    параметрами модели;
+   * 3. отправляет POST в `/v1/images/edits` и разбирает `url`/`b64_json` тем же
+   *    {@link toTaskResult}, что и генерация.
    *
-   * Это осознанное поведение по KI-371: метод обязан существовать у каждого
-   * провайдера, но честнее выполнить ближайшую поддерживаемую операцию и
-   * записать ограничение, чем бросить «не поддерживается» (инструмент тогда
-   * нельзя было бы выбрать в графе). Ссылка на вход уходит в промпт-контекст
-   * как есть — upstream её не скачивает.
+   * Поддерживаются только операции, которые действительно являются
+   * редактированием изображения (`upscale`, `bg_removal`). Для `trim`,
+   * `lipsync` и `chromakey` бросается понятная ошибка до скачивания: OpenAI
+   * Images не умеет работать с видео и не объявляет модель хромакея (KI-418).
    *
    * @param input - публично доступный URL входного файла (`http`/`https`)
-   * @param tool - операция инструмента (`upscale`, `bg_removal`, ...)
+   * @param tool - операция инструмента (`upscale`, `bg_removal`)
    * @param params - служебные ключи (`model`, `prompt`, `idempotencyKey`) и
    *   параметры модели
-   * @returns результат генерации: всегда `done` с `data:`-URI
+   * @returns результат редактирования: `done` с `data:`-URI или URL-ом
    * @throws MediaProviderException если ключ не задан, ссылка на вход не
-   *   `http(s)` или upstream ответил ошибкой
+   *   `http(s)`, операция/модель не поддержана, upstream ответил ошибкой или
+   *   файл превышает лимит
    */
   async applyToolAsync(
     input: string,
     tool: ImageToolOperation,
     params: ImageToolParams = {},
   ): Promise<MediaTaskResult> {
-    this.requireClient();
+    const client = this.requireClient();
+
+    if (!EDIT_OPERATIONS.has(tool)) {
+      throw new MediaProviderException(
+        this.name,
+        `операция ${tool} не поддерживается OpenAI Images: доступны upscale и bg_removal`,
+      );
+    }
 
     const inputUrl = readHttpUrl(input, this.name, tool);
     const requestedModel =
@@ -411,19 +459,77 @@ export class OpenAiImagesProvider implements IMediaProvider {
       );
     }
 
-    const prompt = readToolPrompt(tool, params.prompt, inputUrl);
-    const idempotencyKey = readToolIdempotencyKey(params, tool, inputUrl);
+    const modelId = normalizeOpenAiImagesId(requestedModel);
 
-    this.logger.warn(
-      `Инструмент ${tool} у OpenAI Images не поддерживается как преобразование файла — выполняется генерация по описанию (model=${requestedModel}, inputLen=${inputUrl.length})`,
+    if (!EDIT_MODELS.has(modelId)) {
+      throw new MediaProviderException(
+        this.name,
+        `модель ${modelId} не поддерживает /images/edits: доступны ${[...EDIT_MODELS].join(', ')}`,
+      );
+    }
+
+    const idempotencyKey = readToolIdempotencyKey(params, tool, inputUrl);
+    const cached = this.readIdempotency(idempotencyKey);
+
+    if (cached) {
+      this.logger.log(
+        `Повтор с ключом идемпотентности ${idempotencyKey}: результат инструмента взят из памяти (нового редактирования нет)`,
+      );
+
+      return cached;
+    }
+
+    const image = await this.downloadToolImageAsync(inputUrl);
+    const prompt = readEditPrompt(tool, params.prompt);
+    const form = new FormData();
+
+    // Копия в «чистый» Uint8Array: Buffer в Node типизирован как
+    // `ArrayBufferLike`, а `BlobPart` требует ArrayBuffer без SharedArrayBuffer.
+    const imageBytes = new Uint8Array(image.buffer.length);
+    imageBytes.set(image.buffer);
+
+    form.append('model', modelId);
+    form.append('prompt', prompt);
+    form.append('image', new Blob([imageBytes], { type: image.mime }), image.fileName);
+    form.append('n', '1');
+
+    // Скалярные параметры операции (`size`, `quality`, ...) уходят полями
+    // формы. Служебные ключи (`model`, `prompt`, `idempotencyKey`, ...) уже
+    // обработаны выше и в `params` формы не попадут.
+    for (const [key, value] of Object.entries(readToolModelParams(params))) {
+      // `n` уже зафиксирован выше: инструмент возвращает один результат
+      // (узел сохраняет первый URL), дублировать поле в форме нельзя.
+      if (key === 'n') {
+        continue;
+      }
+
+      form.append(key, String(value));
+    }
+
+    const response = await this.sendMultipartAsync(
+      client,
+      `${client.baseUrl}/images/edits`,
+      form,
+      CREATE_TASK_TIMEOUT_MS,
     );
 
-    return this.createTaskAsync({
-      model: normalizeOpenAiImagesId(requestedModel),
-      prompt,
-      params: readToolModelParams(params),
-      idempotencyKey,
-    });
+    if (!response.ok) {
+      throw await buildHttpErrorAsync(
+        this.name,
+        `не удалось выполнить ${tool} моделью ${modelId}`,
+        response,
+      );
+    }
+
+    const payload = await this.parseJsonAsync(response);
+    const result = this.toTaskResult(payload, modelId, readToolModelParams(params));
+
+    this.writeIdempotency(idempotencyKey, result);
+    this.logger.log(
+      `Инструмент OpenAI Images ${tool} выполнен: model=${modelId}, inputLen=${inputUrl.length}, images=${result.resultUrls.length}`,
+    );
+
+    return result;
   }
 
   /**
@@ -505,6 +611,150 @@ export class OpenAiImagesProvider implements IMediaProvider {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
+        signal,
+      });
+    } catch (error: unknown) {
+      throw new MediaProviderException(
+        this.name,
+        signal.aborted
+          ? 'запрос к API OpenAI Images истёк по таймауту'
+          : 'не удалось обратиться к API OpenAI Images',
+        { cause: error, retryable: true },
+      );
+    }
+  }
+
+  /**
+   * Скачивает входное изображение для `/images/edits` в буфер.
+   *
+   * `fetch` с `redirect: 'error'`: редирект на приватный адрес — типичный
+   * обход SSRF-проверки, поэтому цепочка редиректов не поддерживается.
+   * `Content-Length` проверяется до чтения, фактический размер — после:
+   * chunked-ответ может не объявлять длину (RULES 4.19).
+   *
+   * @param inputUrl - публично доступный `http(s)`-URL изображения
+   * @returns буфер, MIME и имя файла для multipart-части
+   * @throws MediaProviderException если адрес запрещён, сеть/таймаут, ответ
+   *   не 2xx, файл пуст/больше лимита или формат не поддержан
+   */
+  private async downloadToolImageAsync(
+    inputUrl: string,
+  ): Promise<{ buffer: Buffer; mime: string; fileName: string }> {
+    assertSafeToolInputUrl(inputUrl, this.name);
+
+    const signal = AbortSignal.timeout(TOOL_DOWNLOAD_TIMEOUT_MS);
+    let response: Response;
+
+    try {
+      response = await fetch(inputUrl, {
+        method: 'GET',
+        headers: { Accept: 'image/*' },
+        redirect: 'error',
+        signal,
+      });
+    } catch (error: unknown) {
+      throw new MediaProviderException(
+        this.name,
+        signal.aborted
+          ? 'скачивание входного изображения истекло по таймауту'
+          : 'не удалось скачать входное изображение',
+        { cause: error, retryable: true },
+      );
+    }
+
+    if (!response.ok) {
+      throw await buildHttpErrorAsync(
+        this.name,
+        'не удалось скачать входное изображение',
+        response,
+      );
+    }
+
+    const rawLength = response.headers.get('content-length');
+    const declaredLength = rawLength === null ? Number.NaN : Number(rawLength);
+
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_TOOL_IMAGE_BYTES) {
+      throw new MediaProviderException(
+        this.name,
+        `входное изображение больше лимита ${MAX_TOOL_IMAGE_BYTES} байт`,
+      );
+    }
+
+    let buffer: Buffer;
+
+    try {
+      buffer = Buffer.from(await response.arrayBuffer());
+    } catch (error: unknown) {
+      throw new MediaProviderException(
+        this.name,
+        'не удалось прочитать входное изображение',
+        { cause: error, retryable: true },
+      );
+    }
+
+    if (buffer.length === 0) {
+      throw new MediaProviderException(
+        this.name,
+        'входное изображение пустое',
+      );
+    }
+
+    if (buffer.length > MAX_TOOL_IMAGE_BYTES) {
+      throw new MediaProviderException(
+        this.name,
+        `входное изображение больше лимита ${MAX_TOOL_IMAGE_BYTES} байт`,
+      );
+    }
+
+    const mime = readToolImageMime(
+      response.headers.get('content-type'),
+      inputUrl,
+    );
+
+    if (mime === null) {
+      throw new MediaProviderException(
+        this.name,
+        'формат входного изображения не поддержан: нужен PNG, JPEG или WebP',
+      );
+    }
+
+    return {
+      buffer,
+      mime,
+      fileName: `input.${extensionForMime(mime)}`,
+    };
+  }
+
+  /**
+   * Отправляет `multipart/form-data` в `/v1/images/edits`.
+   *
+   * `Content-Type` не задаётся вручную: `fetch` сам добавляет
+   * `multipart/form-data; boundary=...`. Если задать заголовок без boundary,
+   * upstream ответит 400.
+   *
+   * @param client - клиент провайдера (ключ + base URL)
+   * @param url - полный URL эндпоинта
+   * @param body - собранная форма
+   * @param timeoutMs - таймаут запроса (RULES 4.19)
+   * @returns HTTP-ответ
+   * @throws MediaProviderException при сетевой ошибке или таймауте (retryable)
+   */
+  private async sendMultipartAsync(
+    client: { apiKey: string; baseUrl: string },
+    url: string,
+    body: FormData,
+    timeoutMs: number,
+  ): Promise<Response> {
+    const signal = AbortSignal.timeout(timeoutMs);
+
+    try {
+      return await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${client.apiKey}`,
+          Accept: 'application/json',
+        },
+        body,
         signal,
       });
     } catch (error: unknown) {
@@ -764,35 +1014,113 @@ function readToolModelParams(
 }
 
 /**
- * Собирает промпт для passthrough-инструмента.
+ * Собирает промпт для `/images/edits`.
  *
- * @param tool - операция инструмента
+ * @param tool - операция инструмента (`upscale` или `bg_removal`)
  * @param requested - промпт, заданный вызывающим кодом
- * @param inputUrl - ссылка на входной файл (уходит в промпт: скачать файл
- *   OpenAI Images по ссылке не умеет)
  * @returns непустой промпт
  */
-function readToolPrompt(
+function readEditPrompt(
   tool: ImageToolOperation,
   requested: unknown,
-  inputUrl: string,
 ): string {
   if (typeof requested === 'string' && requested.trim().length > 0) {
     return requested.trim();
   }
 
-  // Операции без «содержательного» текста (upscale, bg_removal) получают
-  // инструкцию, по которой gpt-image-1 может сгенерировать результат
-  // (по-настоящему преобразовать файл он не может — см. JSDoc метода).
-  const instructions: Record<ImageToolOperation, string> = {
-    upscale: 'recreate this image in higher detail, sharp and clean',
-    bg_removal: 'recreate this image on a clean solid background',
-    chromakey: 'recreate this image on a green screen background',
-    trim: 'recreate the key frame of this video',
-    lipsync: 'recreate a portrait suitable for lip sync',
-  };
+  return tool === 'bg_removal'
+    ? 'Remove the background from this image and keep only the main subject on a clean background.'
+    : 'Upscale this image to a higher resolution, preserving details, composition and colors.';
+}
 
-  return `${instructions[tool]}. Source: ${inputUrl}`;
+/**
+ * Проверяет, что URL входного изображения не ведёт во внутреннюю сеть.
+ *
+ * Полная защита от DNS rebinding живёт в `SafeHttpClient`, но он отдаёт тело
+ * строкой и не подходит для бинарного файла. Здесь закрыты дешёвые векторы:
+ * `localhost`/metadata-имена, приватные IP-литералы, URL с учётными данными и
+ * редиректы (`redirect: 'error'` в {@link downloadToolImageAsync}).
+ *
+ * @param inputUrl - проверяемая ссылка
+ * @param provider - имя провайдера для текста ошибки
+ * @throws MediaProviderException если URL некорректен или ведёт на запрещённый
+ *   адрес
+ */
+function assertSafeToolInputUrl(inputUrl: string, provider: string): void {
+  let url: URL;
+
+  try {
+    url = new URL(inputUrl);
+  } catch {
+    throw new MediaProviderException(
+      provider,
+      `некорректная ссылка на входное изображение: ${inputUrl.slice(0, 120)}`,
+    );
+  }
+
+  if (url.username.length > 0 || url.password.length > 0) {
+    throw new MediaProviderException(
+      provider,
+      'ссылка на входное изображение не должна содержать учётные данные',
+    );
+  }
+
+  const hostname = normalizeHostname(url.hostname);
+
+  if (isMetadataHostname(hostname) || isBlockedHostname(hostname)) {
+    throw new MediaProviderException(
+      provider,
+      `ссылка на входное изображение ведёт на запрещённый хост: ${hostname}`,
+    );
+  }
+
+  if (
+    isIP(hostname) !== 0 &&
+    (isMetadataIpAddress(hostname) || isBlockedIpAddress(hostname))
+  ) {
+    throw new MediaProviderException(
+      provider,
+      `ссылка на входное изображение ведёт на приватный адрес: ${hostname}`,
+    );
+  }
+}
+
+/**
+ * Определяет MIME входного изображения по `Content-Type` или расширению URL.
+ *
+ * @param contentType - заголовок `Content-Type` ответа (может отсутствовать)
+ * @param inputUrl - исходный URL (fallback по расширению)
+ * @returns поддержанный MIME либо `null`
+ */
+function readToolImageMime(
+  contentType: string | null,
+  inputUrl: string,
+): string | null {
+  const normalized =
+    contentType?.split(';')[0]?.trim().toLowerCase() ?? '';
+
+  if (normalized.startsWith('image/')) {
+    return EDIT_MIME_BY_EXTENSION[normalized.slice('image/'.length)] ?? null;
+  }
+
+  try {
+    const path = new URL(inputUrl).pathname;
+    const extension = path.split('.').pop()?.toLowerCase() ?? '';
+
+    return EDIT_MIME_BY_EXTENSION[extension] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Возвращает расширение файла для MIME.
+ *
+ * @param mime - поддержанный MIME
+ * @returns `png`, `jpg` или `webp`
+ */
+function extensionForMime(mime: string): string {
+  return mime === 'image/jpeg' ? 'jpg' : (mime.split('/')[1] ?? 'png');
 }
 
 /**

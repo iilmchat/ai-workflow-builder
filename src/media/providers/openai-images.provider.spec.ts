@@ -7,7 +7,8 @@ import { OpenAiImagesProvider } from './openai-images.provider.js';
  *
  * Проверяется fallback ключа (`OPENAI_IMAGES_API_KEY` → `OPENAI_API_KEY`),
  * сборка запроса к `/v1/images/generations`, разбор `b64_json` в `data:`-URI,
- * обработка ошибок (`retryable`-классы) и passthrough `applyToolAsync` (KI-371).
+ * обработка ошибок (`retryable`-классы) и `applyToolAsync` через
+ * `multipart/form-data` в `/v1/images/edits` (KI-380).
  *
  * Реальный вызов `gpt-image-1` — в `openai-images.integration.spec.ts` (под
  * `skipIf` по ключу).
@@ -21,6 +22,10 @@ const KEY = 'test-key-images';
 const IDEMPOTENCY_KEY = 'run-1:node-1';
 /** Минимальное «изображение» в base64 (не валидный PNG — важна форма ответа). */
 const B64 = 'iVBORw0KGgoAAAANSUhEUg==';
+/** Ссылка на входное изображение для `applyToolAsync`. */
+const INPUT_URL = 'https://cdn.example.com/photo.png';
+/** «Байты» скачанного изображения (важна форма multipart-части). */
+const IMAGE_BYTES = 'fake-png-bytes';
 
 /**
  * Создаёт заглушку `ConfigService`.
@@ -47,16 +52,24 @@ interface UpstreamCall {
   method: string;
   /** Полный URL. */
   url: string;
-  /** Разобранное тело (для GET — `null`). */
+  /** Разобранное JSON-тело (для GET и multipart — `null`). */
   body: Record<string, unknown> | null;
+  /** FormData, если тело было multipart. */
+  formData: FormData | null;
   /** Заголовок авторизации. */
   authorization: string | null;
 }
 
 /** Ответ заглушки. */
 interface StubResponse {
-  /** Тело (сериализуется в JSON). */
-  body: unknown;
+  /** Тело, сериализуемое в JSON. */
+  body?: unknown;
+  /** Сырое тело (например, «байты» скачанного изображения). */
+  rawBody?: string;
+  /** MIME ответа (по умолчанию `application/json`). */
+  contentType?: string;
+  /** Дополнительные заголовки ответа. */
+  headers?: Record<string, string>;
   /** HTTP-статус. */
   status?: number;
 }
@@ -82,11 +95,16 @@ function stubUpstream(
         typeof init?.body === 'string'
           ? (JSON.parse(init.body) as Record<string, unknown>)
           : null;
+      const formData =
+        typeof FormData !== 'undefined' && init?.body instanceof FormData
+          ? init.body
+          : null;
 
       calls.push({
         method: init?.method ?? 'GET',
         url: target,
         body,
+        formData,
         authorization: headers.get('authorization'),
       });
 
@@ -100,10 +118,18 @@ function stubUpstream(
         return Promise.reject(new Error(`Нет заглушки для ${target}`));
       }
 
+      const responseHeaders = new Headers({
+        'Content-Type': route.contentType ?? 'application/json',
+      });
+
+      for (const [name, value] of Object.entries(route.headers ?? {})) {
+        responseHeaders.set(name, value);
+      }
+
       return Promise.resolve(
-        new Response(JSON.stringify(route.body), {
+        new Response(route.rawBody ?? JSON.stringify(route.body), {
           status: route.status ?? 200,
-          headers: { 'Content-Type': 'application/json' },
+          headers: responseHeaders,
         }),
       );
     }),
@@ -369,26 +395,138 @@ describe('OpenAiImagesProvider', () => {
     );
   });
 
-  it('applyToolAsync: passthrough в createTaskAsync (tool-режима нет, KI-371)', async () => {
+  it('applyToolAsync: скачивает файл и отправляет multipart в /images/edits (b64)', async () => {
+    const calls = stubUpstream([
+      {
+        match: 'cdn.example.com/photo.png',
+        rawBody: IMAGE_BYTES,
+        contentType: 'image/png',
+      },
+      { match: '/images/edits', body: imagesResponse },
+    ]);
+    const provider = createProvider();
+
+    const task = await provider.applyToolAsync(INPUT_URL, 'upscale', {
+      model: 'openai_images:gpt-image-1',
+      idempotencyKey: IDEMPOTENCY_KEY,
+    });
+
+    const download = calls.find((call) => call.method === 'GET');
+    const edit = calls.find((call) => call.method === 'POST');
+    const image = edit?.formData?.get('image');
+
+    expect(download?.url).toBe(INPUT_URL);
+    expect(edit?.url).toBe(`${BASE_URL}/images/edits`);
+    expect(edit?.authorization).toBe(`Bearer ${KEY}`);
+    expect(edit?.formData).toBeInstanceOf(FormData);
+    // Файл уходит именно содержимым, а не ссылкой.
+    expect(image).toBeInstanceOf(Blob);
+    await expect((image as Blob).text()).resolves.toBe(IMAGE_BYTES);
+    expect(edit?.formData?.get('model')).toBe('gpt-image-1');
+    expect(String(edit?.formData?.get('prompt'))).toContain('higher resolution');
+    expect(edit?.formData?.get('n')).toBe('1');
+    expect(task.status).toBe('done');
+    expect(task.resultUrls).toEqual([`data:image/png;base64,${B64}`]);
+  });
+
+  it('applyToolAsync: bg_removal получает свой промпт и скалярные параметры', async () => {
+    const calls = stubUpstream([
+      {
+        match: 'cdn.example.com/photo.png',
+        rawBody: IMAGE_BYTES,
+        contentType: 'image/png',
+      },
+      { match: '/images/edits', body: imagesResponse },
+    ]);
+    const provider = createProvider();
+
+    await provider.applyToolAsync(INPUT_URL, 'bg_removal', {
+      model: 'gpt-image-1',
+      idempotencyKey: IDEMPOTENCY_KEY,
+      size: '1024x1024',
+      quality: 'low',
+    });
+
+    const edit = calls.find((call) => call.method === 'POST');
+    const prompt = String(edit?.formData?.get('prompt'));
+
+    expect(prompt).toContain('Remove the background');
+    expect(edit?.formData?.get('size')).toBe('1024x1024');
+    expect(edit?.formData?.get('quality')).toBe('low');
+  });
+
+  it('applyToolAsync: ответ с url разбирается так же, как b64_json', async () => {
+    stubUpstream([
+      {
+        match: 'cdn.example.com/photo.png',
+        rawBody: IMAGE_BYTES,
+        contentType: 'image/png',
+      },
+      {
+        match: '/images/edits',
+        body: {
+          created: 1,
+          data: [{ url: 'https://cdn.example.com/edited.png' }],
+        },
+      },
+    ]);
+    const provider = createProvider();
+
+    const task = await provider.applyToolAsync(INPUT_URL, 'upscale', {
+      idempotencyKey: IDEMPOTENCY_KEY,
+    });
+
+    expect(task.resultUrls).toEqual(['https://cdn.example.com/edited.png']);
+  });
+
+  it('applyToolAsync: идемпотентность не повторяет скачивание и редактирование', async () => {
+    const calls = stubUpstream([
+      {
+        match: 'cdn.example.com/photo.png',
+        rawBody: IMAGE_BYTES,
+        contentType: 'image/png',
+      },
+      { match: '/images/edits', body: imagesResponse },
+    ]);
+    const provider = createProvider();
+    const params = {
+      model: 'gpt-image-1',
+      idempotencyKey: IDEMPOTENCY_KEY,
+    };
+
+    const first = await provider.applyToolAsync(INPUT_URL, 'upscale', params);
+    const second = await provider.applyToolAsync(INPUT_URL, 'upscale', params);
+
+    expect(calls.filter((call) => call.method === 'GET')).toHaveLength(1);
+    expect(calls.filter((call) => call.method === 'POST')).toHaveLength(1);
+    expect(second).toEqual(first);
+  });
+
+  it('applyToolAsync: trim/lipsync/chromakey отвергаются до скачивания', async () => {
     const calls = stubUpstream([{ body: imagesResponse }]);
     const provider = createProvider();
 
-    const task = await provider.applyToolAsync(
-      'https://cdn.example.com/photo.png',
-      'upscale',
-      { idempotencyKey: IDEMPOTENCY_KEY },
-    );
+    for (const tool of ['trim', 'lipsync', 'chromakey'] as const) {
+      await expect(
+        provider.applyToolAsync(INPUT_URL, tool, { idempotencyKey: IDEMPOTENCY_KEY }),
+      ).rejects.toThrow('не поддерживается OpenAI Images');
+    }
 
-    const post = calls.find((call) => call.method === 'POST');
+    expect(calls).toHaveLength(0);
+  });
 
-    expect(post?.url).toBe(`${BASE_URL}/images/generations`);
-    expect(post?.body?.model).toBe('gpt-image-1');
-    // Ссылка на вход уходит в промпт: скачать файл по ссылке OpenAI Images
-    // не умеет (редактирование возможно только через multipart).
-    expect(String(post?.body?.prompt)).toContain(
-      'https://cdn.example.com/photo.png',
-    );
-    expect(task.status).toBe('done');
+  it('applyToolAsync: dall-e-3 не поддерживает /images/edits — ошибка до сети', async () => {
+    const calls = stubUpstream([{ body: imagesResponse }]);
+    const provider = createProvider();
+
+    await expect(
+      provider.applyToolAsync(INPUT_URL, 'upscale', {
+        model: 'dall-e-3',
+        idempotencyKey: IDEMPOTENCY_KEY,
+      }),
+    ).rejects.toThrow('не поддерживает /images/edits');
+
+    expect(calls).toHaveLength(0);
   });
 
   it('applyToolAsync: не-http ссылка отвергается до запроса', async () => {
@@ -400,5 +538,61 @@ describe('OpenAiImagesProvider', () => {
     ).rejects.toThrow('нужна публичная http(s)-ссылка');
 
     expect(calls).toHaveLength(0);
+  });
+
+  it('applyToolAsync: приватный IP отвергается до сетевого вызова (SSRF)', async () => {
+    const calls = stubUpstream([{ body: imagesResponse }]);
+    const provider = createProvider();
+
+    await expect(
+      provider.applyToolAsync('http://127.0.0.1/photo.png', 'upscale', {
+        idempotencyKey: IDEMPOTENCY_KEY,
+      }),
+    ).rejects.toThrow('приватный адрес');
+
+    expect(calls).toHaveLength(0);
+  });
+
+  it('applyToolAsync: 404 при скачивании — ошибка без POST в /images/edits', async () => {
+    const calls = stubUpstream([
+      {
+        match: 'cdn.example.com/photo.png',
+        body: { error: { message: 'not found' } },
+        status: 404,
+      },
+      { match: '/images/edits', body: imagesResponse },
+    ]);
+    const provider = createProvider();
+
+    const error = await provider
+      .applyToolAsync(INPUT_URL, 'upscale', {
+        idempotencyKey: IDEMPOTENCY_KEY,
+      })
+      .catch((caught: unknown) => caught);
+
+    expect((error as MediaProviderException).retryable).toBe(false);
+    expect((error as Error).message).toContain('not found');
+    expect(calls.some((call) => call.url.includes('/images/edits'))).toBe(false);
+  });
+
+  it('applyToolAsync: слишком большой вход не скачивается полностью', async () => {
+    const calls = stubUpstream([
+      {
+        match: 'cdn.example.com/photo.png',
+        rawBody: 'x',
+        contentType: 'image/png',
+        headers: { 'Content-Length': String(30 * 1024 * 1024) },
+      },
+      { match: '/images/edits', body: imagesResponse },
+    ]);
+    const provider = createProvider();
+
+    await expect(
+      provider.applyToolAsync(INPUT_URL, 'upscale', {
+        idempotencyKey: IDEMPOTENCY_KEY,
+      }),
+    ).rejects.toThrow('больше лимита');
+
+    expect(calls.some((call) => call.url.includes('/images/edits'))).toBe(false);
   });
 });

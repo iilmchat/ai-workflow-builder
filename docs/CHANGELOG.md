@@ -31,6 +31,14 @@
   что ни один каталог не объявляет модель хромакея. Старые workflow с
   `chromakey` открываются с пометкой «недоступно», без молчаливой подмены
   операции (KI-069).
+- **KI-380: OpenAI Images — `applyToolAsync` через `/v1/images/edits`**
+  ([отчёт](development/reports/v0.11.1/S2-openai-images.md)):
+  провайдер скачивает входное изображение в буфер (лимит 25 МБ, PNG/JPEG/WebP),
+  собирает `multipart/form-data` с `image`, `prompt`, `model` и параметрами
+  операции и разбирает ответ `url`/`b64_json` тем же `toTaskResult`, что и
+  генерацию. Поддержаны `upscale` и `bg_removal`; остальные операции и
+  `dall-e-3` отвергаются до платного запроса. Идемпотентность — по
+  `idempotencyKey`.
 
 ## [0.11.0] — 2026-10-19
 
