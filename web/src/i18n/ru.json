@@ -183,6 +183,7 @@
   "node.image_tool.operation": "Операция",
   "node.image_tool.operation.bg_removal": "Удаление фона",
   "node.image_tool.operation.chromakey": "Хромакей",
+  "node.image_tool.operation.unavailable": "недоступно",
   "node.image_tool.operation.lipsync": "Липсинк",
   "node.image_tool.operation.trim": "Обрезка",
   "node.image_tool.operation.upscale": "Апскейл",

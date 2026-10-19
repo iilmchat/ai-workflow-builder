@@ -2,13 +2,21 @@ import { ConfigService } from '@nestjs/config';
 import { LlmProviderException } from '../llm-provider.interface.js';
 import { AnthropicProvider } from './anthropic.provider.js';
 
-const { createMock } = vi.hoisted(() => ({ createMock: vi.fn() }));
+const { createMock, constructorMock } = vi.hoisted(() => ({
+  createMock: vi.fn(),
+  constructorMock: vi.fn(),
+}));
 
 // Реальный SDK в юнит-тестах не вызывается: подменяем клиент целиком
-// (RULES: никаких сетевых вызовов в тестах).
+// (RULES: никаких сетевых вызовов в тестах). Опции конструктора запоминаем,
+// чтобы проверить выключение внутренних ретраев (KI-500).
 vi.mock('@anthropic-ai/sdk', () => ({
   default: class MockAnthropic {
     readonly messages = { create: createMock };
+
+    constructor(options: unknown) {
+      constructorMock(options);
+    }
   },
 }));
 
@@ -268,6 +276,15 @@ describe('AnthropicProvider', () => {
   it('isConfigured отражает наличие ключа (KI-039)', () => {
     expect(new AnthropicProvider(configStub('sk-ant-test')).isConfigured).toBe(true);
     expect(new AnthropicProvider(configStub(undefined)).isConfigured).toBe(false);
+  });
+
+  it('KI-500: клиент создан с maxRetries: 0 — повторы только у движка', () => {
+    new AnthropicProvider(configStub('sk-ant-test'));
+
+    expect(constructorMock).toHaveBeenCalledWith({
+      apiKey: 'sk-ant-test',
+      maxRetries: 0,
+    });
   });
 
   it('возвращает usage: null, если провайдер не отдал метрики (KI-038)', async () => {

@@ -6704,11 +6704,20 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-418 — CreativeLab не объявляет модели upscale/chromakey
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-18
-- **Файлы:** `src/media/image-tool.ts`, `src/media/providers/creativelab.provider.ts`
-- **Описание:** Живой каталог 113 моделей не содержит upscale или chromakey. trim замаплен на `@VideoEdit`, upscale на FAL/Replicate, chromakey пуст.
-- **Решение:** дождаться upstream, либо скрыть операцию.
-- **Связанные:** KI-366, KI-367.
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.11.1 (S1) — отчёт
+  [S1-hardening.md](development/reports/v0.11.1/S1-hardening.md).
+- **Файлы:** `src/media/image-tool.ts`, `src/media/image-tool.spec.ts`,
+  `web/src/types/graph.ts`, `web/src/components/nodes/ImageToolNode.tsx`,
+  `web/src/components/nodes/ImageToolNode.spec.tsx`, `web/src/i18n/{ru,en}.json`
+- **Описание:** Живой каталог 113 моделей не содержит upscale или chromakey.
+  trim замаплен на `@VideoEdit`, upscale — на FAL/Replicate, chromakey пуст.
+- **Fix:** `upscale` подтверждён тестами (FAL `clarity-upscaler` → Replicate
+  `real-esrgan`); для `chromakey` модели нет ни у одного провайдера, поэтому
+  операция скрыта из UI (`UI_IMAGE_TOOL_OPERATIONS`). Backend по-прежнему
+  принимает `chromakey` в старых workflow; такой узел показывает выбранную
+  операцию как недоступную, без молчаливой подмены (KI-069).
+- **Связанные:** KI-366, KI-367, KI-524.
 
 ---
 
@@ -7901,10 +7910,18 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-500 — Двойной retry SDK + движок (High)
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-19
-- **Файлы:** `src/llm/providers/*.ts`
-- **Описание:** OpenAI/Anthropic SDK повторяют 429/5xx сами (`maxRetries=2`), движок — до 3 раз. Worst case — 9 upstream-вызовов/оплат на узел.
-- **Решение:** `maxRetries: 0` в SDK или env-флаг.
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-19
+- **Исправлено в:** v0.11.1 (S1) — отчёт
+  [S1-hardening.md](development/reports/v0.11.1/S1-hardening.md).
+- **Файлы:** `src/llm/providers/openai-compatible.provider.ts`,
+  `src/llm/providers/anthropic.provider.ts`, спеки провайдеров, фабрики и
+  движка.
+- **Описание:** OpenAI/Anthropic SDK повторяют 429/5xx сами (`maxRetries=2`),
+  движок — до 3 раз. Worst case — 9 upstream-вызовов/оплат на узел.
+- **Fix:** оба SDK создаются с `maxRetries: 0`; повторы остаются только у
+  движка (`NODE_RETRY_MAX_ATTEMPTS`) и видны в `node_runs.logs`. Smoke с
+  локальным upstream 429: ровно 1 HTTP-запрос на каждый провайдер.
+- **Связанные:** KI-036, KI-042, KI-104, KI-523.
 
 ---
 
@@ -8184,18 +8201,45 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-523 — `maxRetries: 0` для SDK захардкожен
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/llm/providers/openai-compatible.provider.ts`,
+  `src/llm/providers/anthropic.provider.ts`
+- **Описание:** KI-500 закрыт жёстким `maxRetries: 0`: оператор не может
+  временно включить внутренние ретраи SDK без пересборки. Для диагностики
+  «наш движок vs SDK» флаг мог бы быть полезен, но он же возвращает риск
+  двойного списания.
+- **Решение:** при необходимости добавить env-флаг с дефолтом `0`, строгим
+  парсингом (RULES 4.35) и предупреждением в логе при значении `> 0`.
+- **Связанные:** KI-500.
+
+---
+
+### KI-524 — Список операций `image_tool` продублирован в UI
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/media/image-tool.ts`, `web/src/types/graph.ts`
+- **Описание:** backend `IMAGE_TOOL_OPERATIONS` и UI
+  `UI_IMAGE_TOOL_OPERATIONS` — два независимых списка. `chromakey` скрыт
+  только в UI (KI-418), поэтому backend обязан и дальше принимать старые
+  значения; при появлении модели её нужно добавить в оба места.
+- **Решение:** генерировать UI-список из общего контракта (OpenAPI/JSON-схема)
+  либо добавить тест-паритет на совпадение наборов.
+- **Связанные:** KI-121, KI-418.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 224 |
+| Fixed | 226 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 1 |
 | Documented | 8 |
 | Open | 272 |
 | Won't Fix | 4 |
-| **Всего** | **510** |
+| **Всего** | **512** |
 
 ---
 

@@ -19,7 +19,7 @@ import { useWorkflowStore } from '@/stores/workflow';
 import {
   DATA_TYPE_COLORS,
   DATA_TYPE_LABELS,
-  IMAGE_TOOL_OPERATIONS,
+  UI_IMAGE_TOOL_OPERATIONS,
   type ImageToolFlowNode,
   type ImageToolOperation,
 } from '@/types/graph';
@@ -41,8 +41,8 @@ function formatToolPrice(model: MediaModelInfo): string | null {
  *
  * Вход — файл (ссылка от `image_generation` или другого источника), выход —
  * `resultUrls` (список ссылок). Тело узла:
- * 1. селект операции — 5 значений DESIGN (`upscale`, `bg_removal`,
- *    `chromakey`, `trim`, `lipsync`);
+ * 1. селект операции — доступные значения DESIGN (`upscale`, `bg_removal`,
+ *    `trim`, `lipsync`); `chromakey` скрыт до появления модели (KI-418);
  * 2. селект модели-инструмента: `GET /media/models?type=TOOL`, а если каталог
  *    такого типа не отдаёт (реальность R7.1) — модели с обязательным входным
  *    файлом (`lib/media.pickToolModels`);
@@ -73,7 +73,7 @@ export function ImageToolNode({ id, data }: NodeProps<ImageToolFlowNode>) {
 
   const handleOperationChange = useCallback(
     (value: string) => {
-      const next = IMAGE_TOOL_OPERATIONS.find((candidate) => candidate === value);
+      const next = UI_IMAGE_TOOL_OPERATIONS.find((candidate) => candidate === value);
 
       if (next !== undefined) {
         updateNodeData(id, { operation: next });
@@ -142,11 +142,22 @@ export function ImageToolNode({ id, data }: NodeProps<ImageToolFlowNode>) {
           className="nodrag w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
           onChange={(event) => handleOperationChange(event.target.value)}
         >
-          {IMAGE_TOOL_OPERATIONS.map((candidate: ImageToolOperation) => (
+          {UI_IMAGE_TOOL_OPERATIONS.map((candidate: ImageToolOperation) => (
             <option key={candidate} value={candidate}>
               {t(`node.image_tool.operation.${candidate}`)}
             </option>
           ))}
+
+          {/* KI-418: у `chromakey` нет модели ни у одного провайдера, поэтому
+              новая операция в списке не предлагается. Если она осталась в
+              старом workflow, показываем её выбранной и недоступной — молча
+              подменять операцию нельзя (KI-069). */}
+          {operation === 'chromakey' && (
+            <option value="chromakey" disabled>
+              {t('node.image_tool.operation.chromakey')} —{' '}
+              {t('node.image_tool.operation.unavailable')}
+            </option>
+          )}
         </select>
 
         <select

@@ -426,6 +426,8 @@ describe('LlmProviderFactory', () => {
     expect(openAiConstructorMock).toHaveBeenCalledWith({
       apiKey: 'sk-deepseek',
       baseURL: 'http://localhost:9999/v1',
+      // KI-500: повторы 429/5xx — только у движка.
+      maxRetries: 0,
     });
   });
 
@@ -435,6 +437,8 @@ describe('LlmProviderFactory', () => {
     expect(openAiConstructorMock).toHaveBeenCalledWith({
       apiKey: 'sk-router',
       baseURL: 'https://routerai.ru/api/v1',
+      // KI-500: повторы 429/5xx — только у движка.
+      maxRetries: 0,
     });
   });
 
@@ -618,6 +622,8 @@ describe('LlmProviderFactory', () => {
     expect(openAiConstructorMock).toHaveBeenCalledWith({
       apiKey: 'sk-gptunnel',
       baseURL: 'http://localhost:7777/v1',
+      // KI-500: повторы 429/5xx — только у движка.
+      maxRetries: 0,
     });
   });
 

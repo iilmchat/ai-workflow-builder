@@ -313,7 +313,15 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
       return;
     }
 
-    this.client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
+    // KI-500: SDK не должен повторять 429/5xx сам. Иначе его два внутренних
+    // повтора умножаются на `NODE_RETRY_MAX_ATTEMPTS` движка (до 9 платных
+    // upstream-вызовов на узел). Повторы — только на уровне движка, где они
+    // видны в `node_runs.logs`, учитываются бюджетом и используют `Retry-After`.
+    this.client = new OpenAI({
+      apiKey: config.apiKey,
+      baseURL: config.baseURL,
+      maxRetries: 0,
+    });
   }
 
   /**

@@ -17,6 +17,21 @@
 ---
 ## [Unreleased]
 
+### Fixed
+
+- **KI-500: двойной retry SDK + движок** ([отчёт](development/reports/v0.11.1/S1-hardening.md)):
+  OpenAI-совместимый и Anthropic-провайдеры создают SDK-клиенты с
+  `maxRetries: 0`; повторы 429/5xx выполняет только движок
+  (`NODE_RETRY_MAX_ATTEMPTS`), поэтому до 9 платных upstream-вызовов на узел
+  больше не возникает. Тесты фиксируют опции конструктора и ровно N попыток
+  движка; smoke с локальным upstream 429 — 1 HTTP-запрос на провайдер.
+- **KI-418: `image_tool` — операции без модели** ([отчёт](development/reports/v0.11.1/S1-hardening.md)):
+  `upscale` подтверждён fallback-цепочкой FAL `clarity-upscaler` → Replicate
+  `real-esrgan`; `chromakey` скрыт из UI (`UI_IMAGE_TOOL_OPERATIONS`), потому
+  что ни один каталог не объявляет модель хромакея. Старые workflow с
+  `chromakey` открываются с пометкой «недоступно», без молчаливой подмены
+  операции (KI-069).
+
 ## [0.11.0] — 2026-10-19
 
 **Minor-релиз: DOCX-шаблоны, MCP Adapter, надёжность запусков (Run Lease,

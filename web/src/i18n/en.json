@@ -179,6 +179,7 @@
   "node.image_tool.operation": "Operation",
   "node.image_tool.operation.bg_removal": "Background removal",
   "node.image_tool.operation.chromakey": "Chroma key",
+  "node.image_tool.operation.unavailable": "unavailable",
   "node.image_tool.operation.lipsync": "Lip sync",
   "node.image_tool.operation.trim": "Trim",
   "node.image_tool.operation.upscale": "Upscale",

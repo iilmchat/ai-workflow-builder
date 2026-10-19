@@ -266,6 +266,23 @@ export const IMAGE_TOOL_OPERATIONS = [
 export type ImageToolOperation = (typeof IMAGE_TOOL_OPERATIONS)[number];
 
 /**
+ * Операции `image_tool`, которые показывает UI (KI-418).
+ *
+ * `chromakey` исключён: ни CreativeLab, ни FAL, ни Replicate не объявляют
+ * модель хромакея, поэтому операция гарантированно падала бы с «не выбрана
+ * модель». Backend по-прежнему принимает `chromakey` в старых workflow
+ * (`IMAGE_TOOL_OPERATIONS`), но новым пользователям неработающая кнопка не
+ * показывается. Когда upstream-модель появится, её нужно добавить и в
+ * `DEFAULT_IMAGE_TOOL_MODELS` (`src/media/image-tool.ts`), и сюда.
+ */
+export const UI_IMAGE_TOOL_OPERATIONS = [
+  'upscale',
+  'bg_removal',
+  'trim',
+  'lipsync',
+] as const satisfies readonly ImageToolOperation[];
+
+/**
  * Данные узла `image_tool` (R7.1, DESIGN v0.9 § 3.1).
  *
  * Узел применяет media-инструмент (upscale, удаление фона, хромакей, обрезка,
@@ -285,8 +302,8 @@ export interface ImageToolNodeData extends Record<string, unknown> {
    *
    * `''` — «модель ещё не выбрана». У операций с известной моделью
    * (`bg_removal`, `lipsync`, `trim`, `upscale`) backend подставит дефолт из
-   * каталога; у `chromakey` модели в каталоге нет — запуск упадёт понятной
-   * ошибкой, молчаливой подмены нет (KI-069, KI-367).
+   * каталога. `chromakey` в UI не предлагается (KI-418): модели в каталоге нет,
+   * запуск упал бы с понятной ошибкой, а молчаливой подмены нет (KI-069).
    */
   model?: string;
   /**

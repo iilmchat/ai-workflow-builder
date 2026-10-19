@@ -117,7 +117,15 @@ describe('OpenAiCompatibleProvider', () => {
     expect(lastConstructorOptions()).toEqual({
       apiKey: 'sk-test',
       baseURL: 'https://api.openai.com/v1',
+      // KI-500: повторы 429/5xx — только у движка, не у SDK.
+      maxRetries: 0,
     });
+  });
+
+  it('KI-500: SDK создан с maxRetries: 0 — скрытых повторов нет', () => {
+    new OpenAiCompatibleProvider(providerConfig());
+
+    expect(lastConstructorOptions()).toMatchObject({ maxRetries: 0 });
   });
 
   it('использует baseURL конкретного провайдера (RouterAI, v0.5.0)', () => {
@@ -151,6 +159,8 @@ describe('OpenAiCompatibleProvider', () => {
     expect(lastConstructorOptions()).toEqual({
       apiKey: 'sk-router',
       baseURL: 'https://routerai.ru/api/v1',
+      // KI-500: внутренние ретраи SDK выключены и у прокси-провайдера.
+      maxRetries: 0,
     });
   });
 
@@ -177,6 +187,8 @@ describe('OpenAiCompatibleProvider', () => {
     expect(lastConstructorOptions()).toEqual({
       apiKey: 'not-needed',
       baseURL: 'http://localhost:1234/v1',
+      // KI-500: у локального провайдера повторы тоже только у движка.
+      maxRetries: 0,
     });
   });
 

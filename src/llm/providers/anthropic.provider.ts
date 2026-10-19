@@ -185,7 +185,10 @@ export class AnthropicProvider implements ILlmProvider {
       return;
     }
 
-    this.client = new Anthropic({ apiKey });
+    // KI-500: внутренние ретраи SDK выключены. Повторять упавший вызов
+    // должен только движок (`NODE_RETRY_MAX_ATTEMPTS`), иначе 2 ретрая SDK ×
+    // 3 попытки движка дают до 9 платных upstream-вызовов на один узел.
+    this.client = new Anthropic({ apiKey, maxRetries: 0 });
   }
 
   /** Готов ли провайдер к вызовам (задан ли `ANTHROPIC_API_KEY`, KI-039). */

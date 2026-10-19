@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v0.11.1 | S1 | Hardening: KI-500 (SDK retries) + KI-418 (image_tool) | 2026-10-19 | [S1-hardening.md](v0.11.1/S1-hardening.md) |
 | v0.11.0 | S0-S1 | Foundation + миграции | 2026-10-19 | [S0-S1-foundation.md](v0.11.0/S0-S1-foundation.md) |
 | v0.11.0 | S2-S3 | Document Template Core & API | 2026-10-19 | [S2-S3-document-templates.md](v0.11.0/S2-S3-document-templates.md) |
 | v0.11.0 | S4-S5 | Document Templates Engine & UI | 2026-10-19 | [S4-S5-document-templates-engine.md](v0.11.0/S4-S5-document-templates-engine.md) |

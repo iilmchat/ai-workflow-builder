@@ -5,6 +5,7 @@ import {
   SafeHttpClient,
   type SafeHttpResponse,
 } from '../common/http/safe-http.client.js';
+import { NODE_RETRY_DEFAULTS } from '../config/env.schema.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { workflowRuns, type RunStatus } from '../db/schema.js';
 import { AgentService } from '../agent/agent.service.js';
@@ -1539,6 +1540,38 @@ describe('ExecutionEngineService', () => {
     expect(fake.rows[0].status).toBe('failed');
     expect(fake.rows[0].logs).toHaveLength(2);
     expect(eventTypes()).not.toContain('run_completed');
+  });
+
+  it('KI-500: 429 от провайдера — ровно NODE_RETRY_MAX_ATTEMPTS вызовов, без скрытых ретраев SDK', async () => {
+    const graph: GraphDto = { nodes: [node('A', 'llm')], edges: [] };
+    let calls = 0;
+
+    // Такую ошибку отдаёт провайдер после `maxRetries: 0`: это единственный
+    // upstream-вызов, который видел SDK. Движок повторяет его сам, поэтому
+    // число вызовов должно совпасть с настройкой, а не умножиться на ретраи
+    // SDK (до KI-500 было 2 ретрая SDK × 3 попытки = 9).
+    spyRunNode(async () => {
+      calls += 1;
+      throw new LlmProviderException('openai', '429 rate limit', {
+        retryable: true,
+        retryAfterMs: 1,
+      });
+    });
+
+    vi.useFakeTimers();
+
+    try {
+      const promise = service.executeAsync(RUN_ID, graph);
+      const rejection = expect(promise).rejects.toThrow('429 rate limit');
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(calls).toBe(NODE_RETRY_DEFAULTS.maxAttempts);
+    expect(fake.rows[0].logs).toHaveLength(NODE_RETRY_DEFAULTS.maxAttempts - 1);
   });
 
   it('KI-036: не повторяет детерминированную ошибку провайдера', async () => {

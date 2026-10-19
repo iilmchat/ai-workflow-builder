@@ -1,6 +1,6 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useWorkflowStore } from '@/stores/workflow';
 import type { ImageToolFlowNode, ImageToolNodeData } from '@/types/graph';
@@ -14,6 +14,9 @@ import { ImageToolNode } from './ImageToolNode';
  */
 const AUDIO_LABEL = ru['node.image_tool.audioUrl'];
 const INVALID_AUDIO_HINT = ru['node.image_tool.audioUrl.invalid'];
+const OPERATION_LABEL = ru['node.image_tool.operation'];
+const CHROMAKEY_LABEL = ru['node.image_tool.operation.chromakey'];
+const UNAVAILABLE_LABEL = ru['node.image_tool.operation.unavailable'];
 
 /**
  * Собирает пропсы узла для изолированного рендера.
@@ -24,14 +27,16 @@ const INVALID_AUDIO_HINT = ru['node.image_tool.audioUrl.invalid'];
  * служебный объект React Flow целиком (RULES 1.16: `any` не используется).
  *
  * @param params - `data.params` узла (`audioUrl` живёт здесь, KI-369)
- * @returns пропсы `ImageToolNode` с операцией `lipsync`
+ * @param operation - операция узла (по умолчанию `lipsync`)
+ * @returns пропсы `ImageToolNode`
  */
 function nodePropsOf(
   params: Record<string, unknown> | undefined,
+  operation: ImageToolNodeData['operation'] = 'lipsync',
 ): NodeProps<ImageToolFlowNode> {
   const data: ImageToolNodeData = {
     kind: 'image_tool',
-    operation: 'lipsync',
+    operation,
     model: 'creativelab-lipsync',
     ...(params === undefined ? {} : { params }),
   };
@@ -56,10 +61,13 @@ function nodePropsOf(
  * @param params - `data.params` узла
  * @returns результат `render` (для `unmount`, если понадобится)
  */
-function renderNode(params?: Record<string, unknown>) {
+function renderNode(
+  params?: Record<string, unknown>,
+  operation?: ImageToolNodeData['operation'],
+) {
   return render(
     <ReactFlowProvider>
-      <ImageToolNode {...nodePropsOf(params)} />
+      <ImageToolNode {...nodePropsOf(params, operation)} />
     </ReactFlowProvider>,
   );
 }
@@ -86,6 +94,37 @@ beforeEach(() => {
     toolModels: [],
     toolModelsLoaded: true,
     loadToolModelsAsync: async () => undefined,
+  });
+});
+
+describe('ImageToolNode — операции (KI-418)', () => {
+  /**
+   * Возвращает текст опций селекта операций.
+   *
+   * @returns подписи доступных операций
+   */
+  function operationLabels(): (string | null)[] {
+    const select = screen.getByLabelText(OPERATION_LABEL);
+
+    return within(select)
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+  }
+
+  it('не предлагает chromakey: у операции нет ни одной модели', () => {
+    renderNode(undefined, 'bg_removal');
+
+    expect(operationLabels()).not.toContain(CHROMAKEY_LABEL);
+  });
+
+  it('старый chromakey показывает выбранным, но недоступным', () => {
+    renderNode(undefined, 'chromakey');
+
+    const option = screen.getByRole('option', {
+      name: `${CHROMAKEY_LABEL} — ${UNAVAILABLE_LABEL}`,
+    });
+
+    expect(option).toBeDisabled();
   });
 });
 
