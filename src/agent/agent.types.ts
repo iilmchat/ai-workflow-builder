@@ -285,12 +285,68 @@ export interface AgentTool {
   executeAsync(input: unknown, context: AgentToolContext): Promise<unknown>;
 }
 
-/** Суммарный usage цикла агента. */
+/** Суммарный usage цикла агента (R7.4b + v0.11 cache metrics). */
 export interface AgentUsage {
   /** Сумма входных токенов по шагам (`null`, если провайдер их не отдал). */
   readonly inputTokens: number | null;
   /** Сумма выходных токенов по шагам (`null`, если провайдер их не отдал). */
   readonly outputTokens: number | null;
+  /**
+   * Сумма входных токенов, обслуженных из промпт-кэша (v0.11 S11).
+   *
+   * `null` — ни один шаг не отдал метрику (кэш не применялся или провайдер
+   * её не сообщает). Считается отдельно от `inputTokens`, потому что цена
+   * кэш-токенов другая (R7.7, KI-055).
+   */
+  readonly cacheReadTokens: number | null;
+  /**
+   * Сумма токенов, записанных в промпт-кэш (v0.11 S11).
+   *
+   * Есть только у Anthropic (`cache_creation_input_tokens`): `null` — метрики
+   * не было ни на одном шаге.
+   */
+  readonly cacheCreationTokens: number | null;
+}
+
+/**
+ * Метрики agent-узла для `node_runs` (v0.11 S11, DESIGN § 3.4.1, KI-433).
+ *
+ * Плоский контракт с движком: токены и стоимость цикла агента пишутся в те же
+ * колонки, что у LLM-узла, включая кэш-токены. До S11 цикл отдавал только
+ * вход/выход и `costUsd`, и `node_runs.cache_read_tokens` у агента оставался
+ * `NULL`, хотя шаги уже знали эти значения.
+ */
+export interface AgentNodeMetrics {
+  /** Суммарные входные токены шагов (`null` — ни один шаг их не отдал). */
+  readonly tokensIn: number | null;
+  /** Суммарные выходные токены шагов (`null` — ни один шаг их не отдал). */
+  readonly tokensOut: number | null;
+  /** Стоимость в USD (`0` — локальный провайдер, `null` — цена неизвестна). */
+  readonly costUsd: number | null;
+  /** Суммарные кэш-токены чтения (`null` — метрики не было). */
+  readonly cacheReadTokens: number | null;
+  /** Суммарные кэш-токены записи (`null` — метрики не было). */
+  readonly cacheCreationTokens: number | null;
+}
+
+/**
+ * Результат исполнителя узла `agent`: выходы, шаги и метрики цикла
+ * (v0.11 S11, DESIGN § 3.4.1).
+ *
+ * Живёт в `agent.types`, а не в `node-executors`: это контракт агента, и его
+ * импортируют и исполнитель узла, и движок. Цикл типовых импортов между
+ * модулями допустим (`import type`, RULES 4.2).
+ */
+export interface AgentNodeExecution {
+  /** Выходы узла: `{ result: answer, steps }` (DESIGN § 3.4). */
+  outputs: Record<string, unknown>;
+  /** Шаги в порядке выполнения — они же пишутся в `node_runs.logs`. */
+  steps: AgentStep[];
+  /**
+   * Суммарные метрики цикла (KI-433/S11): движок пишет их в
+   * `node_runs.tokens_in`/`tokens_out`/`cost_usd`/`cache_*`, как у LLM-узла.
+   */
+  metrics: AgentNodeMetrics;
 }
 
 /**
@@ -334,6 +390,20 @@ export interface AgentRunResult {
    * «частичная» стоимость полезнее для бюджета, чем `null` на всё.
    */
   readonly costUsd: number | null;
+  /**
+   * Кэш-токены чтения для `node_runs.cache_read_tokens` (v0.11 S11).
+   *
+   * Дублирует `usage.cacheReadTokens` отдельным полем по той же причине, что и
+   * `tokensIn`: исполнителю узла нужен плоский контракт метрик. `null` — ни
+   * один шаг метрику не отдал.
+   */
+  readonly cacheReadTokens: number | null;
+  /**
+   * Кэш-токены записи для `node_runs.cache_creation_tokens` (v0.11 S11).
+   *
+   * @see cacheReadTokens
+   */
+  readonly cacheCreationTokens: number | null;
 }
 
 /**

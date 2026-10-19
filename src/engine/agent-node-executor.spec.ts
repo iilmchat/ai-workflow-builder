@@ -45,12 +45,19 @@ describe('executeAgentNodeAsync (R7.4b)', () => {
         { kind: 'final', answer: 'готовый ответ' },
       ],
       iterations: 1,
-      usage: { inputTokens: 1, outputTokens: 2 },
-      // KI-407/KI-433: плоские метрики для `node_runs`; с v0.10.2 движок
-      // получает их отдельным полем `usage` и записывает в колонки.
+      usage: {
+        inputTokens: 1,
+        outputTokens: 2,
+        cacheReadTokens: 7,
+        cacheCreationTokens: 3,
+      },
+      // KI-407/KI-433/S11: плоские метрики для `node_runs`; движок получает
+      // их отдельным полем `metrics` и записывает в колонки.
       tokensIn: 1,
       tokensOut: 2,
       costUsd: null,
+      cacheReadTokens: 7,
+      cacheCreationTokens: 3,
     };
     const runAgentAsync = vi.fn(() => Promise.resolve(result));
     const runner: AgentRunner = { runAgentAsync };
@@ -82,11 +89,14 @@ describe('executeAgentNodeAsync (R7.4b)', () => {
     });
     // Шаги продублированы отдельным полем: движок пишет их в node_runs.logs.
     expect(execution.steps).toBe(result.steps);
-    // KI-433: суммарные метрики цикла доходят до движка для `node_runs`.
-    expect(execution.usage).toEqual({
+    // KI-433/v0.11 S11: токены, стоимость и кэш-метрики цикла доходят до
+    // движка для `node_runs`.
+    expect(execution.metrics).toEqual({
       tokensIn: 1,
       tokensOut: 2,
       costUsd: null,
+      cacheReadTokens: 7,
+      cacheCreationTokens: 3,
     });
   });
 
@@ -113,10 +123,17 @@ describe('executeAgentNodeAsync (R7.4b)', () => {
         answer: 'ok',
         steps: [],
         iterations: 1,
-        usage: { inputTokens: null, outputTokens: null },
+        usage: {
+          inputTokens: null,
+          outputTokens: null,
+          cacheReadTokens: null,
+          cacheCreationTokens: null,
+        },
         tokensIn: null,
         tokensOut: null,
         costUsd: null,
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
       } satisfies AgentRunResult),
     );
     const runner: AgentRunner = { runAgentAsync };

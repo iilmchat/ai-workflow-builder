@@ -29,8 +29,8 @@ import {
   AGENT_MAX_TOKENS_PER_STEP_LIMIT,
   AGENT_TOOL_NAMES,
   type AgentNodeData,
+  type AgentNodeExecution,
   type AgentRunResult,
-  type AgentStep,
 } from '../agent/agent.types.js';
 import {
   DocumentStorageUnavailableException,
@@ -2760,34 +2760,14 @@ export interface AgentRunner {
 }
 
 /**
- * Суммарные метрики LLM-шагов цикла агента для `node_runs` (KI-433).
+ * Результат исполнителя узла `agent` — реэкспорт контракта из `agent.types`
+ * (v0.11 S11, DESIGN § 3.4.1).
  *
- * У агента нет отдельного вызова провайдера «на узел»: токены и стоимость
- * копятся по шагам (`llm` и `llm_call`) внутри цикла, а движку нужен плоский
- * контракт — тот же, что у `LlmNodeMetrics`, но без кэш-полей, которых цикл не
- * отдаёт.
+ * Тип переехал в `agent.types` вместе с `AgentNodeMetrics`: это контракт
+ * агента, а не исполнителя. Реэкспорт сохранён, чтобы существующие импорты
+ * (`ExecutionEngineService`, тесты) не менялись.
  */
-export interface AgentNodeExecutionMetrics {
-  /** Сумма входных токенов по шагам (`null` — ни один шаг их не отдал). */
-  readonly tokensIn: number | null;
-  /** Сумма выходных токенов по шагам (`null` — ни один шаг их не отдал). */
-  readonly tokensOut: number | null;
-  /** Стоимость в USD (`0` — локальный провайдер, `null` — цена неизвестна). */
-  readonly costUsd: number | null;
-}
-
-/** Результат исполнителя узла `agent`: выходы, шаги и суммарные метрики. */
-export interface AgentNodeExecution {
-  /** Выходы узла: `{ result: answer, steps }` (DESIGN § 3.4). */
-  outputs: Record<string, unknown>;
-  /** Шаги в порядке выполнения — они же пишутся в `node_runs.logs`. */
-  steps: AgentStep[];
-  /**
-   * Суммарные метрики цикла (KI-433): движок пишет их в
-   * `node_runs.tokens_in`/`tokens_out`/`cost_usd`, как у LLM-узла.
-   */
-  usage: AgentNodeExecutionMetrics;
-}
+export type { AgentNodeExecution } from '../agent/agent.types.js';
 
 /**
  * Исполнитель узла `agent` (R7.4b, DESIGN v0.9 § 3.4).
@@ -2800,7 +2780,7 @@ export interface AgentNodeExecution {
  * @param inputs - нормализованные входы узла (после KI-034 ключ — `prompt`)
  * @param runId - uuid запуска
  * @param runner - цикл агента (`AgentService` в продакшене)
- * @returns `{ outputs: { result, steps }, steps, usage }`
+ * @returns `{ outputs: { result, steps }, steps, metrics }`
  * @throws NodeDataValidationException если `data` не проходят Zod-схему
  * @throws AgentIterationLimitException если лимит итераций исчерпан
  * @throws LlmProviderException если вызов модели упал
@@ -2817,12 +2797,15 @@ export async function executeAgentNodeAsync(
   return {
     outputs: { result: result.answer, steps: result.steps },
     steps: result.steps,
-    // KI-433: токены и стоимость цикла доходят до движка отдельным полем и
-    // пишутся в `node_runs` наравне с `LlmNodeExecutor`.
-    usage: {
+    // KI-433/v0.11 S11: токены, стоимость и кэш-метрики цикла доходят до
+    // движка отдельным полем и пишутся в `node_runs` наравне с
+    // `LlmNodeExecutor` (DESIGN § 3.4.1).
+    metrics: {
       tokensIn: result.tokensIn,
       tokensOut: result.tokensOut,
       costUsd: result.costUsd,
+      cacheReadTokens: result.cacheReadTokens,
+      cacheCreationTokens: result.cacheCreationTokens,
     },
   };
 }

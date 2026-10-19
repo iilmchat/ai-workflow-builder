@@ -317,6 +317,37 @@ describe('AnthropicProvider', () => {
     expect(retryableOf(await catchGenerateError(provider))).toBe(true);
   });
 
+  it('v0.11 S10: переносит Retry-After из заголовков SDK в retryAfterMs', async () => {
+    createMock.mockRejectedValue(
+      Object.assign(new Error('rate limited'), {
+        status: 429,
+        // SDK кладёт заголовки ответа в `error.headers` (fetch Headers).
+        headers: new Headers({ 'retry-after': '2' }),
+      }),
+    );
+
+    const provider = new AnthropicProvider(configStub('sk-ant-test'));
+    const error = await catchGenerateError(provider);
+
+    expect(error).toBeInstanceOf(LlmProviderException);
+    expect((error as LlmProviderException).retryAfterMs).toBe(2_000);
+  });
+
+  it('v0.11 S10: заголовки словарём тоже читаются (совместимость SDK)', async () => {
+    createMock.mockRejectedValue(
+      Object.assign(new Error('rate limited'), {
+        status: 429,
+        headers: { 'retry-after': '1' },
+      }),
+    );
+
+    const provider = new AnthropicProvider(configStub('sk-ant-test'));
+    const error = await catchGenerateError(provider);
+
+    expect((error as LlmProviderException).retryAfterMs).toBe(1_000);
+  });
+
+
   it('помечает 400 как неповторяемую ошибку (KI-036)', async () => {
     createMock.mockRejectedValue(
       Object.assign(new Error('bad request'), { status: 400 }),

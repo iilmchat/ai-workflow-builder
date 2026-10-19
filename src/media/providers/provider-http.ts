@@ -12,6 +12,7 @@
  * повторяем 503» — потерянных запусков.
  */
 
+import { parseRetryAfterMs } from '../../common/utils/retry-after.js';
 import { MediaProviderException } from '../media-provider.interface.js';
 
 /** Таймаут по умолчанию для запросов каталога моделей (мс). */
@@ -42,7 +43,8 @@ export function isRetryableStatus(status: number): boolean {
  * @param provider - имя провайдера (для префикса исключения)
  * @param action - что делали («не удалось создать задачу»)
  * @param response - ответ с не-2xx статусом
- * @returns ошибка с выставленным `retryable`
+ * @returns ошибка с выставленным `retryable` и подсказкой `retryAfterMs`
+ *   (v0.11 S10: заголовок `Retry-After`, если upstream его отдал)
  */
 export async function buildHttpErrorAsync(
   provider: string,
@@ -51,11 +53,15 @@ export async function buildHttpErrorAsync(
 ): Promise<MediaProviderException> {
   const details = await readErrorTextAsync(response);
   const suffix = details === null ? '' : `: ${details}`;
+  const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
 
   return new MediaProviderException(
     provider,
     `${action} — upstream ответил ${response.status}${suffix}`,
-    { retryable: isRetryableStatus(response.status) },
+    {
+      retryable: isRetryableStatus(response.status),
+      ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+    },
   );
 }
 

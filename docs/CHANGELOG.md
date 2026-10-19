@@ -19,6 +19,13 @@
 
 ### Added
 
+- **Метрики Agent-узла (v0.11 S11, DESIGN § 3.4.1, KI-433)** ([отчёт](development/reports/v0.11.0/S10-S11-retry-metrics.md)):
+  `AgentService` агрегирует кэш-токены шагов (`cacheReadTokens`/`cacheCreationTokens`),
+  `AgentRunResult` и `AgentNodeMetrics` (`src/agent/agent.types.ts`) отдают их
+  движку; новый `toNodeRunMetrics(step)` — единый маппинг LLM/agent/media/plain
+  в колонки `node_runs`, им заполняются `UPDATE` и событие `node_completed`.
+  У узла `agent` теперь пишутся `tokens_in`/`tokens_out`/`cost_usd` **и**
+  `cache_read_tokens`/`cache_creation_tokens` (до S11 кэш-колонки были `NULL`).
 - **Run Lease / Heartbeat (v0.11 S9, DESIGN § 3.3.1, KI-066)** ([отчёт](development/reports/v0.11.0/S9-run-lease.md)):
   новый `RunLeaseService` (`src/runs/run-lease.service.ts`): `startAsync`/`renewAsync`/`stop`,
   продление `workflow_runs.lease_expires_at` через `UPDATE … WHERE status = 'running'`
@@ -36,7 +43,7 @@
   PROMPT_CURRENT v8.1 (+ архив v8.0), RELEASES (проверка отчётов и ссылок в
   CHANGELOG); в промпте обновлены метрики, Open High и списки KI.
 - **MCP Adapter (S6+S7, DESIGN § 3.2):** `src/mcp` — `McpClientService` (connect-mutex, HTTP/SSE, TTL-кэш каталога, reconnect), `McpToolAdapter` (имена `mcp__server__tool`, JSON Schema → Zod, нормализация контента). `AgentService`: preflight MCP до LLM, side-effect retry-guard, правило про недоверенный контент. Зависимость `@modelcontextprotocol/sdk`.
-- **Docs:** Создан DESIGN v0.11.0 (шаблоны DOCX, MCP Adapter, Reliability fixes). Отчёты сессий: [S0-S1](development/reports/v0.11.0/S0-S1-foundation.md), [S2-S3](development/reports/v0.11.0/S2-S3-document-templates.md), [S4-S5](development/reports/v0.11.0/S4-S5-document-templates-engine.md), [S6-S7](development/reports/v0.11.0/S6-S7-mcp-adapter.md), [S9](development/reports/v0.11.0/S9-run-lease.md), [S17](development/reports/v0.11.0/S17-docs-sync.md).
+- **Docs:** Создан DESIGN v0.11.0 (шаблоны DOCX, MCP Adapter, Reliability fixes). Отчёты сессий: [S0-S1](development/reports/v0.11.0/S0-S1-foundation.md), [S2-S3](development/reports/v0.11.0/S2-S3-document-templates.md), [S4-S5](development/reports/v0.11.0/S4-S5-document-templates-engine.md), [S6-S7](development/reports/v0.11.0/S6-S7-mcp-adapter.md), [S9](development/reports/v0.11.0/S9-run-lease.md), [S10-S11](development/reports/v0.11.0/S10-S11-retry-metrics.md), [S17](development/reports/v0.11.0/S17-docs-sync.md).
 - **Docs:** Зарегистрированы KI-478..480.
 - **API и метрики (KI-077/450, KI-433, KI-472):** `GET /runs/:id` отдаёт `nodes` —
   проекцию `node_runs`, общую с SSE (`src/runs/run-node-snapshots.ts`), чтобы
@@ -85,6 +92,15 @@
 
 ### Fixed
 
+- **Повтор узлов при временных ошибках media/LLM (v0.11 S10, DESIGN § 3.3.2, KI-104)** ([отчёт](development/reports/v0.11.0/S10-S11-retry-metrics.md)):
+  структурный `RetryableProviderError` + `isRetryableProviderError`
+  (`src/common/errors/retryable-provider.error.ts`); движок проверяет
+  `isRetryableProviderError(error) || isRetryableNodeError(error)`, поэтому
+  429/5xx/таймаут media-провайдера теперь действительно повторяются (раньше
+  условие знало только `LlmProviderException`, и media сразу уходил в `failed`).
+  Задержка — `min(NODE_RETRY_MAX_DELAY_MS, max(base·2^(n−1), retryAfterMs) +
+  jitter)`, настройки читаются из `ConfigService` (`NODE_RETRY_*`, Zod-схема S1),
+  `Retry-After` переносится в `LlmProviderException`/`MediaProviderException`.
 - **Multipart-загрузка из UI (KI-479):** `sendAsync` (`web/src/lib/api.ts`)
   больше не ставит `Content-Type: application/json`, если тело — `FormData`,
   и не перезаписывает явно заданный заголовок: браузер сам добавляет

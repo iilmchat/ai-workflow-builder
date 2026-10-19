@@ -268,6 +268,15 @@ export class EmbeddingNotSupportedException extends Error {
  */
 export class LlmProviderException extends Error {
   /**
+   * Идентификатор провайдера, у которого произошла ошибка.
+   *
+   * Вынесен отдельным полем, а не только в тексте сообщения: движку и
+   * структурному guard'у `isRetryableProviderError` нужен признак провайдера
+   * без разбора строки (v0.11 S10, DESIGN § 3.3.2, KI-104).
+   */
+  readonly provider: string;
+
+  /**
    * Признак «временной» ошибки: имеет ли смысл повторять вызов (KI-036).
    *
    * `true` — 429/5xx, таймаут, сетевой сбой; `false` — детерминированные
@@ -276,21 +285,34 @@ export class LlmProviderException extends Error {
   readonly retryable: boolean;
 
   /**
+   * Подсказка upstream «повторить не раньше, чем через N мс» (`Retry-After`).
+   *
+   * `undefined` — провайдер подсказку не отдал; движок считает паузу сам.
+   */
+  readonly retryAfterMs?: number;
+
+  /**
    * @param provider - идентификатор провайдера (`anthropic`, `openai`,
    *   `routerai`, `deepseek`, `yandex`, `lmstudio`, а также `llm`/`registry`
    *   для ошибок уровня сервиса)
    * @param message - текст ошибки
    * @param options.cause - исходная ошибка (если есть)
    * @param options.retryable - можно ли повторять вызов (по умолчанию `false`)
+   * @param options.retryAfterMs - подсказка `Retry-After` в мс (v0.11 S10)
    */
   constructor(
     provider: string,
     message: string,
-    options: { cause?: unknown; retryable?: boolean } = {},
+    options: { cause?: unknown; retryable?: boolean; retryAfterMs?: number } = {},
   ) {
     super(`[${provider}] ${message}`);
     this.name = 'LlmProviderException';
+    this.provider = provider;
     this.retryable = options.retryable ?? false;
+
+    if (options.retryAfterMs !== undefined) {
+      this.retryAfterMs = options.retryAfterMs;
+    }
 
     if (options.cause !== undefined) {
       this.cause = options.cause;

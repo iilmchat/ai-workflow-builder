@@ -312,7 +312,12 @@ describe('AgentService.runAgentAsync (R7.4b)', () => {
     expect(
       toolStep?.kind === 'tool' ? toolStep.error : 'not-a-tool',
     ).toBeUndefined();
-    expect(result.usage).toEqual({ inputTokens: 20, outputTokens: 10 });
+    expect(result.usage).toEqual({
+      inputTokens: 20,
+      outputTokens: 10,
+      cacheReadTokens: null,
+      cacheCreationTokens: null,
+    });
     // KI-407: те же токены продублированы плоскими полями для `node_runs`.
     expect(result.tokensIn).toBe(20);
     expect(result.tokensOut).toBe(10);
@@ -428,7 +433,12 @@ describe('AgentService.runAgentAsync (R7.4b)', () => {
 
     const result = await service.runAgentAsync(agentNode(), {}, 'run-1');
 
-    expect(result.usage).toEqual({ inputTokens: null, outputTokens: null });
+    expect(result.usage).toEqual({
+      inputTokens: null,
+      outputTokens: null,
+      cacheReadTokens: null,
+      cacheCreationTokens: null,
+    });
   });
 
   it('http_request работает через глобальный fetch и не трогает БД', async () => {
@@ -536,6 +546,48 @@ describe('AgentService — стоимость и бюджет (KI-407)', () => {
     expect(assertWithinBudgetAsync).toHaveBeenNthCalledWith(2, 'run-1', {
       usd: 0.01125,
     });
+  });
+
+  it('v0.11 S11: агрегирует кэш-токены шагов в usage и плоских метриках', async () => {
+    const { service } = await createHarness([
+      {
+        text: '{"tool":"vector_query","input":{"collection":"docs","query":"a"}}',
+        usage: {
+          inputTokens: 1_000,
+          outputTokens: 500,
+          cacheReadTokens: 800,
+          cacheCreationTokens: 200,
+          model: 'gpt-4o',
+        },
+      },
+      {
+        text: '{"final":"готово"}',
+        usage: {
+          inputTokens: 500,
+          outputTokens: 250,
+          cacheReadTokens: 100,
+          model: 'gpt-4o',
+        },
+      },
+    ]);
+
+    const result = await service.runAgentAsync(
+      agentNode({ model: 'gpt-4o' }),
+      {},
+      'run-1',
+    );
+
+    // Кэш-токены суммируются отдельно от input/output: у кэша своя цена
+    // (R7.7/KI-055), поэтому в `inputTokens` они не подмешиваются.
+    expect(result.usage).toEqual({
+      inputTokens: 1_500,
+      outputTokens: 750,
+      cacheReadTokens: 900,
+      cacheCreationTokens: 200,
+    });
+    // Плоские поля для `node_runs.cache_read_tokens/cache_creation_tokens`.
+    expect(result.cacheReadTokens).toBe(900);
+    expect(result.cacheCreationTokens).toBe(200);
   });
 
   it('превышение бюджета бросает BudgetExceededException и обрывает цикл', async () => {

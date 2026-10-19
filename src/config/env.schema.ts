@@ -742,6 +742,26 @@ export const RunLeaseEnvSchema = z.object({
 export type RunLeaseEnv = z.infer<typeof RunLeaseEnvSchema>;
 
 /**
+ * Значения повторов узла по умолчанию (v0.11 S10, DESIGN § 3.3.2).
+ *
+ * Один источник истины для Zod-схемы и для `ExecutionEngineService`: движок
+ * читает уже валидированные значения из `ConfigService`, но в тестах (и при
+ * прямом конструировании сервиса) ключей может не быть — тогда подставляются
+ * ровно те же числа, что и дефолты схемы. Дублировать литералы в двух местах
+ * нельзя: они разойдутся молча (KI-104).
+ */
+export const NODE_RETRY_DEFAULTS = {
+  /** Максимум попыток узла, включая первую. */
+  maxAttempts: 3,
+  /** Базовая задержка перед повтором, мс (далее — экспонента). */
+  baseDelayMs: 500,
+  /** Потолок задержки, мс. */
+  maxDelayMs: 10_000,
+  /** Амплитуда случайного джиттера, мс. */
+  jitterMs: 250,
+} as const;
+
+/**
  * Zod-схема повторов узлов (v0.11 S1, DESIGN § 3.3.2, KI-104).
  *
  * Общие дефолты ретраев: сколько раз повторять retryable-ошибку и как
@@ -755,28 +775,28 @@ export const NodeRetryEnvSchema = z.object({
       emptyToUndefined,
       z.coerce.number().int().min(1).max(5).optional(),
     )
-    .default(3),
+    .default(NODE_RETRY_DEFAULTS.maxAttempts),
   /** Базовая задержка перед повтором, мс (default 500, 100–10000). */
   NODE_RETRY_BASE_DELAY_MS: z
     .preprocess(
       emptyToUndefined,
       z.coerce.number().int().min(100).max(10_000).optional(),
     )
-    .default(500),
+    .default(NODE_RETRY_DEFAULTS.baseDelayMs),
   /** Максимальная задержка (потолок экспоненты), мс (default 10000, 1000–60000). */
   NODE_RETRY_MAX_DELAY_MS: z
     .preprocess(
       emptyToUndefined,
       z.coerce.number().int().min(1000).max(60_000).optional(),
     )
-    .default(10_000),
+    .default(NODE_RETRY_DEFAULTS.maxDelayMs),
   /** Амплитуда случайного джиттера, мс (default 250, 0–2000). */
   NODE_RETRY_JITTER_MS: z
     .preprocess(
       emptyToUndefined,
       z.coerce.number().int().min(0).max(2000).optional(),
     )
-    .default(250),
+    .default(NODE_RETRY_DEFAULTS.jitterMs),
 });
 
 /** Валидированные настройки повторов узлов (v0.11 S1). */

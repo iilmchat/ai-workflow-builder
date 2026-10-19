@@ -384,20 +384,38 @@ export class MediaProviderException extends Error {
   readonly retryable: boolean;
 
   /**
+   * Подсказка upstream «повторить не раньше, чем через N мс» (`Retry-After`).
+   *
+   * v0.11 S10 (DESIGN § 3.3.2): движок сравнивает подсказку с экспонентой и
+   * берёт большую паузу — провайдер сам сообщает, когда лимит освободится.
+   * `undefined` — заголовка нет.
+   */
+  readonly retryAfterMs?: number;
+
+  /**
    * @param provider - идентификатор провайдера (`creativelab`, `media`)
    * @param message - текст ошибки
    * @param options.cause - исходная ошибка (если есть)
    * @param options.retryable - можно ли повторять вызов (по умолчанию `false`)
+   * @param options.retryAfterMs - подсказка `Retry-After` в мс (v0.11 S10)
    */
   constructor(
     provider: string,
     message: string,
-    options: { cause?: unknown; retryable?: boolean } = {},
+    options: {
+      cause?: unknown;
+      retryable?: boolean;
+      retryAfterMs?: number;
+    } = {},
   ) {
     super(`[${provider}] ${message}`);
     this.name = 'MediaProviderException';
     this.provider = provider;
     this.retryable = options.retryable ?? false;
+
+    if (options.retryAfterMs !== undefined) {
+      this.retryAfterMs = options.retryAfterMs;
+    }
 
     if (options.cause !== undefined) {
       this.cause = options.cause;

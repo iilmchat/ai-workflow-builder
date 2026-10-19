@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'node:crypto';
+import { parseRetryAfterMs } from '../../common/utils/retry-after.js';
 import { toMediaModelInfo } from '../dto/media-model.mapper.js';
 import {
   MediaModelsResponseSchema,
@@ -520,7 +521,10 @@ export class CreativeLabProvider implements IMediaProvider {
         return new MediaProviderException(
           this.name,
           upstreamError ?? `${fallback}: media API ответил ${status}`,
-          { retryable: isRetryableStatus(status) },
+          {
+            retryable: isRetryableStatus(status),
+            ...retryAfterOption(response),
+          },
         );
     }
   }
@@ -620,7 +624,10 @@ export class CreativeLabProvider implements IMediaProvider {
       throw new MediaProviderException(
         this.name,
         `media API ответил ${response.status}`,
-        { retryable: isRetryableStatus(response.status) },
+        {
+          retryable: isRetryableStatus(response.status),
+          ...retryAfterOption(response),
+        },
       );
     }
 
@@ -671,6 +678,22 @@ export class CreativeLabProvider implements IMediaProvider {
  */
 function isRetryableStatus(status: number): boolean {
   return status === 429 || status >= 500;
+}
+
+/**
+ * Собирает опции исключения с подсказкой `Retry-After` (v0.11 S10).
+ *
+ * Возвращает пустой объект, если заголовка нет: так опция не появляется в
+ * объекте вовсе, и `retryAfterMs` остаётся `undefined` (движок считает паузу
+ * по экспоненте).
+ *
+ * @param response - ответ upstream с не-2xx статусом
+ * @returns объект с `retryAfterMs` либо пустой объект
+ */
+function retryAfterOption(response: Response): { retryAfterMs?: number } {
+  const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
+
+  return retryAfterMs === undefined ? {} : { retryAfterMs };
 }
 
 /**

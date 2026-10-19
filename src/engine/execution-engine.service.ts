@@ -6,7 +6,10 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { and, eq, sql } from 'drizzle-orm';
+import { randomInt } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { isRetryableProviderError } from '../common/errors/retryable-provider.error.js';
+import { NODE_RETRY_DEFAULTS } from '../config/env.schema.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   nodeRuns,
@@ -31,8 +34,8 @@ import { RunEventsService } from '../runs/run-events.service.js';
 import { RunLeaseService } from '../runs/run-lease.service.js';
 import { withSpanAsync } from '../observability/tracing.js';
 import { AgentService } from '../agent/agent.service.js';
+import type { AgentNodeMetrics } from '../agent/agent.types.js';
 import { LlmNodeExecutor, type LlmNodeMetrics } from '../llm/llm-node-executor.service.js';
-import { LlmProviderException } from '../llm/llm-provider.interface.js';
 import { LlmRegistryService } from '../llm/llm-registry.service.js';
 import {
   MediaNodeExecutor,
@@ -45,7 +48,10 @@ import { WEB_SEARCH_PROVIDER } from '../web-search/web-search.module.js';
 import type { IWebSearchProvider } from '../web-search/web-search.interface.js';
 import type { GraphDto, NodeDto } from './dto/index.js';
 import { EngineService, type ExecutionPlanDto } from './engine.service.js';
-import { RetryableNodeException, VectorDisabledException } from './errors.js';
+import {
+  VectorDisabledException,
+  isRetryableNodeError,
+} from './errors.js';
 import {
   UnsupportedNodeTypeException,
   executeCompareNode,
@@ -64,7 +70,6 @@ import {
   executeWebSearchNodeAsync,
   executeWriteFileNodeAsync,
   prefixSubWorkflowGraph,
-  type AgentNodeExecutionMetrics,
   type SubWorkflowContext,
   type VectorMemoryContext,
 } from './node-executors.js';
@@ -142,10 +147,42 @@ function describePlanError(error: unknown): string {
   return `${base}: ${errors.map((item) => String(item)).join('; ')}`;
 }
 
-/** Сколько раз пробовать узел при «временной» ошибке провайдера (KI-036). */
-const NODE_MAX_ATTEMPTS = 3;
-/** Базовая задержка перед повтором узла, мс (далее — экспоненциально). */
-const NODE_RETRY_BASE_DELAY_MS = 500;
+/**
+ * Читает целочисленную настройку повторов из `ConfigService` в границах.
+ *
+ * `ConfigService` может отдать строку (если сервис получил сырое окружение, а
+ * не результат `EnvSchema.parse`), поэтому значение нормализуется так же, как
+ * в `AgentService`: `Number`, отбрасывание дробной части и clamp. Дефолт —
+ * из {@link NODE_RETRY_DEFAULTS} (единый источник с Zod-схемой, KI-104).
+ *
+ * @param config - конфигурация приложения (RULES 4.6)
+ * @param key - имя env-переменной (`NODE_RETRY_*`)
+ * @param fallback - значение по умолчанию из {@link NODE_RETRY_DEFAULTS}
+ * @param min - нижняя граница (совпадает с валидацией схемы)
+ * @param max - верхняя граница (совпадает с валидацией схемы)
+ * @returns целое число в диапазоне `[min, max]`
+ */
+function readRetryOption(
+  config: ConfigService,
+  key: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const raw = config.get<unknown>(key);
+  const numeric =
+    typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string' && raw.trim().length > 0
+        ? Number(raw)
+        : Number.NaN;
+
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(Math.trunc(numeric), min), max);
+}
 
 /**
  * Текст ошибки узла, пропущенного из-за упавшего предшественника (KI-288).
@@ -193,13 +230,13 @@ type NodeStepResult = (
     }
   | {
       /**
-       * Агент (v0.10.2, KI-433): стоимость/токены относятся к USD, как у
-       * LLM-узла, но набор метрик уже — только суммарные токены и стоимость
-       * цикла (кэш-полей цикл не отдаёт).
+       * Агент (v0.10.2, KI-433; v0.11 S11): стоимость/токены относятся к USD,
+       * как у LLM-узла; с S11 набор метрик совпадает с LLM — включая
+       * кэш-токены (DESIGN § 3.4.1).
        */
       kind: 'agent';
       outputs: Record<string, unknown>;
-      metrics: AgentNodeExecutionMetrics;
+      metrics: AgentNodeMetrics;
     }
 ) & {
   /**
@@ -221,6 +258,100 @@ type NodeStepResult = (
    */
   storageKey?: string | null;
 };
+
+/**
+ * Колонки `node_runs`, которые заполняются метриками шага.
+ *
+ * Валюта не смешивается: LLM/agent пишут `cost_usd`, media — `cost_rub`
+ * (RULES 4.23). Поля `storedUrl`/`storedExpiresAt`/`storageKey` относятся к
+ * сохранённому файлу: у media — из метрик шага, у `document_gen` — из
+ * `step.storageKey`.
+ */
+interface NodeRunMetrics {
+  /** Входные токены (`null` — у типа узла метрики нет). */
+  tokensIn: number | null;
+  /** Выходные токены (`null` — у типа узла метрики нет). */
+  tokensOut: number | null;
+  /** Стоимость в USD строкой для `numeric(12, 6)` либо `null`. */
+  costUsd: string | null;
+  /** Стоимость в рублях строкой для `numeric(12, 6)` либо `null`. */
+  costRub: string | null;
+  /** Кэш-токены чтения (LLM и agent; R7.7/KI-055). */
+  cacheReadTokens: number | null;
+  /** Кэш-токены записи (LLM и agent; R7.7/KI-150). */
+  cacheCreationTokens: number | null;
+  /** Ссылка на сохранённый media-результат (R7.8/KI-362). */
+  storedUrl: string | null;
+  /** Срок жизни ссылки media-результата либо `null`. */
+  storedExpiresAt: Date | null;
+  /** Ключ объекта в хранилище (KI-451/KI-464) либо `null`. */
+  storageKey: string | null;
+}
+
+/**
+ * Приводит метрики шага к колонкам `node_runs` (v0.11 S11, DESIGN § 3.4.1).
+ *
+ * До S11 `step.kind === 'llm' ? … : null` было продублировано в `UPDATE` и в
+ * `node_completed`, а у агента кэш-токены вообще терялись. Один помощник
+ * фиксирует маппинг в одном месте: имена полей у веток разные (`inputTokens`
+ * у LLM, `tokensIn` у агента), а колонки — общие.
+ *
+ * @param step - результат выполнения узла
+ * @returns значения для `INSERT/UPDATE node_runs` и для события
+ *   `node_completed` (валюта и тип сохранённого файла определяются вариантом)
+ */
+function toNodeRunMetrics(step: NodeStepResult): NodeRunMetrics {
+  switch (step.kind) {
+    case 'llm':
+      return {
+        tokensIn: step.metrics.inputTokens,
+        tokensOut: step.metrics.outputTokens,
+        costUsd: toNumericString(step.metrics.costUsd),
+        costRub: null,
+        cacheReadTokens: step.metrics.cacheReadTokens,
+        cacheCreationTokens: step.metrics.cacheCreationTokens,
+        storedUrl: null,
+        storedExpiresAt: null,
+        storageKey: step.storageKey ?? null,
+      };
+    case 'agent':
+      return {
+        tokensIn: step.metrics.tokensIn,
+        tokensOut: step.metrics.tokensOut,
+        costUsd: toNumericString(step.metrics.costUsd),
+        costRub: null,
+        cacheReadTokens: step.metrics.cacheReadTokens,
+        cacheCreationTokens: step.metrics.cacheCreationTokens,
+        storedUrl: null,
+        storedExpiresAt: null,
+        storageKey: step.storageKey ?? null,
+      };
+    case 'media':
+      return {
+        tokensIn: null,
+        tokensOut: null,
+        costUsd: null,
+        costRub: toNumericString(step.metrics.costRub),
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
+        storedUrl: step.metrics.storedUrl,
+        storedExpiresAt: step.metrics.storedExpiresAt,
+        storageKey: step.metrics.storageKey,
+      };
+    case 'plain':
+      return {
+        tokensIn: null,
+        tokensOut: null,
+        costUsd: null,
+        costRub: null,
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
+        storedUrl: null,
+        storedExpiresAt: null,
+        storageKey: step.storageKey ?? null,
+      };
+  }
+}
 
 /** Итог выполнения запуска. */
 export interface ExecutionResult {
@@ -254,6 +385,24 @@ export class ExecutionEngineService {
    * для локальной разработки/тестов (v0.10.2, KI-478/434).
    */
   private readonly allowPrivateIps: boolean;
+
+  /**
+   * Максимум попыток узла, включая первую (env `NODE_RETRY_MAX_ATTEMPTS`).
+   *
+   * v0.11 S10 (DESIGN § 3.3.2, KI-104): значение приходит из `ConfigService`
+   * (Zod-схема `NodeRetryEnvSchema`), а не из константы — оператор может
+   * ослабить/усилить повторы без пересборки. Читается один раз (RULES 4.6).
+   */
+  private readonly retryMaxAttempts: number;
+
+  /** Базовая задержка повтора, мс (env `NODE_RETRY_BASE_DELAY_MS`). */
+  private readonly retryBaseDelayMs: number;
+
+  /** Потолок экспоненциальной задержки, мс (env `NODE_RETRY_MAX_DELAY_MS`). */
+  private readonly retryMaxDelayMs: number;
+
+  /** Амплитуда случайного джиттера, мс (env `NODE_RETRY_JITTER_MS`). */
+  private readonly retryJitterMs: number;
 
   constructor(
     @Inject(DRIZZLE) private readonly db: Database,
@@ -304,6 +453,37 @@ export class ExecutionEngineService {
 
     this.allowPrivateIps =
       allowPrivateIps === true || allowPrivateIps === 'true';
+
+    // v0.11 S10 (DESIGN § 3.3.2, KI-104): настройки повторов. Границы те же,
+    // что у `NodeRetryEnvSchema`; дефолты — из общего `NODE_RETRY_DEFAULTS`.
+    this.retryMaxAttempts = readRetryOption(
+      config,
+      'NODE_RETRY_MAX_ATTEMPTS',
+      NODE_RETRY_DEFAULTS.maxAttempts,
+      1,
+      5,
+    );
+    this.retryBaseDelayMs = readRetryOption(
+      config,
+      'NODE_RETRY_BASE_DELAY_MS',
+      NODE_RETRY_DEFAULTS.baseDelayMs,
+      100,
+      10_000,
+    );
+    this.retryMaxDelayMs = readRetryOption(
+      config,
+      'NODE_RETRY_MAX_DELAY_MS',
+      NODE_RETRY_DEFAULTS.maxDelayMs,
+      1_000,
+      60_000,
+    );
+    this.retryJitterMs = readRetryOption(
+      config,
+      'NODE_RETRY_JITTER_MS',
+      NODE_RETRY_DEFAULTS.jitterMs,
+      0,
+      2_000,
+    );
   }
 
   /**
@@ -778,12 +958,12 @@ export class ExecutionEngineService {
    * (KI-047): пока новая попытка не закрылась, строка не показывает результат
    * и ошибку прошлой.
    *
-   * «Временные» ошибки провайдера (KI-036) повторяются до
-   * {@link NODE_MAX_ATTEMPTS} раз с экспоненциальной задержкой; каждая неудачная
-   * попытка попадает в `node_runs.logs`, а `duration_ms` считается от первой
-   * попытки. Любой сбой (включая падение публикации события) переводит строку в
-   * `failed` — записи не остаются «висящими» в `running`, а исходная ошибка
-   * пробрасывается наружу без подмены (RULES 1.7).
+   * «Временные» ошибки провайдера (KI-036/KI-104, v0.11 S10) повторяются до
+   * `NODE_RETRY_MAX_ATTEMPTS` раз с экспоненциальной задержкой и джиттером;
+   * каждая неудачная попытка попадает в `node_runs.logs`, а `duration_ms`
+   * считается от первой попытки. Любой сбой (включая падение публикации
+   * события) переводит строку в `failed` — записи не остаются «висящими» в
+   * `running`, а исходная ошибка пробрасывается наружу без подмены (RULES 1.7).
    *
    * @param runId - uuid запуска
    * @param nodeId - `id` узла в графе
@@ -925,7 +1105,7 @@ export class ExecutionEngineService {
         startedAt: new Date().toISOString(),
       });
 
-      for (let attempt = 1; attempt <= NODE_MAX_ATTEMPTS; attempt += 1) {
+      for (let attempt = 1; attempt <= this.retryMaxAttempts; attempt += 1) {
         try {
           const step = await this.runNodeAsync(node, inputs, runId, subContext);
           const durationMs = Date.now() - startedAt;
@@ -936,23 +1116,11 @@ export class ExecutionEngineService {
             logs.push(...step.logs);
           }
 
-          // KI-433: у LLM-узла и агента метрики в USD, у media — в рублях.
-          // Сводим их к двум «срезам», чтобы ветки записи в БД и события не
-          // дублировали `step.kind === …` по восемь раз. Имена полей у веток
-          // разные (`inputTokens` у LLM, `tokensIn` у агента) — разводим здесь.
-          const llmMetrics = step.kind === 'llm' ? step.metrics : null;
-          const agentMetrics = step.kind === 'agent' ? step.metrics : null;
-          const mediaMetrics = step.kind === 'media' ? step.metrics : null;
-          const usageTokensIn =
-            llmMetrics?.inputTokens ?? agentMetrics?.tokensIn ?? null;
-          const usageTokensOut =
-            llmMetrics?.outputTokens ?? agentMetrics?.tokensOut ?? null;
-          const usageCostUsd =
-            llmMetrics !== null
-              ? toNumericString(llmMetrics.costUsd)
-              : agentMetrics !== null
-                ? toNumericString(agentMetrics.costUsd)
-                : null;
+          // v0.11 S11 (DESIGN § 3.4.1): один маппер метрик шага → колонки
+          // `node_runs`. У LLM и агента метрики в USD, у media — в рублях;
+          // кэш-токены есть и у LLM, и у агента. Имена полей у вариантов
+          // разные, но дальше их никто не разбирает.
+          const metrics = toNodeRunMetrics(step);
 
           await this.db
             .update(nodeRuns)
@@ -964,29 +1132,9 @@ export class ExecutionEngineService {
               // KI-038: метрики провайдера раздельно по валютам. У LLM-узла
               // заполняется cost_usd, у media-узла — cost_rub, у чистого
               // преобразования обе колонки остаются NULL (RULES 4.23).
-              // KI-433: у узла `agent` те же USD-колонки заполняются суммой
-              // по шагам цикла (`kind: 'agent'`).
-              tokensIn: usageTokensIn,
-              tokensOut: usageTokensOut,
-              costUsd: usageCostUsd,
-              costRub:
-                mediaMetrics === null
-                  ? null
-                  : toNumericString(mediaMetrics.costRub),
-              // R7.7 (KI-055/KI-150): кэш-токены — только у LLM-узла.
-              cacheReadTokens: llmMetrics?.cacheReadTokens ?? null,
-              cacheCreationTokens: llmMetrics?.cacheCreationTokens ?? null,
-              // R7.8 (KI-362): своя ссылка на media-результат — только у media.
-              storedUrl: mediaMetrics?.storedUrl ?? null,
-              storedExpiresAt: mediaMetrics?.storedExpiresAt ?? null,
-              // v0.10 S6 (KI-451): ключ сгенерированного документа. Для media
-              // (KI-464) ключ лежит в метриках шага — local/HMAC и S3
-              // переподписывают ссылку по нему (KI-415). У остальных типов узлов
-              // поля нет — колонка остаётся NULL.
-              storageKey:
-                step.kind === 'media'
-                  ? step.metrics.storageKey
-                  : (step.storageKey ?? null),
+              // KI-433/v0.11 S11: у узла `agent` те же USD-колонки и кэш-токены
+              // заполняются суммой по шагам цикла.
+              ...metrics,
               finishedAt: new Date(),
             })
             .where(eq(nodeRuns.id, nodeRun.id));
@@ -1000,24 +1148,22 @@ export class ExecutionEngineService {
             // KI-075: метрики кладём и в событие — панель показывает стоимость
             // сразу, а не только после F5 (из snapshot). Те же значения, что
             // записаны в node_runs выше (RULES 4.23: раздельно по валютам).
-            // KI-433: для узла `agent` — суммарные токены/стоимость цикла.
-            costRub:
-              mediaMetrics === null
-                ? null
-                : toNumericString(mediaMetrics.costRub),
-            tokensIn: usageTokensIn,
-            tokensOut: usageTokensOut,
-            costUsd: usageCostUsd,
+            // KI-433/v0.11 S11: для узла `agent` — суммарные токены, кэш и
+            // стоимость цикла.
+            costRub: metrics.costRub,
+            tokensIn: metrics.tokensIn,
+            tokensOut: metrics.tokensOut,
+            costUsd: metrics.costUsd,
             // R7.7 (KI-055/KI-365): кэш-токены и экономия — панель показывает
             // их сразу, не дожидаясь F5. Экономия не хранится в БД: в снимке
             // пересчитывается по прайсу (`runs-stream.service.ts`).
-            cacheReadTokens: llmMetrics?.cacheReadTokens ?? null,
-            cacheCreationTokens: llmMetrics?.cacheCreationTokens ?? null,
-            cacheSavingsUsd: llmMetrics?.cacheSavingsUsd ?? null,
+            cacheReadTokens: metrics.cacheReadTokens,
+            cacheCreationTokens: metrics.cacheCreationTokens,
+            cacheSavingsUsd:
+              step.kind === 'llm' ? step.metrics.cacheSavingsUsd : null,
             // R7.8 (KI-362): своя ссылка на результат media-узла.
-            storedUrl: mediaMetrics?.storedUrl ?? null,
-            storedExpiresAt:
-              mediaMetrics?.storedExpiresAt?.toISOString() ?? null,
+            storedUrl: metrics.storedUrl,
+            storedExpiresAt: metrics.storedExpiresAt?.toISOString() ?? null,
             logs,
             finishedAt: new Date().toISOString(),
           });
@@ -1026,24 +1172,24 @@ export class ExecutionEngineService {
         } catch (error: unknown) {
           failure = error;
 
-          // KI-036: повторяем только «временные» ошибки провайдера
-          // (429/5xx/таймаут/сеть) и только пока не исчерпаны попытки.
-          // v0.10 S0: `RetryableNodeException` — тот же контракт для узлов,
-          // которые не ходят через LLM-провайдера (`web_search`,
-          // `document_gen`): маркер `retryable` больше не привязан к
-          // `LlmProviderException`.
+          // KI-036/KI-104 (v0.11 S10, DESIGN § 3.3.2): единый признак повтора.
+          // `isRetryableProviderError` — структурный guard для ошибок внешних
+          // провайдеров (LLM и media, у них разные предки); он заменяет
+          // проверку `instanceof LlmProviderException`, из-за которой
+          // retryable-ошибка media-узла не повторялась. `RetryableNodeException`
+          // проверяется отдельно: у него нет `provider` (узлы без провайдера:
+          // `web_search`, `document_gen`).
           const retryable =
-            (error instanceof LlmProviderException && error.retryable) ||
-            error instanceof RetryableNodeException;
+            isRetryableProviderError(error) || isRetryableNodeError(error);
 
-          if (!retryable || attempt === NODE_MAX_ATTEMPTS) {
+          if (!retryable || attempt === this.retryMaxAttempts) {
             break;
           }
 
-          const delayMs = NODE_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+          const delayMs = this.calculateRetryDelayMs(error, attempt);
           const logLine =
-            `попытка ${attempt}/${NODE_MAX_ATTEMPTS} упала: ${toMessage(error)} — ` +
-            `повтор через ${delayMs} мс`;
+            `попытка ${attempt}/${this.retryMaxAttempts} упала: ` +
+            `${toMessage(error)} — повтор через ${delayMs} мс`;
 
           logs.push(logLine);
           this.logger.warn(`Узел ${nodeId} запуска ${runId}: ${logLine}`);
@@ -1067,6 +1213,39 @@ export class ExecutionEngineService {
 
     // Стек не гасим: ошибку ловит Promise.allSettled в executeAsync (RULES 1.7).
     throw failure instanceof Error ? failure : new Error(message);
+  }
+
+  /**
+   * Считает паузу перед повтором узла (v0.11 S10, DESIGN § 3.3.2).
+   *
+   * Формула: `min(MAX_DELAY, max(baseDelay × 2^(attempt−1), retryAfterMs) +
+   * jitter)`. Подсказка `Retry-After` важнее экспоненты: если провайдер сказал
+   * «не раньше 5 с», повтор через 500 мс всё равно получит 429. Потолок
+   * `NODE_RETRY_MAX_DELAY_MS` не даёт одному узлу «уснуть» на минуты из-за
+   * подсказки, которую upstream выдал с запасом.
+   *
+   * Джиттер — случайная добавка `[0, NODE_RETRY_JITTER_MS)`: при массовом
+   * падении параллельных узлов повторы не бьют в провайдера синхронно.
+   *
+   * @param error - ошибка, из-за которой узел будет повторён
+   * @param attempt - номер завершившейся попытки (1 — первая)
+   * @returns пауза в миллисекундах (целое число)
+   */
+  private calculateRetryDelayMs(error: unknown, attempt: number): number {
+    const baseDelay = this.retryBaseDelayMs * 2 ** (attempt - 1);
+    const hinted =
+      isRetryableProviderError(error) && error.retryAfterMs !== undefined
+        ? error.retryAfterMs
+        : 0;
+    // `randomInt(0, 0)` бросает RangeError, поэтому при нулевом джиттере
+    // добавка не запрашивается вовсе (env допускает `NODE_RETRY_JITTER_MS=0`).
+    const jitter =
+      this.retryJitterMs > 0 ? randomInt(0, this.retryJitterMs) : 0;
+
+    return Math.min(
+      this.retryMaxDelayMs,
+      Math.max(baseDelay, hinted) + jitter,
+    );
   }
 
   /**
@@ -1317,7 +1496,7 @@ export class ExecutionEngineService {
       // JSON-строками — по одной на шаг. KI-433: `usage` (токены и стоимость
       // цикла) возвращается отдельно и пишется в `node_runs` веткой `agent`.
       case 'agent': {
-        const { outputs, steps, usage } = await executeAgentNodeAsync(
+        const { outputs, steps, metrics } = await executeAgentNodeAsync(
           node,
           inputs,
           runId,
@@ -1327,7 +1506,7 @@ export class ExecutionEngineService {
         return {
           kind: 'agent',
           outputs,
-          metrics: usage,
+          metrics,
           logs: steps.map((step) => JSON.stringify(step)),
         };
       }

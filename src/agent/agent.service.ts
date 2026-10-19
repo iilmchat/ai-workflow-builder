@@ -62,6 +62,7 @@ import {
   type AgentToolCall,
   type AgentToolContext,
   type AgentToolName,
+  type AgentUsage,
 } from './agent.types.js';
 
 /**
@@ -158,6 +159,28 @@ const REPLY_PROTOCOL = [
  */
 function toMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Прибавляет nullable-метрику к накопленной сумме (R7.4b, v0.11 S11).
+ *
+ * `null`/`undefined` означают «значение неизвестно», а не ноль: если хотя бы
+ * один шаг отдал метрику, сумма известных полезнее, чем `null` на весь цикл.
+ * Эта же семантика у стоимости (KI-052/KI-407).
+ *
+ * @param total - накопленное значение либо `null`
+ * @param value - метрика шага (`null`/`undefined` — провайдер не отдал)
+ * @returns новая сумма либо `total`, если шаг ничего не сообщил
+ */
+function sumNullable(
+  total: number | null,
+  value: number | null | undefined,
+): number | null {
+  if (value === null || value === undefined) {
+    return total;
+  }
+
+  return (total ?? 0) + value;
 }
 
 /**
@@ -621,9 +644,14 @@ export class AgentService {
       { role: 'user', content: JSON.stringify(inputs ?? null) },
     ];
     const steps: AgentStep[] = [];
-    const usage: { inputTokens: number | null; outputTokens: number | null } = {
+    // v0.11 S11 (DESIGN § 3.4.1): вместе с input/output копятся кэш-токены —
+    // иначе `node_runs.cache_read_tokens` агента оставался NULL, хотя шаги
+    // уже получали эти значения от провайдера (R7.7).
+    const usage: AgentUsage = {
       inputTokens: null,
       outputTokens: null,
+      cacheReadTokens: null,
+      cacheCreationTokens: null,
     };
     // KI-407: стоимость копится по шагам и уходит в `AgentRunResult`, чтобы
     // исполнитель узла записал её в `node_runs.cost_usd`.
@@ -650,6 +678,9 @@ export class AgentService {
       usage,
       tokensIn: usage.inputTokens,
       tokensOut: usage.outputTokens,
+      // v0.11 S11: кэш-метрики цикла для `node_runs` (DESIGN § 3.4.1).
+      cacheReadTokens: usage.cacheReadTokens,
+      cacheCreationTokens: usage.cacheCreationTokens,
       // Сумма уже округлённых шагов может дать артефакт float — для
       // `numeric(12, 6)` в БД и сравнения с бюджетом округляем ещё раз.
       costUsd: costUsd === null ? null : Number(costUsd.toFixed(6)),
@@ -1002,23 +1033,27 @@ export class AgentService {
   }
 
   /**
-   * Накапливает usage по шагам.
+   * Накапливает usage по шагам (R7.4b + v0.11 cache metrics).
    *
    * @param total - аккумулятор (мутируется)
    * @param usage - метрики одного шага
    */
-  private addUsage(
-    total: { inputTokens: number | null; outputTokens: number | null },
-    usage: LlmUsage,
-  ): void {
-    total.inputTokens =
-      usage.inputTokens === null
-        ? total.inputTokens
-        : (total.inputTokens ?? 0) + usage.inputTokens;
-    total.outputTokens =
-      usage.outputTokens === null
-        ? total.outputTokens
-        : (total.outputTokens ?? 0) + usage.outputTokens;
+  private addUsage(total: AgentUsage, usage: LlmUsage): void {
+    // Поля `AgentUsage` объявлены `readonly`, но аккумулятор — локальный
+    // объект, который создаётся здесь же; приведение локализует мутацию в
+    // одном методе и не даёт менять usage снаружи.
+    const target = total as { -readonly [K in keyof AgentUsage]: AgentUsage[K] };
+
+    target.inputTokens = sumNullable(total.inputTokens, usage.inputTokens);
+    target.outputTokens = sumNullable(total.outputTokens, usage.outputTokens);
+    target.cacheReadTokens = sumNullable(
+      total.cacheReadTokens,
+      usage.cacheReadTokens,
+    );
+    target.cacheCreationTokens = sumNullable(
+      total.cacheCreationTokens,
+      usage.cacheCreationTokens,
+    );
   }
 
   /**

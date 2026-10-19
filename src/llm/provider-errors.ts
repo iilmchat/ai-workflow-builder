@@ -1,3 +1,4 @@
+import { parseRetryAfterMs } from '../common/utils/retry-after.js';
 import { LlmProviderException } from './llm-provider.interface.js';
 
 /** HTTP-статусы, при которых повтор вызова имеет смысл. */
@@ -93,12 +94,53 @@ export function isRetryableProviderError(error: unknown, signal: AbortSignal): b
 }
 
 /**
+ * Извлекает подсказку `Retry-After` из ошибки SDK.
+ *
+ * SDK Anthropic и OpenAI кладут заголовки ответа в `error.headers` (fetch
+ * `Headers`). Тип поля в разных версиях SDK отличается, поэтому чтение
+ * структурное: поддерживаются и `Headers`, и обычный словарь с ключом
+ * `retry-after`.
+ *
+ * @param error - значение из `catch`
+ * @returns пауза в мс либо `undefined`, если заголовка нет/он не разобран
+ */
+function extractRetryAfterMs(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null) {
+    return undefined;
+  }
+
+  const headers = (error as { headers?: unknown }).headers;
+
+  if (headers instanceof Headers) {
+    return parseRetryAfterMs(headers.get('retry-after'));
+  }
+
+  if (typeof headers !== 'object' || headers === null) {
+    return undefined;
+  }
+
+  const record = headers as Record<string, unknown>;
+  const raw = record['retry-after'] ?? record['Retry-After'];
+
+  if (typeof raw === 'string') {
+    return parseRetryAfterMs(raw);
+  }
+
+  if (Array.isArray(raw) && typeof raw[0] === 'string') {
+    return parseRetryAfterMs(raw[0]);
+  }
+
+  return undefined;
+}
+
+/**
  * Оборачивает ошибку SDK в {@link LlmProviderException} с признаком повторяемости.
  *
  * @param provider - идентификатор провайдера (`anthropic`/`openai`)
  * @param error - ошибка из `catch`
  * @param signal - сигнал вызова (используется для классификации)
- * @returns ошибка провайдера с сохранённой причиной и флагом `retryable`
+ * @returns ошибка провайдера с сохранённой причиной, флагом `retryable` и
+ *   подсказкой `retryAfterMs` (v0.11 S10)
  */
 export function toProviderException(
   provider: string,
@@ -109,6 +151,11 @@ export function toProviderException(
   const message = signal.aborted
     ? 'вызов отменён или истёк таймаут'
     : toErrorMessage(error);
+  const retryAfterMs = retryable ? extractRetryAfterMs(error) : undefined;
 
-  return new LlmProviderException(provider, message, { cause: error, retryable });
+  return new LlmProviderException(provider, message, {
+    cause: error,
+    retryable,
+    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+  });
 }

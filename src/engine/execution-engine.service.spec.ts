@@ -22,6 +22,7 @@ import { ExecutionEngineService } from './execution-engine.service.js';
 import { LlmNodeExecutor } from '../llm/llm-node-executor.service.js';
 import { MediaNodeExecutor } from '../media/media-node-executor.service.js';
 import { LlmProviderException } from '../llm/llm-provider.interface.js';
+import { MediaProviderException } from '../media/media-provider.interface.js';
 import { LlmRegistryService } from '../llm/llm-registry.service.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
@@ -62,13 +63,11 @@ interface FakeRun {
 
 /** Результат выполнения узла в моке исполнителя (выходы и метрики, KI-038). */
 interface FakeNodeStep {
+  /** Вариант шага: в spy-тестах узел ничего не считает — `plain`. */
+  kind: 'plain';
   outputs: Record<string, unknown>;
-  metrics: {
-    inputTokens: number | null;
-    outputTokens: number | null;
-    costUsd: number | null;
-    model: string;
-  } | null;
+  /** Метрик нет: проверяется только логика повторов/пропусков. */
+  metrics: null;
 }
 
 /** Строка `node_runs` в тестовом двойнике БД. */
@@ -87,6 +86,9 @@ interface FakeNodeRun {
   tokensOut: number | null;
   costUsd: string | null;
   costRub: string | null;
+  /** v0.11 S11: кэш-метрики (LLM и agent). */
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
   /** v0.10 S6: ключ сгенерированного документа (KI-451). */
   storageKey: string | null;
   startedAt: Date | null;
@@ -798,7 +800,7 @@ describe('ExecutionEngineService', () => {
           throw new Error('узел упал');
         }
 
-        return { outputs: { text: 'ok' }, metrics: null };
+        return { kind: 'plain', outputs: { text: 'ok' }, metrics: null };
       },
     );
 
@@ -902,7 +904,11 @@ describe('ExecutionEngineService', () => {
         throw new Error('B упал');
       }
 
-      return { outputs: { text: String(current.data.value) }, metrics: null };
+      return {
+        kind: 'plain',
+        outputs: { text: String(current.data.value) },
+        metrics: null,
+      };
     });
 
     await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow('B упал');
@@ -972,7 +978,11 @@ describe('ExecutionEngineService', () => {
         throw new Error('llm недоступен');
       }
 
-      return { outputs: { text: String(current.data.value) }, metrics: null };
+      return {
+        kind: 'plain',
+        outputs: { text: String(current.data.value) },
+        metrics: null,
+      };
     });
 
     await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow('llm недоступен');
@@ -1476,7 +1486,11 @@ describe('ExecutionEngineService', () => {
         throw new LlmProviderException('anthropic', 'rate limit', { retryable: true });
       }
 
-      return { outputs: { text: 'ответ после повтора' }, metrics: null };
+      return {
+        kind: 'plain',
+        outputs: { text: 'ответ после повтора' },
+        metrics: null,
+      };
     });
 
     vi.useFakeTimers();
@@ -1551,6 +1565,120 @@ describe('ExecutionEngineService', () => {
     expect(fake.rows[0].logs).toEqual([]);
   });
 
+  it('v0.11 S10: media-ошибка 429 (retryable) повторяется 3 раза и завершается', async () => {
+    const graph: GraphDto = {
+      nodes: [node('A', 'image_generation', { model: 'flux-schnell' })],
+      edges: [],
+    };
+    let calls = 0;
+
+    spyRunNode(async () => {
+      calls += 1;
+
+      if (calls < 3) {
+        throw new MediaProviderException('creativelab', 'rate limited', {
+          retryable: true,
+        });
+      }
+
+      return {
+        kind: 'plain',
+        outputs: { mediaUrl: 'https://cdn/img.png' },
+        metrics: null,
+      };
+    });
+
+    vi.useFakeTimers();
+
+    try {
+      const promise = service.executeAsync(RUN_ID, graph);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      await expect(promise).resolves.toEqual(
+        expect.objectContaining({ status: 'completed', executedNodes: 1 }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // KI-104: до S10 условие повтора знало только `LlmProviderException`,
+    // поэтому 429 media-провайдера сразу переводил узел в `failed`.
+    expect(calls).toBe(3);
+    expect(fake.rows[0].status).toBe('completed');
+    expect(fake.rows[0].logs).toHaveLength(2);
+    expect(fake.rows[0].logs?.[0]).toContain('попытка 1/3');
+  });
+
+  it('v0.11 S10: media-ошибка 401 (не retryable) не повторяется', async () => {
+    const graph: GraphDto = {
+      nodes: [node('A', 'image_generation', { model: 'flux-schnell' })],
+      edges: [],
+    };
+    let calls = 0;
+
+    spyRunNode(async () => {
+      calls += 1;
+      throw new MediaProviderException('creativelab', 'ключ не принят', {
+        retryable: false,
+      });
+    });
+
+    await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow(
+      'ключ не принят',
+    );
+
+    expect(calls).toBe(1);
+    expect(fake.rows[0].status).toBe('failed');
+    expect(fake.rows[0].logs).toEqual([]);
+  });
+
+  it('v0.11 S10: retryAfterMs учитывается в задержке (больше экспоненты)', async () => {
+    const graph: GraphDto = {
+      nodes: [node('A', 'image_generation', { model: 'flux-schnell' })],
+      edges: [],
+    };
+    let calls = 0;
+
+    spyRunNode(async () => {
+      calls += 1;
+
+      if (calls === 1) {
+        // Экспонента на первой попытке — 500 мс, подсказка провайдера — 3000 мс:
+        // движок обязан ждать подсказку, иначе повтор снова получит 429.
+        throw new MediaProviderException('creativelab', 'rate limited', {
+          retryable: true,
+          retryAfterMs: 3_000,
+        });
+      }
+
+      return {
+        kind: 'plain',
+        outputs: { mediaUrl: 'https://cdn/img.png' },
+        metrics: null,
+      };
+    });
+
+    vi.useFakeTimers();
+
+    try {
+      const promise = service.executeAsync(RUN_ID, graph);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      await promise;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const log = fake.rows[0].logs?.[0] ?? '';
+    const delay = Number(/повтор через (\d+) мс/.exec(log)?.[1] ?? Number.NaN);
+
+    expect(calls).toBe(2);
+    // Пауза = max(500, 3000) + джиттер [0, 250); экспонента не должна «победить».
+    expect(delay).toBeGreaterThanOrEqual(3_000);
+    expect(delay).toBeLessThan(3_000 + 250);
+  });
+
   it('v0.10 S0: RetryableNodeException повторяется как временная ошибка', async () => {
     const graph: GraphDto = { nodes: [node('A', 'llm')], edges: [] };
     let calls = 0;
@@ -1562,7 +1690,11 @@ describe('ExecutionEngineService', () => {
         throw new RetryableNodeException('web_search', '429 от поисковика');
       }
 
-      return { outputs: { text: 'ответ после повтора' }, metrics: null };
+      return {
+        kind: 'plain',
+        outputs: { text: 'ответ после повтора' },
+        metrics: null,
+      };
     });
 
     vi.useFakeTimers();
@@ -1861,6 +1993,8 @@ describe('ExecutionEngineService', () => {
       tokensOut: row.tokensOut ?? null,
       costUsd: row.costUsd ?? null,
       costRub: row.costRub ?? null,
+      cacheReadTokens: row.cacheReadTokens ?? null,
+      cacheCreationTokens: row.cacheCreationTokens ?? null,
       storageKey: row.storageKey ?? null,
       startedAt: row.startedAt ?? null,
       finishedAt: row.finishedAt ?? null,
@@ -2095,15 +2229,22 @@ describe('ExecutionEngineService', () => {
     expect(row?.costRub).toBeNull();
   });
 
-  it('KI-433: метрики цикла agent пишутся в node_runs (tokens_in/out, cost_usd)', async () => {
+  it('KI-433/S11: метрики цикла agent пишутся в node_runs (токены, cost_usd, кэш)', async () => {
     agentRun.mockResolvedValue({
       answer: 'готово',
       steps: [{ kind: 'final', answer: 'готово' }],
       iterations: 2,
-      usage: { inputTokens: 300, outputTokens: 40 },
+      usage: {
+        inputTokens: 300,
+        outputTokens: 40,
+        cacheReadTokens: 120,
+        cacheCreationTokens: 30,
+      },
       tokensIn: 300,
       tokensOut: 40,
       costUsd: 0.001234,
+      cacheReadTokens: 120,
+      cacheCreationTokens: 30,
     });
 
     await service.executeAsync(RUN_ID, {
@@ -2120,21 +2261,26 @@ describe('ExecutionEngineService', () => {
     const row = fake.rows.find((candidate) => candidate.nodeId === 'A');
 
     // До KI-433 у узла `agent` эти колонки оставались NULL: usage копился в
-    // памяти, но движок его не получал.
+    // памяти, но движок его не получал. v0.11 S11 добавил кэш-токены —
+    // маппер `toNodeRunMetrics` заполняет их так же, как у LLM-узла.
     expect(row?.nodeType).toBe('agent');
     expect(row?.tokensIn).toBe(300);
     expect(row?.tokensOut).toBe(40);
     // numeric(12,6): Drizzle отдаёт строку с 6 знаками, как и у LLM-узла.
     expect(row?.costUsd).toBe('0.001234');
+    expect(row?.cacheReadTokens).toBe(120);
+    expect(row?.cacheCreationTokens).toBe(30);
     expect(row?.outputs).toMatchObject({ result: 'готово' });
 
-    // KI-075/KI-433: те же метрики уходят в событие — панель показывает их
-    // сразу, не дожидаясь F5.
+    // KI-075/KI-433/S11: те же метрики уходят в событие — панель показывает
+    // их сразу, не дожидаясь F5.
     expect(lastEventOfType('node_completed')).toMatchObject({
       nodeId: 'A',
       tokensIn: 300,
       tokensOut: 40,
       costUsd: '0.001234',
+      cacheReadTokens: 120,
+      cacheCreationTokens: 30,
     });
   });
 

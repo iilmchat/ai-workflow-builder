@@ -144,7 +144,12 @@ describe('AgentService — интеграция: http_request → final (R7.4b)'
 
     expect(result.answer).toBe('В Москве 20 градусов');
     expect(result.iterations).toBe(2);
-    expect(result.usage).toEqual({ inputTokens: 24, outputTokens: 8 });
+    expect(result.usage).toEqual({
+      inputTokens: 24,
+      outputTokens: 8,
+      cacheReadTokens: null,
+      cacheCreationTokens: null,
+    });
     // KI-407: плоские метрики для `node_runs` (модель вне прайса → null).
     expect(result.tokensIn).toBe(24);
     expect(result.tokensOut).toBe(8);
