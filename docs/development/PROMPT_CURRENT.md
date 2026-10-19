@@ -1,6 +1,6 @@
 # PROMPT_CURRENT — системный промпт ассистента (v8.1)
 
-**Версия промпта:** 8.1
+**Версия промпта:** 8.2
 **Дата:** 2026-10-19
 **Статус:** актуален для HEAD после S9 (`v0.11.0`; релизный тег ещё не выставлен, `package.json` пока `0.10.1`)
 **Заменяет:** `PROMPT_CURRENT.md` v8.0 (архив: `archive/prompts/PROMPT_V8.md`); структура и правила поведения унаследованы от v7.2 (архив: `archive/prompts/PROMPT_V7.md`) и v4.1 (`archive/prompts/PROMPT_V4.md`)
@@ -21,7 +21,7 @@
 
 | Параметр | Значение |
 |---|---|
-| **Релиз** | `v0.10.1` (версии `package.json` и `web/package.json`; теги — сверять `git tag --list`) |
+| **Релиз** | `v0.11.0` (версии `package.json` и `web/package.json`; теги — сверять `git tag --list`) |
 | **HEAD** | актуальный; после S9 реализован `v0.11.0` (DOCX-шаблоны, MCP, run lease), релизный тег ещё не выставлен |
 | **Репозиторий** | `https://github.com/iilmchat/ai-workflow-builder` |
 | **Рабочий путь** | локальный клон — **зависит от машины**; брать из задания, не угадывать |
@@ -63,8 +63,8 @@
 | `v0.9.3` | Route-level code-split (774 → 141 kB), S3 presigned/streaming, enum-домены в API-контракте |
 | `v0.9.4` | S3 retry/multipart, переподпись presigned URL, env публичного бакета; миникарта, копирайт/версия, плашка истёкшей ссылки |
 | `v0.10.0` | Web Search, DOCX-генерация, safe filesystem (22 узла), Docker/GHCR, ServeStatic, `storage_key`; KI-452..455, 459, 460, 467..471 |
-| `v0.10.1` | Синхронизация версий `package.json`/`web` (0.10.1), аудит реестра KI, регистрация KI-478..480, DESIGN v0.11 |
-| `v0.10.2` | SSRF-защита узла `http` (`ALLOW_PRIVATE_IPS`, redirects/DNS), HMAC-подписи local media URL, S3 signed URL/переподпись, media cleanup TTL, `GET /runs/:id` отдаёт `nodes` (KI-450), метрики Agent в `node_runs` (KI-433), `FormData`-загрузка (KI-479); KI-412/413/415/434/451/464/472/478 |
+| 0.10.1 | Синхронизация версий package.json/web (0.10.1), аудит реестра KI, регистрация KI-478..480, DESIGN v0.11 |
+| 0.11.0 | DOCX-шаблоны, MCP Adapter (S8 API+UI), Run Lease (Heartbeat), Retry (KI-104), Agent Metrics (KI-433), History API+UI (KI-077), SafeHttpClient (SSRF), Redis Throttler, Dark Theme (KI-448) || `v0.10.2` | SSRF-защита узла `http` (`ALLOW_PRIVATE_IPS`, redirects/DNS), HMAC-подписи local media URL, S3 signed URL/переподпись, media cleanup TTL, `GET /runs/:id` отдаёт `nodes` (KI-450), метрики Agent в `node_runs` (KI-433), `FormData`-загрузка (KI-479); KI-412/413/415/434/451/464/472/478 |
 | `v0.11.0` | S0–S9: DOCX-шаблоны (API/движок/UI), MCP Adapter (клиент/адаптер/агент), Run Lease/heartbeat, env-ключи и миграции 0012/0013; закрыт KI-066, зарегистрированы KI-481..496 |
 
 ---
@@ -412,3 +412,4 @@ PDF-рендер и разбор JSON/CSV в `document_gen`/`read_file`, `overwr
 **Итог.** HEAD после S9: **1359** backend-тестов, **395** frontend, 22 типа узлов, Open High 3. Реализован `v0.11.0` (DOCX-шаблоны, MCP Adapter, Run Lease); впереди — релизный docs-гейт, срезы S10–S17 и тёмная тема.
 
 **Продолжаем.**
+
