@@ -523,39 +523,6 @@ describe('SANDBOX_* (R7.5, KI-364)', () => {
   });
 });
 
-describe('ALLOW_PRIVATE_IPS (v0.10.2, KI-478/434)', () => {
-  it('по умолчанию защита включена (false)', () => {
-    expect(NetworkSafetyEnvSchema.parse({}).ALLOW_PRIVATE_IPS).toBe(false);
-    expect(EnvSchema.parse(baseEnv).ALLOW_PRIVATE_IPS).toBe(false);
-  });
-
-  it("строго разбирает 'true'/'false', boolean и пустую строку", () => {
-    expect(
-      NetworkSafetyEnvSchema.parse({ ALLOW_PRIVATE_IPS: 'true' }).ALLOW_PRIVATE_IPS,
-    ).toBe(true);
-    expect(
-      NetworkSafetyEnvSchema.parse({ ALLOW_PRIVATE_IPS: 'false' })
-        .ALLOW_PRIVATE_IPS,
-    ).toBe(false);
-    expect(
-      NetworkSafetyEnvSchema.parse({ ALLOW_PRIVATE_IPS: true }).ALLOW_PRIVATE_IPS,
-    ).toBe(true);
-    // KI-084: пустая переменная в .env — «не задана», а не ошибка.
-    expect(
-      NetworkSafetyEnvSchema.parse({ ALLOW_PRIVATE_IPS: '' }).ALLOW_PRIVATE_IPS,
-    ).toBe(false);
-  });
-
-  it('отклоняет мусор, а не выключает защиту молча', () => {
-    expect(
-      NetworkSafetyEnvSchema.safeParse({ ALLOW_PRIVATE_IPS: 'yes' }).success,
-    ).toBe(false);
-    expect(
-      NetworkSafetyEnvSchema.safeParse({ ALLOW_PRIVATE_IPS: '1' }).success,
-    ).toBe(false);
-  });
-});
-
 /**
  * Допустимый диапазон числового env-ключа v0.11 (границы включительно).
  *
@@ -789,7 +756,7 @@ describe('Throttler env (v0.11 S5, KI-420)', () => {
   });
 });
 
-describe('HTTP_NODE_ALLOW_PRIVATE_NETWORKS (v0.11 S5, KI-434/435/478)', () => {
+describe('HTTP_NODE_ALLOW_PRIVATE_NETWORKS (v0.11 S14, KI-434/435/478)', () => {
   it('по умолчанию false — SSRF-защита http-узла включена', () => {
     expect(
       NetworkSafetyEnvSchema.parse({}).HTTP_NODE_ALLOW_PRIVATE_NETWORKS,

@@ -185,19 +185,19 @@ export function SubWorkflowNode({ id, data }: NodeProps<SubWorkflowFlowNode>) {
         )}
 
         {isOutdated && (
-          <p className="mt-1 text-[10px] font-medium text-amber-600" data-sub-workflow-outdated="">
+          <p className="mt-1 text-[10px] font-medium text-status-warning-foreground" data-sub-workflow-outdated="">
             {t('node.sub_workflow.outdated', { version: selected?.version })}
           </p>
         )}
 
         {isForeign && (
-          <p className="mt-1 text-[10px] font-medium text-red-600" data-sub-workflow-foreign="">
+          <p className="mt-1 text-[10px] font-medium text-status-danger-foreground" data-sub-workflow-foreign="">
             {t('node.sub_workflow.owner_error')}
           </p>
         )}
 
         {loadFailed && (
-          <p className="mt-1 text-[10px] text-red-600" data-sub-workflow-load-error="">
+          <p className="mt-1 text-[10px] text-status-danger-foreground" data-sub-workflow-load-error="">
             {t('node.sub_workflow.load_error')}
           </p>
         )}

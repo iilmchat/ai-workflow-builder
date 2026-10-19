@@ -3,6 +3,10 @@ import { Test } from '@nestjs/testing';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import {
+  SafeHttpClient,
+  type SafeHttpResponse,
+} from '../common/http/safe-http.client.js';
 import { NodeDataValidationException } from '../engine/errors.js';
 import { DEFAULT_EMBEDDING_DIMENSIONS } from '../llm/llm-constants.js';
 import {
@@ -104,6 +108,7 @@ async function createHarness(
   mcpPrepareAsync: ReturnType<typeof vi.fn>;
   mcpListToolsAsync: ReturnType<typeof vi.fn>;
   mcpCreateTool: ReturnType<typeof vi.fn>;
+  httpFetchAsync: ReturnType<typeof vi.fn>;
 }> {
   const generateAsync = vi.fn(
     (
@@ -175,9 +180,22 @@ async function createHarness(
       }),
   );
 
+  // v0.11 S14: `http_request` ходит через SafeHttpClient. В юнит-тесте
+  // подменяется только клиент — SSRF-логика покрыта `safe-http.client.spec.ts`.
+  const httpFetchAsync = vi.fn(() =>
+    Promise.resolve<SafeHttpResponse>({
+      status: 200,
+      ok: true,
+      headers: new Headers(),
+      body: '{"ok":true}',
+      finalUrl: 'https://93.184.216.34/weather',
+    }),
+  );
+
   const moduleRef = await Test.createTestingModule({
     providers: [
       AgentService,
+      { provide: SafeHttpClient, useValue: { fetchAsync: httpFetchAsync } },
       { provide: LlmService, useValue: { generateAsync } },
       {
         provide: LlmRegistryService,
@@ -237,29 +255,11 @@ async function createHarness(
     mcpPrepareAsync,
     mcpListToolsAsync,
     mcpCreateTool,
+    httpFetchAsync,
   };
 }
 
-/**
- * Подменяет глобальный `fetch` и возвращает мок.
- *
- * `AgentService` собирает контекст инструментов сам, поэтому подмена
- * глобального клиента — единственный способ проверить `http_request` без
- * реальной сети (и без DI-правки ради тестов).
- *
- * @param impl - реализация ответа
- * @returns мок fetch
- */
-function stubFetch(impl: () => Promise<Response>): ReturnType<typeof vi.fn> {
-  const mock = vi.fn(impl);
-
-  vi.stubGlobal('fetch', mock);
-
-  return mock;
-}
-
 afterEach(() => {
-  vi.unstubAllGlobals();
   // KI-416: адаптер трассировки — модульное состояние; тест со span'ом не
   // должен влиять на соседние.
   resetTracingAdapter();
@@ -441,15 +441,12 @@ describe('AgentService.runAgentAsync (R7.4b)', () => {
     });
   });
 
-  it('http_request работает через глобальный fetch и не трогает БД', async () => {
-    const fetchMock = stubFetch(() =>
-      Promise.resolve(new Response('{"temp":20}', { status: 200 })),
-    );
-    const { service, findWorkflowIdByRunAsync, generateAsync } =
+  it('http_request работает через SafeHttpClient и не трогает БД', async () => {
+    const { service, findWorkflowIdByRunAsync, generateAsync, httpFetchAsync } =
       await createHarness([
         {
           // Публичный IP-литерал: SSRF-проверка (KI-409) не делает DNS-запрос,
-          // поэтому юнит-тест не зависит от сети.
+          // а клиент подменён — юнит-тест не зависит от сети.
           text: '{"tool":"http_request","input":{"url":"https://93.184.216.34/weather"}}',
         },
         { text: '{"final":"20 градусов"}' },
@@ -461,7 +458,7 @@ describe('AgentService.runAgentAsync (R7.4b)', () => {
       'run-1',
     );
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(httpFetchAsync).toHaveBeenCalledTimes(1);
     expect(result.answer).toBe('20 градусов');
     // workflow_id нужен только vector/memory-инструментам.
     expect(findWorkflowIdByRunAsync).not.toHaveBeenCalled();
@@ -874,13 +871,10 @@ describe('AgentService — MCP-интеграция (v0.11 S7)', () => {
   });
 
   it('side-effect tool → AgentRunException (non-retryable), причина сохранена', async () => {
-    const fetchMock = stubFetch(() =>
-      Promise.resolve(new Response('{}', { status: 200 })),
-    );
     const providerError = new LlmProviderException('anthropic', 'rate limit', {
       retryable: true,
     });
-    const { service, generateAsync } = await createHarness([
+    const { service, generateAsync, httpFetchAsync } = await createHarness([
       {
         text:
           '{"tool":"http_request","input":{"method":"POST",' +
@@ -897,7 +891,7 @@ describe('AgentService — MCP-интеграция (v0.11 S7)', () => {
     expect(error).not.toBeInstanceOf(LlmProviderException);
     expect((error as AgentRunException).message).toContain('повтор запрещён');
     expect((error as AgentRunException).cause).toBe(providerError);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(httpFetchAsync).toHaveBeenCalledTimes(1);
     expect(generateAsync).toHaveBeenCalledTimes(2);
   });
 

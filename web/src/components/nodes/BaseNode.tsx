@@ -7,27 +7,29 @@ import type { NodeRunStatus } from '@/types/run-stream';
  *
  * Классы заданы литералами (не склейкой строк): Tailwind v4 находит их при
  * сканировании исходников, поэтому динамическая сборка имён недопустима.
+ * Сами цвета — токены темы (`--color-node-*`, KI-448): в тёмной теме узел
+ * получает тёмную заливку и светлую рамку, а не светлое пятно.
  * Пропущенный узел (`skipped`, KI-288) отличается не только цветом, но и
  * пунктиром: он визуально «выключен» — движок его не выполнял.
  */
 const STATUS_BORDER: Record<NodeRunStatus, string> = {
   pending: 'border-node-pending',
-  running: 'border-blue-500',
-  completed: 'border-green-500',
-  failed: 'border-red-500',
-  cancelled: 'border-slate-400',
-  skipped: 'border-dashed border-node-skipped',
+  running: 'border-node-border-running',
+  completed: 'border-node-border-completed',
+  failed: 'border-node-border-failed',
+  cancelled: 'border-node-border-cancelled',
+  skipped: 'border-dashed border-node-border-skipped',
 };
 
 /** Лёгкая подсветка фона по статусу — визуальный акцент без «крика». */
 const STATUS_BACKGROUND: Record<NodeRunStatus, string> = {
-  pending: 'bg-node-bg',
-  running: 'bg-blue-50',
-  completed: 'bg-green-50',
-  failed: 'bg-red-50',
-  cancelled: 'bg-node-bg',
-  // Полупрозрачный приглушённый фон: узел «погашен», но карточка читается.
-  skipped: 'bg-muted/30',
+  pending: 'bg-node-bg-pending',
+  running: 'bg-node-bg-running',
+  completed: 'bg-node-bg-completed',
+  failed: 'bg-node-bg-failed',
+  cancelled: 'bg-node-bg-cancelled',
+  // Приглушённая заливка: узел «погашен», но карточка читается.
+  skipped: 'bg-node-bg-skipped',
 };
 
 /** Бейдж-подпись в правом верхнем углу карточки (например, capability модели). */
@@ -127,7 +129,7 @@ export function BaseNode({
           aria-label={t('node.delete')}
           title={t('node.delete')}
           // nodrag: без этого клик по кнопке тащил бы узел.
-          className="nodrag ml-auto cursor-pointer rounded px-1 text-xs leading-none text-muted-foreground opacity-0 transition-opacity hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 group-hover/node:opacity-100"
+          className="nodrag ml-auto cursor-pointer rounded px-1 text-xs leading-none text-muted-foreground opacity-0 transition-opacity hover:bg-node-bg-failed hover:text-foreground focus-visible:opacity-100 group-hover/node:opacity-100"
         >
           ×
         </button>

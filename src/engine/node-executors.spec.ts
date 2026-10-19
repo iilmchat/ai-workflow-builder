@@ -2,11 +2,10 @@
  * Тесты исполнителей узлов R6.5.1 (KI-105): `http`, `condition`, `output`,
  * `compare`.
  *
- * `http` проверяется на моке `fetch` (`vi.fn()`): реальная сеть в юнит-тестах
- * запрещена — тест не должен зависеть от доступности внешнего хоста. Таймаут
- * проверяется через `AbortSignal.timeout`, поэтому мок обязан сам слушать
- * `signal` и отклоняться по `abort` — иначе `await fetch` не завершится и тест
- * повесится.
+ * `http` с v0.11 S14 ходит через `SafeHttpClient`: реальная сеть в юнит-тестах
+ * запрещена, поэтому клиент собирается с фейковым транспортом и моком DNS.
+ * Таймаут проверяется на настоящем `AbortSignal.timeout` внутри клиента —
+ * фейковый транспорт обязан слушать `signal`, иначе тест повесится.
  */
 import {
   NodeDataValidationException,
@@ -27,65 +26,86 @@ import { NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import type { GraphDto } from './dto/index.js';
+import type { Agent } from 'undici';
+import {
+  SafeHttpClient,
+  SafeHttpResponseTooLargeException,
+  type SafeHttpTransportAsync,
+  type SafeHttpTransportInit,
+  type SafeHttpTransportResponse,
+} from '../common/http/safe-http.client.js';
 import { SsrfBlockedException } from '../common/utils/network-safety.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
-
-/**
- * v0.10.2 (KI-478): узел `http` проверяет адрес до запроса, поэтому для
- * доменов нужен DNS-резолв. В юнит-тестах он подменяется: реальная сеть в
- * тестах запрещена, а `example.com` — публичный адрес, который guard
- * пропускает.
- */
-vi.mock('node:dns/promises', () => ({
-  lookup: vi.fn(() =>
-    Promise.resolve([{ address: '93.184.216.34', family: 4 }]),
-  ),
-}));
 
 /** Предельный размер тела ответа, байт (совпадает с константой исполнителя). */
 const MAX_BODY_BYTES = 1_000_000;
 
-/**
- * Подменяет глобальный `fetch` моком.
- *
- * @param implementation - реализация запроса
- * @returns мок `fetch` (для проверки аргументов вызова)
- */
-function mockFetch(
-  implementation: (url: string, init?: RequestInit) => Promise<Response>,
-): ReturnType<typeof vi.fn> {
-  const fetchMock = vi.fn(
-    (input: string | URL | Request, init?: RequestInit): Promise<Response> =>
-      implementation(
-        typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
-        init,
-      ),
-  );
+/** Ответ фейкового транспорта из строки. */
+function transportResponse(
+  status: number,
+  body = '',
+  headers: Record<string, string> = {},
+): SafeHttpTransportResponse {
+  const bytes = Buffer.from(body, 'utf8');
 
-  vi.stubGlobal('fetch', fetchMock);
-
-  return fetchMock;
-}
-
-/**
- * Создаёт успешный `Response` с заданным телом.
- *
- * @param body - текст тела ответа
- * @param status - HTTP-код ответа
- * @param headers - дополнительные заголовки
- * @returns объект ответа в форме, достаточной для исполнителя
- */
-function response(body: string, status = 200, headers: Record<string, string> = {}): Response {
   return {
     status,
     headers: new Headers(headers),
-    text: (): Promise<string> => Promise.resolve(body),
-  } as unknown as Response;
+    body: (async function* stream(): AsyncGenerator<Uint8Array> {
+      if (bytes.length > 0) {
+        yield bytes;
+      }
+    })(),
+    discardAsync: (): Promise<void> => Promise.resolve(),
+  };
+}
+
+/** Вызов фейкового транспорта. */
+interface HttpTransportCall {
+  readonly url: URL;
+  readonly init: SafeHttpTransportInit;
+  readonly dispatcher: Agent;
+}
+
+/**
+ * Собирает `SafeHttpClient` с фейковым транспортом (без сети).
+ *
+ * @param handler - что вернуть на запрос
+ * @param lookup - резолвер DNS
+ * @returns клиент и вызовы транспорта
+ */
+function createHttpClient(
+  handler: (call: HttpTransportCall) => SafeHttpTransportResponse = () =>
+    transportResponse(200, 'ok'),
+  lookup: (hostname: string) => Promise<readonly string[]> = () =>
+    Promise.resolve(['93.184.216.34']),
+): { client: SafeHttpClient; calls: HttpTransportCall[] } {
+  const calls: HttpTransportCall[] = [];
+  const transportAsync = vi.fn(
+    async (
+      url: URL,
+      init: SafeHttpTransportInit,
+      dispatcher: Agent,
+    ): Promise<SafeHttpTransportResponse> => {
+      const call: HttpTransportCall = { url, init, dispatcher };
+
+      calls.push(call);
+
+      return handler(call);
+    },
+  );
+
+  return {
+    client: new SafeHttpClient({
+      lookupAsync: lookup,
+      transportAsync: transportAsync as unknown as SafeHttpTransportAsync,
+    }),
+    calls,
+  };
 }
 
 describe('node-executors', () => {
   afterEach(() => {
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -105,108 +125,148 @@ describe('node-executors', () => {
 
   describe('executeHttpNode', () => {
     it('GET: успешный запрос отдаёт status и body', async () => {
-      const fetchMock = mockFetch(() =>
-        Promise.resolve(response('{"ok":true}', 200)),
+      const { client, calls } = createHttpClient(() =>
+        transportResponse(200, '{"ok":true}'),
       );
 
-      const result = await executeHttpNode({
-        method: 'GET',
-        url: 'https://example.com/api',
-        timeoutMs: 5000,
-      });
+      const result = await executeHttpNode(
+        { method: 'GET', url: 'https://example.com/api', timeoutMs: 5000 },
+        {},
+        client,
+      );
 
       expect(result).toEqual({ status: 200, body: '{"ok":true}' });
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-
-      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-
-      expect(url).toBe('https://example.com/api');
-      expect(init.method).toBe('GET');
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.url.href).toBe('https://example.com/api');
+      expect(calls[0]?.init.method).toBe('GET');
       // Тело не подставляется для GET: undici бросает на это TypeError.
-      expect(init.body).toBeUndefined();
-      expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect(calls[0]?.init.body).toBeUndefined();
+      expect(calls[0]?.init.signal).toBeInstanceOf(AbortSignal);
     });
 
     it('POST: передаёт заголовки и тело запроса', async () => {
-      const fetchMock = mockFetch(() => Promise.resolve(response('created', 201)));
+      const { client, calls } = createHttpClient(() =>
+        transportResponse(201, 'created'),
+      );
 
-      const result = await executeHttpNode({
-        method: 'POST',
-        url: 'https://example.com/items',
-        headers: { 'content-type': 'application/json', 'x-token': 'секрет' },
-        body: '{"name":"item"}',
-      });
+      const result = await executeHttpNode(
+        {
+          method: 'POST',
+          url: 'https://example.com/items',
+          headers: { 'content-type': 'application/json', 'x-token': 'секрет' },
+          body: '{"name":"item"}',
+        },
+        {},
+        client,
+      );
 
       expect(result).toEqual({ status: 201, body: 'created' });
-
-      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-
-      expect(init.method).toBe('POST');
-      expect(init.headers).toEqual({
+      expect(calls[0]?.init.method).toBe('POST');
+      expect(calls[0]?.init.headers).toEqual({
         'content-type': 'application/json',
         'x-token': 'секрет',
       });
-      expect(init.body).toBe('{"name":"item"}');
+      expect(calls[0]?.init.body).toBe('{"name":"item"}');
     });
 
     it('таймаут: бросает ошибку с текстом про таймаут (RULES 4.19)', async () => {
-      mockFetch(
-        (_url, init) =>
-          new Promise<Response>((_resolve, reject) => {
-            // Мок обязан уважать signal: иначе await fetch не завершится.
-            init?.signal?.addEventListener('abort', () => {
-              reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+      const neverResponds = vi.fn(
+        (
+          _url: URL,
+          init: SafeHttpTransportInit,
+        ): Promise<SafeHttpTransportResponse> =>
+          new Promise((_resolve, reject) => {
+            // Транспорт обязан уважать signal: иначе await не завершится.
+            init.signal.addEventListener('abort', () => {
+              reject(
+                new DOMException(
+                  'The operation was aborted due to timeout',
+                  'TimeoutError',
+                ),
+              );
             });
           }),
       );
+      const client = new SafeHttpClient({
+        lookupAsync: () => Promise.resolve(['93.184.216.34']),
+        transportAsync: neverResponds as unknown as SafeHttpTransportAsync,
+      });
 
       await expect(
-        executeHttpNode({ method: 'GET', url: 'https://example.com/slow', timeoutMs: 20 }),
+        executeHttpNode(
+          { method: 'GET', url: 'https://example.com/slow', timeoutMs: 20 },
+          {},
+          client,
+        ),
       ).rejects.toThrow('запрос прерван по таймауту 20 мс');
     });
 
     it('4xx не считается ошибкой узла: возвращает status без throw', async () => {
-      mockFetch(() => Promise.resolve(response('not found', 404)));
+      const { client } = createHttpClient(() =>
+        transportResponse(404, 'not found'),
+      );
 
       await expect(
-        executeHttpNode({ method: 'GET', url: 'https://example.com/missing' }),
+        executeHttpNode(
+          { method: 'GET', url: 'https://example.com/missing' },
+          {},
+          client,
+        ),
       ).resolves.toEqual({ status: 404, body: 'not found' });
     });
 
     it('KI-289: failOnHttpError=true превращает 404 в ошибку узла', async () => {
-      mockFetch(() => Promise.resolve(response('not found', 404)));
+      const { client } = createHttpClient(() =>
+        transportResponse(404, 'not found'),
+      );
 
       await expect(
-        executeHttpNode({
-          method: 'GET',
-          url: 'https://example.com/missing',
-          failOnHttpError: true,
-        }),
+        executeHttpNode(
+          {
+            method: 'GET',
+            url: 'https://example.com/missing',
+            failOnHttpError: true,
+          },
+          {},
+          client,
+        ),
       ).rejects.toThrow('HTTP 404');
     });
 
     it('KI-289: failOnHttpError=true превращает 5xx в ошибку узла', async () => {
-      mockFetch(() => Promise.resolve(response('boom', 503)));
+      const { client } = createHttpClient(() =>
+        transportResponse(503, 'boom'),
+      );
 
       await expect(
-        executeHttpNode({
-          method: 'GET',
-          url: 'https://example.com/flaky',
-          failOnHttpError: true,
-        }),
+        executeHttpNode(
+          {
+            method: 'GET',
+            url: 'https://example.com/flaky',
+            failOnHttpError: true,
+          },
+          {},
+          client,
+        ),
       ).rejects.toThrow('HTTP 503');
     });
 
     it('KI-289: текст ошибки без тела и заголовков ответа (RULES 5.9)', async () => {
       // В теле чужого ответа могут быть секреты/PII: в `node_runs.error`
       // уходит только код, тело в текст ошибки не подставляется.
-      mockFetch(() => Promise.resolve(response('secret-token-42', 500)));
+      const { client } = createHttpClient(() =>
+        transportResponse(500, 'secret-token-42'),
+      );
 
-      const error: unknown = await executeHttpNode({
-        method: 'GET',
-        url: 'https://example.com/leak',
-        failOnHttpError: true,
-      }).then(
+      const error: unknown = await executeHttpNode(
+        {
+          method: 'GET',
+          url: 'https://example.com/leak',
+          failOnHttpError: true,
+        },
+        {},
+        client,
+      ).then(
         () => null,
         (reason: unknown) => reason,
       );
@@ -217,25 +277,33 @@ describe('node-executors', () => {
     });
 
     it('KI-289: failOnHttpError=false и отсутствие поля сохраняют прежнее поведение', async () => {
-      mockFetch(() => Promise.resolve(response('denied', 403)));
+      const denied = createHttpClient(() => transportResponse(403, 'denied'));
 
       await expect(
-        executeHttpNode({
-          method: 'GET',
-          url: 'https://example.com/forbidden',
-          failOnHttpError: false,
-        }),
+        executeHttpNode(
+          {
+            method: 'GET',
+            url: 'https://example.com/forbidden',
+            failOnHttpError: false,
+          },
+          {},
+          denied.client,
+        ),
       ).resolves.toEqual({ status: 403, body: 'denied' });
 
       // Успешный ответ не падает и при failOnHttpError=true.
-      mockFetch(() => Promise.resolve(response('ok', 200)));
+      const ok = createHttpClient(() => transportResponse(200, 'ok'));
 
       await expect(
-        executeHttpNode({
-          method: 'GET',
-          url: 'https://example.com/ok',
-          failOnHttpError: true,
-        }),
+        executeHttpNode(
+          {
+            method: 'GET',
+            url: 'https://example.com/ok',
+            failOnHttpError: true,
+          },
+          {},
+          ok.client,
+        ),
       ).resolves.toEqual({ status: 200, body: 'ok' });
     });
 
@@ -249,44 +317,51 @@ describe('node-executors', () => {
       ).rejects.toThrow(NodeDataValidationException);
     });
 
-    it('обрезает тело ответа до 1 МБ', async () => {
-      mockFetch(() => Promise.resolve(response('a'.repeat(MAX_BODY_BYTES + 500))));
+    it('тело больше 1 МБ — ошибка ResponseTooLarge, а не «обрезанный» ответ', async () => {
+      // v0.11 S14: лимит тела теперь enforced клиентом (KI-025): мегабайтный
+      // ответ не попадает в jsonb, узел честно падает.
+      const { client } = createHttpClient(() =>
+        transportResponse(200, 'a'.repeat(MAX_BODY_BYTES + 500)),
+      );
 
-      const result = await executeHttpNode({
-        method: 'GET',
-        url: 'https://example.com/big',
-      });
-
-      expect(Buffer.byteLength(result.body, 'utf8')).toBe(MAX_BODY_BYTES);
-      expect(result.body).toHaveLength(MAX_BODY_BYTES);
-      expect(result.status).toBe(200);
+      await expect(
+        executeHttpNode(
+          { method: 'GET', url: 'https://example.com/big' },
+          {},
+          client,
+        ),
+      ).rejects.toBeInstanceOf(SafeHttpResponseTooLargeException);
     });
 
-    it('обрезает по границе символа и не рвёт многобайтовый UTF-8', async () => {
-      // 'ё' — 2 байта: лимит 1 000 000 нечётен, поэтому последний символ
-      // обязан быть отброшен целиком, а не разрезан пополам.
-      mockFetch(() => Promise.resolve(response('ё'.repeat(600_000))));
+    it('тело ровно по лимиту проходит и не режется', async () => {
+      const exactlyLimit = 'ё'.repeat(MAX_BODY_BYTES / 2);
+      const { client } = createHttpClient(() =>
+        transportResponse(200, exactlyLimit),
+      );
 
-      const result = await executeHttpNode({
-        method: 'GET',
-        url: 'https://example.com/cyrillic',
-      });
+      const result = await executeHttpNode(
+        { method: 'GET', url: 'https://example.com/exact' },
+        {},
+        client,
+      );
 
-      expect(result.body).toHaveLength(500_000);
       expect(Buffer.byteLength(result.body, 'utf8')).toBe(MAX_BODY_BYTES);
       expect(result.body.endsWith('ё')).toBe(true);
     });
 
     it('берёт URL из входа prompt, если data.url пуст', async () => {
-      const fetchMock = mockFetch(() => Promise.resolve(response('ok')));
+      const { client, calls } = createHttpClient(() =>
+        transportResponse(200, 'ok'),
+      );
 
       const result = await executeHttpNode(
         { method: 'GET' },
         { prompt: 'https://example.com/from-input' },
+        client,
       );
 
       expect(result).toEqual({ status: 200, body: 'ok' });
-      expect(fetchMock.mock.calls[0]?.[0]).toBe('https://example.com/from-input');
+      expect(calls[0]?.url.href).toBe('https://example.com/from-input');
     });
 
     it('падает с понятным текстом, если url не задан нигде', async () => {
@@ -312,92 +387,124 @@ describe('node-executors', () => {
     });
 
     it('KI-478: блокирует loopback-адрес и не делает сетевой вызов', async () => {
-      const fetchMock = mockFetch(() => Promise.resolve(response('ok')));
+      const { client, calls } = createHttpClient(() =>
+        transportResponse(200, 'should not happen'),
+      );
 
       await expect(
-        executeHttpNode({ method: 'GET', url: 'http://127.0.0.1:3000/admin' }),
+        executeHttpNode(
+          { method: 'GET', url: 'http://127.0.0.1:3000/admin' },
+          {},
+          client,
+        ),
       ).rejects.toBeInstanceOf(SsrfBlockedException);
 
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(calls).toHaveLength(0);
     });
 
     it('KI-478: блокирует metadata-адрес 169.254.169.254', async () => {
-      const fetchMock = mockFetch(() => Promise.resolve(response('ok')));
+      const { client, calls } = createHttpClient(() =>
+        transportResponse(200, 'should not happen'),
+      );
 
       await expect(
-        executeHttpNode({
-          method: 'GET',
-          url: 'http://169.254.169.254/latest/meta-data/',
-        }),
+        executeHttpNode(
+          {
+            method: 'GET',
+            url: 'http://169.254.169.254/latest/meta-data/',
+          },
+          {},
+          client,
+        ),
       ).rejects.toMatchObject({
         name: 'SsrfBlockedException',
         hostname: '169.254.169.254',
       });
 
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(calls).toHaveLength(0);
     });
 
-    it('KI-434: блокирует редирект на приватный адрес (redirect: manual)', async () => {
-      const fetchMock = mockFetch(() =>
-        Promise.resolve(
-          response('', 302, { location: 'http://10.0.0.5/internal' }),
-        ),
+    it('KI-434: блокирует редирект на приватный адрес', async () => {
+      const { client, calls } = createHttpClient(() =>
+        transportResponse(302, '', { location: 'http://10.0.0.5/internal' }),
       );
 
       await expect(
-        executeHttpNode({ method: 'GET', url: 'https://example.com/go' }),
+        executeHttpNode(
+          { method: 'GET', url: 'https://example.com/go' },
+          {},
+          client,
+        ),
       ).rejects.toBeInstanceOf(SsrfBlockedException);
 
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-
-      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-
-      // Без manual fetch пошёл бы по 3xx сам, минуя SSRF-проверку.
-      expect(init.redirect).toBe('manual');
+      // Приватный Location не запрашивался.
+      expect(calls).toHaveLength(1);
     });
 
     it('KI-434: идёт по безопасному редиректу и возвращает финальный ответ', async () => {
-      const fetchMock = mockFetch(() => Promise.resolve(response('')));
+      const { client, calls } = createHttpClient((call) =>
+        call.url.pathname === '/start'
+          ? transportResponse(301, '', {
+              location: 'https://example.com/final',
+            })
+          : transportResponse(200, '{"ok":true}'),
+      );
 
-      // Первый ответ — безопасный редирект, второй — финальный.
-      fetchMock
-        .mockResolvedValueOnce(
-          response('', 301, { location: 'https://example.com/final' }),
-        )
-        .mockResolvedValueOnce(response('{"ok":true}', 200));
-
-      const result = await executeHttpNode({
-        method: 'GET',
-        url: 'https://example.com/start',
-      });
+      const result = await executeHttpNode(
+        { method: 'GET', url: 'https://example.com/start' },
+        {},
+        client,
+      );
 
       expect(result).toEqual({ status: 200, body: '{"ok":true}' });
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(fetchMock.mock.calls[1]?.[0]).toBe('https://example.com/final');
+      expect(calls).toHaveLength(2);
+      expect(calls[1]?.url.href).toBe('https://example.com/final');
     });
 
-    it('ALLOW_PRIVATE_IPS: опция пропускает приватный адрес', async () => {
-      const fetchMock = mockFetch(() => Promise.resolve(response('ok')));
+    it('HTTP_NODE_ALLOW_PRIVATE_NETWORKS: флаг пропускает приватный адрес', async () => {
+      const { client, calls } = createHttpClient(() =>
+        transportResponse(200, 'ok'),
+      );
 
       const result = await executeHttpNode(
         { method: 'GET', url: 'http://127.0.0.1:1234/v1/models' },
         {},
-        { allowPrivateIps: true },
+        client,
+        { allowPrivateNetworks: true },
       );
 
       expect(result).toEqual({ status: 200, body: 'ok' });
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(calls).toHaveLength(1);
     });
 
-    it('добавляет к ошибке источник редиректа (диагностика node_runs)', async () => {
-      mockFetch(() =>
-        Promise.resolve(
-          response('', 307, { location: 'http://192.168.1.10/secret' }),
-        ),
+    it('даже при allowPrivateNetworks metadata-адрес остаётся заблокированным', async () => {
+      const { client, calls } = createHttpClient(() =>
+        transportResponse(200, 'should not happen'),
       );
 
       await expect(
-        executeHttpNode({ method: 'GET', url: 'https://example.com/go' }),
+        executeHttpNode(
+          { method: 'GET', url: 'http://169.254.169.254/latest/meta-data/' },
+          {},
+          client,
+          { allowPrivateNetworks: true },
+        ),
+      ).rejects.toBeInstanceOf(SsrfBlockedException);
+
+      expect(calls).toHaveLength(0);
+    });
+
+    it('добавляет к ошибке источник редиректа (диагностика node_runs)', async () => {
+      const { client } = createHttpClient(() =>
+        transportResponse(307, '', { location: 'http://192.168.1.10/secret' }),
+      );
+
+      await expect(
+        executeHttpNode(
+          { method: 'GET', url: 'https://example.com/go' },
+          {},
+          client,
+        ),
       ).rejects.toMatchObject({
         name: 'SsrfBlockedException',
         hostname: '192.168.1.10',
@@ -405,7 +512,6 @@ describe('node-executors', () => {
       });
     });
   });
-
   describe('executeConditionNode', () => {
     /** Песочница с включённым режимом (R7.5): реальный QuickJS-WASM. */
     let sandboxRunner: QuickJsRunnerService;

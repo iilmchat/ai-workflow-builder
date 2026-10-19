@@ -17,6 +17,9 @@ import {
 // v0.10.2 (KI-472): единый источник HTTP-префиксов API — общий `api-prefixes.json`
 // с frontend/Vite. Локального списка здесь больше нет.
 import { API_ROUTE_PATTERN } from './common/api-prefixes.js';
+// v0.11 S15 (KI-420): общие счётчики rate limit между инстансами.
+import { RedisThrottlerModule } from './common/throttler/redis-throttler.module.js';
+import { RedisThrottlerStorage } from './common/throttler/redis-throttler.storage.js';
 import { validateEnv } from './config/env.schema.js';
 import { DbModule } from './db/db.module.js';
 // v0.10 S6: генерация документов (DocumentService).
@@ -86,15 +89,29 @@ const WEB_DIST_PATH = join(
     }),
     // KI-206/KI-234: HTTP rate limiting. Общий лимит — предохранитель от флуда;
     // строгие лимиты на login/share заданы декораторами `@Throttle` в
-    // контроллерах. Хранилище — in-memory (KI-420): при нескольких
-    // backend-инстансах счётчики не общие.
-    ThrottlerModule.forRoot([
-      {
-        name: 'default',
-        ttl: HTTP_THROTTLE_TTL_MS,
-        limit: HTTP_THROTTLE_DEFAULT_LIMIT,
-      },
-    ]),
+    // контроллерах. v0.11 S15 (KI-420): по умолчанию счётчики — в Redis, поэтому
+    // несколько backend-инстансов делят один лимит. `THROTTLER_STORAGE=memory` —
+    // аварийный/тестовый режим (прежнее поведение).
+    ThrottlerModule.forRootAsync({
+      imports: [RedisModule, RedisThrottlerModule],
+      inject: [ConfigService, RedisThrottlerStorage],
+      useFactory: (
+        config: ConfigService,
+        storage: RedisThrottlerStorage,
+      ) => ({
+        throttlers: [
+          {
+            name: 'default',
+            ttl: HTTP_THROTTLE_TTL_MS,
+            limit: HTTP_THROTTLE_DEFAULT_LIMIT,
+          },
+        ],
+        // undefined → `@nestjs/throttler` создаст in-memory ThrottlerStorageService.
+        ...(config.get<string>('THROTTLER_STORAGE') === 'memory'
+          ? {}
+          : { storage }),
+      }),
+    }),
     // BullMQ — корневая конфигурация подключения к Redis через ConfigService,
     // без хардкода URL (RULES 4.9). Очереди регистрируют фича-модули.
     BullModule.forRootAsync({

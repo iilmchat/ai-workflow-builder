@@ -12,6 +12,7 @@
  * только типовый, поэтому runtime-цикла между модулями нет.
  */
 import type { ZodType } from 'zod';
+import type { SafeHttpClient } from '../common/http/safe-http.client.js';
 import type { LlmUsage } from '../llm/llm-provider.interface.js';
 import type { McpToolRef } from '../mcp/mcp.types.js';
 import type {
@@ -215,28 +216,18 @@ export interface AgentToolContext {
       input: unknown,
     ): Promise<{ result: unknown; error?: string }>;
   };
-  /** HTTP-клиент для `http_request` (в продакшене — глобальный `fetch`). */
-  readonly fetchAsync: typeof fetch;
   /**
-   * Резолвер DNS для проверки SSRF (KI-409).
+   * Безопасный HTTP-клиент для инструмента `http_request` (v0.11 S14,
+   * DESIGN § 3.5.1).
    *
-   * Инструмент `http_request` обязан проверить **фактический** адрес после
-   * резолва: строка `https://internal.example` может указывать на
-   * `10.0.0.5`. В продакшене — `dns.lookup` (`defaultDnsLookupAsync` в
-   * `common/utils/network-safety.ts`), в тестах — мок, чтобы не ходить в сеть.
-   *
-   * Отсутствие поля — «использовать реальный `dns.lookup`»: контракт остаётся
-   * обратно совместимым для тестов и альтернативных реализаций.
+   * Заменяет прежние `fetchAsync`/`dnsLookupAsync`/`allowPrivateIps`: весь
+   * SSRF-путь (ручной DNS-резолв, pinning IP, `redirect: 'manual'`, лимит тела)
+   * живёт в {@link SafeHttpClient}. Инструмент агента **всегда** блокирует
+   * приватные адреса — флаг `HTTP_NODE_ALLOW_PRIVATE_NETWORKS` относится только
+   * к узлу `http` и сюда не передаётся (LLM не должен ходить во внутреннюю
+   * сеть).
    */
-  readonly dnsLookupAsync?: (hostname: string) => Promise<readonly string[]>;
-  /**
-   * Пропускать ли приватные/локальные адреса в `http_request` (v0.10.2).
-   *
-   * Читается из env `ALLOW_PRIVATE_IPS` (default `false`). `true` — осознанное
-   * выключение SSRF-защиты для локальной разработки/тестов; отсутствие поля
-   * трактуется как `false` (fail closed).
-   */
-  readonly allowPrivateIps?: boolean;
+  readonly httpClient: SafeHttpClient;
 }
 
 /**

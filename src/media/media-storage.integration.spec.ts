@@ -11,6 +11,7 @@ import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DRIZZLE, type Database } from '../db/db.module.js';
+import { SafeHttpClient } from '../common/http/safe-http.client.js';
 import * as schema from '../db/schema.js';
 import { nodeRuns, workflowRuns, workflows } from '../db/schema.js';
 import { AgentService } from '../agent/agent.service.js';
@@ -192,6 +193,11 @@ describe.skipIf(!process.env.DATABASE_URL)(
           EngineService,
           MediaNodeExecutor,
           { provide: DRIZZLE, useValue: dbHandle },
+          // v0.11 S14: HTTP-клиент узла `http` в этом графе не используется.
+          {
+            provide: SafeHttpClient,
+            useValue: { fetchAsync: vi.fn() },
+          },
           // v0.11 S9 (KI-066): движок запускает heartbeat аренды. В интеграции
           // проверяется media-пайплайн, поэтому достаточно заглушки.
           {

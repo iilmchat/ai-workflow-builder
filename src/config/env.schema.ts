@@ -285,40 +285,27 @@ export type AgentEnv = z.infer<typeof AgentEnvSchema>;
 /**
  * Zod-схема сетевой безопасности исходящих HTTP-запросов (v0.10.2, v0.11).
  *
- * `ALLOW_PRIVATE_IPS` — аварийный переключатель SSRF-защиты узла `http` и
- * инструмента агента `http_request` (KI-478/434). По умолчанию `false`:
- * приватные, loopback и link-local адреса блокируются, редиректы на них —
- * тоже. `true` нужен только для локальной разработки/тестов (LM Studio,
- * внутренние сервисы); в prod-подобных окружениях он не запрещён схемой, но
- * выключает защиту осознанно.
- *
- * v0.11 S5 добавляет `HTTP_NODE_ALLOW_PRIVATE_NETWORKS` — отдельный флаг
- * **только** для узла `http` (см. JSDoc поля): выключать защиту у инструмента
- * агента ради внутренних URL в графе не требуется.
+ * v0.11 S14 (KI-434/435/478) свёл сетевой путь к одному `SafeHttpClient`:
+ * `http_request` агента **всегда** блокирует приватные адреса, а узлу `http`
+ * доверенная инсталляция может разрешить внутренние сети отдельным флагом
+ * {@link NetworkSafetyEnvSchema.shape.HTTP_NODE_ALLOW_PRIVATE_NETWORKS}.
+ * Прежний `ALLOW_PRIVATE_IPS` (v0.10.2) удалён: он отключал защиту сразу у
+ * обоих потребителей, включая инструмент агента, и противоречил DESIGN § 3.5.1.
  *
  * Разбор строгий, как у `SANDBOX_ENABLED`/`PGVECTOR_ENABLED` (RULES 4.35):
  * `z.coerce.boolean()` превратил бы строку `'false'` в `true`, и защита
  * выключилась бы «сама».
  */
 export const NetworkSafetyEnvSchema = z.object({
-  /** Пропускать ли приватные IP в исходящих HTTP-запросах (default false). */
-  ALLOW_PRIVATE_IPS: z
-    .preprocess(
-      emptyToUndefined,
-      z
-        .union([z.boolean(), z.enum(['true', 'false'])])
-        .transform((value) => value === true || value === 'true')
-        .optional(),
-    )
-    .default(false),
   /**
-   * Пропускать ли приватные сети **только** узлу `http` (v0.11 S5,
+   * Пропускать ли приватные сети **только** узлу `http` (v0.11 S14,
    * KI-434/435/478, default false).
    *
-   * Отдельный от {@link ALLOW_PRIVATE_IPS} флаг: `http_request` агента и
-   * `http`-узел — разные векторы SSRF, и выключать защиту у инструмента агента
-   * ради внутренних URL в графе не нужно. `true` — только для доверенного
-   * self-hosted (DESIGN § 3.5.1, § 4.3).
+   * `http_request` агента и `http`-узел — разные векторы SSRF: выключать защиту
+   * у инструмента агента ради внутренних URL в графе не нужно. `true` — только
+   * для доверенного self-hosted (DESIGN § 3.5.1, § 4.3). Metadata-алиасы
+   * (`169.254.169.254`, `metadata.google.internal`) остаются запрещёнными и при
+   * `true`: это чужие instance-credentials, а не «внутренний сервис».
    *
    * Разбор строгий, как у `MCP_ENABLED` (RULES 4.35): `z.coerce.boolean()`
    * превратил бы строку `'false'` в `true` и выключил защиту «сама». Пустая
@@ -1045,8 +1032,8 @@ export const EnvSchema = z.object({
   ...VectorEnvSchema.shape,
   // Web-search-провайдер: ключ Tavily и выбор провайдера (v0.10 S1).
   ...WebSearchEnvSchema.shape,
-  // v0.10.2: SSRF-защита исходящих HTTP-запросов (ALLOW_PRIVATE_IPS) +
-  // отдельный флаг http-узла (v0.11 S5, HTTP_NODE_ALLOW_PRIVATE_NETWORKS).
+  // v0.11 S14: SSRF-флаг http-узла (HTTP_NODE_ALLOW_PRIVATE_NETWORKS);
+  // `http_request` агента всегда блокирует приватные адреса.
   ...NetworkSafetyEnvSchema.shape,
   // v0.11 S0: лимиты DOCX-шаблонов document_gen (DESIGN § 3.1.9).
   ...DocumentTemplateEnvSchema.shape,

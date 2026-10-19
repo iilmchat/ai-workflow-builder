@@ -216,11 +216,11 @@ export function AudioGenNode({ id, data }: NodeProps<AudioGenFlowNode>) {
 
         <div className="mt-2">
           {status === 'running' ? (
-            <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-blue-300 bg-blue-50 px-2 text-center text-[10px] text-blue-600">
+            <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-node-border-running bg-node-bg-running px-2 text-center text-[10px] text-foreground">
               {t('node.audio.generating')}
             </div>
           ) : status === 'failed' ? (
-            <div className="flex min-h-20 items-center justify-center rounded-lg border border-red-200 bg-red-50 px-2 text-center text-[10px] text-red-600">
+            <div className="flex min-h-20 items-center justify-center rounded-lg border border-node-border-failed bg-node-bg-failed px-2 text-center text-[10px] text-foreground">
               {t('node.audio.error')}
             </div>
           ) : mediaSource.expired ? (
@@ -233,7 +233,7 @@ export function AudioGenNode({ id, data }: NodeProps<AudioGenFlowNode>) {
               className="w-full"
             />
           ) : mediaSource.invalid ? (
-            <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-amber-300 px-2 text-center text-[10px] text-amber-600">
+            <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-status-warning-border px-2 text-center text-[10px] text-status-warning-foreground">
               {t('node.image.invalid_url')}
             </div>
           ) : (

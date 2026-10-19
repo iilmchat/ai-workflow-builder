@@ -1,6 +1,11 @@
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  SafeHttpClient,
+  type SafeHttpRequest,
+  type SafeHttpResponse,
+} from '../common/http/safe-http.client.js';
 import type { LlmGenerateResult } from '../llm/llm-provider.interface.js';
 import { LlmRegistryService } from '../llm/llm-registry.service.js';
 import { LlmService } from '../llm/llm.service.js';
@@ -12,18 +17,14 @@ import { VectorStoreService } from '../vector/vector-store.service.js';
 import { AgentService } from './agent.service.js';
 import type { AgentNodeData } from './agent.types.js';
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
-
 /**
  * Интеграционный тест агента (R7.4b, DESIGN v0.9 § 3.4).
  *
  * В отличие от юнитов `agent.service.spec.ts`, здесь не мокаются ни реестр
  * инструментов, ни парсер, ни транскрипт: собирается настоящий `AgentService`
  * с настоящими инструментами, подменены только **внешние границы** — ответ
- * модели (сеть провайдера) и `fetch` (HTTP-инструмент). Сценарий — два шага,
- * как требует DESIGN: `http_request` и `final`.
+ * модели (сеть провайдера) и `SafeHttpClient` (HTTP-инструмент, v0.11 S14).
+ * Сценарий — два шага, как требует DESIGN: `http_request` и `final`.
  */
 describe('AgentService — интеграция: http_request → final (R7.4b)', () => {
   it('проходит полный цикл и доносит тело HTTP-ответа до модели', async () => {
@@ -49,18 +50,23 @@ describe('AgentService — интеграция: http_request → final (R7.4b)'
         });
       },
     );
-    const fetchMock = vi.fn(
-      (_url: string, _init?: RequestInit): Promise<Response> =>
-        Promise.resolve(
-          new Response('{"city":"Москва","temp":20}', { status: 200 }),
-        ),
+    // v0.11 S14: HTTP-инструмент ходит через SafeHttpClient. Подменяем только
+    // его — SSRF-логика покрыта `safe-http.client.spec.ts`.
+    const httpFetchAsync = vi.fn(
+      (_request: SafeHttpRequest): Promise<SafeHttpResponse> =>
+        Promise.resolve({
+          status: 200,
+          ok: true,
+          headers: new Headers(),
+          body: '{"city":"Москва","temp":20}',
+          finalUrl: 'https://93.184.216.34/weather',
+        }),
     );
-
-    vi.stubGlobal('fetch', fetchMock);
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         AgentService,
+        { provide: SafeHttpClient, useValue: { fetchAsync: httpFetchAsync } },
         { provide: LlmService, useValue: { generateAsync } },
         {
           provide: LlmRegistryService,
@@ -162,8 +168,10 @@ describe('AgentService — интеграция: http_request → final (R7.4b)'
     ]);
 
     // Внешняя граница: ровно один HTTP-запрос на URL из ответа модели.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://93.184.216.34/weather');
+    expect(httpFetchAsync).toHaveBeenCalledTimes(1);
+    expect(httpFetchAsync.mock.calls[0]?.[0].url).toBe(
+      'https://93.184.216.34/weather',
+    );
 
     // Транскрипт: системная инструкция пользователя и протокол доехали до
     // модели, а тело HTTP-ответа — до второй итерации.

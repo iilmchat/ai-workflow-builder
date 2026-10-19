@@ -19,6 +19,24 @@
 
 ### Added
 
+- **Redis-хранилище Throttler (v0.11 S15, DESIGN § 3.5.2, KI-420)** ([отчёт](development/reports/v0.11.0/S14-S15-security-infra.md)):
+  `RedisThrottlerStorage` (`src/common/throttler/redis-throttler.storage.ts`) —
+  `ThrottlerStorage` на отдельном fail-fast соединении (`duplicate()` с
+  `maxRetriesPerRequest: 1`, `enableOfflineQueue: false`), атомарный `EVAL`
+  Lua-скрипта, ключ `${THROTTLER_KEY_PREFIX}:<throttler>:<tracker>`, fallback на
+  `ThrottlerStorageService` при недоступном Redis (warn не чаще раза в минуту),
+  `onApplicationShutdown` → `quit()`. `AppModule` собирает
+  `ThrottlerModule.forRootAsync`; `THROTTLER_STORAGE=memory` — аварийный и
+  тестовый режим.
+- **Тёмная тема — семантические токены статусов узлов (v0.11 S16, DESIGN § 2.8/§ 3.6, KI-448)** ([отчёт](development/reports/v0.11.0/S16-dark-theme.md)):
+  в `web/src/styles/theme.css` (`@theme` + `.dark`) добавлены
+  `--color-node-bg-pending/-running/-completed/-failed/-cancelled/-skipped` и
+  `--color-node-border-running/-completed/-failed/-cancelled/-skipped`,
+  а также `--color-status-info/success/danger/warning-foreground` и
+  `--color-status-warning-bg/-border` для статусного текста и предупреждающих
+  плашек. Утилиты `bg-node-bg-*`/`border-node-border-*`/`text-status-*` —
+  литеральные классы (Tailwind v4 сканирует исходники, RULES 4.32), но цвет
+  берут из переменной, поэтому переключаются вместе с `.dark`.
 - **История запусков — API и восстановление после F5 (v0.11 S12+S13, DESIGN § 3.4.2/§ 3.4.3, KI-077)** ([отчёт](development/reports/v0.11.0/S12-S13-history.md)):
   новый `NodeRunSnapshotMapper` (`src/runs/node-run-snapshot.mapper.ts`) — единый
   маппер `node_runs` для SSE-снимка и `GET /runs/:id/nodes` (переподпись
@@ -109,6 +127,29 @@
 
 ### Changed
 
+- **SSRF-флаги и лимит тела узла `http` (v0.11 S14, DESIGN § 3.5.1, KI-434/435/478).**
+  `ALLOW_PRIVATE_IPS` удалён из `EnvSchema` и `.env.example`: он отключал
+  защиту сразу у узла `http` и у инструмента агента, что противоречит
+  DESIGN § 3.5.1. Приватные сети для узла `http` разрешает только
+  `HTTP_NODE_ALLOW_PRIVATE_NETWORKS=true`; `http_request` не отключается.
+- **Throttler по умолчанию на Redis (v0.11 S15, KI-420).** `AppModule` собирает
+  `ThrottlerModule.forRootAsync` с `RedisThrottlerStorage`: несколько
+  backend-инстансов делят один лимит. `THROTTLER_STORAGE=memory` возвращает
+  прежнее поведение (счётчики по инстансу).
+- **Статусы узлов и медиа-плейсхолдеры переведены на токены темы (v0.11 S16, DESIGN § 3.6, KI-448)** ([отчёт](development/reports/v0.11.0/S16-dark-theme.md)):
+  `BaseNode` (`STATUS_BORDER`/`STATUS_BACKGROUND`) больше не использует
+  `bg-blue-50`/`bg-green-50`/`bg-red-50`/`border-*-500`; `pending`…`skipped`
+  получают токены темы, кнопка удаления — `hover:bg-node-bg-failed
+  hover:text-foreground`. Тот же аудит: кнопка скачивания DOCX
+  (`DocumentGenNode`) — `bg-node-bg-completed`/`border-node-border-completed`/
+  `text-foreground`; плейсхолдеры `running`/`failed` в `ImageGen`, `ImageTool`,
+  `VideoGen`, `AudioGen`, `MusicGen` — `bg-node-bg-running`/`bg-node-bg-failed`
+  + `text-foreground`; плейсхолдер невалидной ссылки и плашка отсутствующих
+  переменных шаблона — `--color-status-warning-*`; статусный текст
+  `WriteFileNode`, `WebSearchNode`, `SubWorkflowNode`, `ImageToolNode` и
+  `RunResultPanel` — `text-status-*-foreground` (иначе `text-green-700`/
+  `text-red-700` на тёмном фоне ниже AA). Кнопка удаления `CommentNode` — та же
+  пара ховера, что в `BaseNode`.
 - **`GET /runs/:id` больше не отдаёт `nodes` (v0.11 S12, DESIGN § 3.4.2, KI-077).**
   Поле было добавлено в v0.10.2 (KI-450) и дублировало SSE-снимок; теперь
   история узлов приходит из `GET /runs/:id/nodes` — массива `NodeRunSnapshot`
@@ -119,6 +160,15 @@
 
 ### Fixed
 
+- **KI-292** — `nest build` копирует JSON-шаблоны в `dist/templates`: в
+  `nest-cli.json` объявлены `assets` (`templates/**`), Docker-обход
+  `COPY --from=builder /app/src/templates` удалён, CI проверяет
+  `test -f dist/templates/text-llm.json`; `TemplateLoaderService` считает
+  `dist/templates` основным путём, фолбэк на `<repo>/src/templates` остаётся для
+  `tsx`/dev.
+- **KI-448** — тёмная тема: светлые фоны статусных узлов заменены токенами
+  темы; в `.dark` карточки получают тёмные заливки и светлые рамки, контраст
+  текста статусов поднят выше AA (проверено CDP-смоуком, 14/14).
 - **Повтор узлов при временных ошибках media/LLM (v0.11 S10, DESIGN § 3.3.2, KI-104)** ([отчёт](development/reports/v0.11.0/S10-S11-retry-metrics.md)):
   структурный `RetryableProviderError` + `isRetryableProviderError`
   (`src/common/errors/retryable-provider.error.ts`); движок проверяет
@@ -145,17 +195,26 @@
 
 ### Security
 
-- **SSRF-защита (KI-478, KI-434):** единый `src/common/utils/network-safety.ts`
-  для узла `http` и tool'а `http_request`: блокировка приватных, loopback,
-  link-local (включая metadata `169.254.169.254`) и служебных IPv4/IPv6,
-  DNS-резолв с проверкой всех адресов, `redirect: 'manual'` с повторной
-  проверкой каждого `Location` и лимитом хопов. Защита выключается только
-  явно — `ALLOW_PRIVATE_IPS=true` (default `false`, строгий разбор строки).
-  DNS rebinding (KI-435) остаётся открытым: без pinning IP на уровне
-  HTTP-клиента риск не закрыть.
+- **`SafeHttpClient` — SSRF, DNS rebinding и redirect guard (v0.11 S14, DESIGN § 3.5.1, KI-434/435/478)** ([отчёт](development/reports/v0.11.0/S14-S15-security-infra.md)):
+  новый `src/common/http/safe-http.client.ts` на `undici@8`: **один**
+  `dns.lookup` с проверкой всех адресов, денлист приватных/локальных/metadata
+  имён и IP (включая decimal/hex формы), pinning выбранного IP через
+  `Agent({ connect: { lookup } })` (TLS SNI и `Host` остаются исходными),
+  `redirect: 'manual'` с перепроверкой каждого `Location` относительно текущего
+  URL (лимит 5 хопов), `AbortSignal.any([signal, timeout])`, потоковый лимит
+  тела 1 МБ. Узел `http` и `http_request` агента переведены на клиент;
+  `http_request` **всегда** блокирует приватные адреса, узлу `http` приватные
+  сети разрешает только `HTTP_NODE_ALLOW_PRIVATE_NETWORKS=true`
+  (metadata-алиасы остаются в блоке и тогда). Прежние
+  `fetchWithSsrfGuardAsync`/`assertPublicHttpUrlAsync` удалены — SSRF-путь один.
 
 ### Docs
 
+- **Тёмная тема (v0.11 S16):** отчёт [S16-dark-theme.md](development/reports/v0.11.0/S16-dark-theme.md);
+  KI-448 переведён в `Fixed`, зарегистрированы KI-509 (бейджи TopBar/LLMNode —
+  светлые плашки), KI-510 (Toast/модалки/логин — светлые литералы), KI-511
+  (`dark:` не привязан к классу `.dark`) и KI-512 (рамка `pending`-узла в
+  тёмной теме, 1.72:1). Сводка реестра пересчитана grep'ом: 500 записей.
 - **Аудит реестра KI (2026-10-19):** закрыто 12 устаревших KI из аудита —
   9 переведены в `Fixed` (KI-118, 361, 363, 366, 371, 373, 382, 456, 238)
   и 3 — в `Won't Fix` (KI-233, 457, 401). Дополнительно KI-196 разделён:

@@ -57,6 +57,29 @@
   --color-node-skipped: theme(colors.slate.400);
 
   /*
+   * Статусные поверхности узлов (KI-448, DESIGN v0.11 § 3.6).
+   *
+   * До S16 фон/рамку статуса в `BaseNode` задавали литералы Tailwind
+   * (`bg-blue-50`, `border-green-500`): в тёмной теме такие узлы оставались
+   * светлыми пятнами. Значения объявлены отдельными переменными в @theme и
+   * переопределены в `.dark` — утилиты `bg-node-bg-*` / `border-node-border-*`
+   * остаются литеральными классами (Tailwind v4 сканирует исходники, RULES 4.32),
+   * а цвет приходит из переменной и меняется вместе с темой.
+   */
+  --color-node-bg-pending: theme(colors.white);
+  --color-node-bg-running: theme(colors.blue.50);
+  --color-node-bg-completed: theme(colors.green.50);
+  --color-node-bg-failed: theme(colors.red.50);
+  --color-node-bg-cancelled: theme(colors.slate.100);
+  --color-node-bg-skipped: theme(colors.slate.100);
+
+  --color-node-border-running: theme(colors.blue.500);
+  --color-node-border-completed: theme(colors.green.500);
+  --color-node-border-failed: theme(colors.red.500);
+  --color-node-border-cancelled: theme(colors.slate.400);
+  --color-node-border-skipped: theme(colors.slate.400);
+
+  /*
    * Узел-комментарий (KI-187): «бумажный» стикер, отличимый от карточек данных.
    * Объявлен в @theme, чтобы значение было готовой переменной, а не
    * color-mix() со ссылкой на тему Tailwind — RULES 4.32 (KI-134).
@@ -64,6 +87,23 @@
   --color-comment-bg: theme(colors.amber.50);
   --color-comment-border: theme(colors.amber.300);
   --color-comment-foreground: theme(colors.amber.950);
+
+  /*
+   * Текст статусов и предупреждающие поверхности (S16, KI-448).
+   *
+   * Второй слой того же аудита: `text-green-700`/`text-red-700` в теле узлов и
+   * панели результата на тёмном фоне дают контраст ~2:1 — ниже AA. `dark:`-
+   * утилиты здесь не годятся: вариант `dark` в Tailwind v4 по умолчанию
+   * привязан к `prefers-color-scheme`, а тема переключается классом `.dark`
+   * (своей custom-variant в проекте нет). Поэтому цвета — тоже токены,
+   * переопределяемые в `.dark`.
+   */
+  --color-status-info-foreground: theme(colors.blue.700);
+  --color-status-success-foreground: theme(colors.green.700);
+  --color-status-danger-foreground: theme(colors.red.700);
+  --color-status-warning-foreground: theme(colors.amber.800);
+  --color-status-warning-bg: theme(colors.amber.50);
+  --color-status-warning-border: theme(colors.amber.300);
 
   /*
    * Тень карточек и панелей: одна утилита shadow-node на обе темы.
@@ -103,6 +143,28 @@
   --color-node-failed: theme(colors.red.500);
   /* KI-288: в тёмной теме приглушённый серый читается на slate-900. */
   --color-node-skipped: theme(colors.slate.500);
+
+  /* KI-448: статусные поверхности узлов — тёмные заливки и светлые рамки. */
+  --color-node-bg-pending: theme(colors.slate.900);
+  --color-node-bg-running: theme(colors.blue.950);
+  --color-node-bg-completed: theme(colors.green.950);
+  --color-node-bg-failed: theme(colors.red.950);
+  --color-node-bg-cancelled: theme(colors.slate.800);
+  --color-node-bg-skipped: theme(colors.slate.800);
+
+  --color-node-border-running: theme(colors.blue.400);
+  --color-node-border-completed: theme(colors.green.400);
+  --color-node-border-failed: theme(colors.red.400);
+  --color-node-border-cancelled: theme(colors.slate.500);
+  --color-node-border-skipped: theme(colors.slate.500);
+
+  /* S16: светлые оттенки статусного текста на тёмном фоне нечитаемы. */
+  --color-status-info-foreground: theme(colors.blue.300);
+  --color-status-success-foreground: theme(colors.green.300);
+  --color-status-danger-foreground: theme(colors.red.300);
+  --color-status-warning-foreground: theme(colors.amber.200);
+  --color-status-warning-bg: theme(colors.amber.950);
+  --color-status-warning-border: theme(colors.amber.700);
 
   /* KI-187: в тёмной теме стикер — приглушённый янтарный, текст светлый. */
   --color-comment-bg: theme(colors.amber.950);

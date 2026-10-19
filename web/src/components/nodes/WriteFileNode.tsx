@@ -177,7 +177,7 @@ export function WriteFileNode({ id, data }: NodeProps<WriteFileFlowNode>) {
 
         {saved ? (
           <p
-            className="mt-2 text-[9px] text-green-700"
+            className="mt-2 text-[9px] text-status-success-foreground"
             data-write-file-saved=""
           >
             {t('node.write_file.saved', { path: savedPath })}
@@ -187,7 +187,7 @@ export function WriteFileNode({ id, data }: NodeProps<WriteFileFlowNode>) {
             {t('node.write_file.saving')}
           </p>
         ) : status === 'failed' ? (
-          <p className="mt-2 text-[9px] text-red-600" data-write-file-failed="">
+          <p className="mt-2 text-[9px] text-status-danger-foreground" data-write-file-failed="">
             {t('node.write_file.failed')}
           </p>
         ) : (

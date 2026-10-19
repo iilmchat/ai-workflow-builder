@@ -145,7 +145,7 @@ export function WebSearchNode({ id, data }: NodeProps<WebSearchFlowNode>) {
                       target="_blank"
                       rel="noreferrer"
                       title={result.url}
-                      className="nodrag block truncate text-[10px] font-medium text-blue-600 hover:underline"
+                      className="nodrag block truncate text-[10px] font-medium text-status-info-foreground hover:underline"
                     >
                       {result.title.trim() || result.url}
                     </a>

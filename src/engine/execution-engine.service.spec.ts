@@ -1,6 +1,10 @@
 import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { Param } from 'drizzle-orm';
+import {
+  SafeHttpClient,
+  type SafeHttpResponse,
+} from '../common/http/safe-http.client.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { workflowRuns, type RunStatus } from '../db/schema.js';
 import { AgentService } from '../agent/agent.service.js';
@@ -30,17 +34,6 @@ import { WorkflowService } from '../workflow/workflow.service.js';
 import { WEB_SEARCH_PROVIDER } from '../web-search/web-search.module.js';
 import { UnsupportedNodeTypeException, type SubWorkflowRecord } from './node-executors.js';
 import { RetryableNodeException, VectorDisabledException } from './errors.js';
-
-/**
- * v0.10.2 (KI-478): узел `http` проверяет адрес (SSRF) и для доменов резолвит
- * DNS. В тестах резолвер подменён: реальная сеть в юнит-тестах запрещена,
- * адрес публичный, guard его пропускает.
- */
-vi.mock('node:dns/promises', () => ({
-  lookup: vi.fn(() =>
-    Promise.resolve([{ address: '93.184.216.34', family: 4 }]),
-  ),
-}));
 
 /** Стабильный uuid запуска. */
 const RUN_ID = '22222222-2222-4222-8222-222222222222';
@@ -360,6 +353,8 @@ describe('ExecutionEngineService', () => {
   /** v0.11 S9: проводка heartbeat аренды запуска (RunLeaseService). */
   let leaseStart: ReturnType<typeof vi.fn>;
   let leaseStop: ReturnType<typeof vi.fn>;
+  /** v0.11 S14: HTTP-клиент узла `http` (в тестах — фейк без сети). */
+  let httpFetchAsync: ReturnType<typeof vi.fn>;
   let fake: ReturnType<typeof createFakeDb>;
   /** Окружение для `ConfigService`-заглушки (изменяется в отдельных тестах). */
   let envConfig: Record<string, unknown>;
@@ -523,6 +518,17 @@ describe('ExecutionEngineService', () => {
     // что движок запускает его после markRunRunningAsync и гасит в finally.
     leaseStart = vi.fn(() => Promise.resolve());
     leaseStop = vi.fn();
+    // v0.11 S14: узел `http` ходит через SafeHttpClient. По умолчанию —
+    // успешный ответ; тесты KI-478/289 переопределяют реализацию.
+    httpFetchAsync = vi.fn(() =>
+      Promise.resolve<SafeHttpResponse>({
+        status: 200,
+        ok: true,
+        headers: new Headers(),
+        body: '{"ip":"127.0.0.1"}',
+        finalUrl: 'https://example.com/get',
+      }),
+    );
     envConfig = {
       SANDBOX_ENABLED: true,
       SANDBOX_TIMEOUT_MS: 100,
@@ -602,6 +608,8 @@ describe('ExecutionEngineService', () => {
             writeFileAsync: vi.fn(),
           },
         },
+        // v0.11 S14: безопасный HTTP-клиент узла `http` — фейк без сети.
+        { provide: SafeHttpClient, useValue: { fetchAsync: httpFetchAsync } },
         // R6.7 (KI-200): источник подграфов для узла sub_workflow.
         { provide: WorkflowService, useValue: { findOneAsync: findWorkflow } },
         // R7.4a (KI-128): vector/memory-узлы. В юнит-тестах движка они не
@@ -1033,12 +1041,18 @@ describe('ExecutionEngineService', () => {
       ['зависимый', 'независимый-2'],
     ]);
 
+    // v0.11 S14: HTTP-клиент в тесте — фейк; http-узел должен упасть, поэтому
+    // имитируем сетевой отказ (в проде 127.0.0.1 заблокировал бы SafeHttpClient).
+    httpFetchAsync.mockRejectedValueOnce(
+      new Error('connect ECONNREFUSED 127.0.0.1:1'),
+    );
+
     await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow();
 
     const statusOf = (nodeId: string): string | undefined =>
       fake.rows.find((row) => row.nodeId === nodeId)?.status;
 
-    // `http` падает сам (порт 1 закрыт), зависимый узел не запускается, а
+    // `http` падает сам (сеть/SSRF), зависимый узел не запускается, а
     // независимая ветка выполняется до конца.
     expect(statusOf('источник')).toBe('failed');
     expect(statusOf('независимый-1')).toBe('completed');
@@ -1126,6 +1140,11 @@ describe('ExecutionEngineService', () => {
       ],
       edges: [edge('ab', 'A', 'B', 'text', 'text')],
     };
+
+    // v0.11 S14: HTTP-клиент — фейк; узел `A` должен упасть.
+    httpFetchAsync.mockRejectedValueOnce(
+      new Error('connect ECONNREFUSED 127.0.0.1:1'),
+    );
 
     await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow();
 
@@ -1239,108 +1258,85 @@ describe('ExecutionEngineService', () => {
   });
 
   it('R6.5.1: выполняет граф http → text и пишет outputs http в node_runs', async () => {
-    const fetchMock = vi.fn(() =>
-      Promise.resolve({
-        status: 200,
-        headers: new Headers(),
-        text: () => Promise.resolve('{"ip":"127.0.0.1"}'),
-      } as unknown as Response),
-    );
+    const graph: GraphDto = {
+      nodes: [
+        node('A', 'http', { method: 'GET', url: 'https://example.com/get', timeoutMs: 5000 }),
+        node('B', 'text', { value: 'после http' }),
+      ],
+      edges: [],
+    };
 
-    vi.stubGlobal('fetch', fetchMock);
+    const result = await service.executeAsync(RUN_ID, graph);
 
-    try {
-      const graph: GraphDto = {
-        nodes: [
-          node('A', 'http', { method: 'GET', url: 'https://example.com/get', timeoutMs: 5000 }),
-          node('B', 'text', { value: 'после http' }),
-        ],
-        edges: [],
-      };
+    expect(result.status).toBe('completed');
+    expect(result.executedNodes).toBe(2);
 
-      const result = await service.executeAsync(RUN_ID, graph);
+    const httpRow = fake.rows.find((row) => row.nodeId === 'A');
 
-      expect(result.status).toBe('completed');
-      expect(result.executedNodes).toBe(2);
-
-      const httpRow = fake.rows.find((row) => row.nodeId === 'A');
-
-      expect(httpRow?.status).toBe('completed');
-      expect(httpRow?.nodeType).toBe('http');
-      expect(httpRow?.outputs).toEqual({ status: 200, body: '{"ip":"127.0.0.1"}' });
-      // У http-узла нет метрик: обе колонки стоимости остаются NULL (KI-038).
-      expect(httpRow?.costUsd).toBeNull();
-      expect(httpRow?.costRub).toBeNull();
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      expect(fake.run.status).toBe('completed');
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    expect(httpRow?.status).toBe('completed');
+    expect(httpRow?.nodeType).toBe('http');
+    expect(httpRow?.outputs).toEqual({ status: 200, body: '{"ip":"127.0.0.1"}' });
+    // У http-узла нет метрик: обе колонки стоимости остаются NULL (KI-038).
+    expect(httpRow?.costUsd).toBeNull();
+    expect(httpRow?.costRub).toBeNull();
+    expect(httpFetchAsync).toHaveBeenCalledTimes(1);
+    expect(httpFetchAsync.mock.calls[0]?.[0]).toMatchObject({
+      url: 'https://example.com/get',
+      method: 'GET',
+      timeoutMs: 5000,
+    });
+    expect(fake.run.status).toBe('completed');
   });
 
   it('R6.5.1: http без url падает с понятной ошибкой и не повторяется', async () => {
-    const fetchMock = vi.fn();
+    const graph: GraphDto = { nodes: [node('A', 'http', { method: 'GET' })], edges: [] };
 
-    vi.stubGlobal('fetch', fetchMock);
+    await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow(
+      'Узел http: не задан url',
+    );
 
-    try {
-      const graph: GraphDto = { nodes: [node('A', 'http', { method: 'GET' })], edges: [] };
-
-      await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow(
-        'Узел http: не задан url',
-      );
-
-      expect(fake.rows[0].status).toBe('failed');
-      expect(fake.rows[0].error).toContain('не задан url');
-      // Детерминированная ошибка: сеть не дёргалась, повторов не было (KI-041).
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(fake.rows[0].logs).toEqual([]);
-      expect(fake.run.status).toBe('failed');
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    expect(fake.rows[0].status).toBe('failed');
+    expect(fake.rows[0].error).toContain('не задан url');
+    // Детерминированная ошибка: сеть не дёргалась, повторов не было (KI-041).
+    expect(httpFetchAsync).not.toHaveBeenCalled();
+    expect(fake.rows[0].logs).toEqual([]);
+    expect(fake.run.status).toBe('failed');
   });
 
   it('KI-289: http с failOnHttpError=true делает 4xx ошибкой узла и пропускает потомка', async () => {
-    const fetchMock = vi.fn(() =>
-      Promise.resolve({
-        status: 404,
-        headers: new Headers(),
-        text: () => Promise.resolve('not found'),
-      } as unknown as Response),
-    );
+    httpFetchAsync.mockResolvedValue({
+      status: 404,
+      ok: false,
+      headers: new Headers(),
+      body: 'not found',
+      finalUrl: 'https://example.com/missing',
+    } satisfies SafeHttpResponse);
 
-    vi.stubGlobal('fetch', fetchMock);
+    const graph: GraphDto = {
+      nodes: [
+        node('A', 'http', {
+          method: 'GET',
+          url: 'https://example.com/missing',
+          failOnHttpError: true,
+        }),
+        node('B', 'text', { value: 'fallback-потомок' }),
+      ],
+      edges: [edge('ab', 'A', 'B', 'result', 'text')],
+    };
 
-    try {
-      const graph: GraphDto = {
-        nodes: [
-          node('A', 'http', {
-            method: 'GET',
-            url: 'https://example.com/missing',
-            failOnHttpError: true,
-          }),
-          node('B', 'text', { value: 'fallback-потомок' }),
-        ],
-        edges: [edge('ab', 'A', 'B', 'result', 'text')],
-      };
+    await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow('HTTP 404');
 
-      await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow('HTTP 404');
+    const rowA = fake.rows.find((row) => row.nodeId === 'A');
+    const rowB = fake.rows.find((row) => row.nodeId === 'B');
 
-      const rowA = fake.rows.find((row) => row.nodeId === 'A');
-      const rowB = fake.rows.find((row) => row.nodeId === 'B');
-
-      // KI-289: узел закрыт failed, а не completed с { status, body }.
-      expect(rowA?.status).toBe('failed');
-      expect(rowA?.error).toBe('HTTP 404');
-      expect(rowA?.outputs).toBeNull();
-      // KI-288: потомок упавшего http-узла не запускается вовсе.
-      expect(rowB?.status).toBe('skipped');
-      expect(fake.run.outputs).toEqual({});
-      expect(fake.run.status).toBe('failed');
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    // KI-289: узел закрыт failed, а не completed с { status, body }.
+    expect(rowA?.status).toBe('failed');
+    expect(rowA?.error).toBe('HTTP 404');
+    expect(rowA?.outputs).toBeNull();
+    // KI-288: потомок упавшего http-узла не запускается вовсе.
+    expect(rowB?.status).toBe('skipped');
+    expect(fake.run.outputs).toEqual({});
+    expect(fake.run.status).toBe('failed');
   });
 
   it('R6.5.1: compare получает оба входа a и b (per-handle fallback)', async () => {

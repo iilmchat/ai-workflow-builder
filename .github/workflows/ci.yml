@@ -44,6 +44,12 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # KI-292 / v0.11 S15: `nest build` обязан копировать assets шаблонов в
+      # dist. Без этого гейта регрессия (убрали assets из nest-cli.json) снова
+      # пройдёт незамеченной — Docker-обход удалён.
+      - name: Check dist templates asset
+        run: test -f dist/templates/text-llm.json
+
       # KI-317: tsconfig.build.json исключает **/*.spec.ts, а vitest типы не
       # проверяет — спеки валидируются отдельным tsconfig.spec.json.
       - name: Typecheck

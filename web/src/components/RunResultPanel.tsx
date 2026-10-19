@@ -142,7 +142,7 @@ export function RunResultPanel() {
 
               {status === 'running' ? (
                 <Section title={t('runResultPanel.section.status')}>
-                  <p className="text-xs text-blue-600">{t('runResultPanel.running')}</p>
+                  <p className="text-xs text-status-info-foreground">{t('runResultPanel.running')}</p>
                 </Section>
               ) : null}
 
@@ -161,7 +161,7 @@ export function RunResultPanel() {
 
               {error !== undefined && status !== 'skipped' ? (
                 <Section title={t('runResultPanel.section.error')}>
-                  <p className="whitespace-pre-wrap text-xs text-red-700">{error}</p>
+                  <p className="whitespace-pre-wrap text-xs text-status-danger-foreground">{error}</p>
                 </Section>
               ) : null}
 
@@ -207,7 +207,7 @@ export function RunResultPanel() {
                         {step.kind === 'tool' && step.error !== null ? (
                           <p
                             data-agent-step-error=""
-                            className="mt-1 whitespace-pre-wrap text-[10px] text-red-700"
+                            className="mt-1 whitespace-pre-wrap text-[10px] text-status-danger-foreground"
                           >
                             {t('agent.tool.error')}: {step.error}
                           </p>
@@ -237,7 +237,7 @@ export function RunResultPanel() {
                   {cacheRead !== null ? (
                     <p
                       data-cache-read=""
-                      className="mt-0.5 text-xs text-emerald-700"
+                      className="mt-0.5 text-xs text-status-success-foreground"
                     >
                       {cacheRead}
                     </p>
@@ -264,15 +264,15 @@ export function RunResultPanel() {
               ) : null}
 
               {runStatus === 'running' || runStatus === 'pending' ? (
-                <p className="text-xs text-blue-600">{t('runResultPanel.running')}</p>
+                <p className="text-xs text-status-info-foreground">{t('runResultPanel.running')}</p>
               ) : null}
 
               {runStatus === 'completed' ? (
-                <p className="text-xs text-green-700">{t('runResultPanel.run_completed')}</p>
+                <p className="text-xs text-status-success-foreground">{t('runResultPanel.run_completed')}</p>
               ) : null}
 
               {runStatus === 'failed' ? (
-                <p className="whitespace-pre-wrap text-xs text-red-700">
+                <p className="whitespace-pre-wrap text-xs text-status-danger-foreground">
                   {t('runResultPanel.run_error', {
                     error: runError ?? t('runResultPanel.run_error_unknown'),
                   })}

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { SafeHttpClient, SafeHttpResponse } from '../common/http/safe-http.client.js';
 import type {
   VectorMatch,
   VectorQueryInput,
@@ -6,7 +7,29 @@ import type {
 } from '../engine/node-executors.js';
 import { DEFAULT_EMBEDDING_DIMENSIONS } from '../llm/llm-constants.js';
 import type { AgentToolContext } from './agent.types.js';
-import { TOOL_REGISTRY } from './agent-tools.js';
+import { AGENT_HTTP_TIMEOUT_MS, TOOL_REGISTRY } from './agent-tools.js';
+
+/**
+ * Собирает ответ безопасного HTTP-клиента для тестов.
+ *
+ * @param status - HTTP-код
+ * @param body - текст тела
+ * @param headers - заголовки ответа
+ * @returns ответ `SafeHttpClient`
+ */
+function httpResponse(
+  status = 200,
+  body = '{"ok":true}',
+  headers: Record<string, string> = {},
+): SafeHttpResponse {
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    headers: new Headers(headers),
+    body,
+    finalUrl: 'https://api.test/items',
+  };
+}
 
 /**
  * Вектор нужной размерности: колонка `workflow_vectors.embedding` — vector(1536).
@@ -39,7 +62,6 @@ function createContext(overrides: Partial<AgentToolContext> = {}): {
     llmGenerateAsync: ReturnType<typeof vi.fn>;
     evaluateSandboxedAsync: ReturnType<typeof vi.fn>;
     fetchAsync: ReturnType<typeof vi.fn>;
-    dnsLookupAsync: ReturnType<typeof vi.fn>;
   };
 } {
   const insertVectorAsync = vi.fn<
@@ -61,12 +83,10 @@ function createContext(overrides: Partial<AgentToolContext> = {}): {
     Promise.resolve({ text: 'ответ модели', usage: null }),
   );
   const evaluateSandboxedAsync = vi.fn(() => Promise.resolve({ result: 42 }));
-  const fetchAsync = vi.fn(() =>
-    Promise.resolve(new Response('{"ok":true}', { status: 200 })),
-  );
-  // KI-409: резолвер DNS подменяется, чтобы тесты не ходили в сеть. Публичный
-  // адрес — SSRF-проверка пропускает запрос.
-  const dnsLookupAsync = vi.fn(() => Promise.resolve(['93.184.216.34']));
+  const fetchAsync = vi.fn(() => Promise.resolve(httpResponse()));
+  // v0.11 S14: инструмент ходит через SafeHttpClient; тест подменяет только
+  // его метод — остальная SSRF-логика покрыта `safe-http.client.spec.ts`.
+  const httpClient = { fetchAsync } as unknown as SafeHttpClient;
 
   const context: AgentToolContext = {
     runId: 'run-1',
@@ -82,10 +102,7 @@ function createContext(overrides: Partial<AgentToolContext> = {}): {
     embedAsync,
     llmGenerateAsync,
     sandbox: { evaluateSandboxedAsync },
-    // Мок повторяет сигнатуру fetch: достаточно, чтобы инструмент получил
-    // предсказуемый ответ и тест проверил аргументы вызова.
-    fetchAsync: fetchAsync as unknown as typeof fetch,
-    dnsLookupAsync,
+    httpClient,
     ...overrides,
   };
 
@@ -100,7 +117,6 @@ function createContext(overrides: Partial<AgentToolContext> = {}): {
       llmGenerateAsync,
       evaluateSandboxedAsync,
       fetchAsync,
-      dnsLookupAsync,
     },
   };
 }
@@ -124,7 +140,7 @@ describe('TOOL_REGISTRY (R7.4b)', () => {
     ]);
   });
 
-  it('http_request: POST с JSON-телом уходит в fetch, ответ возвращается как данные', async () => {
+  it('http_request: POST с JSON-телом уходит в безопасный клиент, ответ возвращается как данные', async () => {
     const { context, mocks } = createContext();
 
     const result = await TOOL_REGISTRY.http_request.executeAsync(
@@ -133,17 +149,22 @@ describe('TOOL_REGISTRY (R7.4b)', () => {
     );
 
     expect(mocks.fetchAsync).toHaveBeenCalledTimes(1);
-    const [url, init] = mocks.fetchAsync.mock.calls[0] as unknown as [
-      string,
-      RequestInit,
+    const [request] = mocks.fetchAsync.mock.calls[0] as unknown as [
+      {
+        url: string;
+        method: string;
+        headers?: Record<string, string>;
+        body?: string;
+        timeoutMs: number;
+      },
     ];
 
-    expect(url).toBe('https://api.test/items');
-    expect(init.method).toBe('POST');
-    expect(init.headers).toEqual({ 'content-type': 'application/json' });
-    expect(init.body).toBe('{"a":1}');
+    expect(request.url).toBe('https://api.test/items');
+    expect(request.method).toBe('POST');
+    expect(request.headers).toEqual({ 'content-type': 'application/json' });
+    expect(request.body).toBe('{"a":1}');
     // Таймаут обязателен для внешнего вызова (RULES 4.19).
-    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(request.timeoutMs).toBe(AGENT_HTTP_TIMEOUT_MS);
     expect(result).toEqual({
       status: 200,
       ok: true,
@@ -153,9 +174,11 @@ describe('TOOL_REGISTRY (R7.4b)', () => {
 
   it('http_request: не-2xx — это данные, а не исключение; длинное тело обрезается', async () => {
     const { context } = createContext({
-      fetchAsync: vi.fn(() =>
-        Promise.resolve(new Response('x'.repeat(5_000), { status: 503 })),
-      ) as unknown as typeof fetch,
+      httpClient: {
+        fetchAsync: vi.fn(() =>
+          Promise.resolve(httpResponse(503, 'x'.repeat(5_000))),
+        ),
+      } as unknown as SafeHttpClient,
     });
 
     const result = (await TOOL_REGISTRY.http_request.executeAsync(

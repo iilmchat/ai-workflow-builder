@@ -11,25 +11,18 @@
  * обычная константа без Nest-DI: юнит-тесты подставляют моки хранилища и
  * `fetch`, не поднимая ни модуль, ни приложение (RULES 4.13/4.14).
  *
- * **SSRF (v0.10.2).** Проверка адреса и ручной обход редиректов живут в общем
- * `common/utils/network-safety.ts` — его же использует узел `http`, чтобы у
- * двух точек входа в сеть была одна защита (KI-409/434/435/478).
+ * **SSRF (v0.11 S14).** Инструмент `http_request` ходит через
+ * `SafeHttpClient` (`context.httpClient`): DNS-резолв один раз, проверка всех
+ * адресов, pinning IP против rebinding (KI-435) и ручной обход редиректов
+ * (KI-434). Приватные адреса для агента закрыты всегда — он не должен ходить во
+ * внутреннюю сеть (DESIGN § 3.5.1).
  */
 import { z } from 'zod';
 import {
   DEFAULT_EMBEDDING_DIMENSIONS,
   DEFAULT_EMBEDDING_MODEL,
 } from '../llm/llm-constants.js';
-import {
-  defaultDnsLookupAsync,
-  fetchWithSsrfGuardAsync,
-} from '../common/utils/network-safety.js';
-import {
-  AGENT_TOOL_NAMES,
-  type AgentTool,
-  type AgentToolContext,
-  type AgentToolName,
-} from './agent.types.js';
+import { AGENT_TOOL_NAMES, type AgentTool, type AgentToolContext, type AgentToolName } from './agent.types.js';
 
 /** Таймаут HTTP-инструмента, мс (RULES 4.19 — длительные вызовы с лимитом). */
 export const AGENT_HTTP_TIMEOUT_MS = 15_000;
@@ -175,30 +168,23 @@ export const TOOL_REGISTRY: Readonly<Record<AgentToolName, AgentTool>> = {
             ? (parsed.body as string)
             : undefined;
 
-      // KI-409/434/478: URL — недоверенный ввод модели. Проверка адреса и
-      // ручной обход редиректов — в общем `network-safety.ts`: публичный хост
-      // может ответить `302 Location: http://169.254.169.254/…`, и без
-      // `redirect: 'manual'` запрос ушёл бы во внутреннюю сеть.
-      const response = await fetchWithSsrfGuardAsync(
-        context.fetchAsync,
-        parsed.url,
-        {
-          method: parsed.method,
-          ...(serializedBody === undefined
-            ? {}
-            : {
-                headers: { 'content-type': 'application/json' },
-                body: serializedBody,
-              }),
-          // RULES 4.19: у внешнего вызова всегда есть таймаут.
-          signal: AbortSignal.timeout(AGENT_HTTP_TIMEOUT_MS),
-        },
-        {
-          lookupAsync: context.dnsLookupAsync ?? defaultDnsLookupAsync,
-          allowPrivateIps: context.allowPrivateIps === true,
-        },
-      );
-      const body = truncateBody(await response.text());
+      // KI-409/434/435/478: URL — недоверенный ввод модели. Клиент резолвит
+      // DNS один раз, проверяет все адреса, прибивает IP и вручную обходит
+      // редиректы. Приватные адреса для агента закрыты **всегда**:
+      // `allowPrivateNetworks` здесь не передаётся (DESIGN § 3.5.1).
+      const response = await context.httpClient.fetchAsync({
+        url: parsed.url,
+        method: parsed.method,
+        // RULES 4.19: у внешнего вызова всегда есть таймаут.
+        timeoutMs: AGENT_HTTP_TIMEOUT_MS,
+        ...(serializedBody === undefined
+          ? {}
+          : {
+              headers: { 'content-type': 'application/json' },
+              body: serializedBody,
+            }),
+      });
+      const body = truncateBody(response.body);
 
       // Не-2xx — это данные, а не сбой инструмента: агент сам решит, повторять
       // запрос, менять URL или отвечать пользователю (DESIGN § 3.4).

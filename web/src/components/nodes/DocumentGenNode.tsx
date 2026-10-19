@@ -27,9 +27,9 @@ const FIELD_CLASS =
 const BUTTON_CLASS =
   'nodrag rounded-lg border border-border bg-background px-2 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50';
 
-/** Ссылка на скачанный документ в том же стиле, что была до S5. */
+/** Ссылка на скачанный документ: семантические токены вместо светлых литералов. */
 const DOWNLOAD_CLASS =
-  'nodrag mt-2 inline-flex items-center gap-1 rounded-lg border border-green-300 bg-green-50 px-2 py-1 text-[10px] font-medium text-green-700 transition-colors hover:bg-green-100';
+  'nodrag mt-2 inline-flex items-center gap-1 rounded-lg border border-node-border-completed bg-node-bg-completed px-2 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-muted';
 
 /**
  * Режим интерпретации контента (DESIGN v0.10 § 3.2.1).
@@ -607,7 +607,7 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
                     </label>
                     {variablesError ? (
                       <p
-                        className="text-[9px] text-red-600"
+                        className="text-[9px] text-status-danger-foreground"
                         data-document-template-variables-error=""
                       >
                         {t('template.variablesInvalid')}
@@ -622,17 +622,17 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
                   </p>
                 ) : null}
                 {templatesError ? (
-                  <p className="text-[9px] text-red-600">
+                  <p className="text-[9px] text-status-danger-foreground">
                     {t('template.loadError')}
                   </p>
                 ) : null}
                 {uploadError ? (
-                  <p className="text-[9px] text-red-600">
+                  <p className="text-[9px] text-status-danger-foreground">
                     {t('template.uploadError')}
                   </p>
                 ) : null}
                 {deleteError ? (
-                  <p className="text-[9px] text-red-600">
+                  <p className="text-[9px] text-status-danger-foreground">
                     {t('template.deleteError')}
                   </p>
                 ) : null}
@@ -661,7 +661,7 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
 
         {missingVariables.length > 0 ? (
           <p
-            className="mt-2 rounded-lg border border-yellow-300 bg-yellow-50 px-2 py-1 text-[9px] text-yellow-800"
+            className="mt-2 rounded-lg border border-status-warning-border bg-status-warning-bg px-2 py-1 text-[9px] text-status-warning-foreground"
             data-document-gen-missing=""
           >
             {t('template.missing', {

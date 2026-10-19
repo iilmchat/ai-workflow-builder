@@ -1,35 +1,70 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { Agent } from 'undici';
 import {
-  SsrfBlockedException,
-  assertPublicHttpUrlAsync,
-  isBlockedIpAddress,
-} from '../common/utils/network-safety.js';
+  SafeHttpClient,
+  type SafeHttpTransportAsync,
+  type SafeHttpTransportInit,
+  type SafeHttpTransportResponse,
+} from '../common/http/safe-http.client.js';
+import { SsrfBlockedException } from '../common/utils/network-safety.js';
 import type { AgentToolContext } from './agent.types.js';
 import { TOOL_REGISTRY } from './agent-tools.js';
 
-/**
- * Публичный резолвер для тестов «разрешено»: адрес не из приватных диапазонов.
- */
-function publicLookup(): Promise<readonly string[]> {
-  return Promise.resolve(['93.184.216.34']);
+/** Публичный адрес для «разрешённых» сценариев. */
+const PUBLIC_IP = '93.184.216.34';
+
+/** Ответ транспорта из строки. */
+function transportResponse(
+  status: number,
+  body = '',
+  headers: Record<string, string> = {},
+): SafeHttpTransportResponse {
+  const bytes = Buffer.from(body, 'utf8');
+
+  return {
+    status,
+    headers: new Headers(headers),
+    body: (async function* stream(): AsyncGenerator<Uint8Array> {
+      if (bytes.length > 0) {
+        yield bytes;
+      }
+    })(),
+    discardAsync: (): Promise<void> => Promise.resolve(),
+  };
 }
 
 /**
  * Собирает контекст только для `http_request`.
  *
- * Инструменту нужны `fetchAsync` и `dnsLookupAsync`; остальные зависимости
- * контракта объявлены моками, чтобы тест ловил случайное обращение к ним.
+ * SSRF-защита живёт в настоящем {@link SafeHttpClient} с фейковым транспортом:
+ * тест проверяет именно связку «инструмент → клиент», не ходя в сеть.
  *
- * @param lookupAsync - резолвер DNS, подменяющий сеть
- * @returns контекст и мок `fetch`
+ * @param handler - что вернуть транспорту
+ * @param lookup - резолвер DNS
+ * @returns контекст, вызовы транспорта и мок DNS
  */
 function createHttpContext(
-  lookupAsync: (hostname: string) => Promise<readonly string[]>,
-  overrides: Partial<AgentToolContext> = {},
-): { context: AgentToolContext; fetchAsync: ReturnType<typeof vi.fn> } {
-  const fetchAsync = vi.fn(() =>
-    Promise.resolve(new Response('{"ok":true}', { status: 200 })),
+  handler: (url: URL) => SafeHttpTransportResponse = () =>
+    transportResponse(200, '{"ok":true}'),
+  lookup: (hostname: string) => Promise<readonly string[]> = () =>
+    Promise.resolve([PUBLIC_IP]),
+): {
+  context: AgentToolContext;
+  transportAsync: ReturnType<typeof vi.fn>;
+  lookupAsync: ReturnType<typeof vi.fn>;
+} {
+  const transportAsync = vi.fn(
+    async (
+      url: URL,
+      _init: SafeHttpTransportInit,
+      _dispatcher: Agent,
+    ): Promise<SafeHttpTransportResponse> => handler(url),
   );
+  const lookupAsync = vi.fn(lookup);
+  const httpClient = new SafeHttpClient({
+    lookupAsync,
+    transportAsync: transportAsync as unknown as SafeHttpTransportAsync,
+  });
   const context: AgentToolContext = {
     runId: 'run-1',
     nodeId: 'agent-1',
@@ -44,138 +79,23 @@ function createHttpContext(
     embedAsync: vi.fn(),
     llmGenerateAsync: vi.fn(),
     sandbox: { evaluateSandboxedAsync: vi.fn() },
-    fetchAsync: fetchAsync as unknown as typeof fetch,
-    dnsLookupAsync: lookupAsync,
-    ...overrides,
+    httpClient,
   };
 
-  return { context, fetchAsync };
+  return { context, transportAsync, lookupAsync };
 }
 
 /**
- * Юнит-тесты SSRF-защиты инструмента `http_request` (KI-409).
+ * Юнит-тесты SSRF-защиты инструмента `http_request` (KI-409/434/435/478).
  *
  * `url` приходит от модели, то есть является недоверенным вводом: запрос к
  * loopback, приватной подсети или metadata-сервису облака давал бы доступ к
- * внутренней инфраструктуре. Тесты не ходят в сеть: IP-литералы проверяются
- * до DNS, а для доменов резолвер подменён моком.
+ * внутренней инфраструктуре. Инструмент **всегда** блокирует приватные адреса:
+ * флаг `HTTP_NODE_ALLOW_PRIVATE_NETWORKS` относится только к узлу `http`.
  */
-describe('SSRF-защита http_request (KI-409)', () => {
-  it('isBlockedIpAddress: loopback, приватные, link-local и metadata', () => {
-    const blocked = [
-      '0.0.0.0',
-      '127.0.0.1',
-      '127.1.2.3',
-      '10.0.0.1',
-      '172.16.0.1',
-      '172.31.255.255',
-      '192.168.0.1',
-      '169.254.169.254',
-      '100.64.0.1',
-      '::1',
-      '::',
-      'fc00::1',
-      'fd12:3456::1',
-      'fe80::1',
-      '::ffff:127.0.0.1',
-      '::ffff:169.254.169.254',
-      // IPv6 в верхнем регистре не должен обходить проверку.
-      '::FFFF:127.0.0.1',
-    ];
-
-    for (const address of blocked) {
-      expect(isBlockedIpAddress(address), address).toBe(true);
-    }
-  });
-
-  it('isBlockedIpAddress: публичные адреса пропускаются', () => {
-    const allowed = [
-      '8.8.8.8',
-      '93.184.216.34',
-      // Граница 172.16/12: 172.15 и 172.32 — уже публичные.
-      '172.15.0.1',
-      '172.32.0.1',
-      '2001:4860:4860::8888',
-      '2001:4860:4860::ABCD',
-    ];
-
-    for (const address of allowed) {
-      expect(isBlockedIpAddress(address), address).toBe(false);
-    }
-  });
-
-  it('блокирует localhost по имени, не выполняя DNS-запрос', async () => {
-    const lookupAsync = vi.fn(() => publicLookup());
-
-    await expect(
-      assertPublicHttpUrlAsync('http://localhost:3000/admin', lookupAsync),
-    ).rejects.toBeInstanceOf(SsrfBlockedException);
-
-    expect(lookupAsync).not.toHaveBeenCalled();
-  });
-
-  it('блокирует 127.0.0.1 и ::1 без DNS-запроса', async () => {
-    const lookupAsync = vi.fn(() => publicLookup());
-
-    await expect(
-      assertPublicHttpUrlAsync('http://127.0.0.1:3000', lookupAsync),
-    ).rejects.toBeInstanceOf(SsrfBlockedException);
-    await expect(
-      assertPublicHttpUrlAsync('http://[::1]:3000', lookupAsync),
-    ).rejects.toBeInstanceOf(SsrfBlockedException);
-
-    expect(lookupAsync).not.toHaveBeenCalled();
-  });
-
-  it('блокирует AWS metadata 169.254.169.254', async () => {
-    const lookupAsync = vi.fn(() => publicLookup());
-
-    await expect(
-      assertPublicHttpUrlAsync(
-        'http://169.254.169.254/latest/meta-data/iam/security-credentials/',
-        lookupAsync,
-      ),
-    ).rejects.toBeInstanceOf(SsrfBlockedException);
-
-    expect(lookupAsync).not.toHaveBeenCalled();
-  });
-
-  it('блокирует домен, который резолвится в приватный адрес', async () => {
-    const lookupAsync = vi.fn(() =>
-      Promise.resolve(['93.184.216.34', '10.0.0.5']),
-    );
-
-    await expect(
-      assertPublicHttpUrlAsync('https://internal.example/api', lookupAsync),
-    ).rejects.toMatchObject({
-      name: 'SsrfBlockedException',
-      hostname: 'internal.example',
-      address: '10.0.0.5',
-    });
-    expect(lookupAsync).toHaveBeenCalledWith('internal.example');
-  });
-
-  it('пропускает домен с публичным адресом', async () => {
-    const lookupAsync = vi.fn(() => publicLookup());
-
-    await expect(
-      assertPublicHttpUrlAsync('https://api.example.com/items', lookupAsync),
-    ).resolves.toBeUndefined();
-    expect(lookupAsync).toHaveBeenCalledWith('api.example.com');
-  });
-
-  it('нерезолвящееся имя не блокируется: fetch сам вернёт сетевую ошибку', async () => {
-    const lookupAsync = vi.fn(() =>
-      Promise.reject(new Error('getaddrinfo ENOTFOUND api.test')),
-    );
-
-    await expect(
-      assertPublicHttpUrlAsync('https://api.test/items', lookupAsync),
-    ).resolves.toBeUndefined();
-  });
-
-  it('http_request отвергает не-http(s) протокол до сетевого вызова', async () => {
-    const { context, fetchAsync } = createHttpContext(publicLookup);
+describe('SSRF-защита http_request (KI-409/434/435/478)', () => {
+  it('отвергает не-http(s) протокол до сетевого вызова', async () => {
+    const { context, transportAsync } = createHttpContext();
 
     await expect(
       TOOL_REGISTRY.http_request.executeAsync(
@@ -184,11 +104,11 @@ describe('SSRF-защита http_request (KI-409)', () => {
       ),
     ).rejects.toThrow(/http или https/);
 
-    expect(fetchAsync).not.toHaveBeenCalled();
+    expect(transportAsync).not.toHaveBeenCalled();
   });
 
-  it('http_request не делает сетевой вызов к localhost', async () => {
-    const { context, fetchAsync } = createHttpContext(publicLookup);
+  it('не делает сетевой вызов к localhost', async () => {
+    const { context, transportAsync, lookupAsync } = createHttpContext();
 
     await expect(
       TOOL_REGISTRY.http_request.executeAsync(
@@ -197,11 +117,31 @@ describe('SSRF-защита http_request (KI-409)', () => {
       ),
     ).rejects.toBeInstanceOf(SsrfBlockedException);
 
-    expect(fetchAsync).not.toHaveBeenCalled();
+    expect(transportAsync).not.toHaveBeenCalled();
+    expect(lookupAsync).not.toHaveBeenCalled();
   });
 
-  it('http_request не делает сетевой вызов к 169.254.169.254', async () => {
-    const { context, fetchAsync } = createHttpContext(publicLookup);
+  it('не делает сетевой вызов к 127.0.0.1 и [::1]', async () => {
+    const { context, transportAsync } = createHttpContext();
+
+    await expect(
+      TOOL_REGISTRY.http_request.executeAsync(
+        { url: 'http://127.0.0.1:3000' },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(SsrfBlockedException);
+    await expect(
+      TOOL_REGISTRY.http_request.executeAsync(
+        { url: 'http://[::1]:3000' },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(SsrfBlockedException);
+
+    expect(transportAsync).not.toHaveBeenCalled();
+  });
+
+  it('не делает сетевой вызов к 169.254.169.254', async () => {
+    const { context, transportAsync } = createHttpContext();
 
     await expect(
       TOOL_REGISTRY.http_request.executeAsync(
@@ -210,34 +150,31 @@ describe('SSRF-защита http_request (KI-409)', () => {
       ),
     ).rejects.toBeInstanceOf(SsrfBlockedException);
 
-    expect(fetchAsync).not.toHaveBeenCalled();
+    expect(transportAsync).not.toHaveBeenCalled();
   });
 
-  it('http_request блокирует домен, резолвящийся во внутреннюю сеть', async () => {
-    const { context, fetchAsync } = createHttpContext(() =>
-      Promise.resolve(['192.168.1.10']),
+  it('блокирует домен, резолвящийся во внутреннюю сеть', async () => {
+    const { context, transportAsync } = createHttpContext(
+      () => transportResponse(200, 'should not happen'),
+      () => Promise.resolve(['192.168.1.10']),
     );
 
-    await expect(
-      TOOL_REGISTRY.http_request.executeAsync(
-        { url: 'https://intranet.example/secret' },
-        context,
-      ),
-    ).rejects.toMatchObject({
-      name: 'SsrfBlockedException',
-      address: '192.168.1.10',
-    });
+    const error: unknown = await TOOL_REGISTRY.http_request
+      .executeAsync({ url: 'https://intranet.example/secret' }, context)
+      .then(
+        () => null,
+        (reason: unknown) => reason,
+      );
 
-    expect(fetchAsync).not.toHaveBeenCalled();
+    expect(error).toBeInstanceOf(SsrfBlockedException);
+    expect(error).toMatchObject({ address: '192.168.1.10' });
+    expect(transportAsync).not.toHaveBeenCalled();
   });
 
-  it('KI-434: http_request блокирует редирект на metadata-адрес (redirect: manual)', async () => {
-    const { context, fetchAsync } = createHttpContext(publicLookup);
-
-    fetchAsync.mockResolvedValueOnce(
-      new Response(null, {
-        status: 302,
-        headers: { location: 'http://169.254.169.254/latest/meta-data/' },
+  it('KI-434: блокирует редирект на metadata-адрес', async () => {
+    const { context, transportAsync } = createHttpContext(() =>
+      transportResponse(302, '', {
+        location: 'http://169.254.169.254/latest/meta-data/',
       }),
     );
 
@@ -255,25 +192,17 @@ describe('SSRF-защита http_request (KI-409)', () => {
     });
 
     // Второго запроса не было: приватный Location не запрашивался.
-    expect(fetchAsync).toHaveBeenCalledTimes(1);
-
-    const [, init] = fetchAsync.mock.calls[0] as [string, RequestInit];
-
-    // KI-434: без manual fetch пошёл бы по 3xx сам, минуя проверку.
-    expect(init.redirect).toBe('manual');
+    expect(transportAsync).toHaveBeenCalledTimes(1);
   });
 
-  it('KI-434: http_request идёт по безопасному редиректу', async () => {
-    const { context, fetchAsync } = createHttpContext(publicLookup);
-
-    fetchAsync
-      .mockResolvedValueOnce(
-        new Response(null, {
-          status: 301,
-          headers: { location: 'https://public.example/final' },
-        }),
-      )
-      .mockResolvedValueOnce(new Response('{"ok":true}', { status: 200 }));
+  it('KI-434: идёт по безопасному редиректу', async () => {
+    const { context, transportAsync } = createHttpContext((url) =>
+      url.pathname === '/start'
+        ? transportResponse(301, '', {
+            location: 'https://public.example/final',
+          })
+        : transportResponse(200, '{"ok":true}'),
+    );
 
     const result = await TOOL_REGISTRY.http_request.executeAsync(
       { url: 'https://public.example/start' },
@@ -281,21 +210,38 @@ describe('SSRF-защита http_request (KI-409)', () => {
     );
 
     expect(result).toMatchObject({ status: 200, ok: true });
-    expect(fetchAsync).toHaveBeenCalledTimes(2);
-    expect(fetchAsync.mock.calls[1]?.[0]).toBe('https://public.example/final');
+    expect(transportAsync).toHaveBeenCalledTimes(2);
   });
 
-  it('ALLOW_PRIVATE_IPS=true: http_request пропускает приватный хост', async () => {
-    const { context, fetchAsync } = createHttpContext(publicLookup, {
-      allowPrivateIps: true,
-    });
+  it('не передаёт allowPrivateNetworks клиенту (инструмент агента закрыт всегда)', async () => {
+    const { context } = createHttpContext();
+    // Спай на публичном контракте клиента: инструмент не должен выставлять
+    // флаг, разрешающий приватные сети (он относится только к узлу `http`).
+    const fetchSpy = vi.spyOn(context.httpClient, 'fetchAsync');
 
-    const result = await TOOL_REGISTRY.http_request.executeAsync(
-      { url: 'http://127.0.0.1:1234/v1/models' },
+    await TOOL_REGISTRY.http_request.executeAsync(
+      { url: 'https://public.example/items' },
       context,
     );
 
-    expect(result).toMatchObject({ status: 200, ok: true });
-    expect(fetchAsync).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0]?.[0].allowPrivateNetworks).toBeUndefined();
+  });
+
+  it('не-2xx — это данные, а не сбой инструмента', async () => {
+    const { context } = createHttpContext(() =>
+      transportResponse(503, 'service unavailable'),
+    );
+
+    const result = (await TOOL_REGISTRY.http_request.executeAsync(
+      { url: 'https://public.example/fail' },
+      context,
+    )) as { status: number; ok: boolean; body: string };
+
+    expect(result).toMatchObject({
+      status: 503,
+      ok: false,
+      body: 'service unavailable',
+    });
   });
 });

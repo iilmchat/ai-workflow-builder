@@ -218,7 +218,7 @@ export function ImageToolNode({ id, data }: NodeProps<ImageToolFlowNode>) {
             {audioUrlInvalid && (
               <p
                 id={`image-tool-audio-error-${id}`}
-                className="mt-1 text-[10px] text-red-600"
+                className="mt-1 text-[10px] text-status-danger-foreground"
               >
                 {t('node.image_tool.audioUrl.invalid')}
               </p>
@@ -245,11 +245,11 @@ export function ImageToolNode({ id, data }: NodeProps<ImageToolFlowNode>) {
 
         <div className="mt-2">
           {status === 'running' ? (
-            <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-blue-300 bg-blue-50 px-2 text-center text-[10px] text-blue-600">
+            <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-node-border-running bg-node-bg-running px-2 text-center text-[10px] text-foreground">
               {t('node.image_tool.applying')}
             </div>
           ) : status === 'failed' ? (
-            <div className="flex min-h-20 items-center justify-center rounded-lg border border-red-200 bg-red-50 px-2 text-center text-[10px] text-red-600">
+            <div className="flex min-h-20 items-center justify-center rounded-lg border border-node-border-failed bg-node-bg-failed px-2 text-center text-[10px] text-foreground">
               {t('node.image_tool.error')}
             </div>
           ) : mediaSource.expired ? (
@@ -261,7 +261,7 @@ export function ImageToolNode({ id, data }: NodeProps<ImageToolFlowNode>) {
               className="w-full rounded-lg border border-border"
             />
           ) : mediaSource.invalid ? (
-            <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-amber-300 px-2 text-center text-[10px] text-amber-600">
+            <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-status-warning-border px-2 text-center text-[10px] text-status-warning-foreground">
               {t('node.image.invalid_url')}
             </div>
           ) : (

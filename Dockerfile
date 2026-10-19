@@ -52,16 +52,15 @@ ENV PORT=3000
 
 WORKDIR /app
 
-# dist/ уже содержит main.js и migrate.js (см. build:migrate выше).
+# dist/ уже содержит main.js и migrate.js (см. build:migrate выше), а также
+# dist/templates: `nest-cli.json` объявляет `templates/**/*.json` как assets,
+# поэтому `nest build` копирует их сам (v0.11 S15, KI-292). Docker-обход с
+# копированием `src/templates` больше не нужен.
 COPY --from=builder --chown=node:node /app/package.json ./package.json
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/web/dist ./web/dist
 COPY --from=builder --chown=node:node /app/drizzle ./drizzle
-# nest build не копирует .json-ассеты (KI-289), а TemplateLoaderService ищет их
-# в `<repo>/src/templates` как фолбэк — без этого каталога GET /templates в
-# контейнере вернул бы пустой список.
-COPY --from=builder --chown=node:node /app/src/templates ./src/templates
 COPY --from=builder --chown=node:node /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=builder --chown=node:node /app/docker-entrypoint.sh ./docker-entrypoint.sh
 

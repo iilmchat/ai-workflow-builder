@@ -25,7 +25,7 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { defaultDnsLookupAsync } from '../common/utils/network-safety.js';
+import { SafeHttpClient } from '../common/http/safe-http.client.js';
 import { NodeDataValidationException } from '../engine/errors.js';
 import type { LlmUsage } from '../llm/llm-provider.interface.js';
 import { LlmProviderException } from '../llm/llm-provider.interface.js';
@@ -510,14 +510,6 @@ export class AgentService {
   private readonly defaultMaxTokensPerStep: number;
 
   /**
-   * Пропускать ли приватные IP в `http_request` (env `ALLOW_PRIVATE_IPS`).
-   *
-   * Читается один раз в конструкторе (RULES 4.6): значение — аварийный
-   * переключатель SSRF-защиты (KI-478/434), а не настройка на каждый вызов.
-   */
-  private readonly allowPrivateIps: boolean;
-
-  /**
    * Действующий лимит MCP-инструментов на узел (env `MCP_MAX_TOOLS_PER_NODE`).
    *
    * Zod-схема узла использует жёсткий потолок 20 (константа), а env может
@@ -544,6 +536,9 @@ export class AgentService {
     private readonly vectorStore: VectorStoreService,
     private readonly sandbox: QuickJsRunnerService,
     private readonly config: ConfigService,
+    // v0.11 S14 (KI-434/435/478): единственный безопасный HTTP-клиент для
+    // инструмента `http_request`; приватные адреса он блокирует всегда.
+    private readonly httpClient: SafeHttpClient,
     private readonly costBudget: CostBudgetService,
     private readonly mcp: McpClientService,
     private readonly mcpAdapter: McpToolAdapter,
@@ -567,13 +562,6 @@ export class AgentService {
       1,
       MCP_MAX_TOOLS_PER_NODE_LIMIT,
     );
-    // Строка `'false'` из сырого окружения не должна включать защиту наоборот:
-    // как и у остальных флагов, истина — только boolean `true`/строка `'true'`
-    // (после `EnvSchema` приходит boolean).
-    const allowPrivateIps = config.get<unknown>('ALLOW_PRIVATE_IPS');
-
-    this.allowPrivateIps =
-      allowPrivateIps === true || allowPrivateIps === 'true';
   }
 
   /**
@@ -1161,16 +1149,11 @@ export class AgentService {
         return { text: result.text, usage: result.usage };
       },
       sandbox: this.sandbox,
-      // Глобальный fetch не привязан к `this`; обёртка нужна, чтобы контекст
-      // оставался сериализуемым контрактом и тесты могли подменить клиент.
-      fetchAsync: (url, init) => fetch(url, init),
-      // KI-409: инструмент `http_request` резолвит хост перед запросом.
-      // Системный `dns.lookup` — продакшен-реализация; тесты подставляют мок
-      // через контекст, а не через сеть.
-      dnsLookupAsync: defaultDnsLookupAsync,
-      // v0.10.2 (KI-478/434): тот же env-флаг, что у узла `http`; агент и узел
-      // проверяют адреса одинаково.
-      allowPrivateIps: this.allowPrivateIps,
+      // v0.11 S14 (DESIGN § 3.5.1): весь SSRF-путь инструмента `http_request`
+      // — внутри клиента (DNS один раз, pinning IP, manual redirects, лимит
+      // тела). Приватные адреса для агента закрыты всегда: флаг
+      // HTTP_NODE_ALLOW_PRIVATE_NETWORKS сюда не передаётся.
+      httpClient: this.httpClient,
     };
   }
 }

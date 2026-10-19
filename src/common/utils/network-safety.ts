@@ -1,33 +1,29 @@
 /**
- * Сетевая безопасность: единая SSRF-защита исходящих HTTP-запросов.
+ * Сетевая безопасность: общие предикаты SSRF-защиты исходящих HTTP-запросов.
  *
- * Модуль появился в v0.10.2 (hardening): проверка «адрес публичный?» была
- * только у инструмента агента `http_request` (KI-409), а узел `http` ходил в
- * сеть без неё (KI-478), редиректы не проверялись ни там, ни там (KI-434).
- * Теперь оба потребителя используют один код:
+ * Модуль появился в v0.10.2 (hardening), когда проверка «адрес публичный?»
+ * была только у инструмента агента `http_request` (KI-409), а узел `http`
+ * ходил в сеть без неё (KI-478), редиректы не проверялись ни там, ни там
+ * (KI-434).
+ *
+ * **v0.11 S14 (KI-434/435/478).** Сетевой путь один — `SafeHttpClient`
+ * (`src/common/http/safe-http.client.ts`): он резолвит DNS **один раз**,
+ * проверяет все адреса, прибивает выбранный IP через `undici` (KI-435) и
+ * вручную обходит редиректы (KI-434). Прежние `assertPublicHttpUrlAsync` и
+ * `fetchWithSsrfGuardAsync` удалены: они резолвили имя дважды (проверка +
+ * `fetch`) и оставляли DNS rebinding открытым.
+ *
+ * Здесь остались только примитивы, общие для клиента и тестов:
  *
  * - {@link isPrivateIp} — предикат «адрес из приватного/локального диапазона»;
  * - {@link isBlockedIpAddress} — более строгий SSRF-денлист: кроме приватных
  *   блокируются служебные, multicast и документационные диапазоны;
- * - {@link assertPublicHttpUrlAsync} — проверка URL до сетевого вызова
- *   (имя хоста → DNS-резолв `all: true` → проверка каждого адреса);
- * - {@link fetchWithSsrfGuardAsync} — `fetch` с `redirect: 'manual'` и
- *   повторной проверкой каждого `Location`: ровно то, чего не хватало для
- *   KI-434/478.
- *
- * **Остаточный риск DNS rebinding (KI-435).** Имя резолвится в проверке, а
- * `fetch` резолвит его повторно; при TTL=0 злоумышленник может отдать публичный
- * адрес на первом запросе и приватный на втором. Закрыть это без pinning IP на
- * уровне HTTP-клиента (`undici`/`lookup`) нельзя — риск задокументирован и
- * остаётся открытым. Ручной обход редиректов его не устраняет, но убирает
- * самый дешёвый вектор (KI-434): публичный хост с `302 Location:
- * http://169.254.169.254/`.
- *
- * **Env `ALLOW_PRIVATE_IPS`.** Для локальной разработки и тестов (LM Studio,
- * внутренние сервисы) защиту можно осознанно выключить: `true` — проверки
- * пропускаются. Дефолт `false` (fail closed). Флаг читает вызывающий код через
- * `ConfigService` (RULES 4.6) и передаёт сюда параметром — модуль не читает
- * `process.env` сам.
+ * - {@link normalizeHostname}/{@link isBlockedHostname} — нормализация имени и
+ *   денлист заведомо локальных/metadata-имён (до DNS-резолва);
+ * - {@link isMetadataHostname}/{@link isMetadataIpAddress} — алиасы хранилищ
+ *   токенов инстанса: они остаются запрещёнными даже при
+ *   `allowPrivateNetworks=true` (это не «внутренний сервис», а чужие
+ *   credentials).
  */
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
@@ -45,8 +41,8 @@ export type DnsLookupAsync = (hostname: string) => Promise<readonly string[]>;
  *
  * @param hostname - имя хоста из URL
  * @returns IP-адреса всех семейств
- * @throws Error при сбое DNS (`ENOTFOUND`, `EAI_AGAIN`) — валидатор решает,
- *   что с этим делать (см. {@link assertPublicHttpUrlAsync})
+ * @throws Error при сбое DNS (`ENOTFOUND`, `EAI_AGAIN`) — клиент решает, что с
+ *   этим делать (см. `SafeHttpDnsException`, fail closed)
  */
 export async function defaultDnsLookupAsync(
   hostname: string,
@@ -57,7 +53,7 @@ export async function defaultDnsLookupAsync(
 }
 
 /**
- * Максимум переходов по редиректам в {@link fetchWithSsrfGuardAsync}.
+ * Максимум переходов по редиректам в `SafeHttpClient`.
  *
  * Каждый хоп — отдельный сетевой вызов и отдельная SSRF-проверка; лимит
  * защищает от бесконечной цепочки (`A → B → A → …`).
@@ -65,7 +61,7 @@ export async function defaultDnsLookupAsync(
 export const HTTP_MAX_REDIRECTS = 5;
 
 /**
- * Имена хостов, которые запрещены без резолва (KI-409).
+ * Имена хостов, которые запрещены без DNS-резолва (KI-409).
  *
  * `localhost` и его поддомены (RFC 6761) — сам хост; `metadata.google.internal`
  * и `instance-data` — документированные алиасы metadata-сервисов облаков.
@@ -82,14 +78,28 @@ const BLOCKED_HOSTNAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * HTTP-коды, которые клиент обязан обработать как редирект.
+ * Алиасы metadata-сервисов: всегда запрещены (даже при `allowPrivateNetworks`).
  *
- * `300`/`304` сюда не входят: `fetch` по спецификации их не переходит, и
- * трактовать их как редирект значило бы поменять поведение.
+ * Эти имена указывают на хранилище токенов инстанса (AWS/GCP/Kubernetes), а не
+ * на «свой» внутренний сервис. Разрешать их доверенной инсталляции нельзя:
+ * утечка instance credentials — ровно тот вектор, от которого защищает SSRF-
+ * guard.
  */
-const REDIRECT_STATUSES: ReadonlySet<number> = new Set([
-  301, 302, 303, 307, 308,
+const METADATA_HOSTNAMES: ReadonlySet<string> = new Set([
+  'metadata',
+  'metadata.google.internal',
+  'instance-data',
 ]);
+
+/**
+ * Адрес AWS/GCP metadata-сервиса (link-local, но не «внутренний сервис»).
+ *
+ * Заблокирован всегда, в том числе при `allowPrivateNetworks=true`; входит в
+ * link-local `169.254/16`, поэтому отдельный предикат нужен, чтобы отличить
+ * его от прочих link-local адресов, которые доверенная инсталляция могла бы
+ * разрешить.
+ */
+const METADATA_IPV4: readonly number[] = [169, 254, 169, 254];
 
 /**
  * Ошибка: запрос к локальному/внутреннему адресу запрещён (KI-409/434/478).
@@ -135,7 +145,7 @@ export class SsrfBlockedException extends Error {
 }
 
 /**
- * Ошибка: цепочка редиректов превысила {@link HTTP_MAX_REDIRECTS}.
+ * Ошибка: цепочка редиректов превысила `maxRedirects` (`SafeHttpClient`).
  *
  * Отдельный класс, а не `SsrfBlockedException`: это не попытка обойти guard, а
  * сломанная/зацикленная конфигурация удалённого хоста.
@@ -163,7 +173,7 @@ export class TooManyRedirectsException extends Error {
  * @param hostname - `url.hostname`
  * @returns имя в нижнем регистре без скобок и завершающей точки
  */
-function normalizeHostname(hostname: string): string {
+export function normalizeHostname(hostname: string): string {
   const lower = hostname.trim().toLowerCase();
   const withoutBrackets =
     lower.startsWith('[') && lower.endsWith(']') ? lower.slice(1, -1) : lower;
@@ -179,8 +189,69 @@ function normalizeHostname(hostname: string): string {
  * @param hostname - нормализованное имя
  * @returns `true` для `localhost`, его поддоменов и известных metadata-алиасов
  */
-function isBlockedHostname(hostname: string): boolean {
+export function isBlockedHostname(hostname: string): boolean {
   return BLOCKED_HOSTNAMES.has(hostname) || hostname.endsWith('.localhost');
+}
+
+/**
+ * Проверяет, что имя хоста — алиас metadata-сервиса.
+ *
+ * Такие имена запрещены **всегда** (в том числе при
+ * `allowPrivateNetworks=true`): это чужие instance-credentials, а не
+ * внутренний сервис инсталляции.
+ *
+ * @param hostname - нормализованное имя
+ * @returns `true` для `metadata`, `metadata.google.internal`, `instance-data`
+ */
+export function isMetadataHostname(hostname: string): boolean {
+  return METADATA_HOSTNAMES.has(hostname);
+}
+
+/**
+ * Проверяет, что IP — адрес metadata-сервиса (`169.254.169.254`).
+ *
+ * Учитывает IPv4-mapped форму (`::ffff:169.254.169.254`): иначе проверка
+ * обходилась бы через IPv6-литерал.
+ *
+ * @param address - IPv4/IPv6-литерал
+ * @returns `true` для адреса metadata-сервиса
+ */
+export function isMetadataIpAddress(address: string): boolean {
+  const normalized = address.toLowerCase();
+  const family = isIP(normalized);
+
+  if (family === 4) {
+    const octets = parseIpv4(normalized);
+
+    return octets !== null && isSameIpv4(octets, METADATA_IPV4);
+  }
+
+  if (family === 6) {
+    const bytes = parseIpv6(normalized);
+    const embedded = bytes === null ? null : embeddedIpv4(bytes);
+
+    return embedded !== null && isSameIpv4(embedded, METADATA_IPV4);
+  }
+
+  return false;
+}
+
+/**
+ * Сравнивает два IPv4-адреса, заданных октетами.
+ *
+ * @param left - четыре октета
+ * @param right - четыре октета
+ * @returns `true`, если адреса совпадают
+ */
+function isSameIpv4(
+  left: readonly number[],
+  right: readonly number[],
+): boolean {
+  return (
+    left.length === 4 &&
+    right.length === 4 &&
+    left.every((octet, index) => octet === right[index])
+  );
 }
 
 /**
@@ -495,276 +566,14 @@ export function isBlockedIpAddress(address: string): boolean {
   if (family === 4) {
     const octets = parseIpv4(normalized);
 
-    return (
-      octets === null || isPrivateIpv4(octets) || isUnsafeIpv4(octets)
-    );
+    return octets === null || isPrivateIpv4(octets) || isUnsafeIpv4(octets);
   }
 
   if (family === 6) {
     const bytes = parseIpv6(normalized);
 
-    return (
-      bytes === null || isPrivateIpv6(bytes) || isUnsafeIpv6(bytes)
-    );
+    return bytes === null || isPrivateIpv6(bytes) || isUnsafeIpv6(bytes);
   }
 
   return false;
-}
-
-/**
- * Разбирает URL и проверяет схему (`http`/`https`).
- *
- * @param rawUrl - строка URL
- * @returns разобранный URL
- * @throws Error если строка не является абсолютным http(s)-адресом
- */
-function parseHttpUrl(rawUrl: string): URL {
-  let url: URL;
-
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    throw new Error(
-      'Некорректный URL: ожидался абсолютный http(s)-адрес',
-    );
-  }
-
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error('URL должен использовать протокол http или https');
-  }
-
-  return url;
-}
-
-/**
- * Проверяет URL на SSRF (KI-409/434/478).
- *
- * **Как.** Сначала блокируются заведомо локальные имена (`localhost`,
- * metadata-алиасы), затем IP-литерал проверяется напрямую, а для домена
- * выполняется DNS-резолв и проверяется **каждый** полученный адрес.
- *
- * **Сбой DNS не блокирует запрос.** Если имя не резолвится, соединения с
- * приватным адресом всё равно не будет, а `fetch` вернёт понятную сетевую
- * ошибку. Блокировать здесь означало бы ломать валидные запросы при
- * временном сбое резолвера. Остаточный риск DNS-rebinding (первый резолв —
- * публичный, второй в `fetch` — приватный) задокументирован в шапке модуля:
- * закрыть его без pinning IP на уровне HTTP-клиента нельзя (KI-435).
- *
- * **`allowPrivateIps`.** Осознанное выключение защиты для локальной
- * разработки/тестов (`ALLOW_PRIVATE_IPS=true`); проверка схемы при этом
- * остаётся.
- *
- * @param rawUrl - абсолютный URL из аргументов инструмента/узла
- * @param lookupAsync - резолвер DNS (по умолчанию системный `dns.lookup`)
- * @param options - `allowPrivateIps`: пропустить проверку приватных адресов
- * @returns промис без значения
- * @throws SsrfBlockedException если имя/адрес локальный или приватный
- * @throws Error если URL невалиден или схема не http(s)
- */
-export async function assertPublicHttpUrlAsync(
-  rawUrl: string,
-  lookupAsync: DnsLookupAsync = defaultDnsLookupAsync,
-  options: { readonly allowPrivateIps?: boolean } = {},
-): Promise<void> {
-  const url = parseHttpUrl(rawUrl);
-
-  if (options.allowPrivateIps === true) {
-    return;
-  }
-
-  const hostname = normalizeHostname(url.hostname);
-
-  if (hostname.length === 0 || isBlockedHostname(hostname)) {
-    throw new SsrfBlockedException(hostname);
-  }
-
-  if (isIP(hostname) !== 0) {
-    if (isBlockedIpAddress(hostname)) {
-      throw new SsrfBlockedException(hostname, hostname);
-    }
-
-    return;
-  }
-
-  let addresses: readonly string[];
-
-  try {
-    addresses = await lookupAsync(hostname);
-  } catch {
-    // См. JSDoc: нерезолвящееся имя не даёт соединения, fetch сам сообщит
-    // об ошибке; здесь важно не превратить сетевой сбой DNS в отказ узла.
-    return;
-  }
-
-  for (const address of addresses) {
-    if (isBlockedIpAddress(address)) {
-      throw new SsrfBlockedException(hostname, address);
-    }
-  }
-}
-
-/**
- * Освобождает тело ответа-редиректа, чтобы не держать соединение.
- *
- * Тело редиректа не нужно вызывающему коду; если его не закрыть, `undici`
- * держит сокет до сборки мусора.
- *
- * @param response - ответ с 3xx
- * @returns промис без значения (ошибки закрытия проглатываются)
- */
-async function discardResponseBodyAsync(response: Response): Promise<void> {
-  try {
-    await response.body?.cancel();
-  } catch {
-    // Поток мог быть уже закрыт/прочитан — это не повод ронять запрос.
-  }
-}
-
-/**
- * Собирает `RequestInit` для следующего хопа редиректа.
- *
- * Повторяет поведение браузера/`fetch`: `303` всегда превращается в `GET`,
- * `301`/`302` с `POST` — тоже (у остальных методов тело сохраняется);
- * `307`/`308` метод и тело сохраняют.
- *
- * @param init - текущие опции запроса
- * @param status - код редиректа
- * @returns опции для следующего запроса
- */
-function buildRedirectInit(init: RequestInit, status: number): RequestInit {
-  const method = (init.method ?? 'GET').toUpperCase();
-  const becomesGet =
-    status === 303 ||
-    ((status === 301 || status === 302) && method === 'POST');
-
-  if (!becomesGet) {
-    return init;
-  }
-
-  return { ...init, method: 'GET', body: undefined };
-}
-
-/**
- * Разрешает `Location` редиректа относительно текущего URL и проверяет схему.
- *
- * @param location - заголовок `Location`
- * @param currentUrl - URL, который вернул редирект
- * @returns абсолютный URL следующего хопа
- * @throws Error если `Location` не является абсолютным http(s)-адресом
- */
-function resolveRedirectUrl(location: string, currentUrl: string): string {
-  let url: URL;
-
-  try {
-    url = new URL(location, currentUrl);
-  } catch {
-    throw new Error('Некорректный Location в ответе-редиректе');
-  }
-
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error('Location редиректа должен использовать http или https');
-  }
-
-  return url.href;
-}
-
-/** Опции SSRF-защиты запроса. */
-export interface SsrfGuardOptions {
-  /** Резолвер DNS (по умолчанию системный `dns.lookup`). */
-  readonly lookupAsync?: DnsLookupAsync;
-  /**
-   * Пропускать приватные/локальные адреса (env `ALLOW_PRIVATE_IPS=true`).
-   *
-   * Дефолт `false`: защита включена, пока её не выключили осознанно.
-   */
-  readonly allowPrivateIps?: boolean;
-}
-
-/** Опции {@link fetchWithSsrfGuardAsync}. */
-export interface SafeFetchOptions extends SsrfGuardOptions {
-  /** Максимум переходов по редиректам (по умолчанию {@link HTTP_MAX_REDIRECTS}). */
-  readonly maxRedirects?: number;
-}
-
-/**
- * Выполняет HTTP-запрос с SSRF-защитой и ручной обработкой редиректов.
- *
- * **Зачем.** `fetch` по умолчанию идёт по 3xx сам, поэтому проверка исходного
- * URL ничего не гарантирует: публичный хост отвечает
- * `302 Location: http://169.254.169.254/…`, и запрос уходит во внутреннюю
- * сеть (KI-434). Здесь `redirect: 'manual'`, каждый `Location` разрешается
- * относительно текущего URL и **проверяется заново** — как обычный хост
- * (KI-478).
- *
- * **Редирект без `Location`** возвращается вызывающему коду как есть (это
- * валидный, хотя и необычный ответ). **Лимит хопов** —
- * {@link HTTP_MAX_REDIRECTS} либо `maxRedirects` из опций.
- *
- * @param fetchAsync - HTTP-клиент (глобальный `fetch` либо мок в тестах)
- * @param rawUrl - абсолютный http(s)-URL
- * @param init - опции запроса (метод, заголовки, тело, `signal`)
- * @param options - резолвер DNS, `allowPrivateIps`, лимит редиректов
- * @returns финальный ответ (не 3xx, если цепочка завершилась)
- * @throws SsrfBlockedException если любой хоп ведёт на приватный адрес
- * @throws TooManyRedirectsException если цепочка длиннее лимита
- * @throws Error если URL/Location невалиден или схема не http(s)
- */
-export async function fetchWithSsrfGuardAsync(
-  fetchAsync: typeof fetch,
-  rawUrl: string,
-  init: RequestInit = {},
-  options: SafeFetchOptions = {},
-): Promise<Response> {
-  const maxRedirects = options.maxRedirects ?? HTTP_MAX_REDIRECTS;
-  const lookupAsync = options.lookupAsync ?? defaultDnsLookupAsync;
-  const allowPrivateIps = options.allowPrivateIps === true;
-  // RULES 4.19: таймаут (`signal`) приходит от вызывающего и действует на всю
-  // цепочку — отдельный таймер на каждый хоп не нужен.
-  let currentInit: RequestInit = { ...init, redirect: 'manual' };
-  let currentUrl = rawUrl;
-  /** URL, с которого пришёл текущий хоп; `null` — исходный запрос. */
-  let redirectFrom: string | null = null;
-
-  for (let hop = 0; ; hop += 1) {
-    try {
-      await assertPublicHttpUrlAsync(currentUrl, lookupAsync, {
-        allowPrivateIps,
-      });
-    } catch (error: unknown) {
-      // Контекст «редирект с какого URL» важен в логе узла/агента: прямой
-      // запрос и переход по чужому `Location` — разные диагнозы.
-      if (error instanceof SsrfBlockedException && redirectFrom !== null) {
-        throw new SsrfBlockedException(
-          error.hostname,
-          error.address,
-          redirectFrom,
-        );
-      }
-
-      throw error;
-    }
-
-    const response = await fetchAsync(currentUrl, currentInit);
-
-    if (!REDIRECT_STATUSES.has(response.status)) {
-      return response;
-    }
-
-    const location = response.headers.get('location');
-
-    // 3xx без Location — не цепочка: отдаём как есть (как и браузер).
-    if (location === null || location.trim().length === 0) {
-      return response;
-    }
-
-    await discardResponseBodyAsync(response);
-
-    if (hop >= maxRedirects) {
-      throw new TooManyRedirectsException(maxRedirects);
-    }
-
-    redirectFrom = currentUrl;
-    currentUrl = resolveRedirectUrl(location.trim(), currentUrl);
-    currentInit = buildRedirectInit(currentInit, response.status);
-  }
 }

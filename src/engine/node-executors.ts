@@ -47,10 +47,10 @@ import {
   MCP_SERVER_NAME,
 } from '../mcp/mcp.types.js';
 import {
-  defaultDnsLookupAsync,
-  fetchWithSsrfGuardAsync,
-  type DnsLookupAsync,
-} from '../common/utils/network-safety.js';
+  SafeHttpClient,
+  type SafeHttpRequest,
+  type SafeHttpResponse,
+} from '../common/http/safe-http.client.js';
 import {
   DEFAULT_EMBEDDING_DIMENSIONS,
   DEFAULT_EMBEDDING_MODEL,
@@ -1215,27 +1215,33 @@ export interface HttpNodeData {
 const HTTP_DEFAULT_TIMEOUT_MS = 30_000;
 /** Верхняя граница таймаута запроса, мс (защита от «вечного» узла). */
 const HTTP_MAX_TIMEOUT_MS = 120_000;
-/** Таймаут HTTP-запроса не может быть меньше 1 мс. */
-const HTTP_MIN_TIMEOUT_MS = 1;
-/** Максимальный размер сохраняемого тела ответа — 1 МБ. */
+/**
+ * Максимальный размер сохраняемого тела ответа — 1 МБ (KI-025).
+ *
+ * Передаётся в {@link SafeHttpClient} как `maxResponseBytes`: клиент читает
+ * тело потоком и прерывает запрос, если лимит превышен, — в `node_runs.outputs`
+ * (jsonb) не попадает мегабайтный чужой ответ.
+ */
 const HTTP_MAX_BODY_BYTES = 1_000_000;
 
 /**
- * Опции исполнителя узла `http`, которые приходят из окружения (v0.10.2).
+ * Опции исполнителя узла `http` (v0.11 S14).
  *
  * Вынесены отдельным параметром, а не читаются из `process.env` внутри
  * чистой функции: env доступен через `ConfigService` только движку (RULES 4.6),
- * а тесты подставляют резолвер DNS и флаг без глобального состояния.
+ * а тесты подставляют флаг без глобального состояния.
  */
 export interface HttpNodeExecutionOptions {
   /**
-   * Пропускать приватные/локальные адреса (env `ALLOW_PRIVATE_IPS`, default
-   * `false`). `true` — осознанное выключение SSRF-защиты для локальной
-   * разработки; см. `common/utils/network-safety.ts`.
+   * Пропускать приватные/локальные адреса — env
+   * `HTTP_NODE_ALLOW_PRIVATE_NETWORKS` (default `false`).
+   *
+   * `true` — только для доверенного self-hosted, где узлу `http` разрешены
+   * внутренние вызовы (DESIGN § 3.5.1). Metadata-алиасы
+   * (`169.254.169.254`, `metadata.google.internal`) остаются запрещёнными и при
+   * `true`; инструмент агента `http_request` этим флагом не отключается.
    */
-  readonly allowPrivateIps?: boolean;
-  /** Резолвер DNS для SSRF-проверки (в тестах — мок, без сети). */
-  readonly dnsLookupAsync?: DnsLookupAsync;
+  readonly allowPrivateNetworks?: boolean;
 }
 
 /**
@@ -1261,9 +1267,9 @@ const HttpNodeDataSchema = z.object({
 });
 
 /**
- * Ищет исходную причину ошибки `fetch`.
+ * Ищет исходную причину ошибки HTTP-клиента.
  *
- * И `AbortSignal.timeout()`, и отмена через `AbortController` в undici
+ * И `AbortSignal.timeout()`, и отмена через `AbortController` в `undici`
  * проявляются по-разному: иногда это `DOMException` с `name='AbortError'` или
  * `'TimeoutError'`, иногда — `TypeError`, у которого настоящая причина лежит
  * в `cause`. Смотрим оба уровня, чтобы не потерять факт отмены.
@@ -1280,7 +1286,7 @@ function asErrorLike(error: unknown): { name?: unknown; message?: unknown } | nu
 /**
  * Распознаёт ошибку отмены/таймаута запроса.
  *
- * @param error - значение из `catch` вокруг `fetch`
+ * @param error - значение из `catch` вокруг HTTP-клиента
  * @returns `true`, если запрос был прерван (сигналом или таймаутом)
  */
 function isAbortLikeError(error: unknown): boolean {
@@ -1296,49 +1302,21 @@ function isAbortLikeError(error: unknown): boolean {
 }
 
 /**
- * Обрезает строку до лимита в байтах UTF-8, не разрезая символ.
+ * Исполнитель узла `http` (KI-105, KI-289, KI-478, RULES 4.19 / 5.9).
  *
- * Длина в байтах ≠ длине в символах: `Buffer.byteLength` считает байты, а
- * срез делается по кодовым точкам. Если усечение попадает в середину
- * суррогатной пары, лишняя code unit отбрасывается — иначе получился бы
- * «битый» символ (RULES 1.17: наружу не уходит невалидный текст).
+ * Запрос уходит через {@link SafeHttpClient} — тот же безопасный клиент, что у
+ * `http_request` агента: проверка адреса до вызова, `redirect: 'manual'` с
+ * повторной проверкой каждого `Location`, pinning IP против DNS rebinding.
+ * При `HTTP_NODE_ALLOW_PRIVATE_NETWORKS=true` клиенту разрешаются приватные
+ * сети (только для доверенного self-hosted); инструмент агента флаг не
+ * отключает.
  *
- * @param value - исходный текст ответа
- * @param maxBytes - предельный размер в байтах UTF-8
- * @returns текст, у которого `Buffer.byteLength` не больше `maxBytes`
- */
-function truncateToBytes(value: string, maxBytes: number): string {
-  if (Buffer.byteLength(value, 'utf8') <= maxBytes) {
-    return value;
-  }
-
-  let usedBytes = 0;
-  let end = 0;
-
-  for (const symbol of value) {
-    const symbolBytes = Buffer.byteLength(symbol, 'utf8');
-
-    if (usedBytes + symbolBytes > maxBytes) {
-      break;
-    }
-
-    usedBytes += symbolBytes;
-    end += symbol.length;
-  }
-
-  return value.slice(0, end);
-}
-
-/**
- * Исполнитель узла `http` (KI-105, KI-289, RULES 4.19 / 5.9).
- *
- * Запрос уходит через глобальный `fetch` (Node 18+) с жёстким таймаутом
- * `AbortSignal.timeout`. По умолчанию коды 4xx/5xx **не** считаются ошибкой
- * узла: узел возвращает `{ status, body }`, а решение «это провал» принимает
- * граф (например, узел `condition`). Если в `data.failOnHttpError` стоит `true`
- * (KI-289), ответ с кодом ≥ 400 переводит узел в `failed` — текст ошибки
- * намеренно короткий, без тела и заголовков. Наружу в обоих случаях
- * пробрасываются сетевые ошибки и таймаут — движок запишет их в
+ * По умолчанию коды 4xx/5xx **не** считаются ошибкой узла: узел возвращает
+ * `{ status, body }`, а решение «это провал» принимает граф (например, узел
+ * `condition`). Если в `data.failOnHttpError` стоит `true` (KI-289), ответ с
+ * кодом ≥ 400 переводит узел в `failed` — текст ошибки намеренно короткий, без
+ * тела и заголовков. Наружу в обоих случаях пробрасываются сетевые ошибки,
+ * SSRF-блокировка, превышение лимита тела и таймаут — движок запишет их в
  * `node_runs.error`.
  *
  * Тело и заголовки запроса сознательно не логируются: в них попадают токены
@@ -1348,18 +1326,21 @@ function truncateToBytes(value: string, maxBytes: number): string {
  *
  * @param data - распарсенные данные узла (`method`/`url`/`headers`/`body`/`timeoutMs`/`failOnHttpError`)
  * @param inputs - входы узла; `inputs.prompt` используется как URL-фолбэк
- * @param options - SSRF-опции из окружения (v0.10.2): `allowPrivateIps` и
- *   резолвер DNS для тестов
- * @returns `{ status, body }`, где `body` обрезано до 1 МБ
+ * @param httpClient - безопасный HTTP-клиент (в продакшене — DI, в тестах — фейк)
+ * @param options - `allowPrivateNetworks` из env (v0.11 S14)
+ * @returns `{ status, body }`, где `body` не больше 1 МБ
  * @throws NodeDataValidationException если данные не проходят Zod-схему
- * @throws SsrfBlockedException если URL/редирект ведёт на приватный адрес
- *   (KI-478/434) и `ALLOW_PRIVATE_IPS` не включён
+ * @throws SsrfBlockedException если URL/редирект ведёт на запрещённый адрес
+ *   (KI-478/434)
+ * @throws SafeHttpDnsException если имя не разрешилось (fail closed, KI-435)
+ * @throws SafeHttpResponseTooLargeException если тело больше 1 МБ (KI-025)
  * @throws Error если URL не задан, запрос прерван по таймауту либо
  *   `failOnHttpError=true` и сервер ответил кодом ≥ 400 (`HTTP <код>`)
  */
 export async function executeHttpNode(
   data: unknown,
   inputs: Record<string, unknown> = {},
+  httpClient: SafeHttpClient = new SafeHttpClient(),
   options: HttpNodeExecutionOptions = {},
 ): Promise<{ status: number; body: string }> {
   const parsed = parseNodeData('http', HttpNodeDataSchema, data);
@@ -1375,34 +1356,26 @@ export async function executeHttpNode(
   }
 
   const timeoutMs = parsed.timeoutMs ?? HTTP_DEFAULT_TIMEOUT_MS;
+  const request: SafeHttpRequest = {
+    url,
+    method: parsed.method,
+    timeoutMs,
+    maxResponseBytes: HTTP_MAX_BODY_BYTES,
+    ...(parsed.headers === undefined ? {} : { headers: parsed.headers }),
+    // `body` недопустим для GET: `undici` бросает TypeError, поэтому тело
+    // подставляется только для методов, которые его поддерживают.
+    ...(parsed.body === undefined || parsed.method === 'GET'
+      ? {}
+      : { body: parsed.body }),
+    ...(options.allowPrivateNetworks === true
+      ? { allowPrivateNetworks: true }
+      : {}),
+  };
 
-  // RULES 4.19: длительная операция обязана иметь таймаут. `AbortSignal.timeout`
-  // не оставляет висеть ни сам запрос, ни таймер после его завершения.
-  const signal = AbortSignal.timeout(Math.max(timeoutMs, HTTP_MIN_TIMEOUT_MS));
-
-  // `RequestInit.body` недопустим для GET: undici бросает TypeError, поэтому
-  // тело подставляется только для методов, которые его поддерживают.
-  const init: RequestInit = { method: parsed.method, signal };
-
-  if (parsed.headers) {
-    init.headers = parsed.headers;
-  }
-
-  if (parsed.body !== undefined && parsed.method !== 'GET') {
-    init.body = parsed.body;
-  }
-
-  let response: Response;
+  let response: SafeHttpResponse;
 
   try {
-    // v0.10.2 (KI-478/434): тот же guard, что у `http_request` агента:
-    // проверка адреса до вызова, `redirect: 'manual'` и повторная проверка
-    // каждого `Location`. Иначе узел мог дёрнуть metadata/internal-сервис или
-    // уйти на приватный адрес по цепочке редиректов.
-    response = await fetchWithSsrfGuardAsync(fetch, url, init, {
-      lookupAsync: options.dnsLookupAsync ?? defaultDnsLookupAsync,
-      allowPrivateIps: options.allowPrivateIps === true,
-    });
+    response = await httpClient.fetchAsync(request);
   } catch (error: unknown) {
     if (isAbortLikeError(error)) {
       throw new Error(`Узел http: запрос прерван по таймауту ${timeoutMs} мс`);
@@ -1411,21 +1384,15 @@ export async function executeHttpNode(
     throw error;
   }
 
-  // Тело ответа читается целиком и обрезается до лимита: `node_runs.outputs`
-  // — jsonb, и мегабайтные ответы не должны раздувать БД (KI-025). Чтение идёт
-  // и при `failOnHttpError`: незакрытый ответ держал бы соединение undici, а
-  // `await response.text()` заодно сливает поток до конца.
-  const rawBody = await response.text();
-  const body = truncateToBytes(rawBody, HTTP_MAX_BODY_BYTES);
-
   // KI-289: явный заказ «4xx/5xx — это падение». Сравнение с `true` строгое:
   // отсутствие поля (старые графы) и `false` сохраняют прежнее поведение.
   if (parsed.failOnHttpError === true && response.status >= 400) {
     throw new Error(`HTTP ${response.status}`);
   }
 
-  return { status: response.status, body };
+  return { status: response.status, body: response.body };
 }
+
 
 /* ──────────────── Узел condition (MVP, без маршрутизации) ──────────────── */
 

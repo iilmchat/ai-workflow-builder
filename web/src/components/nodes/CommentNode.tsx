@@ -75,7 +75,7 @@ export function CommentNode({ id, data }: NodeProps<CommentFlowNode>) {
           aria-label={t('node.delete')}
           title={t('node.delete')}
           // nodrag: без этого клик по кнопке тащил бы узел.
-          className="nodrag ml-auto cursor-pointer rounded px-1 text-xs leading-none text-muted-foreground opacity-0 transition-opacity hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 group-hover/comment:opacity-100"
+          className="nodrag ml-auto cursor-pointer rounded px-1 text-xs leading-none text-muted-foreground opacity-0 transition-opacity hover:bg-node-bg-failed hover:text-foreground focus-visible:opacity-100 group-hover/comment:opacity-100"
         >
           ×
         </button>

@@ -9,6 +9,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { randomInt } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { isRetryableProviderError } from '../common/errors/retryable-provider.error.js';
+import { SafeHttpClient } from '../common/http/safe-http.client.js';
 import { NODE_RETRY_DEFAULTS } from '../config/env.schema.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
@@ -379,12 +380,15 @@ export class ExecutionEngineService {
   private readonly logger = new Logger(ExecutionEngineService.name);
 
   /**
-   * Пропускать ли приватные IP в узле `http` (env `ALLOW_PRIVATE_IPS`).
+   * Пропускать ли приватные сети в узле `http` — env
+   * `HTTP_NODE_ALLOW_PRIVATE_NETWORKS` (v0.11 S14, DESIGN § 3.5.1).
    *
-   * `false` — SSRF-защита включена (дефолт), `true` — осознанное выключение
-   * для локальной разработки/тестов (v0.10.2, KI-478/434).
+   * `false` — SSRF-защита включена (дефолт), `true` — осознанное разрешение
+   * внутренних адресов для доверенного self-hosted. Инструмент агента
+   * `http_request` этим флагом не отключается: он всегда блокирует приватные
+   * адреса (LLM не должен ходить во внутреннюю сеть).
    */
-  private readonly allowPrivateIps: boolean;
+  private readonly httpNodeAllowPrivateNetworks: boolean;
 
   /**
    * Максимум попыток узла, включая первую (env `NODE_RETRY_MAX_ATTEMPTS`).
@@ -427,6 +431,9 @@ export class ExecutionEngineService {
     // v0.10 S0 (KI-455): аварийный выключатель vector/memory-узлов.
     // ConfigModule глобальный, поэтому сервис резолвится в любом модуле.
     private readonly config: ConfigService,
+    // v0.11 S14 (KI-478/434/435): единственный безопасный HTTP-клиент. Узел
+    // `http` и `http_request` агента ходят через него — второй SSRF-пути нет.
+    private readonly httpClient: SafeHttpClient,
     // v0.10 S2 (DESIGN v0.10 § 3.1): web-search-провайдер узла web_search.
     // Токен выбирается в WebSearchModule по env WEB_SEARCH_PROVIDER.
     @Inject(WEB_SEARCH_PROVIDER)
@@ -446,13 +453,15 @@ export class ExecutionEngineService {
     // проверяет path traversal и лимит 5 МБ (RULES 4.38).
     private readonly filesystemService: FilesystemService,
   ) {
-    // v0.10.2 (KI-478/434): аварийный переключатель SSRF-защиты узла `http`.
-    // Читается один раз (RULES 4.6); строка `'false'` из сырого окружения не
-    // должна трактоваться как включение — истина только `true`/`'true'`.
-    const allowPrivateIps = config.get<unknown>('ALLOW_PRIVATE_IPS');
+    // v0.11 S14 (DESIGN § 3.5.1): отдельный флаг **только** для узла `http`.
+    // Читается один раз (RULES 4.6); трактовка строгая, как у `EnvSchema`:
+    // истина — только boolean `true` или строка `'true'`, а не «непустое».
+    const allowPrivateNetworks = config.get<unknown>(
+      'HTTP_NODE_ALLOW_PRIVATE_NETWORKS',
+    );
 
-    this.allowPrivateIps =
-      allowPrivateIps === true || allowPrivateIps === 'true';
+    this.httpNodeAllowPrivateNetworks =
+      allowPrivateNetworks === true || allowPrivateNetworks === 'true';
 
     // v0.11 S10 (DESIGN § 3.3.2, KI-104): настройки повторов. Границы те же,
     // что у `NodeRetryEnvSchema`; дефолты — из общего `NODE_RETRY_DEFAULTS`.
@@ -1350,9 +1359,10 @@ export class ExecutionEngineService {
         return { kind: 'plain', outputs, metrics: null };
       }
       case 'http': {
-        const outputs = await executeHttpNode(node.data, inputs, {
-          // v0.10.2 (KI-478/434): SSRF-защита; env читается в конструкторе.
-          allowPrivateIps: this.allowPrivateIps,
+        const outputs = await executeHttpNode(node.data, inputs, this.httpClient, {
+          // v0.11 S14 (KI-478): SSRF-защита; env читается в конструкторе.
+          // `http_request` агента этим флагом не отключается.
+          allowPrivateNetworks: this.httpNodeAllowPrivateNetworks,
         });
 
         return { kind: 'plain', outputs, metrics: null };

@@ -63,6 +63,7 @@
     "quickjs-emscripten": "^0.32.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "undici": "^8.12.2",
     "zod": "^4.6.6"
   },
   "devDependencies": {

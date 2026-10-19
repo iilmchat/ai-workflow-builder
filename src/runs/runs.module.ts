@@ -1,8 +1,11 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AuthModule } from '../auth/auth.module.js';
 import { AgentService } from '../agent/agent.service.js';
+import { AuthModule } from '../auth/auth.module.js';
+// v0.11 S14 (KI-434/435/478): безопасный HTTP-клиент узла `http` и
+// инструмента `http_request` агента — один экземпляр на приложение.
+import { SafeHttpClient } from '../common/http/safe-http.client.js';
 // v0.10 S6: DocumentService для исполнителя узла document_gen.
 import { DocumentsModule } from '../documents/documents.module.js';
 // v0.10 S7: FilesystemService для исполнителей read_file/write_file (S8).
@@ -106,6 +109,10 @@ import { RUNS_QUEUE_DB, RUNS_QUEUE_PREFIX } from './runs.worker-options.js';
     // (ниже, в этом же модуле) запускает heartbeat, RunsProcessor — читает
     // lease_expires_at для guard'а KI-023.
     RunLeaseService,
+    // v0.11 S14: безопасный HTTP-клиент (SSRF/pinning/redirects) для узла
+    // `http` и инструмента `http_request` — инжектится в
+    // ExecutionEngineService и AgentService.
+    SafeHttpClient,
     ExecutionEngineService,
     // R7.4a (KI-128): SQL к pgvector для узлов vector_*/memory_*.
     VectorStoreService,

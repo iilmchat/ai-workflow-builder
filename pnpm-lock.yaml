@@ -243,7 +243,7 @@ importers:
         version: 5.3.1(@nestjs/common@12.1.2(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0))(@nestjs/core@12.1.2)(pino-http@11.0.0)(pino@10.4.0)(rxjs@7.8.2)
       openai:
         specifier: ^7.32.0
-        version: 7.32.0(@aws-sdk/credential-provider-node@3.972.86)(@smithy/signature-v4@5.7.4)(undici@6.20.1)(zod@4.6.6)
+        version: 7.32.0(@aws-sdk/credential-provider-node@3.972.86)(@smithy/signature-v4@5.7.4)(undici@8.12.2)(zod@4.6.6)
       pg:
         specifier: ^8.23.1
         version: 8.23.1
@@ -262,6 +262,9 @@ importers:
       rxjs:
         specifier: ^7.8.1
         version: 7.8.2
+      undici:
+        specifier: ^8.12.2
+        version: 8.12.2
       zod:
         specifier: ^4.6.6
         version: 4.6.6
@@ -3528,6 +3531,10 @@ packages:
     resolution: {integrity: sha512-AjQF1QsmqfJys+LXfGTNum+qw4S88CojRInG/6t31W/1fk6G59s92bnAvGz5Cmur+kQv2SURXEvvudLmbrE8QA==}
     engines: {node: '>=18.17'}
 
+  undici@8.12.2:
+    resolution: {integrity: sha512-XtuDWVdqTLr3NAxm2ly9/hU6kUsJOgGh1RASzMBbsw6aWCOaQzHdW+QQDfdERjfJ2V5vL5pRPa4RetO9UfivDg==}
+    engines: {node: '>=22.19.0'}
+
   unicode-emoji-modifier-base@1.0.0:
     resolution: {integrity: sha512-yLSH4py7oFH3oG/9K+XWrz1pSi3dfUrWEnInbxMfArOfc1+33BlGPQtLsOYwvdMy11AwUBetYuaRxSPqgkq+8g==}
     engines: {node: '>=4'}
@@ -6080,11 +6087,11 @@ snapshots:
     dependencies:
       mimic-function: 5.0.1
 
-  openai@7.32.0(@aws-sdk/credential-provider-node@3.972.86)(@smithy/signature-v4@5.7.4)(undici@6.20.1)(zod@4.6.6):
+  openai@7.32.0(@aws-sdk/credential-provider-node@3.972.86)(@smithy/signature-v4@5.7.4)(undici@8.12.2)(zod@4.6.6):
     optionalDependencies:
       '@aws-sdk/credential-provider-node': 3.972.86
       '@smithy/signature-v4': 5.7.4
-      undici: 6.20.1
+      undici: 8.12.2
       zod: 4.6.6
 
   ora@5.4.1:
@@ -6652,6 +6659,8 @@ snapshots:
   undici-types@8.9.0: {}
 
   undici@6.20.1: {}
+
+  undici@8.12.2: {}
 
   unicode-emoji-modifier-base@1.0.0: {}
 
