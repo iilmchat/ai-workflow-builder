@@ -7674,13 +7674,17 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-479 — Multipart Content-Type не поддерживается фронтендом (Medium)
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-19
-- **Файлы:** `web/src/lib/api.ts`
-- **Описание:** `sendAsync` безусловно выполняет
-  `headers.set('Content-Type', 'application/json')` (строка 265), даже если
-  передан `FormData`. Браузер не может добавить `multipart/form-data; boundary`,
-  и сервер получает JSON-заголовок с multipart-телом. Следствие: загрузка
-  DOCX-шаблона (`POST /workflow/:id/document-templates`) из UI невозможна.
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-10-19
+- **Исправлено в:** v0.11.0 (S3) — `sendAsync` не ставит
+  `Content-Type: application/json` для `FormData` и не перезаписывает явно
+  заданный заголовок; браузер сам добавляет `multipart/form-data; boundary`.
+  Повтор после refresh сохраняет тело. Тест — `web/src/lib/api.spec.ts`.
+- **Файлы:** `web/src/lib/api.ts`, `web/src/lib/api.spec.ts`
+- **Описание:** `sendAsync` безусловно выполнял
+  `headers.set('Content-Type', 'application/json')`, даже если передан
+  `FormData`. Браузер не мог добавить `multipart/form-data; boundary`, и сервер
+  получал JSON-заголовок с multipart-телом. Следствие: загрузка DOCX-шаблона
+  (`POST /workflow/:id/document-templates`) из UI была невозможна.
 - **Решение:** не ставить JSON-заголовок для `FormData` и не перезаписывать
   явно заданный `Content-Type` (DESIGN v0.11 § 3.1.8).
 - **Связанные:** DESIGN v0.11 § 1.2/§ 3.1.8, KI-480.
@@ -7704,18 +7708,54 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-481 — DESIGN § 3.1.3: порядок `asText()` и `uncompressedSize` ломает fail-closed (Low)
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-19
+- **Исправлено в:** v0.11.0 (S2) — в `DocumentTemplateService.assertDocxArchive`
+  лимиты распаковки считаются по метаданным **до** первых `asText()`; в
+  DESIGN v0.11 § 3.1.3 добавлена поправка реализации.
+- **Файлы:** `src/documents/document-template.service.ts`,
+  `docs/development/v0.11/DESIGN_V011_FEATURES.md`
+- **Описание:** в псевдокоде DESIGN проверка макросов через
+  `zip.file('[Content_Types].xml')?.asText()` стоит до подсчёта
+  `_data.uncompressedSize`. PizZip лениво распаковывает запись и при
+  `asText()` подменяет `_data`: после чтения текста `uncompressedSize` уже не
+  число. Реализация «строго по псевдокоду» отклонила бы **любой** шаблон по
+  fail-closed ветке, то есть проверка не работала бы вовсе.
+- **Решение:** переставить проверки: сначала записи/размеры (метаданные), затем
+  макросы и скан DTD (текст). Набор проверок не изменён; тесты фиксируют, что
+  обычный шаблон проходит, а битый ZIP, макросы, XXE и zip bomb — нет.
+- **Связанные:** DESIGN v0.11 § 3.1.3, v0.11 S2.
+
+---
+
+### KI-482 — docxtemplater печатает контекст шаблона в stdout при ошибке (Low)
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-19
+- **Исправлено в:** v0.11.0 (S2) — опция `errorLogging: false` в
+  `DocumentTemplateService.createDocument`.
+- **Файлы:** `src/documents/document-template.service.ts`
+- **Описание:** по умолчанию docxtemplater (`errorLogging: true`) пишет в
+  консоль объект ошибки вместе с `properties.context` — фрагментом
+  пользовательского документа. Это нарушает RULES 5.9 (содержимое документов и
+  промптов не логируется) и засоряет stdout воркера.
+- **Решение:** отключить `errorLogging`; ошибка всё равно уходит наверх через
+  `DocumentTemplateInvalidException` с `details[]` (файл-часть + объяснение,
+  без содержимого документа).
+- **Связанные:** RULES 5.9, DESIGN v0.11 § 3.1.3.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 214 |
+| Fixed | 217 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 1 |
 | Documented | 6 |
-| Open | 242 |
+| Open | 241 |
 | Won't Fix | 4 |
-| **Всего** | **468** |
+| **Всего** | **470** |
 
 ---
 

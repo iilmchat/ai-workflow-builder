@@ -60,3 +60,72 @@ export class DocumentStorageUnavailableException extends Error {
     this.name = 'DocumentStorageUnavailableException';
   }
 }
+
+/**
+ * Код отказа DOCX-шаблона (v0.11 S2, DESIGN § 3.1.3).
+ *
+ * - `invalid-zip` — буфер не является ZIP-архивом (сигнатура/структура);
+ * - `invalid-docx` — архив не OOXML или небезопасен (нет обязательных частей,
+ *   макросы, превышены лимиты распаковки, DTD/ENTITY);
+ * - `syntax` — docxtemplater не скомпилировал теги (незакрытый `{name`,
+ *   неверная вложенность циклов);
+ * - `render` — ошибка подстановки данных (в том числе превышение лимита
+ *   переменных).
+ *
+ * Код нужен вызывающему коду, чтобы отличить «пользователь загрузил мусор»
+ * (400, non-retryable) от внутренней ошибки рендера.
+ */
+export type DocumentTemplateInvalidCode =
+  | 'invalid-zip'
+  | 'invalid-docx'
+  | 'syntax'
+  | 'render';
+
+/**
+ * Шаблон документа не прошёл проверку/рендер (v0.11 S2, DESIGN § 3.1.3).
+ *
+ * Наследуется от `Error`, а не от Nest `HttpException`: исключение бросает
+ * чистый рендерер (`DocumentTemplateService`), который не знает об HTTP.
+ * Контроллер (`DocumentTemplatesController`) и исполнитель узла (S4)
+ * переводят его в 400/`failed` соответственно.
+ *
+ * `details` — тексты из `error.properties.errors` docxtemplater **без
+ * содержимого документа** (RULES 5.9): только имя файла-части и объяснение
+ * («The tag beginning with "{name" is unclosed»). Этого достаточно, чтобы
+ * пользователь понял, что править в шаблоне.
+ */
+export class DocumentTemplateInvalidException extends Error {
+  /**
+   * @param code - машинный код отказа (см. {@link DocumentTemplateInvalidCode})
+   * @param message - короткое описание для пользователя/лога
+   * @param details - подробности по каждому тегу (без содержимого документа)
+   */
+  constructor(
+    readonly code: DocumentTemplateInvalidCode,
+    message: string,
+    readonly details: readonly string[] = [],
+  ) {
+    super(
+      details.length === 0 ? message : `${message}: ${details.join('; ')}`,
+    );
+    this.name = 'DocumentTemplateInvalidException';
+  }
+}
+
+/**
+ * Шаблон не найден в указанном workflow (v0.11 S2, DESIGN § 3.1.6).
+ *
+ * Используется загрузчиком для исполнителя узла (`loadAsync`): проверка
+ * `WHERE id = $templateId AND workflow_id = $runWorkflowId` отсекает чужой
+ * workflow, поэтому удалённый или «переехавший» шаблон — non-retryable отказ
+ * узла, а не 404 HTTP (HTTP отдаёт контроллер через `NotFoundException`).
+ */
+export class DocumentTemplateNotFoundException extends Error {
+  /**
+   * @param templateId - uuid запрошенного шаблона
+   */
+  constructor(readonly templateId: string) {
+    super(`Шаблон документа ${templateId} не найден в workflow`);
+    this.name = 'DocumentTemplateNotFoundException';
+  }
+}

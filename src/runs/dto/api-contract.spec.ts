@@ -93,6 +93,16 @@ const RUN_BUDGET_DTO_PATH = join(SPEC_DIR, 'run-budget.dto.ts');
 /** Файл с TS-типом `BudgetMode` — источник домена `RunBudgetResponse.mode`. */
 const COST_BUDGET_SERVICE_PATH = join(SPEC_DIR, '..', 'cost-budget.service.ts');
 
+/** Файл с `DocumentTemplateSummary` (`/workflow/:id/document-templates`, v0.11 S3). */
+const DOCUMENT_TEMPLATE_DTO_PATH = join(
+  SPEC_DIR,
+  '..',
+  '..',
+  'documents',
+  'dto',
+  'document-template.dto.ts',
+);
+
 /**
  * Где объявлен DTO ответа и как из него читать поля.
  *
@@ -145,6 +155,13 @@ type DtoSource =
     kind: 'interface',
     path: COLLABORATOR_DTO_PATH,
     label: 'src/workflow/dto/collaborator.dto.ts',
+  },
+  // v0.11 S3: публичное представление DOCX-шаблона; зеркало в web —
+  // `ApiDocumentTemplateSchema` (`web/src/lib/api.ts`).
+  DocumentTemplateSummary: {
+    kind: 'interface',
+    path: DOCUMENT_TEMPLATE_DTO_PATH,
+    label: 'src/documents/dto/document-template.dto.ts',
   },
   ExportWorkflowDto: {
     kind: 'zod',

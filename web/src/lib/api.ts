@@ -93,6 +93,25 @@ export const ApiRunSchema = z.object({
 export type ApiRun = z.infer<typeof ApiRunSchema>;
 
 /**
+ * Публичное представление DOCX-шаблона (`DocumentTemplateSummary`, v0.11 S3).
+ *
+ * Зеркало backend-интерфейса `src/documents/dto/document-template.dto.ts`;
+ * паритет состава полей проверяет `api-contract.spec.ts` через
+ * `docs/development/api-contract.json`. Содержимое файла сюда не входит — оно
+ * скачивается отдельной ручкой `GET …/:templateId/file`.
+ */
+export const ApiDocumentTemplateSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  bytes: z.number(),
+  placeholders: z.array(z.string()),
+  createdAt: z.string(),
+});
+
+/** DOCX-шаблон в терминах API. */
+export type ApiDocumentTemplate = z.infer<typeof ApiDocumentTemplateSchema>;
+
+/**
  * Схема бюджета запуска (`GET /runs/:id/budget`, R7.1, KI-048).
  *
  * Поля совпадают с backend `RunBudgetResponse`
@@ -268,7 +287,19 @@ async function sendAsync(
   const headers = new Headers(options.headers);
   const token = getAccessToken();
 
-  headers.set('Content-Type', 'application/json');
+  /**
+   * KI-479 (DESIGN v0.11 § 3.1.8): `FormData` обязан уйти с браузерным
+   * `multipart/form-data; boundary=…`. Если поставить `application/json`,
+   * браузер не добавит boundary, и multer на backend не разберёт тело.
+   * Явно заданный `Content-Type` тоже не перезаписываем — это может быть
+   * осознанный вызов (например, `application/octet-stream`).
+   */
+  const isFormData =
+    typeof FormData !== 'undefined' && options.body instanceof FormData;
+
+  if (!isFormData && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
 
   if (token !== null && !isAuthPathWithoutRefresh(url) && (forceToken || !headers.has('Authorization'))) {
     headers.set('Authorization', `Bearer ${token}`);

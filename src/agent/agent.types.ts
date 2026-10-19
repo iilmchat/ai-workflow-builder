@@ -13,7 +13,11 @@
  */
 import type { ZodType } from 'zod';
 import type { LlmUsage } from '../llm/llm-provider.interface.js';
-import type { VectorMatch, VectorMemoryStore } from '../engine/node-executors.js';
+import type { McpToolRef } from '../mcp/mcp.types.js';
+import type {
+  VectorMatch,
+  VectorMemoryStore,
+} from '../engine/node-executors.js';
 
 /**
  * Имена инструментов агента (DESIGN v0.9 § 3.4).
@@ -65,8 +69,18 @@ export interface AgentNodeData {
   readonly model: string;
   /** Пользовательская системная инструкция; добавляется перед протоколом. */
   readonly systemPrompt?: string;
-  /** Включённые инструменты: от 1 до {@link AGENT_TOOL_NAMES}.length. */
+  /** Включённые инструменты: от 0 до {@link AGENT_TOOL_NAMES}.length. */
   readonly tools: readonly AgentToolName[];
+  /**
+   * MCP-инструменты узла (v0.11 S7, DESIGN § 3.2.5).
+   *
+   * Узел хранит **имена** сервера и инструмента, а не URL: реестр серверов
+   * задаётся только оператором в env `MCP_SERVERS` (DESIGN § 2.3). Вместе с
+   * `tools` должен давать хотя бы один инструмент; суммарный предел — 20
+   * ({@link MCP_MAX_TOOLS_PER_NODE_LIMIT}). `undefined` трактуется как пустой
+   * список — старые узлы и прямые вызовы сервиса остаются совместимыми.
+   */
+  readonly mcpTools?: readonly McpToolRef[];
   /** Предел итераций цикла; default — {@link AGENT_DEFAULT_MAX_ITERATIONS}. */
   readonly maxIterations?: number;
   /** Лимит токенов ответа на шаг; default — {@link AGENT_DEFAULT_MAX_TOKENS_PER_STEP}. */
@@ -233,12 +247,33 @@ export interface AgentToolContext {
  * с суффиксом `Async` по RULES 1.4.
  */
 export interface AgentTool {
-  /** Имя из {@link AGENT_TOOL_NAMES}. */
-  readonly name: AgentToolName;
+  /**
+   * Имя инструмента.
+   *
+   * Нативные инструменты используют {@link AgentToolName}; MCP-инструменты —
+   * динамическую строку `mcp__<server>__<tool>` (DESIGN § 3.2.5), поэтому тип
+   * расширен до `string`. `AgentToolName` остаётся типом **нативных** имён и
+   * используется в `TOOL_REGISTRY`/Zod-схеме узла.
+   */
+  readonly name: string;
   /** Описание для системного промпта и UI. */
   readonly description: string;
   /** Схема аргументов; `.parse()` бросает ZodError на мусоре. */
   readonly inputSchema: ZodType<unknown>;
+  /**
+   * MCP-подсказка «инструмент только читает данные» (v0.11 S7, DESIGN § 3.3.2).
+   *
+   * Используется retry-политикой: read-only MCP-инструмент не считается
+   * побочным эффектом, поэтому узел можно повторить. У нативных инструментов
+   * поле отсутствует — их классификация зашита в `AgentService`.
+   */
+  readonly readOnlyHint?: boolean;
+  /** MCP-подсказка «инструмент может изменять внешние данные». */
+  readonly destructiveHint?: boolean;
+  /** MCP-подсказка «повторный вызов идемпотентен». */
+  readonly idempotentHint?: boolean;
+  /** MCP-подсказка «инструмент работает с внешним миром». */
+  readonly openWorldHint?: boolean;
   /**
    * Выполняет инструмент.
    *
@@ -325,6 +360,26 @@ export class AgentIterationLimitException extends Error {
     );
     this.name = 'AgentIterationLimitException';
     this.iterations = iterations;
+  }
+}
+
+/**
+ * Ошибка: запуск агента прерван, повтор узла небезопасен (v0.11 S7).
+ *
+ * Появляется из retry-guard'а `AgentService` (DESIGN § 3.3.2): если во время
+ * цикла уже выполнялся инструмент с побочным эффектом, повтор всего узла
+ * повторно выполнит его (запись файла, HTTP POST, клик в браузере). Ошибка
+ * non-retryable: движок не увидит ни `LlmProviderException.retryable`, ни
+ * `RetryableNodeException` и не повторит узел.
+ */
+export class AgentRunException extends Error {
+  /**
+   * @param message - текст ошибки для пользователя/лога
+   * @param options - стандартные опции `Error` (в первую очередь `cause`)
+   */
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'AgentRunException';
   }
 }
 

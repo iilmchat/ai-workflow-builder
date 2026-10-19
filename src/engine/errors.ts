@@ -69,3 +69,53 @@ export class VectorDisabledException extends Error {
     this.name = 'VectorDisabledException';
   }
 }
+
+/**
+ * Ошибка: тип узла не поддерживается executor'ом.
+ *
+ * Наследуется от `Error`, а не от Nest `HttpException`: исключение живёт в
+ * контексте worker'а, а не HTTP-запроса, и должно приводить к
+ * `run.status='failed'`.
+ *
+ * **Почему объявлена здесь, а не в `node-executors.ts`** (v0.11 S2). Класс
+ * нужен не только исполнителям, но и документам: `resolveTemplateVariables`
+ * (`src/documents/document-template.service.ts`) бросает
+ * {@link NodeDataValidationException} при невалидном входе шаблона
+ * (DESIGN v0.11 § 3.1.4). Импорт из `node-executors.ts` создал бы цикл
+ * `engine → documents → engine` в S4; импорт из нейтрального `errors.ts` —
+ * нет. Прежнее место объявления сохранено реэкспортом, поэтому существующие
+ * импорты (`src/media/*`, `src/vector/*`, тесты) не меняются.
+ */
+export class UnsupportedNodeTypeException extends Error {
+  /**
+   * @param nodeType - неизвестный тип узла из графа
+   * @param message - готовый текст ошибки; по умолчанию — «тип не поддерживается»
+   */
+  constructor(nodeType: string, message?: string) {
+    super(message ?? `Неподдерживаемый тип узла: ${nodeType}`);
+    this.name = 'UnsupportedNodeTypeException';
+  }
+}
+
+/**
+ * Ошибка: данные узла не прошли валидацию Zod-схемой (R6.5.1).
+ *
+ * Наследуется от {@link UnsupportedNodeTypeException}, потому что для движка это
+ * один класс отказа: узел с таким `data` выполнить нельзя. Подкласс даёт точный
+ * текст ошибки и позволяет тестам отличать «неизвестный тип» от «известный тип
+ * с битыми данными»; `catch` на родителя ловит оба случая.
+ *
+ * v0.11 S2: класс переехал из `node-executors.ts`, чтобы документы могли
+ * бросать его без циклического импорта (см. JSDoc
+ * {@link UnsupportedNodeTypeException}).
+ */
+export class NodeDataValidationException extends UnsupportedNodeTypeException {
+  /**
+   * @param nodeType - тип узла, чьи `data` не прошли валидацию
+   * @param reason - причина отказа (текст ошибки Zod)
+   */
+  constructor(nodeType: string, reason: string) {
+    super(nodeType, `Некорректные данные узла ${nodeType}: ${reason}`);
+    this.name = 'NodeDataValidationException';
+  }
+}

@@ -1,13 +1,24 @@
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
+import { NodeDataValidationException } from '../engine/errors.js';
 import { DEFAULT_EMBEDDING_DIMENSIONS } from '../llm/llm-constants.js';
-import type {
-  LlmGenerateResult,
-  LlmUsage,
+import {
+  LlmProviderException,
+  type LlmGenerateResult,
+  type LlmUsage,
 } from '../llm/llm-provider.interface.js';
 import { LlmRegistryService } from '../llm/llm-registry.service.js';
 import { LlmService } from '../llm/llm.service.js';
+import { McpClientService } from '../mcp/mcp-client.service.js';
+import { McpUnavailableException } from '../mcp/mcp.errors.js';
+import {
+  McpToolAdapter,
+  normalizeToolResult,
+} from '../mcp/mcp-tool.adapter.js';
+import type { McpToolDescriptor } from '../mcp/mcp.types.js';
 import {
   resetTracingAdapter,
   setTracingAdapter,
@@ -19,12 +30,15 @@ import {
 } from '../runs/cost-budget.service.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
-import { AgentService } from './agent.service.js';
+import { TOOL_REGISTRY } from './agent-tools.js';
+import { AgentService, isSideEffectingTool } from './agent.service.js';
 import {
   AGENT_DEFAULT_MAX_ITERATIONS,
   AGENT_DEFAULT_MAX_TOKENS_PER_STEP,
   AgentIterationLimitException,
+  AgentRunException,
   type AgentNodeData,
+  type AgentTool,
 } from './agent.types.js';
 
 /**
@@ -55,11 +69,13 @@ function agentNode(overrides: Partial<AgentNodeData> = {}): AgentNodeData {
 /** Один ответ LLM в сценарии. */
 interface ScriptedReply {
   /** Текст ответа модели (JSON-протокол либо обычный текст). */
-  text: string;
+  text?: string;
   /** usage вызова; `null` — провайдер не отдал токены. */
   usage?: LlmUsage | null;
   /** Обслужен ли вызов локальным провайдером (KI-148). */
   isLocal?: boolean;
+  /** Ошибка вместо ответа (для проверки retry-guard, v0.11 S7). */
+  error?: unknown;
 }
 
 /**
@@ -83,6 +99,11 @@ async function createHarness(
   queryVectorsAsync: ReturnType<typeof vi.fn>;
   writeMemoryAsync: ReturnType<typeof vi.fn>;
   configGet: ReturnType<typeof vi.fn>;
+  mcpIsEnabled: ReturnType<typeof vi.fn>;
+  mcpHasServer: ReturnType<typeof vi.fn>;
+  mcpPrepareAsync: ReturnType<typeof vi.fn>;
+  mcpListToolsAsync: ReturnType<typeof vi.fn>;
+  mcpCreateTool: ReturnType<typeof vi.fn>;
 }> {
   const generateAsync = vi.fn(
     (
@@ -96,8 +117,12 @@ async function createHarness(
         return Promise.reject(new Error('сценарий исчерпан: лишний вызов LLM'));
       }
 
+      if (reply.error !== undefined) {
+        return Promise.reject(reply.error);
+      }
+
       return Promise.resolve({
-        text: reply.text,
+        text: reply.text ?? '',
         usage:
           reply.usage === undefined
             ? { inputTokens: 10, outputTokens: 5, model: 'claude-test' }
@@ -113,6 +138,24 @@ async function createHarness(
   const writeMemoryAsync = vi.fn(() => Promise.resolve());
   const embedAsync = vi.fn(() => Promise.resolve([vector()]));
   const configGet = vi.fn(() => undefined);
+  // v0.11 S7: MCP-клиент и адаптер — внешние границы. По умолчанию preflight
+  // пустой (нативные тесты), каталог пуст, adapters собираются по месту.
+  const mcpIsEnabled = vi.fn(() => true);
+  const mcpHasServer = vi.fn((_server: string) => true);
+  const mcpPrepareAsync = vi.fn((_servers: readonly string[]) =>
+    Promise.resolve(),
+  );
+  const mcpListToolsAsync = vi.fn((_server: string) =>
+    Promise.resolve<readonly McpToolDescriptor[]>([]),
+  );
+  const mcpCreateTool = vi.fn(
+    (server: string, descriptor: McpToolDescriptor): AgentTool => ({
+      name: `mcp__${server}__${descriptor.name}`,
+      description: descriptor.description ?? '',
+      inputSchema: z.record(z.string(), z.unknown()),
+      executeAsync: () => Promise.resolve({ ok: true }),
+    }),
+  );
   // KI-407: бюджет — внешняя граница (БД), в юнит-тесте только «пускает» или
   // «бросает». Оценка фиксируется в моке, чтобы тест проверил, что передана
   // именно накопленная стоимость цикла.
@@ -165,6 +208,19 @@ async function createHarness(
         provide: CostBudgetService,
         useValue: { assertWithinBudgetAsync },
       },
+      {
+        provide: McpClientService,
+        useValue: {
+          isEnabled: mcpIsEnabled,
+          hasServer: mcpHasServer,
+          prepareAsync: mcpPrepareAsync,
+          listToolsAsync: mcpListToolsAsync,
+        },
+      },
+      {
+        provide: McpToolAdapter,
+        useValue: { createAgentTool: mcpCreateTool },
+      },
     ],
   }).compile();
 
@@ -176,6 +232,11 @@ async function createHarness(
     queryVectorsAsync,
     writeMemoryAsync,
     configGet,
+    mcpIsEnabled,
+    mcpHasServer,
+    mcpPrepareAsync,
+    mcpListToolsAsync,
+    mcpCreateTool,
   };
 }
 
@@ -248,7 +309,9 @@ describe('AgentService.runAgentAsync (R7.4b)', () => {
     });
     // `toMatchObject` игнорирует отсутствующий ключ `error`, поэтому проверка
     // «ошибки нет» — отдельная и явная.
-    expect(toolStep?.kind === 'tool' ? toolStep.error : 'not-a-tool').toBeUndefined();
+    expect(
+      toolStep?.kind === 'tool' ? toolStep.error : 'not-a-tool',
+    ).toBeUndefined();
     expect(result.usage).toEqual({ inputTokens: 20, outputTokens: 10 });
     // KI-407: те же токены продублированы плоскими полями для `node_runs`.
     expect(result.tokensIn).toBe(20);
@@ -299,8 +362,12 @@ describe('AgentService.runAgentAsync (R7.4b)', () => {
 
   it('исчерпание maxIterations бросает AgentIterationLimitException', async () => {
     const { service, generateAsync } = await createHarness([
-      { text: '{"tool":"vector_query","input":{"collection":"docs","query":"a"}}' },
-      { text: '{"tool":"vector_query","input":{"collection":"docs","query":"b"}}' },
+      {
+        text: '{"tool":"vector_query","input":{"collection":"docs","query":"a"}}',
+      },
+      {
+        text: '{"tool":"vector_query","input":{"collection":"docs","query":"b"}}',
+      },
       // Третий ответ не должен запрашиваться: лимит — 2.
       { text: '{"final":"поздно"}' },
     ]);
@@ -311,7 +378,9 @@ describe('AgentService.runAgentAsync (R7.4b)', () => {
       'run-1',
     );
 
-    await expect(rejection).rejects.toBeInstanceOf(AgentIterationLimitException);
+    await expect(rejection).rejects.toBeInstanceOf(
+      AgentIterationLimitException,
+    );
     await expect(rejection).rejects.toMatchObject({ iterations: 2 });
 
     expect(generateAsync).toHaveBeenCalledTimes(2);
@@ -614,3 +683,260 @@ describe('AgentService — span agent.step (KI-416)', () => {
     expect(recorded[1]?.attributes.tool_name).toBeUndefined();
   });
 });
+
+/** Описание MCP-инструмента для сценариев агента. */
+const READ_FILE_DESCRIPTOR: McpToolDescriptor = {
+  name: 'read_file',
+  description: 'Reads a file',
+  inputSchema: {
+    type: 'object',
+    properties: { path: { type: 'string' } },
+    required: ['path'],
+  },
+  annotations: { readOnlyHint: true, idempotentHint: true },
+};
+
+/**
+ * MCP-интеграция агента (v0.11 S7, DESIGN § 3.2.5, § 3.3.2).
+ *
+ * Проверяется контракт между `AgentService`, MCP-клиентом и адаптером:
+ * preflight до первого LLM-вызова, MCP-only узел, classification побочных
+ * эффектов и retry-guard.
+ */
+describe('AgentService — MCP-интеграция (v0.11 S7)', () => {
+  it('MCP-only узел: preflight, адаптер, tool-шаг и финальный ответ', async () => {
+    const {
+      service,
+      generateAsync,
+      mcpPrepareAsync,
+      mcpListToolsAsync,
+      mcpCreateTool,
+    } = await createHarness([
+      {
+        text: '{"tool":"mcp__filesystem__read_file","input":{"path":"a.txt"}}',
+      },
+      { text: '{"final":"Файл прочитан"}' },
+    ]);
+    const executeAsync = vi.fn(() => Promise.resolve('file body'));
+
+    mcpListToolsAsync.mockResolvedValue([READ_FILE_DESCRIPTOR]);
+    mcpCreateTool.mockReturnValue({
+      name: 'mcp__filesystem__read_file',
+      description: 'Reads a file',
+      inputSchema: z.record(z.string(), z.unknown()),
+      readOnlyHint: true,
+      executeAsync,
+    });
+
+    const result = await service.runAgentAsync(
+      agentNode({
+        tools: [],
+        mcpTools: [{ server: 'filesystem', tool: 'read_file' }],
+      }),
+      {},
+      'run-1',
+      'agent-1',
+    );
+
+    expect(mcpPrepareAsync).toHaveBeenCalledWith(['filesystem']);
+    expect(mcpListToolsAsync).toHaveBeenCalledWith('filesystem');
+    expect(mcpCreateTool).toHaveBeenCalledWith(
+      'filesystem',
+      READ_FILE_DESCRIPTOR,
+    );
+    expect(executeAsync).toHaveBeenCalledTimes(1);
+    expect(result.answer).toBe('Файл прочитан');
+    expect(result.steps[1]).toMatchObject({
+      kind: 'tool',
+      name: 'mcp__filesystem__read_file',
+      output: 'file body',
+    });
+
+    // DESIGN § 3.2.5: в системном промпте есть правило о недоверенном контенте.
+    expect(generateAsync.mock.calls[0]?.[0]).toContain('untrusted data');
+    expect(generateAsync.mock.calls[0]?.[0]).toContain(
+      '- mcp__filesystem__read_file:',
+    );
+  });
+
+  it('preflight fail → узел падает без LLM-вызова', async () => {
+    const { service, generateAsync, mcpPrepareAsync } = await createHarness([
+      { text: '{"final":"поздно"}' },
+    ]);
+
+    mcpPrepareAsync.mockRejectedValue(
+      new McpUnavailableException('filesystem', 'нет связи'),
+    );
+
+    await expect(
+      service.runAgentAsync(
+        agentNode({
+          tools: [],
+          mcpTools: [{ server: 'filesystem', tool: 'read_file' }],
+        }),
+        {},
+        'run-1',
+      ),
+    ).rejects.toBeInstanceOf(McpUnavailableException);
+    expect(generateAsync).not.toHaveBeenCalled();
+  });
+
+  it('неизвестный MCP-сервер → NodeDataValidationException до preflight', async () => {
+    const { service, generateAsync, mcpHasServer, mcpPrepareAsync } =
+      await createHarness([{ text: '{"final":"поздно"}' }]);
+
+    mcpHasServer.mockReturnValue(false);
+
+    await expect(
+      service.runAgentAsync(
+        agentNode({
+          tools: [],
+          mcpTools: [{ server: 'unknown', tool: 'read_file' }],
+        }),
+        {},
+        'run-1',
+      ),
+    ).rejects.toBeInstanceOf(NodeDataValidationException);
+    expect(mcpPrepareAsync).not.toHaveBeenCalled();
+    expect(generateAsync).not.toHaveBeenCalled();
+  });
+
+  it('неизвестный MCP-инструмент → NodeDataValidationException без LLM', async () => {
+    const { service, generateAsync, mcpListToolsAsync } = await createHarness([
+      { text: '{"final":"поздно"}' },
+    ]);
+
+    mcpListToolsAsync.mockResolvedValue([READ_FILE_DESCRIPTOR]);
+
+    await expect(
+      service.runAgentAsync(
+        agentNode({
+          tools: [],
+          mcpTools: [{ server: 'filesystem', tool: 'missing_tool' }],
+        }),
+        {},
+        'run-1',
+      ),
+    ).rejects.toBeInstanceOf(NodeDataValidationException);
+    expect(generateAsync).not.toHaveBeenCalled();
+  });
+
+  it('side-effect tool → AgentRunException (non-retryable), причина сохранена', async () => {
+    const fetchMock = stubFetch(() =>
+      Promise.resolve(new Response('{}', { status: 200 })),
+    );
+    const providerError = new LlmProviderException('anthropic', 'rate limit', {
+      retryable: true,
+    });
+    const { service, generateAsync } = await createHarness([
+      {
+        text:
+          '{"tool":"http_request","input":{"method":"POST",' +
+          '"url":"https://93.184.216.34/x","body":"{}"}}',
+      },
+      { error: providerError },
+    ]);
+
+    const error: unknown = await service
+      .runAgentAsync(agentNode({ tools: ['http_request'] }), {}, 'run-1')
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AgentRunException);
+    expect(error).not.toBeInstanceOf(LlmProviderException);
+    expect((error as AgentRunException).message).toContain('повтор запрещён');
+    expect((error as AgentRunException).cause).toBe(providerError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(generateAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('read-only tool → retryable LlmProviderException пробрасывается как есть', async () => {
+    const providerError = new LlmProviderException('anthropic', 'overloaded', {
+      retryable: true,
+    });
+    const { service } = await createHarness([
+      {
+        text: '{"tool":"vector_query","input":{"collection":"docs","query":"a"}}',
+      },
+      { error: providerError },
+    ]);
+
+    const error: unknown = await service
+      .runAgentAsync(agentNode({ tools: ['vector_query'] }), {}, 'run-1')
+      .catch((caught: unknown) => caught);
+
+    // Побочных эффектов не было: движок увидит retryable-ошибку и повторит узел.
+    expect(error).toBe(providerError);
+    expect((error as LlmProviderException).retryable).toBe(true);
+  });
+
+  it('MCP read-only hint → повтор разрешён, destructive → запрещён', async () => {
+    const readOnly = adapterTool('read_file', { readOnlyHint: true });
+    const idempotent = adapterTool('list_files', { idempotentHint: true });
+    const destructive = adapterTool('write_file', { destructiveHint: true });
+    const unannotated = adapterTool('click');
+
+    expect(isSideEffectingTool(readOnly, {})).toBe(false);
+    expect(isSideEffectingTool(idempotent, {})).toBe(false);
+    expect(isSideEffectingTool(destructive, {})).toBe(true);
+    expect(isSideEffectingTool(unannotated, {})).toBe(true);
+  });
+
+  it('нативные side-effect инструменты классифицируются по методу/имени', () => {
+    expect(
+      isSideEffectingTool(TOOL_REGISTRY.http_request, {
+        method: 'GET',
+        url: 'https://example.com',
+      }),
+    ).toBe(false);
+    expect(
+      isSideEffectingTool(TOOL_REGISTRY.http_request, {
+        method: 'POST',
+        url: 'https://example.com',
+      }),
+    ).toBe(true);
+    expect(isSideEffectingTool(TOOL_REGISTRY.vector_query, {})).toBe(false);
+    expect(isSideEffectingTool(TOOL_REGISTRY.memory_write, {})).toBe(true);
+    expect(isSideEffectingTool(TOOL_REGISTRY.code_eval, {})).toBe(true);
+  });
+});
+
+describe('normalizeToolResult — недоверенный контент в агенте (v0.11 S7)', () => {
+  it('image/resource заменяются placeholder, text остаётся', () => {
+    const result = {
+      content: [
+        { type: 'text', text: 'hello' },
+        { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+        {
+          type: 'resource',
+          resource: { uri: 'file:///a.txt', text: 'body' },
+        },
+      ],
+    } as CallToolResult;
+
+    expect(normalizeToolResult(result, 4000)).toBe(
+      'hello\n[image omitted]\n[resource omitted]',
+    );
+  });
+});
+
+/**
+ * Собирает MCP-`AgentTool` с заданными аннотациями.
+ *
+ * @param name - имя инструмента на сервере
+ * @param hints - MCP-аннотации
+ * @returns инструмент для классификатора побочных эффектов
+ */
+function adapterTool(
+  name: string,
+  hints: Partial<
+    Pick<AgentTool, 'readOnlyHint' | 'destructiveHint' | 'idempotentHint'>
+  > = {},
+): AgentTool {
+  return {
+    name: `mcp__filesystem__${name}`,
+    description: name,
+    inputSchema: z.record(z.string(), z.unknown()),
+    ...hints,
+    executeAsync: () => Promise.resolve(null),
+  };
+}

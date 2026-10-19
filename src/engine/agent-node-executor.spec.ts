@@ -67,6 +67,8 @@ describe('executeAgentNodeAsync (R7.4b)', () => {
         kind: 'agent',
         model: 'claude-test',
         tools: ['http_request'],
+        // v0.11 S7: схема нормализует отсутствующий `mcpTools` в пустой массив.
+        mcpTools: [],
         maxIterations: 3,
       },
       { prompt: 'вопрос' },
@@ -90,7 +92,9 @@ describe('executeAgentNodeAsync (R7.4b)', () => {
 
   it('tools обязателен и непуст: пустой список — ошибка валидации', async () => {
     const runner: AgentRunner = {
-      runAgentAsync: vi.fn(() => Promise.reject(new Error('не должен вызваться'))),
+      runAgentAsync: vi.fn(() =>
+        Promise.reject(new Error('не должен вызваться')),
+      ),
     };
 
     await expect(
@@ -103,9 +107,50 @@ describe('executeAgentNodeAsync (R7.4b)', () => {
     ).rejects.toBeInstanceOf(NodeDataValidationException);
   });
 
+  it('MCP-only узел валиден (v0.11 S7), дубли MCP-инструментов отвергаются', async () => {
+    const runAgentAsync = vi.fn(() =>
+      Promise.resolve({
+        answer: 'ok',
+        steps: [],
+        iterations: 1,
+        usage: { inputTokens: null, outputTokens: null },
+        tokensIn: null,
+        tokensOut: null,
+        costUsd: null,
+      } satisfies AgentRunResult),
+    );
+    const runner: AgentRunner = { runAgentAsync };
+    const mcpData = {
+      ...VALID_DATA,
+      tools: [],
+      mcpTools: [{ server: 'filesystem', tool: 'read_file' }],
+    };
+
+    await expect(
+      executeAgentNodeAsync(agentNode(mcpData), {}, 'run-1', runner),
+    ).resolves.toBeDefined();
+
+    await expect(
+      executeAgentNodeAsync(
+        agentNode({
+          ...mcpData,
+          mcpTools: [
+            { server: 'filesystem', tool: 'read_file' },
+            { server: 'filesystem', tool: 'read_file' },
+          ],
+        }),
+        {},
+        'run-1',
+        runner,
+      ),
+    ).rejects.toBeInstanceOf(NodeDataValidationException);
+  });
+
   it('неизвестный инструмент и maxIterations вне 1–10 отвергаются схемой', async () => {
     const runner: AgentRunner = {
-      runAgentAsync: vi.fn(() => Promise.reject(new Error('не должен вызваться'))),
+      runAgentAsync: vi.fn(() =>
+        Promise.reject(new Error('не должен вызваться')),
+      ),
     };
 
     await expect(
@@ -129,7 +174,9 @@ describe('executeAgentNodeAsync (R7.4b)', () => {
 
   it('model обязателен и не может быть пустым', async () => {
     const runner: AgentRunner = {
-      runAgentAsync: vi.fn(() => Promise.reject(new Error('не должен вызваться'))),
+      runAgentAsync: vi.fn(() =>
+        Promise.reject(new Error('не должен вызваться')),
+      ),
     };
 
     await expect(

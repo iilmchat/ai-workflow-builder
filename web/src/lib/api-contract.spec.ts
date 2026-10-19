@@ -32,7 +32,7 @@
  * нет (RULES 1.4).
  */
 import { describe, expect, it } from 'vitest';
-import { ApiRunBudgetSchema, ApiRunSchema } from './api';
+import { ApiDocumentTemplateSchema, ApiRunBudgetSchema, ApiRunSchema } from './api';
 import { CollaboratorSchema } from './collaborators-api';
 import { ExportWorkflowSchema } from './export-import-api';
 import { ShareTokenSchema, SharedWorkflowSchema } from './share-api';
@@ -68,6 +68,8 @@ interface MirrorSchema {
 const MIRROR_SCHEMAS: Record<string, MirrorSchema> = {
   // R7.6 (KI-197): участники workflow — новое зеркало REST-ответа.
   CollaboratorResponse: CollaboratorSchema,
+  // v0.11 S3: публичное представление DOCX-шаблона (document-templates API).
+  DocumentTemplateSummary: ApiDocumentTemplateSchema,
   ExportWorkflowDto: ExportWorkflowSchema,
   RunResponse: ApiRunSchema,
   // R7.1 (KI-048): бюджет запуска — новое зеркало REST-ответа.

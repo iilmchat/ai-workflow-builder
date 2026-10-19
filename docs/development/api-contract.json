@@ -3,6 +3,7 @@
   "version": 1,
   "responses": {
     "CollaboratorResponse": ["email", "invitedAt", "invitedBy", "role", "userId"],
+    "DocumentTemplateSummary": ["bytes", "createdAt", "id", "name", "placeholders"],
     "ExportWorkflowDto": ["edges", "exportedAt", "name", "nodes", "version"],
     "RunBudgetResponse": ["accumulated", "estimated", "maxRub", "maxUsd", "mode", "ok", "remaining"],
     "RunResponse": ["createdAt", "id", "nodes", "status", "workflowId"],

@@ -80,6 +80,12 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 - **Document Generation (`document_gen`):** Markdown или JSON → DOCX
   (заголовки, списки, код, таблицы, инлайн-разметка) с сохранением в
   local/S3 и кнопкой скачивания.
+- **DOCX-шаблоны (v0.11 S2/S3):** загрузка `.docx` с плейсхолдерами
+  `{name}`/`{#items}` через `POST /workflow/:id/document-templates`; список,
+  скачивание и удаление — `GET`/`GET …/file`/`DELETE …/:templateId`.
+  Права `viewer` (чтение) и `editor` (изменение), хранение в PostgreSQL
+  (`sha256`, `bytes`, `placeholders`), защита от ZIP-бомб, макросов и XXE.
+  Загрузка из UI — multipart/`FormData` (KI-479).
 - **Safe Filesystem (`read_file`/`write_file`):** чтение и запись TXT/CSV/JSON
   в изолированном `./data/workspace/{workflowId}/` с защитой от path traversal
   и лимитом 5 МБ на файл.

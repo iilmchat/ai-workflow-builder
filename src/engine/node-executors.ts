@@ -37,6 +37,11 @@ import {
   DocumentTooLargeException,
 } from '../documents/document.errors.js';
 import { DOCX_MIME_TYPE } from '../documents/document.service.js';
+import { NodeDataValidationException } from './errors.js';
+import {
+  MCP_MAX_TOOLS_PER_NODE_LIMIT,
+  MCP_SERVER_NAME,
+} from '../mcp/mcp.types.js';
 import {
   defaultDnsLookupAsync,
   fetchWithSsrfGuardAsync,
@@ -871,40 +876,18 @@ export async function executeWriteFileNodeAsync(
 export const ANNOTATION_NODE_TYPES: ReadonlySet<string> = new Set(['comment']);
 
 /**
- * Ошибка: тип узла не поддерживается executor'ом.
+ * Ошибки исполнителей: типы узлов и валидация `data`.
  *
- * Наследуется от `Error`, а не от Nest `HttpException`: исключение живёт в
- * контексте worker'а, а не HTTP-запроса, и должно приводить к `run.status='failed'`.
+ * v0.11 S2: объявления переехали в `./errors.js`, чтобы документы
+ * (`resolveTemplateVariables`, DESIGN v0.11 § 3.1.4) могли бросать
+ * `NodeDataValidationException`, не импортируя весь `node-executors.ts` (это
+ * создало бы цикл `engine → documents → engine` в S4). Реэкспорт сохраняет
+ * прежний публичный API модуля для существующих импортов.
  */
-export class UnsupportedNodeTypeException extends Error {
-  /**
-   * @param nodeType - неизвестный тип узла из графа
-   * @param message - готовый текст ошибки; по умолчанию — «тип не поддерживается»
-   */
-  constructor(nodeType: string, message?: string) {
-    super(message ?? `Неподдерживаемый тип узла: ${nodeType}`);
-    this.name = 'UnsupportedNodeTypeException';
-  }
-}
-
-/**
- * Ошибка: данные узла не прошли валидацию Zod-схемой (R6.5.1).
- *
- * Наследуется от {@link UnsupportedNodeTypeException}, потому что для движка это
- * один класс отказа: узел с таким `data` выполнить нельзя. Подкласс даёт точный
- * текст ошибки и позволяет тестам отличать «неизвестный тип» от «известный тип
- * с битыми данными»; `catch` на родителя ловит оба случая.
- */
-export class NodeDataValidationException extends UnsupportedNodeTypeException {
-  /**
-   * @param nodeType - тип узла, чьи `data` не прошли валидацию
-   * @param reason - причина отказа (текст ошибки Zod)
-   */
-  constructor(nodeType: string, reason: string) {
-    super(nodeType, `Некорректные данные узла ${nodeType}: ${reason}`);
-    this.name = 'NodeDataValidationException';
-  }
-}
+export {
+  NodeDataValidationException,
+  UnsupportedNodeTypeException,
+} from './errors.js';
 
 /**
  * Разбирает `data` узла Zod-схемой и бросает единую ошибку при отказе.
@@ -2399,42 +2382,91 @@ function pickMemoryValue(
 /* ────────────────────────────── Узел agent (R7.4b) ────────────────────────────── */
 
 /**
- * Zod-схема данных узла `agent` (R7.4b, DESIGN v0.9 § 3.4).
+ * Zod-схема данных узла `agent` (R7.4b, v0.11 S7).
  *
- * `tools` обязателен и непуст: агент без инструментов — это LLM-узел с лишним
- * циклом. Дубли имён отсекаются refine'ом (повтор в чекбоксах не должен
- * удваивать вызов), а порог `AGENT_TOOL_NAMES.length` соответствует UI (7).
+ * `tools` + `mcpTools` вместе обязаны дать хотя бы один инструмент: агент без
+ * инструментов — это LLM-узел с лишним циклом. Дубли имён отсекаются
+ * refine'ом (повтор в чекбоксах не должен удваивать вызов), MCP-ссылки
+ * проверяются на дубли пар «сервер + инструмент» (DESIGN § 3.2.5). Схема не
+ * читает `ConfigService`, поэтому использует константу
+ * {@link MCP_MAX_TOOLS_PER_NODE_LIMIT}; env-лимит может быть меньше и
+ * проверяется в `AgentService` на запуске.
  */
-const AgentNodeDataSchema = z.object({
-  // `kind` обязателен (в отличие от старых узлов): agent появился в v0.9,
-  // графов без дискриминатора не существует, а совпадение с `AgentNodeData`
-  // проверяет tsc.
-  kind: z.literal('agent'),
-  model: z.string().trim().min(1, 'model обязателен'),
-  systemPrompt: z.string().optional(),
-  tools: z
-    .array(z.enum(AGENT_TOOL_NAMES))
-    .min(1, 'нужен хотя бы один инструмент')
-    .max(AGENT_TOOL_NAMES.length)
-    .refine(
-      (tools) => new Set(tools).size === tools.length,
-      'инструменты не должны повторяться',
-    ),
-  // Границы совпадают с UI и env-схемой (R7.4b): больше 10 итераций — это
-  // зацикливание модели, а не сценарий workflow.
-  maxIterations: z
-    .number()
-    .int()
-    .min(1)
-    .max(AGENT_MAX_ITERATIONS_LIMIT)
-    .optional(),
-  maxTokensPerStep: z
-    .number()
-    .int()
-    .min(1)
-    .max(AGENT_MAX_TOKENS_PER_STEP_LIMIT)
-    .optional(),
+const McpToolRefSchema = z.object({
+  // Имя сервера проверяется той же регуляркой, что и реестр env: узел не
+  // должен ссылаться на сервер, который оператор не сможет объявить.
+  server: z.string().regex(MCP_SERVER_NAME, 'некорректное имя MCP-сервера'),
+  tool: z.string().min(1).max(128),
 });
+
+const AgentNodeDataSchema = z
+  .object({
+    // `kind` обязателен (в отличие от старых узлов): agent появился в v0.9,
+    // графов без дискриминатора не существует, а совпадение с `AgentNodeData`
+    // проверяет tsc.
+    kind: z.literal('agent'),
+    model: z.string().trim().min(1, 'model обязателен'),
+    systemPrompt: z.string().optional(),
+    // v0.11 S7: нативных инструментов может не быть, если узел использует
+    // только MCP (DESIGN § 3.2.5); требование «хотя бы один инструмент» —
+    // в superRefine ниже, по сумме двух списков.
+    tools: z
+      .array(z.enum(AGENT_TOOL_NAMES))
+      .max(AGENT_TOOL_NAMES.length)
+      .default([]),
+    // MCP-инструменты: узел хранит имена, а не URL (DESIGN § 2.3).
+    mcpTools: z
+      .array(McpToolRefSchema)
+      .max(MCP_MAX_TOOLS_PER_NODE_LIMIT)
+      .default([]),
+    // Границы совпадают с UI и env-схемой (R7.4b): больше 10 итераций — это
+    // зацикливание модели, а не сценарий workflow.
+    maxIterations: z
+      .number()
+      .int()
+      .min(1)
+      .max(AGENT_MAX_ITERATIONS_LIMIT)
+      .optional(),
+    maxTokensPerStep: z
+      .number()
+      .int()
+      .min(1)
+      .max(AGENT_MAX_TOKENS_PER_STEP_LIMIT)
+      .optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.tools.length + data.mcpTools.length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['tools'],
+        message: 'нужен хотя бы один инструмент',
+      });
+    }
+
+    if (new Set(data.tools).size !== data.tools.length) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['tools'],
+        message: 'инструменты не должны повторяться',
+      });
+    }
+
+    const seen = new Set<string>();
+
+    for (const [index, ref] of data.mcpTools.entries()) {
+      const key = `${ref.server}\u0000${ref.tool}`;
+
+      if (seen.has(key)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['mcpTools', index],
+          message: 'дубль MCP-инструмента',
+        });
+      }
+
+      seen.add(key);
+    }
+  });
 
 /**
  * Исполнитель цикла агента (реализация — `AgentService`).

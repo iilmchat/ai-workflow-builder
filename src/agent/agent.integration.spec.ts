@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LlmGenerateResult } from '../llm/llm-provider.interface.js';
 import { LlmRegistryService } from '../llm/llm-registry.service.js';
 import { LlmService } from '../llm/llm.service.js';
+import { McpClientService } from '../mcp/mcp-client.service.js';
+import { McpToolAdapter } from '../mcp/mcp-tool.adapter.js';
 import { CostBudgetService } from '../runs/cost-budget.service.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
@@ -91,6 +93,20 @@ describe('AgentService — интеграция: http_request → final (R7.4b)'
         },
         { provide: ConfigService, useValue: { get: () => undefined } },
         {
+          // v0.11 S7: MCP-инструменты в сценарии не используются, preflight пуст.
+          provide: McpClientService,
+          useValue: {
+            isEnabled: () => true,
+            hasServer: () => true,
+            prepareAsync: vi.fn(() => Promise.resolve()),
+            listToolsAsync: vi.fn(() => Promise.resolve([])),
+          },
+        },
+        {
+          provide: McpToolAdapter,
+          useValue: { createAgentTool: vi.fn() },
+        },
+        {
           // KI-407: бюджет — внешняя граница (БД), в интеграционном тесте
           // достаточно «пускающего» мока.
           provide: CostBudgetService,
@@ -142,9 +158,7 @@ describe('AgentService — интеграция: http_request → final (R7.4b)'
 
     // Внешняя граница: ровно один HTTP-запрос на URL из ответа модели.
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      'https://93.184.216.34/weather',
-    );
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://93.184.216.34/weather');
 
     // Транскрипт: системная инструкция пользователя и протокол доехали до
     // модели, а тело HTTP-ответа — до второй итерации.

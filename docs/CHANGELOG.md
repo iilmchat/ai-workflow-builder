@@ -28,9 +28,36 @@
   `node_runs` наравне с LLM-узлами. API-префиксы сведены в единый
   `api-prefixes.json`: из него строятся RegExp SPA-fallback'а backend'а и
   Vite-прокси, дублирование списков устранено.
+- **DOCX-шаблоны — ядро (v0.11 S2, DESIGN § 3.1.3–3.1.4):** новый
+  `DocumentTemplateService` (`src/documents/document-template.service.ts`) на
+  `docxtemplater` 3.71 + `pizzip` 3.3: компиляция шаблона, список простых
+  плейсхолдеров, рендер с `nullGetter` (отсутствующая переменная → пустая
+  строка + `missingVariables`) и `resolveTemplateVariables` (объект /
+  массив → `{items}` / JSON-строка, sanitize ключей `__proto__`/`constructor`/
+  `prototype`). До docxtemplater архив проверяется fail-closed: сигнатура
+  `PK`, обязательные `[Content_Types].xml` и `word/document.xml`, запрет
+  макросов (`vbaProject.bin`, `macroEnabled`), лимиты распакованного
+  размера/записей/коэффициента сжатия, скан XML/rels на `<!DOCTYPE`/
+  `<!ENTITY` (XXE). Ошибки — `DocumentTemplateInvalidException` с кодом
+  `invalid-zip | invalid-docx | syntax | render`.
+- **DOCX-шаблоны — API (v0.11 S3, DESIGN § 3.1.5):** маршруты
+  `GET/POST /workflow/:id/document-templates`, `GET …/:templateId/file`,
+  `DELETE …/:templateId` (`src/documents/document-templates.controller.ts`).
+  Загрузка через `FileInterceptor` (memory storage, лимит 5 МБ, 413 на
+  oversize), права `viewer`/`editor` через `workflowAccessFilter` (403 для
+  viewer, 404 для чужого workflow), компиляция шаблона до INSERT, хранение
+  `sha256`/`bytes`/`placeholders`/`content` в `document_templates`,
+  `DocumentTemplateSummary` в `docs/development/api-contract.json`; лимиты —
+  из `DOCUMENT_TEMPLATE_*` env.
 
 ### Fixed
 
+- **Multipart-загрузка из UI (KI-479):** `sendAsync` (`web/src/lib/api.ts`)
+  больше не ставит `Content-Type: application/json`, если тело — `FormData`,
+  и не перезаписывает явно заданный заголовок: браузер сам добавляет
+  `multipart/form-data; boundary=…`. Повтор запроса после refresh сохраняет
+  тело (boundary генерируется заново). Закрыто тестом
+  `web/src/lib/api.spec.ts`.
 - **Media и S3 (KI-412, 413, 415, 451, 464):** HMAC-подписи ссылок локального
   хранилища (`?expires=&sign=`, env `MEDIA_URL_SIGNING_SECRET`,
   `MEDIA_URL_TTL_SECONDS`); переподпись по `storage_key`
@@ -60,6 +87,12 @@
   Добавлены KI-475..477; KI-450 помечен дублем KI-077; KI-292 понижен до Low.
   Сводка реестра на момент аудита: 248 Open, 205 Fixed, 4 Won't Fix, всего
   465 записей; после регистрации KI-478..480 — 251 Open, всего 468.
+- **DOCX-шаблоны (v0.11 S2+S3):** KI-479 переведён в `Fixed`; зарегистрированы
+  KI-481 (порядок `asText()` и проверки `uncompressedSize` в псевдокоде
+  DESIGN § 3.1.3 делает fail-closed неработоспособным — исправлено в коде
+  порядком проверок и примечанием в DESIGN) и KI-482 (docxtemplater по
+  умолчанию печатает контекст шаблона в stdout — отключено `errorLogging`,
+  RULES 5.9). `api-contract.json` дополнен `DocumentTemplateSummary`.
 
 ---
 
