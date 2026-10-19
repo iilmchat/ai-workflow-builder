@@ -50,6 +50,8 @@ const baseRun: WorkflowRun = {
   createdAt: CREATED_AT,
   startedAt: STARTED_AT,
   finishedAt: null,
+  // v0.11 S1 (KI-066): nullable-колонка аренды; в старых строках — null.
+  leaseExpiresAt: null,
 };
 
 /**

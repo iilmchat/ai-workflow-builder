@@ -34,6 +34,8 @@ const runRow: WorkflowRun = {
   createdAt: new Date('2024-01-01T00:00:00.000Z'),
   startedAt: new Date('2024-01-01T00:00:00.000Z'),
   finishedAt: null,
+  // v0.11 S1 (KI-066): аренда запуска; в тестовом снимке не используется.
+  leaseExpiresAt: null,
 };
 
 /**

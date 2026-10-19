@@ -283,14 +283,18 @@ export const AgentEnvSchema = z.object({
 export type AgentEnv = z.infer<typeof AgentEnvSchema>;
 
 /**
- * Zod-схема сетевой безопасности исходящих HTTP-запросов (v0.10.2).
+ * Zod-схема сетевой безопасности исходящих HTTP-запросов (v0.10.2, v0.11).
  *
- * `ALLOW_PRIVATE_IPS` — единственный аварийный переключатель SSRF-защиты узла
- * `http` и инструмента агента `http_request` (KI-478/434). По умолчанию
- * `false`: приватные, loopback и link-local адреса блокируются, редиректы на
- * них — тоже. `true` нужен только для локальной разработки/тестов (LM Studio,
+ * `ALLOW_PRIVATE_IPS` — аварийный переключатель SSRF-защиты узла `http` и
+ * инструмента агента `http_request` (KI-478/434). По умолчанию `false`:
+ * приватные, loopback и link-local адреса блокируются, редиректы на них —
+ * тоже. `true` нужен только для локальной разработки/тестов (LM Studio,
  * внутренние сервисы); в prod-подобных окружениях он не запрещён схемой, но
  * выключает защиту осознанно.
+ *
+ * v0.11 S5 добавляет `HTTP_NODE_ALLOW_PRIVATE_NETWORKS` — отдельный флаг
+ * **только** для узла `http` (см. JSDoc поля): выключать защиту у инструмента
+ * агента ради внутренних URL в графе не требуется.
  *
  * Разбор строгий, как у `SANDBOX_ENABLED`/`PGVECTOR_ENABLED` (RULES 4.35):
  * `z.coerce.boolean()` превратил бы строку `'false'` в `true`, и защита
@@ -307,9 +311,29 @@ export const NetworkSafetyEnvSchema = z.object({
         .optional(),
     )
     .default(false),
+  /**
+   * Пропускать ли приватные сети **только** узлу `http` (v0.11 S5,
+   * KI-434/435/478, default false).
+   *
+   * Отдельный от {@link ALLOW_PRIVATE_IPS} флаг: `http_request` агента и
+   * `http`-узел — разные векторы SSRF, и выключать защиту у инструмента агента
+   * ради внутренних URL в графе не нужно. `true` — только для доверенного
+   * self-hosted (DESIGN § 3.5.1, § 4.3).
+   *
+   * Разбор строгий, как у `MCP_ENABLED` (RULES 4.35): `z.coerce.boolean()`
+   * превратил бы строку `'false'` в `true` и выключил защиту «сама». Пустая
+   * строка — «не задано» (KI-084), а не ошибка старта.
+   */
+  HTTP_NODE_ALLOW_PRIVATE_NETWORKS: z.preprocess(
+    emptyToUndefined,
+    z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+  ),
 });
 
-/** Валидированные настройки сетевой безопасности (v0.10.2). */
+/** Валидированные настройки сетевой безопасности (v0.10.2, v0.11 S5). */
 export type NetworkSafetyEnv = z.infer<typeof NetworkSafetyEnvSchema>;
 
 /**
@@ -554,6 +578,228 @@ export const WebSearchEnvSchema = z.object({
 export type WebSearchEnv = z.infer<typeof WebSearchEnvSchema>;
 
 /**
+ * Zod-схема лимитов DOCX-шаблонов document_gen (v0.11 S0, DESIGN § 3.1.9).
+ *
+ * Значения — предохранители загрузки и хранения шаблонов: приложение не
+ * должно «съесть» память/диск на ZIP-бомбе (`MAX_UNCOMPRESSED_BYTES`,
+ * `MAX_ENTRIES`) или на бесконечном числе шаблонов
+ * (`MAX_PER_WORKFLOW`). Реально используются загрузчиком в S2, здесь —
+ * единственный источник истины для дефолтов и границ (RULES 4.5).
+ */
+export const DocumentTemplateEnvSchema = z.object({
+  /** Максимальный размер загружаемого .docx, байт (default 5 МБ, 1 КБ–20 МБ). */
+  DOCUMENT_TEMPLATE_MAX_BYTES: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(1024).max(20_971_520).optional(),
+    )
+    .default(5_242_880),
+  /**
+   * Максимальный распакованный размер .docx, байт (default 50 МБ,
+   * 1 МБ–200 МБ). Защита от ZIP-бомбы: `.docx` — это ZIP, и 5 МБ архива
+   * легко разворачиваются в гигабайты.
+   */
+  DOCUMENT_TEMPLATE_MAX_UNCOMPRESSED_BYTES: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(1_048_576).max(209_715_200).optional(),
+    )
+    .default(52_428_800),
+  /**
+   * Максимальное число записей ZIP-архива шаблона (default 2000,
+   * 10–10000). Вторая половина защиты от ZIP-бомбы.
+   */
+  DOCUMENT_TEMPLATE_MAX_ENTRIES: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(10).max(10_000).optional(),
+    )
+    .default(2000),
+  /** Максимум шаблонов на один workflow (default 50, 1–500). */
+  DOCUMENT_TEMPLATE_MAX_PER_WORKFLOW: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(1).max(500).optional(),
+    )
+    .default(50),
+  /**
+   * Максимальный размер JSON `variables` узла document_gen, байт
+   * (default 256 КБ, 1 КБ–2 МБ). Переменные подставляются в DOCX, и
+   * многосотмегабайтный JSON — это отказ в обслуживании, а не сценарий.
+   */
+  DOCUMENT_TEMPLATE_MAX_VARIABLES_BYTES: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(1024).max(2_097_152).optional(),
+    )
+    .default(262_144),
+});
+
+/** Валидированные лимиты DOCX-шаблонов document_gen (v0.11 S0). */
+export type DocumentTemplateEnv = z.infer<typeof DocumentTemplateEnvSchema>;
+
+/**
+ * Zod-схема MCP-адаптера (v0.11 S0, DESIGN § 3.2.1, § 4.3).
+ *
+ * `MCP_ENABLED` по умолчанию `false`: зависимость не должна ходить в сеть и
+ * открывать внешние инструменты без явного решения администратора.
+ * `MCP_SERVERS` — строка JSON с реестром серверов; её разбор и валидация
+ * отложены до S6 (здесь только тип/дефолт, как требует S0): на старте
+ * `MCP_ENABLED=false` приложение не должно падать из-за ещё не
+ * поддерживаемого формата.
+ *
+ * Разбор boolean строгий, как у `ALLOW_PRIVATE_IPS`/`SANDBOX_ENABLED`
+ * (RULES 4.35): `z.coerce.boolean()` превратил бы строку `'false'` в `true`
+ * и молча включил MCP.
+ */
+export const McpEnvSchema = z.object({
+  /** Включён ли MCP-адаптер (default false; пустая строка — «не задано», KI-084). */
+  MCP_ENABLED: z.preprocess(
+    emptyToUndefined,
+    z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+  ),
+  /** JSON-реестр MCP-серверов (default `{}`). Парсинг — в S6, сейчас строка. */
+  MCP_SERVERS: z.string().default('{}'),
+  /** Таймаут подключения к MCP-серверу, мс (default 10000, 1000–60000). */
+  MCP_CONNECT_TIMEOUT_MS: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(1000).max(60_000).optional(),
+    )
+    .default(10_000),
+  /** Таймаут одного MCP-вызова, мс (default 30000, 1000–300000). */
+  MCP_REQUEST_TIMEOUT_MS: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(1000).max(300_000).optional(),
+    )
+    .default(30_000),
+  /** TTL кэша каталога инструментов, мс (default 60000, 5000–600000). */
+  MCP_CATALOG_TTL_MS: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(5000).max(600_000).optional(),
+    )
+    .default(60_000),
+  /** Максимум инструментов от одного MCP-сервера (default 200, 1–500). */
+  MCP_MAX_TOOLS_PER_SERVER: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(1).max(500).optional(),
+    )
+    .default(200),
+  /** Максимум MCP-инструментов на один agent-узел (default 20, 1–20). */
+  MCP_MAX_TOOLS_PER_NODE: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(1).max(20).optional(),
+    )
+    .default(20),
+  /** Максимум символов результата MCP-инструмента (default 4000, 500–20000). */
+  MCP_MAX_RESULT_CHARS: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(500).max(20_000).optional(),
+    )
+    .default(4000),
+});
+
+/** Валидированные настройки MCP-адаптера (v0.11 S0). */
+export type McpEnv = z.infer<typeof McpEnvSchema>;
+
+/**
+ * Zod-схема heartbeat/lease запуска (v0.11 S1, DESIGN § 3.3.1, KI-066).
+ *
+ * `WORKFLOW_RUN_HEARTBEAT_MS` — период продления аренды, `..._LEASE_TTL_MS` —
+ * срок аренды. Кросс-проверка `TTL >= 2 × heartbeat` живёт в
+ * `EnvSchema.superRefine` (видит оба значения сразу, как и проверки KI-213/
+ * KI-220/KI-221) и гарантирует, что один пропущенный тик не «убивает»
+ * живой запуск.
+ */
+export const RunLeaseEnvSchema = z.object({
+  /** Период продления lease, мс (default 30000, 5000–300000). */
+  WORKFLOW_RUN_HEARTBEAT_MS: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(5000).max(300_000).optional(),
+    )
+    .default(30_000),
+  /**
+   * Срок аренды запуска, мс (default 90000). Базовая граница — целое число,
+   * нижняя граница задаётся кросс-проверкой `TTL >= 2 × heartbeat`
+   * (DESIGN § 3.3.1): при 30 с heartbeat и 90 с TTL два пропущенных тика ещё
+   * не считаются смертью worker'а.
+   */
+  WORKFLOW_RUN_LEASE_TTL_MS: z
+    .preprocess(emptyToUndefined, z.coerce.number().int().optional())
+    .default(90_000),
+});
+
+/** Валидированные настройки heartbeat/lease запуска (v0.11 S1). */
+export type RunLeaseEnv = z.infer<typeof RunLeaseEnvSchema>;
+
+/**
+ * Zod-схема повторов узлов (v0.11 S1, DESIGN § 3.3.2, KI-104).
+ *
+ * Общие дефолты ретраев: сколько раз повторять retryable-ошибку и как
+ * рассчитывать паузу (экспонента + джиттер). `MAX_ATTEMPTS=1` — поведение
+ * «без повторов» (аварийный откат, DESIGN § 4.7).
+ */
+export const NodeRetryEnvSchema = z.object({
+  /** Максимум попыток узла, включая первую (default 3, 1–5). */
+  NODE_RETRY_MAX_ATTEMPTS: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(1).max(5).optional(),
+    )
+    .default(3),
+  /** Базовая задержка перед повтором, мс (default 500, 100–10000). */
+  NODE_RETRY_BASE_DELAY_MS: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(100).max(10_000).optional(),
+    )
+    .default(500),
+  /** Максимальная задержка (потолок экспоненты), мс (default 10000, 1000–60000). */
+  NODE_RETRY_MAX_DELAY_MS: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(1000).max(60_000).optional(),
+    )
+    .default(10_000),
+  /** Амплитуда случайного джиттера, мс (default 250, 0–2000). */
+  NODE_RETRY_JITTER_MS: z
+    .preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(0).max(2000).optional(),
+    )
+    .default(250),
+});
+
+/** Валидированные настройки повторов узлов (v0.11 S1). */
+export type NodeRetryEnv = z.infer<typeof NodeRetryEnvSchema>;
+
+/**
+ * Zod-схема общего throttler'а (v0.11 S5, DESIGN § 3.5.2, KI-420).
+ *
+ * При нескольких backend-инстансах счётчики rate limit должны быть общими,
+ * поэтому по умолчанию хранилище — Redis. `memory` — откат к прежнему
+ * поведению (для локальной разработки/тестов без Redis-кластера).
+ */
+export const ThrottlerEnvSchema = z.object({
+  /** Хранилище счётчиков: `redis` (default) или `memory` (аварийный откат). */
+  THROTTLER_STORAGE: z.enum(['redis', 'memory']).default('redis'),
+  /** Префикс ключей счётчиков в Redis (default `throttle:v1`). */
+  THROTTLER_KEY_PREFIX: z.string().min(1).default('throttle:v1'),
+});
+
+/** Валидированные настройки общего throttler'а (v0.11 S5). */
+export type ThrottlerEnv = z.infer<typeof ThrottlerEnvSchema>;
+
+/**
  * Zod-схема переменных окружения, обязательных для запуска приложения.
  *
  * Проверяется ровно один раз при инициализации `ConfigModule` (fail-fast):
@@ -779,8 +1025,19 @@ export const EnvSchema = z.object({
   ...VectorEnvSchema.shape,
   // Web-search-провайдер: ключ Tavily и выбор провайдера (v0.10 S1).
   ...WebSearchEnvSchema.shape,
-  // v0.10.2: SSRF-защита исходящих HTTP-запросов (ALLOW_PRIVATE_IPS).
+  // v0.10.2: SSRF-защита исходящих HTTP-запросов (ALLOW_PRIVATE_IPS) +
+  // отдельный флаг http-узла (v0.11 S5, HTTP_NODE_ALLOW_PRIVATE_NETWORKS).
   ...NetworkSafetyEnvSchema.shape,
+  // v0.11 S0: лимиты DOCX-шаблонов document_gen (DESIGN § 3.1.9).
+  ...DocumentTemplateEnvSchema.shape,
+  // v0.11 S0: MCP-адаптер; выключен по умолчанию (DESIGN § 3.2.1).
+  ...McpEnvSchema.shape,
+  // v0.11 S1: heartbeat/lease запуска (KI-066, DESIGN § 3.3.1).
+  ...RunLeaseEnvSchema.shape,
+  // v0.11 S1: общие дефолты повторов узлов (KI-104, DESIGN § 3.3.2).
+  ...NodeRetryEnvSchema.shape,
+  // v0.11 S5: общий throttler между инстансами (KI-420, DESIGN § 3.5.2).
+  ...ThrottlerEnvSchema.shape,
 })
   /**
    * Fail-fast: отказ старта при `AUTH_DISABLED=true` в production.
@@ -811,6 +1068,19 @@ export const EnvSchema = z.object({
       code: z.ZodIssueCode.custom,
       message: 'COOKIE_SECURE=false недопустим в production (security)',
       path: ['COOKIE_SECURE'],
+    });
+  }
+  // v0.11 S1 (KI-066): аренда запуска должна переживать минимум один
+  // пропущенный тик heartbeat. Иначе worker, «задумавшийся» на один период,
+  // теряет lease, и второй воркер параллельно переигрывает тот же граф.
+  // Проверка стоит на итоговой схеме, потому что heartbeat и TTL объявлены в
+  // разных группах, а видеть их нужно одновременно (DESIGN § 3.3.1).
+  if (env.WORKFLOW_RUN_LEASE_TTL_MS < 2 * env.WORKFLOW_RUN_HEARTBEAT_MS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'WORKFLOW_RUN_LEASE_TTL_MS должен быть не меньше 2 × WORKFLOW_RUN_HEARTBEAT_MS',
+      path: ['WORKFLOW_RUN_LEASE_TTL_MS'],
     });
   }
 });

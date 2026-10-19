@@ -47,6 +47,7 @@ import {
   DEFAULT_VECTOR_SCORE_THRESHOLD,
   DEFAULT_VECTOR_TOPK,
   IMAGE_TOOL_OPERATIONS,
+  MCP_MAX_TOOLS_PER_NODE_LIMIT,
   type AgentNodeData,
   type AppNode,
   type AudioGenNodeData,
@@ -59,6 +60,7 @@ import {
   type ImageToolNodeData,
   type ImageToolOperation,
   type LlmNodeData,
+  type McpToolRef,
   type MemoryReadNodeData,
   type MemoryWriteNodeData,
   type MusicGenNodeData,
@@ -932,6 +934,45 @@ function validateIntegerInRange(
 }
 
 /**
+ * Проверяет и нормализует ссылки на MCP-инструменты узла `agent`
+ * (v0.11 S0, DESIGN § 3.2.5).
+ *
+ * Данные приходят из jsonb без типов (RULES 1.17): массив, строка, объект
+ * без `server`/`tool` или пустые имена сломали бы backend-схему узла и Run
+ * упал бы ещё до первого шага. Поэтому невалидные записи отбрасываются
+ * (KI-129: поле просто не создаётся), а валидные переносятся как есть —
+ * Save/Load round-trip не теряет выбранные инструменты. Сверх жёсткого
+ * потолка (20) записи отбрасываются: backend такое всё равно отвергнет.
+ *
+ * @param value - значение `data.mcpTools` из API
+ * @returns валидные ссылки (возможно пустой массив) либо `undefined`
+ */
+function validateMcpTools(value: unknown): McpToolRef[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const tools: McpToolRef[] = [];
+
+  for (const entry of value) {
+    if (tools.length >= MCP_MAX_TOOLS_PER_NODE_LIMIT || !isPlainObject(entry)) {
+      continue;
+    }
+
+    const server = typeof entry.server === 'string' ? entry.server.trim() : '';
+    const tool = typeof entry.tool === 'string' ? entry.tool.trim() : '';
+
+    if (server.length === 0 || tool.length === 0) {
+      continue;
+    }
+
+    tools.push({ server, tool });
+  }
+
+  return tools;
+}
+
+/**
  * Создаёт узел нужного типа с дефолтными данными.
  *
  * @param type - тип узла из тулбара
@@ -1634,6 +1675,14 @@ function nodeDataFromApi(type: NodeType, data: Record<string, unknown>): NodeDat
         result.maxTokensPerStep = maxTokensPerStep;
       }
 
+      // v0.11 S0 (DESIGN § 3.2.5): внешние MCP-инструменты. Поле отсутствует
+      // у старых графов — backend подставит пустой массив сам.
+      const mcpTools = validateMcpTools(data.mcpTools);
+
+      if (mcpTools !== undefined) {
+        result.mcpTools = mcpTools;
+      }
+
       return result;
     }
     // v0.10 S0 (Foundation): новые узлы. Данные из jsonb проверяются на
@@ -1694,6 +1743,23 @@ function nodeDataFromApi(type: NodeType, data: Record<string, unknown>): NodeDat
 
       if (typeof data.fileName === 'string') {
         result.fileName = data.fileName;
+      }
+
+      // v0.11 S0 (DESIGN § 3.1.2): режим шаблона. Отсутствие `mode` — старый
+      // граф, который исполняется как `inline`; сам дефолт подставляет
+      // backend, поэтому пустой режим в data не создаём (KI-129).
+      if (data.mode === 'inline' || data.mode === 'template') {
+        result.mode = data.mode;
+      }
+
+      if (typeof data.templateId === 'string' && data.templateId.trim().length > 0) {
+        result.templateId = data.templateId;
+      }
+
+      // Variables — произвольный JSON-объект (не массив): массив backend-
+      // схема отвергнет, поэтому такое значение просто не переносим.
+      if (isPlainObject(data.variables)) {
+        result.variables = data.variables;
       }
 
       return result;

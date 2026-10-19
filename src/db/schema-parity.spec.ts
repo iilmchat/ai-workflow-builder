@@ -66,6 +66,12 @@ const PG_DATA_TYPE_BY_COLUMN_TYPE: Readonly<Record<string, string>> = {
   // Размерность (1536) живёт в `udt_name`/типе колонки, гейт её не сверяет:
   // длина проверяется исполнителем и миграцией.
   PgVector: 'USER-DEFINED',
+  // v0.11 S1: `document_templates.content` объявлена через `customType`
+  // (`bytea`) — у custom-колонок Drizzle `columnType === 'PgCustomColumn'`.
+  // Встроенного `bytea` в pg-core нет, поэтому маппинг явный; если в схеме
+  // появится второй custom-тип с другим SQL-типом, гейт потребует уточнения
+  // (молча пропускать незнакомый тип он не должен — KI-298).
+  PgCustomColumn: 'bytea',
 };
 
 /** Строка ответа `information_schema.columns` (только нужные поля). */

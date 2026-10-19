@@ -1,6 +1,11 @@
 import {
+  DocumentTemplateEnvSchema,
   EnvSchema,
+  McpEnvSchema,
   NetworkSafetyEnvSchema,
+  NodeRetryEnvSchema,
+  RunLeaseEnvSchema,
+  ThrottlerEnvSchema,
   VectorEnvSchema,
   WebSearchEnvSchema,
   WorkerEnvSchema,
@@ -547,6 +552,272 @@ describe('ALLOW_PRIVATE_IPS (v0.10.2, KI-478/434)', () => {
     ).toBe(false);
     expect(
       NetworkSafetyEnvSchema.safeParse({ ALLOW_PRIVATE_IPS: '1' }).success,
+    ).toBe(false);
+  });
+});
+
+/**
+ * Допустимый диапазон числового env-ключа v0.11 (границы включительно).
+ *
+ * Таблица вместо копипасты: у новых ключей проверка «дефолт + обе границы»
+ * отличается только именем и числами.
+ */
+interface EnvIntegerBound {
+  readonly key: string;
+  readonly min: number;
+  readonly max: number;
+}
+
+/**
+ * Проверяет, что схема принимает обе границы и отвергает значения за ними.
+ *
+ * Заодно проверяется, что нечисловая строка — ошибка, а не «0» после
+ * `Number('')`/`Number('abc')`: молчаливый 0 включил бы лимит на минимуме.
+ *
+ * @param schema - Zod-схема группы env-ключей
+ * @param bounds - ключи и допустимые диапазоны
+ */
+function expectIntegerBounds(
+  schema: { safeParse: (value: unknown) => { success: boolean } },
+  bounds: readonly EnvIntegerBound[],
+): void {
+  for (const { key, min, max } of bounds) {
+    expect(
+      schema.safeParse({ [key]: String(min) }).success,
+      `${key}: нижняя граница ${min}`,
+    ).toBe(true);
+    expect(
+      schema.safeParse({ [key]: String(max) }).success,
+      `${key}: верхняя граница ${max}`,
+    ).toBe(true);
+    expect(
+      schema.safeParse({ [key]: String(min - 1) }).success,
+      `${key}: ниже нижней границы ${min}`,
+    ).toBe(false);
+    expect(
+      schema.safeParse({ [key]: String(max + 1) }).success,
+      `${key}: выше верхней границы ${max}`,
+    ).toBe(false);
+    expect(
+      schema.safeParse({ [key]: 'abc' }).success,
+      `${key}: нечисловое значение`,
+    ).toBe(false);
+  }
+}
+
+/** Диапазоны лимитов DOCX-шаблонов (DESIGN v0.11 § 3.1.9). */
+const DOCUMENT_TEMPLATE_BOUNDS: readonly EnvIntegerBound[] = [
+  { key: 'DOCUMENT_TEMPLATE_MAX_BYTES', min: 1024, max: 20_971_520 },
+  {
+    key: 'DOCUMENT_TEMPLATE_MAX_UNCOMPRESSED_BYTES',
+    min: 1_048_576,
+    max: 209_715_200,
+  },
+  { key: 'DOCUMENT_TEMPLATE_MAX_ENTRIES', min: 10, max: 10_000 },
+  { key: 'DOCUMENT_TEMPLATE_MAX_PER_WORKFLOW', min: 1, max: 500 },
+  {
+    key: 'DOCUMENT_TEMPLATE_MAX_VARIABLES_BYTES',
+    min: 1024,
+    max: 2_097_152,
+  },
+];
+
+/** Диапазоны таймаутов и лимитов MCP (DESIGN v0.11 § 3.2.1, § 4.3). */
+const MCP_BOUNDS: readonly EnvIntegerBound[] = [
+  { key: 'MCP_CONNECT_TIMEOUT_MS', min: 1000, max: 60_000 },
+  { key: 'MCP_REQUEST_TIMEOUT_MS', min: 1000, max: 300_000 },
+  { key: 'MCP_CATALOG_TTL_MS', min: 5000, max: 600_000 },
+  { key: 'MCP_MAX_TOOLS_PER_SERVER', min: 1, max: 500 },
+  { key: 'MCP_MAX_TOOLS_PER_NODE', min: 1, max: 20 },
+  { key: 'MCP_MAX_RESULT_CHARS', min: 500, max: 20_000 },
+];
+
+/** Диапазоны дефолтов повторов узлов (DESIGN v0.11 § 3.3.2). */
+const NODE_RETRY_BOUNDS: readonly EnvIntegerBound[] = [
+  { key: 'NODE_RETRY_MAX_ATTEMPTS', min: 1, max: 5 },
+  { key: 'NODE_RETRY_BASE_DELAY_MS', min: 100, max: 10_000 },
+  { key: 'NODE_RETRY_MAX_DELAY_MS', min: 1000, max: 60_000 },
+  { key: 'NODE_RETRY_JITTER_MS', min: 0, max: 2000 },
+];
+
+describe('Document templates env (v0.11 S0)', () => {
+  it('дефолты совпадают с DESIGN § 3.1.9', () => {
+    expect(DocumentTemplateEnvSchema.parse({})).toMatchObject({
+      DOCUMENT_TEMPLATE_MAX_BYTES: 5_242_880,
+      DOCUMENT_TEMPLATE_MAX_UNCOMPRESSED_BYTES: 52_428_800,
+      DOCUMENT_TEMPLATE_MAX_ENTRIES: 2000,
+      DOCUMENT_TEMPLATE_MAX_PER_WORKFLOW: 50,
+      DOCUMENT_TEMPLATE_MAX_VARIABLES_BYTES: 262_144,
+    });
+  });
+
+  it('принимает обе границы диапазона и отвергает выход за них', () => {
+    expectIntegerBounds(DocumentTemplateEnvSchema, DOCUMENT_TEMPLATE_BOUNDS);
+  });
+
+  it('переменные попадают в общее окружение EnvSchema', () => {
+    const parsed = EnvSchema.parse({
+      ...baseEnv,
+      DOCUMENT_TEMPLATE_MAX_BYTES: '1048576',
+      DOCUMENT_TEMPLATE_MAX_ENTRIES: '500',
+    });
+
+    expect(parsed.DOCUMENT_TEMPLATE_MAX_BYTES).toBe(1_048_576);
+    expect(parsed.DOCUMENT_TEMPLATE_MAX_ENTRIES).toBe(500);
+    // Остальные — дефолты схемы.
+    expect(parsed.DOCUMENT_TEMPLATE_MAX_PER_WORKFLOW).toBe(50);
+  });
+});
+
+describe('MCP env (v0.11 S0)', () => {
+  it('дефолты: MCP выключен, реестр пустой, лимиты DESIGN § 4.3', () => {
+    expect(McpEnvSchema.parse({})).toMatchObject({
+      MCP_ENABLED: false,
+      MCP_SERVERS: '{}',
+      MCP_CONNECT_TIMEOUT_MS: 10_000,
+      MCP_REQUEST_TIMEOUT_MS: 30_000,
+      MCP_CATALOG_TTL_MS: 60_000,
+      MCP_MAX_TOOLS_PER_SERVER: 200,
+      MCP_MAX_TOOLS_PER_NODE: 20,
+      MCP_MAX_RESULT_CHARS: 4000,
+    });
+  });
+
+  it("MCP_ENABLED строго разбирает 'true'/'false', мусор — ошибка", () => {
+    expect(McpEnvSchema.parse({ MCP_ENABLED: 'true' }).MCP_ENABLED).toBe(true);
+    expect(McpEnvSchema.parse({ MCP_ENABLED: 'false' }).MCP_ENABLED).toBe(false);
+    expect(McpEnvSchema.safeParse({ MCP_ENABLED: 'garbage' }).success).toBe(false);
+    // RULES 4.35: не строка 'true'/'false' — ошибка, а не молчаливый true.
+    expect(McpEnvSchema.safeParse({ MCP_ENABLED: '1' }).success).toBe(false);
+    // KI-084: пустая переменная в .env — «не задана», уходит в дефолт false.
+    expect(McpEnvSchema.parse({ MCP_ENABLED: '' }).MCP_ENABLED).toBe(false);
+  });
+
+  it('MCP_SERVERS — строка (разбор JSON отложен до S6)', () => {
+    expect(
+      McpEnvSchema.parse({ MCP_SERVERS: '{"filesystem":{"transport":"http"}}' })
+        .MCP_SERVERS,
+    ).toBe('{"filesystem":{"transport":"http"}}');
+    // Объект принимается только после появления JSON-парсера в S6.
+    expect(McpEnvSchema.safeParse({ MCP_SERVERS: {} }).success).toBe(false);
+  });
+
+  it('принимает обе границы int-лимитов и отвергает выход за них', () => {
+    expectIntegerBounds(McpEnvSchema, MCP_BOUNDS);
+  });
+});
+
+describe('Run lease / heartbeat env (v0.11 S1, KI-066)', () => {
+  it('дефолты: heartbeat 30 с, TTL 90 с', () => {
+    expect(RunLeaseEnvSchema.parse({})).toMatchObject({
+      WORKFLOW_RUN_HEARTBEAT_MS: 30_000,
+      WORKFLOW_RUN_LEASE_TTL_MS: 90_000,
+    });
+  });
+
+  it('heartbeat ограничен 5000..300000, TTL — целое число', () => {
+    expectIntegerBounds(RunLeaseEnvSchema, [
+      { key: 'WORKFLOW_RUN_HEARTBEAT_MS', min: 5000, max: 300_000 },
+    ]);
+    expect(
+      RunLeaseEnvSchema.safeParse({ WORKFLOW_RUN_LEASE_TTL_MS: '1.5' }).success,
+    ).toBe(false);
+  });
+
+  it('superRefine: TTL < 2 × heartbeat — ошибка, TTL == 2 × heartbeat — ок', () => {
+    expect(
+      EnvSchema.safeParse({
+        ...baseEnv,
+        WORKFLOW_RUN_HEARTBEAT_MS: '30000',
+        WORKFLOW_RUN_LEASE_TTL_MS: '59999',
+      }).success,
+    ).toBe(false);
+    expect(
+      EnvSchema.safeParse({
+        ...baseEnv,
+        WORKFLOW_RUN_HEARTBEAT_MS: '30000',
+        WORKFLOW_RUN_LEASE_TTL_MS: '60000',
+      }).success,
+    ).toBe(true);
+    expect(() =>
+      validateEnv({
+        ...baseEnv,
+        WORKFLOW_RUN_HEARTBEAT_MS: '60000',
+        WORKFLOW_RUN_LEASE_TTL_MS: '1000',
+      }),
+    ).toThrow('WORKFLOW_RUN_LEASE_TTL_MS');
+  });
+
+  it('дефолты проходят кросс-проверку в общем EnvSchema', () => {
+    const parsed = EnvSchema.parse(baseEnv);
+
+    expect(parsed.WORKFLOW_RUN_HEARTBEAT_MS).toBe(30_000);
+    expect(parsed.WORKFLOW_RUN_LEASE_TTL_MS).toBe(90_000);
+  });
+});
+
+describe('Node retry env (v0.11 S1, KI-104)', () => {
+  it('дефолты и границы DESIGN § 3.3.2', () => {
+    expect(NodeRetryEnvSchema.parse({})).toMatchObject({
+      NODE_RETRY_MAX_ATTEMPTS: 3,
+      NODE_RETRY_BASE_DELAY_MS: 500,
+      NODE_RETRY_MAX_DELAY_MS: 10_000,
+      NODE_RETRY_JITTER_MS: 250,
+    });
+    expectIntegerBounds(NodeRetryEnvSchema, NODE_RETRY_BOUNDS);
+  });
+});
+
+describe('Throttler env (v0.11 S5, KI-420)', () => {
+  it('дефолты: Redis и префикс throttle:v1', () => {
+    expect(ThrottlerEnvSchema.parse({})).toMatchObject({
+      THROTTLER_STORAGE: 'redis',
+      THROTTLER_KEY_PREFIX: 'throttle:v1',
+    });
+  });
+
+  it('storage — только redis/memory, префикс не пустой', () => {
+    expect(
+      ThrottlerEnvSchema.parse({ THROTTLER_STORAGE: 'memory' }).THROTTLER_STORAGE,
+    ).toBe('memory');
+    expect(
+      ThrottlerEnvSchema.safeParse({ THROTTLER_STORAGE: 'postgres' }).success,
+    ).toBe(false);
+    expect(
+      ThrottlerEnvSchema.safeParse({ THROTTLER_KEY_PREFIX: '' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('HTTP_NODE_ALLOW_PRIVATE_NETWORKS (v0.11 S5, KI-434/435/478)', () => {
+  it('по умолчанию false — SSRF-защита http-узла включена', () => {
+    expect(
+      NetworkSafetyEnvSchema.parse({}).HTTP_NODE_ALLOW_PRIVATE_NETWORKS,
+    ).toBe(false);
+    expect(EnvSchema.parse(baseEnv).HTTP_NODE_ALLOW_PRIVATE_NETWORKS).toBe(false);
+  });
+
+  it("строго разбирает 'true'/'false', мусор — ошибка", () => {
+    expect(
+      NetworkSafetyEnvSchema.parse({
+        HTTP_NODE_ALLOW_PRIVATE_NETWORKS: 'true',
+      }).HTTP_NODE_ALLOW_PRIVATE_NETWORKS,
+    ).toBe(true);
+    expect(
+      NetworkSafetyEnvSchema.parse({
+        HTTP_NODE_ALLOW_PRIVATE_NETWORKS: 'false',
+      }).HTTP_NODE_ALLOW_PRIVATE_NETWORKS,
+    ).toBe(false);
+    expect(
+      NetworkSafetyEnvSchema.safeParse({
+        HTTP_NODE_ALLOW_PRIVATE_NETWORKS: 'garbage',
+      }).success,
+    ).toBe(false);
+    // KI-084: пустая переменная в .env — «не задана», защита остаётся включена.
+    expect(
+      NetworkSafetyEnvSchema.parse({
+        HTTP_NODE_ALLOW_PRIVATE_NETWORKS: '',
+      }).HTTP_NODE_ALLOW_PRIVATE_NETWORKS,
     ).toBe(false);
   });
 });

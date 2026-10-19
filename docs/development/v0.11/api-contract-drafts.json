@@ -1,0 +1,30 @@
+{
+  "_comment": "Черновик v0.11. Активируется в основном api-contract.json по шагам S3/S8/S12.",
+  "version": 1,
+  "responses": {
+    "DocumentTemplateSummary": [
+      "bytes",
+      "createdAt",
+      "id",
+      "name",
+      "placeholders"
+    ],
+    "McpServersResponse": ["enabled", "maxToolsPerNode", "servers"],
+    "McpServerSummary": ["error", "name", "status", "tools", "transport"],
+    "McpToolSummary": [
+      "description",
+      "destructiveHint",
+      "idempotentHint",
+      "name",
+      "readOnlyHint",
+      "title"
+    ]
+  },
+  "enums": {
+    "McpServerSummary.status": ["disabled", "error", "ok"],
+    "McpServerSummary.transport": ["http", "sse"]
+  },
+  "refs": {
+    "RunNodeSnapshotAddition": "docs/development/sse-contract.json#/snapshot/node"
+  }
+}

@@ -1,6 +1,7 @@
 import { relations, sql } from 'drizzle-orm';
 import {
   check,
+  customType,
   index,
   integer,
   jsonb,
@@ -180,6 +181,77 @@ export type WorkflowCollaborator = typeof workflowCollaborators.$inferSelect;
 export type NewWorkflowCollaborator = typeof workflowCollaborators.$inferInsert;
 
 /**
+ * Бинарная колонка PostgreSQL (v0.11 S1, DESIGN § 3.1.1).
+ *
+ * Drizzle pg-core не имеет встроенного `bytea`, поэтому тип объявляется через
+ * `customType`: `data` — Buffer, `driverData` — Buffer (без преобразований).
+ * Используется для содержимого DOCX-шаблонов (`document_templates.content`).
+ */
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType: () => 'bytea',
+});
+
+/**
+ * document_templates — загруженные .docx-шаблоны узла `document_gen`
+ * (v0.11 S1, DESIGN § 3.1.1).
+ *
+ * Область видимости — **workflow, а не пользователь**: шаблон — часть
+ * определения сценария, он должен быть доступен соавторам (`viewer`/`editor`)
+ * и не «протекать» между чужими workflow. Проверка на запуске тривиальна:
+ * `WHERE id = $templateId AND workflow_id = $runWorkflowId`.
+ *
+ * `placeholders` хранится в БД, потому что список извлекается при загрузке
+ * (компиляция шаблона) и нужен списку/UI без повторного разбора 5 МБ на
+ * каждый `GET`. CHECK-ограничения дублируют лимиты env на уровне БД (RULES
+ * 1.17): `bytes` в допустимом диапазоне и совпадает с `octet_length(content)`
+ * — иначе список и рендер увидели бы противоречивые метаданные.
+ */
+export const documentTemplates = pgTable(
+  'document_templates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workflowId: uuid('workflow_id')
+      .notNull()
+      .references(() => workflows.id, { onDelete: 'cascade' }),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    content: bytea('content').notNull(),
+    bytes: integer('bytes').notNull(),
+    sha256: text('sha256').notNull(),
+    placeholders: jsonb('placeholders')
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index('document_templates_workflow_created_idx').on(
+      table.workflowId,
+      table.createdAt,
+    ),
+    // DESIGN § 3.1.1: верхняя граница — DOCUMENT_TEMPLATE_MAX_BYTES (5 МБ).
+    check(
+      'document_templates_bytes_check',
+      sql`${table.bytes} > 0 AND ${table.bytes} <= 5242880`,
+    ),
+    // DESIGN § 3.1.1: метаданные обязаны совпадать с фактическим размером.
+    check(
+      'document_templates_content_size_check',
+      sql`octet_length(${table.content}) = ${table.bytes}`,
+    ),
+  ],
+);
+
+/** Строка таблицы `document_templates`. */
+export type DocumentTemplate = typeof documentTemplates.$inferSelect;
+/** Значения для INSERT в `document_templates`. */
+export type NewDocumentTemplate = typeof documentTemplates.$inferInsert;
+
+/**
  * Размерность вектора эмбеддинга (R7.4a, DESIGN v0.9 § 3.4).
  *
  * Зафиксирована колонкой `vector(1536)` — это размерность
@@ -274,6 +346,15 @@ export const workflowRuns = pgTable('workflow_runs', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   startedAt: timestamp('started_at', { withTimezone: true }).defaultNow(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
+  /**
+   * Срок аренды запуска (v0.11 S1, DESIGN § 3.3.1, KI-066).
+   *
+   * Heartbeat продлевает аренду (`RunLeaseService.renewAsync`), а
+   * `RunsProcessor` считает запуск зависшим, когда `lease_expires_at <= now()`.
+   * `NULL` — строка создана до v0.11: для неё работает прежний fallback по
+   * `started_at` (`RUN_STALE_THRESHOLD_MS`), поэтому backfill не нужен.
+   */
+  leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
 });
 
 /**

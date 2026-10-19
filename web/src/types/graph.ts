@@ -699,6 +699,32 @@ export const DEFAULT_AGENT_MAX_ITERATIONS = 5;
 export const DEFAULT_AGENT_TOOLS: readonly AgentToolName[] = ['http_request'];
 
 /**
+ * Жёсткий предел MCP-инструментов на один agent-узел (v0.11 S0).
+ *
+ * Совпадает с backend-константой `MCP_MAX_TOOLS_PER_NODE_LIMIT` (DESIGN
+ * § 3.2.5): Zod-схема узла не читает `ConfigService`, поэтому использует
+ * константу, а env `MCP_MAX_TOOLS_PER_NODE` может быть меньше, но не больше.
+ * UI дополнительно ограничивает выбор по `maxToolsPerNode` из
+ * `GET /mcp/servers` (S8).
+ */
+export const MCP_MAX_TOOLS_PER_NODE_LIMIT = 20;
+
+/**
+ * Ссылка на инструмент внешнего MCP-сервера в узле `agent` (v0.11 S0,
+ * DESIGN § 3.2.5).
+ *
+ * Сам URL/токен MCP-сервера в графе не хранится: узел ссылается только на
+ * имя сервера из операторского env-реестра (`MCP_SERVERS`). Это исключает
+ * SSRF «через граф» и утечку токена в JSON workflow (DESIGN § 3.2.8).
+ */
+export interface McpToolRef {
+  /** Имя MCP-сервера из env-реестра. */
+  server: string;
+  /** Имя инструмента в каталоге сервера. */
+  tool: string;
+}
+
+/**
  * Данные узла `agent` (R7.4b, DESIGN v0.9 § 3.4).
  *
  * Порты (`src/engine/node-ports.ts`): вход `text-input` → порт `prompt`
@@ -714,6 +740,14 @@ export interface AgentNodeData extends Record<string, unknown> {
   systemPrompt?: string;
   /** Включённые инструменты: от {@link AGENT_MIN_TOOLS} до {@link AGENT_MAX_TOOLS}. */
   tools: AgentToolName[];
+  /**
+   * Инструменты внешних MCP-серверов (v0.11 S0, DESIGN § 3.2.5).
+   *
+   * Отсутствие поля = старый граф без MCP; backend подставляет `[]`. Лимит
+   * (не более 20) проверяет backend-схема узла; UI дополнительно ограничивает
+   * по `maxToolsPerNode` из `GET /mcp/servers` (S8).
+   */
+  mcpTools?: McpToolRef[];
   /** Предел итераций 1–10; `undefined` — дефолт backend (5). */
   maxIterations?: number;
   /**
@@ -769,6 +803,10 @@ export interface WebSearchNodeData extends Record<string, unknown> {
  *
  * Имя типа сокращено до `document_gen` (контракт S0); сам конвейер
  * Markdown/JSON → DOCX/PDF появится в S6.
+ *
+ * v0.11 S0 (DESIGN § 3.1.2): аддитивно добавлен режим `mode` — `inline`
+ * (прежнее поведение) или `template` (рендер загруженного .docx-шаблона).
+ * Отсутствие `mode` в старых графах трактуется как `inline`.
  */
 export interface DocumentGenNodeData extends Record<string, unknown> {
   kind: 'document_gen';
@@ -782,6 +820,18 @@ export interface DocumentGenNodeData extends Record<string, unknown> {
   content?: string;
   /** Имя файла без пути (необязательно). */
   fileName?: string;
+  /**
+   * Режим узла (v0.11 S0, DESIGN § 3.1.2). Отсутствие = `inline`:
+   * старые графы продолжают работать без изменений.
+   */
+  mode?: 'inline' | 'template';
+  /** id DOCX-шаблона workflow; обязателен при `mode = 'template'`. */
+  templateId?: string;
+  /**
+   * Fallback-переменные шаблона (JSON-объект). Переменные со входа важнее;
+   * при `mode = 'inline'` поле игнорируется.
+   */
+  variables?: Record<string, unknown>;
 }
 
 /**
