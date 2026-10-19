@@ -15,7 +15,7 @@
  * `htmlFallback: true` — HTML-deep-link получает `index.html`.
  */
 
-import registry from '../../../api-prefixes.json';
+import registry from '../../../api-prefixes.json' with { type: 'json' };
 
 /** Описание одного HTTP-префикса API. */
 export interface ApiPrefix {

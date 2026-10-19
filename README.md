@@ -1,16 +1,16 @@
 # IIChatTools AI Workflow Builder
 
 [![CI](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml/badge.svg)](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.0-blue.svg)](docs/CHANGELOG.md)
-[![Backend tests](https://img.shields.io/badge/backend_tests-1424-brightgreen.svg)](docs/development/RELEASES.md)
-[![Frontend tests](https://img.shields.io/badge/frontend_tests-417-brightgreen.svg)](docs/development/RELEASES.md)
+[![Version](https://img.shields.io/badge/version-0.11.1-blue.svg)](docs/CHANGELOG.md)
+[![Backend tests](https://img.shields.io/badge/backend_tests-1439-brightgreen.svg)](docs/development/RELEASES.md)
+[![Frontend tests](https://img.shields.io/badge/frontend_tests-419-brightgreen.svg)](docs/development/RELEASES.md)
 [![License](https://img.shields.io/badge/license-proprietary-lightgrey.svg)](#лицензия)
 
 > **Визуальный конструктор AI-сценариев.** Собирайте LLM-, медиа- и агентные
 > workflow на холсте, запускайте их в фоне и наблюдайте за результатом в
 > реальном времени.
 
-**Версия:** `v0.11.0` · **Стек:** NestJS 12 · React 19 · PostgreSQL 17 + pgvector ·
+**Версия:** `v0.11.1` · **Стек:** NestJS 12 · React 19 · PostgreSQL 17 + pgvector ·
 S3 · OpenTelemetry · Docker/GHCR
 **© 2026 RuChating (iilmchat)**
 
@@ -237,11 +237,11 @@ backend должен быть запущен первым.
 
 | Показатель | Значение |
 |---|---|
-| Версия | **v0.11.0** |
-| Backend-тесты | **1424** (18 skipped, 103 файла) |
-| Frontend-тесты | **417** (50 файлов) |
+| Версия | **v0.11.1** |
+| Backend-тесты | **1439** (18 skipped, 104 файла) |
+| Frontend-тесты | **419** (50 файлов) |
 | Типов узлов | **22** |
-| KI-реестр | **KI-522** — последний номер; всего **510** записей (3 Open High) |
+| KI-реестр | **KI-525** — последний номер; всего **513** записей (0 Open High) |
 | CI | GitHub Actions: build, typecheck, migrations, tests (backend + web) |
 | Docker | multi-stage образ + `docker-compose.prod.yml`, публикация в GHCR |
 

@@ -17,6 +17,11 @@
 ---
 ## [Unreleased]
 
+## [0.11.1] — 2026-10-19
+
+**Patch-релиз: отключение внутренних ретраев SDK, fallback `image_tool` и
+OpenAI Images `applyToolAsync`.**
+
 ### Fixed
 
 - **KI-500: двойной retry SDK + движок** ([отчёт](development/reports/v0.11.1/S1-hardening.md)):
@@ -39,6 +44,15 @@
   генерацию. Поддержаны `upscale` и `bg_removal`; остальные операции и
   `dall-e-3` отвергаются до платного запроса. Идемпотентность — по
   `idempotencyKey`.
+
+### Changed
+
+- **Релизная подготовка v0.11.1 (S17)** ([отчёт](development/reports/v0.11.1/S17-release.md)):
+  `package.json`/`web/package.json` → `0.11.1`; `[Unreleased]` переименован в
+  `[0.11.1] — 2026-10-19`, сверху добавлена пустая секция; README/docs README,
+  USER_GUIDE, MANUAL_TESTING_GUIDE и RELEASES синхронизированы по метрикам
+  (1439 backend / 419 frontend, 513 KI, 0 Open High); сборка web очищена от
+  предупреждения JSON-import.
 
 ## [0.11.0] — 2026-10-19
 
