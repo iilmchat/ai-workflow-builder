@@ -106,7 +106,7 @@
 
 | Версия | Документ | Статус | О чём |
 |---|---|---|---|
-| v0.11 | [DESIGN_V011_FEATURES.md](development/v0.11/DESIGN_V011_FEATURES.md) | Draft (в разработке) | DOCX-шаблоны, MCP Adapter, Reliability/History, dark theme |
+| v0.11 | [DESIGN_V011_FEATURES.md](development/v0.11/DESIGN_V011_FEATURES.md) | In progress (S0–S9 реализованы) | DOCX-шаблоны, MCP Adapter, Run Lease/Reliability, History, dark theme |
 | v0.10 | [DESIGN_V010_FEATURES.md](development/v0.10/DESIGN_V010_FEATURES.md) | Released (v0.10.0) | Web Search, Document Generation, safe filesystem, Docker/GHCR |
 | v0.9 | [DESIGN_V09_FEATURES.md](development/v0.9/DESIGN_V09_FEATURES.md) | Released (v0.9.0) | медиа, состояние (pgvector/Memory), агенты, sandbox, наблюдаемость |
 | v0.8 | [DESIGN_V08_FEATURES.md](development/v0.8/DESIGN_V08_FEATURES.md) | Approved | Auth, Share, sub-workflows, Canvas UX, LLM upgrade |
@@ -121,17 +121,19 @@
 
 Старые версии системных промптов **не удаляются**: начиная с V5 они переносятся
 сюда (RULES § 2.17). Актуальная версия всегда одна:
-[PROMPT_CURRENT.md](development/PROMPT_CURRENT.md). Промпты V1–V4 оставлены в
-`docs/development/` как исторические.
+[PROMPT_CURRENT.md](development/PROMPT_CURRENT.md). Все исторические версии
+(включая V1–V4) лежат в `docs/development/archive/prompts/`.
 
 | Файл | Версия | Статус |
 |---|---|---|
+| [PROMPT_V8.md](development/archive/prompts/PROMPT_V8.md) | v8.0 (для v0.10.1) | 🗄️ архив |
+| [PROMPT_V7.md](development/archive/prompts/PROMPT_V7.md) | v7.2 (для v0.10.x) | 🗄️ архив |
 | [PROMPT_V5_v6.4.md](development/archive/prompts/PROMPT_V5_v6.4.md) | v6.4 (для v0.9.0) | 🗄️ архив |
 | [PROMPT_V5.md](development/archive/prompts/PROMPT_V5.md) | v6.3 (для v0.9.0) | 🗄️ архив |
-| [PROMPT_V4.md](development/PROMPT_V4.md) | v4 (исторический) | 🗄️ исторический |
-| [PROMPT_V3.md](development/PROMPT_V3.md) | v3 (исторический) | 🗄️ исторический |
-| [PROMPT_V2.md](development/PROMPT_V2.md) | v2 (исторический) | 🗄️ исторический |
-| [PROMPT_V1.md](development/PROMPT_V1.md) | v1 (исторический) | 🗄️ исторический |
+| [PROMPT_V4.md](development/archive/prompts/PROMPT_V4.md) | v4 (исторический) | 🗄️ исторический |
+| [PROMPT_V3.md](development/archive/prompts/PROMPT_V3.md) | v3 (исторический) | 🗄️ исторический |
+| [PROMPT_V2.md](development/archive/prompts/PROMPT_V2.md) | v2 (исторический) | 🗄️ исторический |
+| [PROMPT_V1.md](development/archive/prompts/PROMPT_V1.md) | v1 (исторический) | 🗄️ исторический |
 
 ---
 
