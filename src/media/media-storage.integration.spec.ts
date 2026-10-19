@@ -30,6 +30,9 @@ import { WorkflowService } from '../workflow/workflow.service.js';
 import { WEB_SEARCH_PROVIDER } from '../web-search/web-search.module.js';
 import type { IMediaProvider } from './media-provider.interface.js';
 import { DocumentService } from '../documents/document.service.js';
+// v0.11 S4: зависимости template-режима document_gen (в графе не используются).
+import { DocumentTemplateService } from '../documents/document-template.service.js';
+import { DocumentTemplatesService } from '../documents/document-templates.service.js';
 import { FilesystemService } from '../filesystem/filesystem.service.js';
 
 /**
@@ -243,6 +246,16 @@ describe.skipIf(!process.env.DATABASE_URL)(
               readFileAsync: vi.fn(),
               writeFileAsync: vi.fn(),
             },
+          },
+          // v0.11 S4: зависимости template-режима document_gen. В этом графе
+          // шаблоны не используются; заглушки нужны для сборки DI-графа.
+          {
+            provide: DocumentTemplateService,
+            useValue: { renderAsync: vi.fn() },
+          },
+          {
+            provide: DocumentTemplatesService,
+            useValue: { loadAsync: vi.fn() },
           },
           // v0.10 S0 (KI-455): движок читает PGVECTOR_ENABLED через ConfigService.
           {

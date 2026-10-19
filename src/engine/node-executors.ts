@@ -34,9 +34,14 @@ import {
 } from '../agent/agent.types.js';
 import {
   DocumentStorageUnavailableException,
+  DocumentTemplateNotFoundException,
   DocumentTooLargeException,
 } from '../documents/document.errors.js';
 import { DOCX_MIME_TYPE } from '../documents/document.service.js';
+// v0.11 S4 (DESIGN § 3.1.4/§ 3.1.7): резолвер переменных шаблона живёт в
+// documents (покрыт S2-тестами), исполнитель только вызывает его. Цикла нет:
+// `document-template.service` импортирует `engine/errors`, а не этот файл.
+import { resolveTemplateVariables } from '../documents/document-template.service.js';
 import { NodeDataValidationException } from './errors.js';
 import {
   MCP_MAX_TOOLS_PER_NODE_LIMIT,
@@ -326,6 +331,15 @@ export type DocumentSource = 'markdown' | 'json';
 /** Выходной формат узла `document_gen`; S6 реализует только DOCX. */
 export type DocumentOutputFormat = 'docx' | 'pdf';
 
+/**
+ * Режим узла `document_gen` (v0.11 S4, DESIGN § 3.1.2).
+ *
+ * `inline` — прежнее поведение: Markdown/JSON → DOCX. `template` — рендер
+ * загруженного `.docx`-шаблона с подстановкой переменных. Поле аддитивное:
+ * старые графы без `mode` выполняются как `inline`.
+ */
+export type DocumentGenerationMode = 'inline' | 'template';
+
 /** Данные узла `document_gen` (v0.10 S6, DESIGN v0.10 § 3.2.1). */
 export interface DocumentGenerationNodeData {
   /** Формат файла; S6 поддерживает только `docx`. */
@@ -338,23 +352,54 @@ export interface DocumentGenerationNodeData {
   content?: string;
   /** Имя файла для UI; в хранилище ключ строится из `runId`/`nodeId`. */
   fileName?: string;
+  /** Режим узла (v0.11 S4); отсутствие поля = `inline`. */
+  mode?: DocumentGenerationMode;
+  /** id DOCX-шаблона workflow; обязателен при `mode = 'template'`. */
+  templateId?: string;
+  /** Fallback-переменные шаблона; вход `inputs.prompt` важнее. */
+  variables?: Record<string, unknown>;
 }
 
 /**
  * Zod-схема `data` узла `document_gen`.
  *
- * `format`/`source` имеют дефолты: узел, добавленный до S6, не содержит этих
- * полей и должен выполняться как Markdown → DOCX. Неизвестные ключи
- * (например, `kind` из UI) Zod отбрасывает — граф остаётся forward-compatible
- * (RULES 1.17).
+ * `format`/`source`/`mode` имеют дефолты: узел, добавленный до S6/S4, не
+ * содержит этих полей и должен выполняться как Markdown → DOCX (`inline`).
+ * Неизвестные ключи (например, `kind` из UI) Zod отбрасывает — граф остаётся
+ * forward-compatible (RULES 1.17).
+ *
+ * `superRefine` повторяет контракт DESIGN § 3.1.2: без `templateId` режим
+ * `template` неисполним, а шаблоны существуют только в DOCX. Ошибка схемы
+ * превращается в `NodeDataValidationException` до загрузки шаблона.
  */
-const DocumentGenerationNodeDataSchema = z.object({
-  format: z.enum(['docx', 'pdf']).default('docx'),
-  source: z.enum(['markdown', 'json']).default('markdown'),
-  title: z.string().trim().max(200).optional(),
-  content: z.string().max(DOCUMENT_MAX_CONTENT_CHARS).optional(),
-  fileName: z.string().trim().max(120).optional(),
-});
+const DocumentGenerationNodeDataSchema = z
+  .object({
+    format: z.enum(['docx', 'pdf']).default('docx'),
+    source: z.enum(['markdown', 'json']).default('markdown'),
+    title: z.string().trim().max(200).optional(),
+    content: z.string().max(DOCUMENT_MAX_CONTENT_CHARS).optional(),
+    fileName: z.string().trim().max(120).optional(),
+    mode: z.enum(['inline', 'template']).default('inline'),
+    templateId: z.uuid('templateId должен быть валидным UUID').optional(),
+    variables: z.record(z.string(), z.unknown()).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.mode === 'template' && data.templateId === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['templateId'],
+        message: 'для режима template нужен templateId',
+      });
+    }
+
+    if (data.mode === 'template' && data.format !== 'docx') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['format'],
+        message: 'шаблоны поддерживают только DOCX',
+      });
+    }
+  });
 
 /**
  * Структурный контракт рендерера DOCX.
@@ -410,9 +455,78 @@ export interface DocumentGenerationStorage {
   ): Promise<{ url: string | null; key: string | null }>;
 }
 
+/**
+ * Загрузчик DOCX-шаблона для исполнителя (v0.11 S4, DESIGN § 3.1.7).
+ *
+ * В продакшене — `DocumentTemplatesService.loadAsync` (проверяет
+ * принадлежность шаблона workflow запуска). Структурный контракт позволяет
+ * тестировать исполнитель без Nest-DI и PostgreSQL.
+ */
+export interface DocumentTemplateLoader {
+  /**
+   * Загружает шаблон workflow.
+   *
+   * @param templateId - uuid шаблона из `data.templateId`
+   * @param workflowId - uuid workflow запуска
+   * @returns имя и содержимое `.docx`
+   * @throws DocumentTemplateNotFoundException если шаблона нет в этом workflow
+   */
+  loadAsync(
+    templateId: string,
+    workflowId: string,
+  ): Promise<{ name: string; content: Buffer }>;
+}
+
+/**
+ * Рендерер DOCX-шаблонов для исполнителя (v0.11 S4, DESIGN § 3.1.7).
+ *
+ * В продакшене — `DocumentTemplateService.renderAsync`. `missingVariables`
+ * объявлены `readonly`, потому что рендерер не должен давать вызывающему коду
+ * менять собранный список.
+ */
+export interface DocumentTemplateRenderer {
+  /**
+   * Рендерит шаблон данными.
+   *
+   * @param content - содержимое `.docx`
+   * @param variables - значения плейсхолдеров
+   * @returns DOCX и имена незаполненных переменных
+   * @throws DocumentTemplateInvalidException при ошибке шаблона/рендера
+   */
+  renderAsync(
+    content: Buffer,
+    variables: Record<string, unknown>,
+  ): Promise<{ buffer: Buffer; missingVariables: readonly string[] }>;
+}
+
+/**
+ * Зависимости исполнителя `document_gen` (v0.11 S4, DESIGN § 3.1.7).
+ *
+ * Объект вместо растущего списка аргументов: к S4 у функции уже было четыре
+ * позиционных параметра, а режим `template` добавляет ещё три зависимости.
+ * Позиционный вызов стало бы невозможно читать, а случайная перестановка
+ * моков в тестах не ловилась бы типами.
+ */
+export interface DocumentGenerationDeps {
+  /** Рендерер Markdown/JSON → DOCX (inline-режим). */
+  documentService: DocumentGenerator;
+  /** Хранилище сгенерированных файлов (оба режима). */
+  mediaStorage: DocumentGenerationStorage;
+  /** Загрузчик шаблона из БД workflow (template-режим). */
+  templateLoader: DocumentTemplateLoader;
+  /** Рендерер `docxtemplater` (template-режим). */
+  templateRenderer: DocumentTemplateRenderer;
+  /**
+   * uuid workflow запуска. Нужен только `template`-режиму для проверки
+   * принадлежности шаблона; в `inline` движок передаёт пустую строку и не
+   * делает лишний SELECT (DESIGN § 3.1.7).
+   */
+  workflowId: string;
+}
+
 /** Результат исполнителя `document_gen`: выходы и ключ для `node_runs`. */
 export interface DocumentGenerationNodeExecution {
-  /** Выходы узла (DESIGN § 3.2.5). */
+  /** Выходы узла (DESIGN § 3.2.5, v0.11 § 3.1.7). */
   outputs: Record<string, unknown>;
   /**
    * Ключ объекта в хранилище — движок пишет его в `node_runs.storage_key`
@@ -420,6 +534,14 @@ export interface DocumentGenerationNodeExecution {
    * {@link DocumentStorageUnavailableException}.
    */
   storageKey: string | null;
+  /**
+   * Дополнительные строки в `node_runs.logs` (v0.11 S4).
+   *
+   * Template-режим пишет сюда предупреждение о незаполненных переменных:
+   * документ собран, но пользователь должен увидеть, какие плейсхолдеры
+   * остались пустыми (DESIGN § 3.1.4). Только имена, без значений (RULES 5.9).
+   */
+  logs?: readonly string[];
 }
 
 /**
@@ -574,67 +696,48 @@ function withDocumentTitle(json: unknown, title: string | undefined): unknown {
 }
 
 /**
- * Исполнитель узла `document_gen` (v0.10 S6, DESIGN v0.10 § 3.2).
+ * Имя файла для `download` в UI.
  *
- * Конвейер: валидация `data` → выбор контента (`inputs.prompt` важнее
- * `data.content`) → {@link DocumentGenerator} (Markdown/JSON → `Buffer`) →
- * проверка 10 МБ → `saveGeneratedAsync(buffer,'docx',runId,nodeId)`.
+ * Явное `data.fileName` важнее имени, которое построило хранилище
+ * (`generated-<nodeId>.docx`). Ключ в хранилище не меняется — `fileName`
+ * нужен только браузеру.
  *
- * Ключ хранилища возвращается отдельным полем: движок кладёт его в
- * `node_runs.storage_key`, чтобы ссылку можно было переподписать по ключу, а
- * не парсить URL (KI-451/KI-457). Выходы содержат `storedUrl`/`fileUrl` —
- * по ним UI рисует кнопку скачивания.
+ * @param savedKey - ключ объекта из `saveGeneratedAsync`
+ * @param nodeId - id узла (для дефолтного имени)
+ * @param fileName - `data.fileName` (уже обрезан Zod-схемой)
+ * @returns имя файла без пути
+ */
+function resolveDocumentFileName(
+  savedKey: string,
+  nodeId: string,
+  fileName: string | undefined,
+): string {
+  if (fileName !== undefined && fileName.length > 0) {
+    return fileName;
+  }
+
+  return savedKey.split('/').at(-1) ?? `generated-${nodeId}.docx`;
+}
+
+/**
+ * Общая часть сохранения документа: проверка 10 МБ, запись в хранилище и
+ * контроль того, что бэкенд вернул ссылку и ключ.
  *
- * @param node - узел графа типа `document_gen`
- * @param inputs - нормализованные входы узла (после KI-034 ключ — `prompt`)
- * @param runId - uuid запуска (первый сегмент ключа хранилища)
- * @param documentService - рендерер DOCX (`DocumentService` в продакшене)
- * @param mediaStorage - хранилище (`MEDIA_STORAGE` в продакшене)
- * @returns выходы и `storageKey` для `node_runs`
- * @throws NodeDataValidationException если `data`/контент не проходят проверки
+ * @param buffer - готовый DOCX
+ * @param nodeId - id узла (сегмент ключа хранилища)
+ * @param runId - uuid запуска (первый сегмент ключа)
+ * @param deps - зависимости исполнителя
+ * @returns ссылка, ключ и имя файла для outputs
  * @throws DocumentTooLargeException если DOCX больше 10 МБ
  * @throws DocumentStorageUnavailableException если сохранение выключено или
  *   бэкенд не вернул ссылку/ключ
- * @throws DocumentRenderException если рендерер не смог собрать документ
  */
-export async function executeDocumentGenerationNodeAsync(
-  node: NodeDto,
-  inputs: Record<string, unknown>,
+async function saveDocumentAsync(
+  buffer: Buffer,
+  nodeId: string,
   runId: string,
-  documentService: DocumentGenerator,
-  mediaStorage: DocumentGenerationStorage,
-): Promise<DocumentGenerationNodeExecution> {
-  const data = parseNodeData(
-    'document_gen',
-    DocumentGenerationNodeDataSchema,
-    node.data,
-  );
-
-  // PDF есть в DESIGN § 3.2.3, но в S6 реализован только DOCX-рендерер.
-  // Молча отдавать .docx на запрос PDF нельзя: UI/пользователь получит не тот
-  // формат, поэтому — явная ошибка (KI-463).
-  if (data.format !== 'docx') {
-    throw new NodeDataValidationException(
-      'document_gen',
-      `формат '${data.format}' пока не поддерживается: v0.10 S6 генерирует DOCX`,
-    );
-  }
-
-  // DESIGN § 3.2.4: без хранилища отдать документ нечем — падаем до рендера,
-  // чтобы не тратить CPU на файл, который некуда положить.
-  if (mediaStorage.backend === 'none') {
-    throw new DocumentStorageUnavailableException('MEDIA_STORAGE_BACKEND=none');
-  }
-
-  const content = resolveDocumentContent(data.source, inputs.prompt, data.content);
-
-  const buffer =
-    content.kind === 'markdown'
-      ? await documentService.generateDocxFromMarkdownAsync(content.markdown)
-      : await documentService.generateDocxFromJsonAsync(
-          withDocumentTitle(content.json, data.title),
-        );
-
+  deps: DocumentGenerationDeps,
+): Promise<{ url: string; key: string }> {
   // DESIGN § 3.2.3: итоговый файл ≤ 10 МБ. Проверка до сохранения — чтобы
   // огромный файл не осел в локальном хранилище/S3. Лимит числа блоков (≤ 500)
   // здесь не проверяется: `DocumentService` не отдаёт модель без повторного
@@ -643,11 +746,11 @@ export async function executeDocumentGenerationNodeAsync(
     throw new DocumentTooLargeException(buffer.byteLength, DOCUMENT_MAX_BYTES);
   }
 
-  const saved = await mediaStorage.saveGeneratedAsync(
+  const saved = await deps.mediaStorage.saveGeneratedAsync(
     buffer,
     'docx',
     runId,
-    node.id,
+    nodeId,
   );
 
   // `null` означает `MEDIA_STORAGE_BACKEND=none` либо сбой S3 (S5): ссылки и
@@ -659,15 +762,177 @@ export async function executeDocumentGenerationNodeAsync(
     );
   }
 
-  // Имя файла: явное `data.fileName` важнее имени, которое построило
-  // хранилище (`generated-<nodeId>.docx`). Ключ в хранилище не меняется —
-  // `fileName` нужен только для `download` в UI.
-  const storedFileName =
-    saved.key.split('/').at(-1) ?? `generated-${node.id}.docx`;
-  const fileName =
-    data.fileName !== undefined && data.fileName.length > 0
-      ? data.fileName
-      : storedFileName;
+  return { url: saved.url, key: saved.key };
+}
+
+/**
+ * Исполнитель режима `template` (v0.11 S4, DESIGN § 3.1.7).
+ *
+ * Порядок шагов:
+ * 1. `templateLoader.loadAsync(templateId, workflowId)` — `WHERE id = … AND
+ *    workflow_id = …`; шаблон чужого workflow неотличим от удалённого и даёт
+ *    non-retryable {@link DocumentTemplateNotFoundException};
+ * 2. `resolveTemplateVariables(inputs, data.variables)` — вход важнее
+ *    fallback-поля, JSON-строка LLM обязана быть объектом (DESIGN § 3.1.4);
+ * 3. `templateRenderer.renderAsync(content, variables)` — рендер и список
+ *    незаполненных переменных;
+ * 4. лимит 10 МБ → `saveGeneratedAsync` (тот же путь, что у inline).
+ *
+ * @param node - узел графа типа `document_gen`
+ * @param inputs - нормализованные входы узла (`prompt`)
+ * @param runId - uuid запуска
+ * @param deps - зависимости исполнителя
+ * @param data - провалидированные данные узла
+ * @returns выходы с метаданными шаблона, `storageKey` и warning в `logs`
+ * @throws NodeDataValidationException если данные узла неполны для template
+ * @throws DocumentTemplateNotFoundException если шаблона нет в workflow
+ * @throws DocumentTemplateInvalidException если шаблон/рендер невалиден
+ * @throws DocumentTooLargeException если DOCX больше 10 МБ
+ * @throws DocumentStorageUnavailableException если хранилище недоступно
+ */
+async function executeTemplateDocumentAsync(
+  node: NodeDto,
+  inputs: Record<string, unknown>,
+  runId: string,
+  deps: DocumentGenerationDeps,
+  data: z.infer<typeof DocumentGenerationNodeDataSchema>,
+): Promise<DocumentGenerationNodeExecution> {
+  // `superRefine` гарантирует templateId, но его вывод не сужен TS: без
+  // явной проверки тип остаётся `string | undefined`.
+  if (data.templateId === undefined) {
+    throw new NodeDataValidationException(
+      'document_gen',
+      'для режима template нужен templateId',
+    );
+  }
+
+  // workflowId в template-режиме обязан быть: по нему проверяется
+  // принадлежность шаблона. Пустая строка означает ошибку проводки движка —
+  // лучше явный отказ, чем SQL-ошибка `invalid input syntax for type uuid`.
+  if (deps.workflowId.length === 0) {
+    throw new NodeDataValidationException(
+      'document_gen',
+      'не удалось определить workflow запуска для режима template',
+    );
+  }
+
+  const template = await deps.templateLoader.loadAsync(
+    data.templateId,
+    deps.workflowId,
+  );
+
+  const variables = resolveTemplateVariables(inputs, data.variables);
+
+  const rendered = await deps.templateRenderer.renderAsync(
+    template.content,
+    variables,
+  );
+
+  const saved = await saveDocumentAsync(rendered.buffer, node.id, runId, deps);
+  const fileName = resolveDocumentFileName(saved.key, node.id, data.fileName);
+
+  // Только имена ключей, без значений (RULES 5.9): warning помогает понять,
+  // какие поля не заполнила модель, но не раскрывает содержимое документа.
+  const missingVariables = [...rendered.missingVariables];
+
+  return {
+    storageKey: saved.key,
+    logs:
+      missingVariables.length === 0
+        ? undefined
+        : [
+            'warning: шаблон отрендерен, не заполнены плейсхолдеры: ' +
+              missingVariables.join(', '),
+          ],
+    outputs: {
+      fileUrl: saved.url,
+      storedUrl: saved.url,
+      storedExpiresAt: null,
+      fileName,
+      mimeType: DOCX_MIME_TYPE,
+      bytes: rendered.buffer.byteLength,
+      format: 'docx',
+      // Метаданные режима (DESIGN § 3.1.7): UI показывает templateName и
+      // предупреждение по missingVariables, а `mode` отличает документ по
+      // шаблону от inline-документа.
+      mode: 'template',
+      templateId: data.templateId,
+      templateName: template.name,
+      missingVariables,
+    },
+  };
+}
+
+/**
+ * Исполнитель узла `document_gen` (v0.10 S6; режим `template` — v0.11 S4).
+ *
+ * Два режима (DESIGN § 3.1.2):
+ * - `inline` (дефолт, старые графы) — без изменений: выбор контента
+ *   (`inputs.prompt` важнее `data.content`) → {@link DocumentGenerator}
+ *   (Markdown/JSON → `Buffer`) → лимит 10 МБ → `saveGeneratedAsync`;
+ * - `template` — {@link executeTemplateDocumentAsync}.
+ *
+ * Ключ хранилища возвращается отдельным полем: движок кладёт его в
+ * `node_runs.storage_key`, чтобы ссылку можно было переподписать по ключу, а
+ * не парсить URL (KI-451/KI-457). Выходы содержат `storedUrl`/`fileUrl` —
+ * по ним UI рисует кнопку скачивания.
+ *
+ * @param node - узел графа типа `document_gen`
+ * @param inputs - нормализованные входы узла (после KI-034 ключ — `prompt`)
+ * @param runId - uuid запуска (первый сегмент ключа хранилища)
+ * @param deps - зависимости: рендереры, хранилище, workflow запуска
+ * @returns выходы и `storageKey` для `node_runs`
+ * @throws NodeDataValidationException если `data`/контент не проходят проверки
+ * @throws DocumentTemplateNotFoundException если шаблон не принадлежит workflow
+ * @throws DocumentTooLargeException если DOCX больше 10 МБ
+ * @throws DocumentStorageUnavailableException если сохранение выключено или
+ *   бэкенд не вернул ссылку/ключ
+ * @throws DocumentRenderException если рендерер не смог собрать документ
+ */
+export async function executeDocumentGenerationNodeAsync(
+  node: NodeDto,
+  inputs: Record<string, unknown>,
+  runId: string,
+  deps: DocumentGenerationDeps,
+): Promise<DocumentGenerationNodeExecution> {
+  const data = parseNodeData(
+    'document_gen',
+    DocumentGenerationNodeDataSchema,
+    node.data,
+  );
+
+  // PDF есть в DESIGN § 3.2.3, но в S6 реализован только DOCX-рендерер.
+  // Молча отдавать .docx на запрос PDF нельзя: UI/пользователь получит не тот
+  // формат, поэтому — явная ошибка (KI-463). Для template-режима это же
+  // ограничение дублирует `superRefine` схемы.
+  if (data.format !== 'docx') {
+    throw new NodeDataValidationException(
+      'document_gen',
+      `формат '${data.format}' пока не поддерживается: v0.10 S6 генерирует DOCX`,
+    );
+  }
+
+  // DESIGN § 3.2.4: без хранилища отдать документ нечем — падаем до рендера,
+  // чтобы не тратить CPU на файл, который некуда положить.
+  if (deps.mediaStorage.backend === 'none') {
+    throw new DocumentStorageUnavailableException('MEDIA_STORAGE_BACKEND=none');
+  }
+
+  if (data.mode === 'template') {
+    return executeTemplateDocumentAsync(node, inputs, runId, deps, data);
+  }
+
+  const content = resolveDocumentContent(data.source, inputs.prompt, data.content);
+
+  const buffer =
+    content.kind === 'markdown'
+      ? await deps.documentService.generateDocxFromMarkdownAsync(content.markdown)
+      : await deps.documentService.generateDocxFromJsonAsync(
+          withDocumentTitle(content.json, data.title),
+        );
+
+  const saved = await saveDocumentAsync(buffer, node.id, runId, deps);
+  const fileName = resolveDocumentFileName(saved.key, node.id, data.fileName);
 
   return {
     storageKey: saved.key,

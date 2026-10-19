@@ -454,6 +454,77 @@ export async function deleteWorkflowAsync(id: string): Promise<void> {
 }
 
 /**
+ * Список DOCX-шаблонов workflow (v0.11 S5, DESIGN § 3.1.5/§ 3.1.8).
+ *
+ * Содержимое файлов сюда не входит — оно скачивается отдельной ручкой
+ * `GET …/:templateId/file`; список нужен селекту шаблонов в узле.
+ *
+ * @param workflowId - uuid сохранённого workflow
+ * @returns шаблоны workflow, сначала новые
+ * @throws ApiError при сетевой ошибке, не-2xx статусе или неожиданном формате
+ */
+export async function listDocumentTemplatesAsync(
+  workflowId: string,
+): Promise<ApiDocumentTemplate[]> {
+  const data = await requestAsync<unknown>(
+    `/workflow/${encodeURIComponent(workflowId)}/document-templates`,
+  );
+
+  return z.array(ApiDocumentTemplateSchema).parse(data);
+}
+
+/**
+ * Загружает `.docx`-шаблон в workflow (v0.11 S5, DESIGN § 3.1.5).
+ *
+ * Тело — `FormData`: `sendAsync` не ставит `Content-Type: application/json`
+ * для `FormData` (KI-479), поэтому браузер сам добавит `multipart/form-data` с
+ * boundary. Поле файла — `file` (имя поля задано контроллером), имя шаблона —
+ * необязательное поле `name`.
+ *
+ * @param workflowId - uuid сохранённого workflow
+ * @param file - выбранный пользователем `.docx`
+ * @param name - имя шаблона (по умолчанию backend берёт имя файла)
+ * @returns созданный шаблон (201)
+ * @throws ApiError при 400/403/404/413 или сетевой ошибке
+ */
+export async function uploadDocumentTemplateAsync(
+  workflowId: string,
+  file: File,
+  name?: string,
+): Promise<ApiDocumentTemplate> {
+  const body = new FormData();
+  body.append('file', file);
+
+  if (name !== undefined && name.trim().length > 0) {
+    body.append('name', name.trim());
+  }
+
+  const data = await requestAsync<unknown>(
+    `/workflow/${encodeURIComponent(workflowId)}/document-templates`,
+    { method: 'POST', body },
+  );
+
+  return ApiDocumentTemplateSchema.parse(data);
+}
+
+/**
+ * Удаляет шаблон workflow (v0.11 S5, DESIGN § 3.1.5).
+ *
+ * @param workflowId - uuid workflow-владельца шаблона
+ * @param templateId - uuid шаблона
+ * @throws ApiError при 403/404 (роль viewer или шаблон уже удалён)
+ */
+export async function deleteDocumentTemplateAsync(
+  workflowId: string,
+  templateId: string,
+): Promise<void> {
+  await requestAsync<null>(
+    `/workflow/${encodeURIComponent(workflowId)}/document-templates/${encodeURIComponent(templateId)}`,
+    { method: 'DELETE' },
+  );
+}
+
+/**
  * Строит план выполнения графа.
  *
  * @param nodes - узлы графа

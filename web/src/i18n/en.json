@@ -81,6 +81,7 @@
   "node.document_gen.download": "Download DOCX",
   "node.document_gen.hint": "After Run the document is saved to storage and a link appears here.",
   "node.document_gen.label": "Document generation",
+  "node.document_gen.mode": "Mode",
   "node.document_gen.mode.inline": "Text",
   "node.document_gen.mode.template": "Template",
   "node.document_gen.source": "Input format",
@@ -412,5 +413,13 @@
   "template.delete": "Delete template",
   "template.uploadError": "Template upload failed",
   "template.empty": "No templates yet",
+  "template.deleteConfirm": "Delete template \"{{name}}\"?",
+  "template.deleteError": "Template deletion failed",
+  "template.loadError": "Could not load the template list",
+  "template.needSave": "Save the workflow to upload a template.",
+  "template.noPlaceholders": "The template has no placeholders",
+  "template.uploading": "Uploading…",
+  "template.variablesFromInput": "Variables will come from the input (inputs.prompt).",
+  "template.variablesInvalid": "Variables must be a JSON object",
   "workflow.default_name": "New workflow"
 }

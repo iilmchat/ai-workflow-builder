@@ -85,6 +85,7 @@
   "node.document_gen.download": "Скачать DOCX",
   "node.document_gen.hint": "После Run документ сохранится в хранилище, и здесь появится ссылка.",
   "node.document_gen.label": "Генерация документа",
+  "node.document_gen.mode": "Режим",
   "node.document_gen.mode.inline": "Текст",
   "node.document_gen.mode.template": "Шаблон",
   "node.document_gen.source": "Формат ввода",
@@ -412,5 +413,13 @@
   "template.delete": "Удалить шаблон",
   "template.uploadError": "Не удалось загрузить шаблон",
   "template.empty": "Шаблонов пока нет",
+  "template.deleteConfirm": "Удалить шаблон «{{name}}»?",
+  "template.deleteError": "Не удалось удалить шаблон",
+  "template.loadError": "Не удалось загрузить список шаблонов",
+  "template.needSave": "Сохраните workflow, чтобы загрузить шаблон.",
+  "template.noPlaceholders": "В шаблоне нет плейсхолдеров",
+  "template.uploading": "Загрузка…",
+  "template.variablesFromInput": "Переменные придут из входа (inputs.prompt).",
+  "template.variablesInvalid": "Переменные должны быть JSON-объектом",
   "workflow.default_name": "Новый workflow"
 }

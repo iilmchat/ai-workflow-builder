@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { requestAsync } from './api';
+import {
+  deleteDocumentTemplateAsync,
+  listDocumentTemplatesAsync,
+  requestAsync,
+  uploadDocumentTemplateAsync,
+} from './api';
 import { useAuthStore } from '@/stores/auth';
 
 /**
@@ -173,5 +178,82 @@ describe('requestAsync: Content-Type (KI-479)', () => {
     expect(bodyOf(fetchMock, 2)).toBe(formData);
     expect(headersOf(fetchMock, 2).has('Content-Type')).toBe(false);
     expect(headersOf(fetchMock, 2).get('Authorization')).toBe('Bearer access-token-2');
+  });
+});
+
+describe('document-templates API (v0.11 S5)', () => {
+  /** uuid workflow в тестах шаблонов. */
+  const WORKFLOW_ID = '77777777-7777-4777-8777-777777777777';
+
+  /** uuid шаблона в тестах API. */
+  const TEMPLATE_ID = '55555555-5555-4555-8555-555555555555';
+
+  /** Ответ `DocumentTemplateSummary`, который разбирает Zod-схема. */
+  const TEMPLATE = {
+    id: TEMPLATE_ID,
+    name: 'Договор поставки',
+    bytes: 1011,
+    placeholders: ['client', 'amount'],
+    createdAt: '2026-10-19T09:36:59.000Z',
+  };
+
+  it('listDocumentTemplatesAsync: GET списка и Zod-разбор', async () => {
+    const fetchMock = stubFetch(() => jsonResponse([TEMPLATE]));
+
+    const result = await listDocumentTemplatesAsync(WORKFLOW_ID);
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(
+      `/workflow/${WORKFLOW_ID}/document-templates`,
+    );
+    expect(result).toEqual([TEMPLATE]);
+  });
+
+  it('uploadDocumentTemplateAsync: POST multipart без JSON-заголовка (KI-479)', async () => {
+    const fetchMock = stubFetch(() => jsonResponse(TEMPLATE, 201));
+    const file = new File(['PK\u0003\u0004'], 'contract.docx', {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    });
+
+    const result = await uploadDocumentTemplateAsync(
+      WORKFLOW_ID,
+      file,
+      'Договор',
+    );
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(
+      `/workflow/${WORKFLOW_ID}/document-templates`,
+    );
+    expect(init.method).toBe('POST');
+    expect(headersOf(fetchMock).has('Content-Type')).toBe(false);
+
+    const body = init.body as FormData;
+    expect(body).toBeInstanceOf(FormData);
+    expect(body.get('file')).toBe(file);
+    expect(body.get('name')).toBe('Договор');
+    expect(result).toEqual(TEMPLATE);
+  });
+
+  it('deleteDocumentTemplateAsync: DELETE по шаблону', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 204,
+        text: () => Promise.resolve(''),
+      } as unknown as Response),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await deleteDocumentTemplateAsync(WORKFLOW_ID, TEMPLATE_ID);
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toContain(
+      `/workflow/${WORKFLOW_ID}/document-templates/${TEMPLATE_ID}`,
+    );
+    expect(init.method).toBe('DELETE');
   });
 });

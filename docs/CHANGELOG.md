@@ -20,7 +20,7 @@
 ### Added
 
 - **MCP Adapter (S6+S7, DESIGN § 3.2):** `src/mcp` — `McpClientService` (connect-mutex, HTTP/SSE, TTL-кэш каталога, reconnect), `McpToolAdapter` (имена `mcp__server__tool`, JSON Schema → Zod, нормализация контента). `AgentService`: preflight MCP до LLM, side-effect retry-guard, правило про недоверенный контент. Зависимость `@modelcontextprotocol/sdk`.
-- **Docs:** Создан DESIGN v0.11.0 (шаблоны DOCX, MCP Adapter, Reliability fixes). Отчёты сессий: [S0-S1](reports/v0.11.0/S0-S1-foundation.md), [S2-S3](reports/v0.11.0/S2-S3-document-templates.md), [S6-S7](reports/v0.11.0/S6-S7-mcp-adapter.md).
+- **Docs:** Создан DESIGN v0.11.0 (шаблоны DOCX, MCP Adapter, Reliability fixes). Отчёты сессий: [S0-S1](development/reports/v0.11.0/S0-S1-foundation.md), [S2-S3](development/reports/v0.11.0/S2-S3-document-templates.md), [S4-S5](development/reports/v0.11.0/S4-S5-document-templates-engine.md), [S6-S7](development/reports/v0.11.0/S6-S7-mcp-adapter.md).
 - **Docs:** Зарегистрированы KI-478..480.
 - **API и метрики (KI-077/450, KI-433, KI-472):** `GET /runs/:id` отдаёт `nodes` —
   проекцию `node_runs`, общую с SSE (`src/runs/run-node-snapshots.ts`), чтобы
@@ -29,7 +29,7 @@
   `node_runs` наравне с LLM-узлами. API-префиксы сведены в единый
   `api-prefixes.json`: из него строятся RegExp SPA-fallback'а backend'а и
   Vite-прокси, дублирование списков устранено.
-- **DOCX-шаблоны — API (v0.11 S3, DESIGN § 3.1.5)** ([отчёт](reports/v0.11.0/S2-S3-document-templates.md)): новый
+- **DOCX-шаблоны — API (v0.11 S3, DESIGN § 3.1.5)** ([отчёт](development/reports/v0.11.0/S2-S3-document-templates.md)): новый
   `DocumentTemplateService` (`src/documents/document-template.service.ts`) на
   `docxtemplater` 3.71 + `pizzip` 3.3: компиляция шаблона, список простых
   плейсхолдеров, рендер с `nullGetter` (отсутствующая переменная → пустая
@@ -50,6 +50,22 @@
   `sha256`/`bytes`/`placeholders`/`content` в `document_templates`,
   `DocumentTemplateSummary` в `docs/development/api-contract.json`; лимиты —
   из `DOCUMENT_TEMPLATE_*` env.
+- **DOCX-шаблоны — режим `template` (v0.11 S4, DESIGN § 3.1.7)** ([отчёт](development/reports/v0.11.0/S4-S5-document-templates-engine.md)):
+  исполнитель `document_gen` принимает `DocumentGenerationDeps` (`documentService`,
+  `mediaStorage`, `templateLoader`, `templateRenderer`, `workflowId`) и умеет
+  `mode='template'`: загрузка шаблона workflow (`loadAsync`, чужой шаблон →
+  non-retryable `DocumentTemplateNotFoundException`), подстановка переменных
+  (`resolveTemplateVariables`), рендер `docxtemplater`, лимит 10 МБ и
+  `saveGeneratedAsync`. В `outputs` добавлены `mode`/`templateId`/
+  `templateName`/`missingVariables`, в `logs` — warning о незаполненных
+  плейсхолдерах; inline-режим не изменился. Движок передаёт `workflowId` только
+  для template-режима (без лишнего SELECT).
+- **DOCX-шаблоны — UI узла `document_gen` (v0.11 S5, DESIGN § 3.1.8)** ([отчёт](development/reports/v0.11.0/S4-S5-document-templates-engine.md)):
+  селект режима «Текст/Шаблон», список шаблонов workflow и загрузка `.docx`
+  (`FormData`, KI-479), чипы плейсхолдеров, JSON-переменные (только без входящей
+  связи), удаление шаблона (disabled для `viewer`), жёлтая подсказка
+  `Не заполнено: …` по `missingVariables` после Run; i18n-ключи в `ru.json`/
+  `en.json`, data-атрибуты для smoke.
 
 ### Fixed
 

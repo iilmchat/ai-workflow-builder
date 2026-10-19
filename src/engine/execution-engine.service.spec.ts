@@ -5,6 +5,10 @@ import { DRIZZLE, type Database } from '../db/db.module.js';
 import { workflowRuns, type RunStatus } from '../db/schema.js';
 import { AgentService } from '../agent/agent.service.js';
 import { DocumentService } from '../documents/document.service.js';
+// v0.11 S4: зависимости template-режима узла document_gen.
+import { DocumentTemplateService } from '../documents/document-template.service.js';
+import { DocumentTemplatesService } from '../documents/document-templates.service.js';
+import { DocumentTemplateNotFoundException } from '../documents/document.errors.js';
 // v0.10 S7/S8: сервис workspace для узлов read_file/write_file.
 import { FilesystemService } from '../filesystem/filesystem.service.js';
 import { MEDIA_STORAGE } from '../media/media-storage.service.js';
@@ -342,6 +346,10 @@ describe('ExecutionEngineService', () => {
   let documentFromJson: ReturnType<typeof vi.fn>;
   /** v0.10 S6: сохранение документа в хранилище. */
   let saveGenerated: ReturnType<typeof vi.fn>;
+  /** v0.11 S4: загрузка DOCX-шаблона workflow (DocumentTemplatesService). */
+  let loadTemplate: ReturnType<typeof vi.fn>;
+  /** v0.11 S4: рендер DOCX-шаблона (DocumentTemplateService). */
+  let renderTemplate: ReturnType<typeof vi.fn>;
   /** R7.4b: цикл agent-узла (в тесте KI-433 возвращает usage). */
   let agentRun: ReturnType<typeof vi.fn>;
   let findWorkflow: ReturnType<typeof vi.fn>;
@@ -488,6 +496,21 @@ describe('ExecutionEngineService', () => {
           key: `${runId}/generated-${nodeId}.docx`,
         }),
     );
+    // v0.11 S4: режим template. Загрузчик проверяет принадлежность шаблона
+    // workflow запуска, рендерер возвращает буфер и список пропусков.
+    loadTemplate = vi.fn((_templateId: string, _workflowId: string) =>
+      Promise.resolve({
+        name: 'Шаблон договора',
+        content: Buffer.from('PK\u0003\u0004template-docx'),
+      }),
+    );
+    renderTemplate = vi.fn(
+      (_content: Buffer, _variables: Record<string, unknown>) =>
+        Promise.resolve({
+          buffer: Buffer.from('PK\u0003\u0004rendered-docx'),
+          missingVariables: [] as string[],
+        }),
+    );
     fake = createFakeDb(RUN_ID);
     envConfig = {
       SANDBOX_ENABLED: true,
@@ -538,6 +561,16 @@ describe('ExecutionEngineService', () => {
             backend: 'local',
             saveGeneratedAsync: saveGenerated,
           },
+        },
+        // v0.11 S4: зависимости template-режима. В большинстве тестов узел не
+        // выполняется — заглушки нужны, чтобы Nest собрал граф DI.
+        {
+          provide: DocumentTemplatesService,
+          useValue: { loadAsync: loadTemplate },
+        },
+        {
+          provide: DocumentTemplateService,
+          useValue: { renderAsync: renderTemplate },
         },
         // v0.10 S8: узлы read_file/write_file в этом спеке не выполняются —
         // заглушка нужна только чтобы Nest собрал граф зависимостей.
@@ -1609,6 +1642,82 @@ describe('ExecutionEngineService', () => {
       storedUrl: `/media/file/${RUN_ID}/generated-A.docx`,
       format: 'docx',
     });
+  });
+
+  it('v0.11 S4: document_gen mode=template получает workflowId и пишет метаданные/предупреждение', async () => {
+    const templateId = '55555555-5555-4555-8555-555555555555';
+    loadTemplate.mockResolvedValue({
+      name: 'Шаблон договора',
+      content: Buffer.from('PK\u0003\u0004template-docx'),
+    });
+    renderTemplate.mockResolvedValue({
+      buffer: Buffer.from('PK\u0003\u0004rendered-docx'),
+      missingVariables: ['amount'],
+    });
+
+    const graph: GraphDto = {
+      nodes: [
+        node('A', 'document_gen', {
+          mode: 'template',
+          templateId,
+          variables: { client: 'ACME' },
+        }),
+      ],
+      edges: [],
+    };
+
+    const result = await service.executeAsync(RUN_ID, graph);
+
+    expect(result.status).toBe('completed');
+    // workflowId берётся из workflow_runs (`findWorkflowIdByRunAsync`) —
+    // ровно так шаблон проверяется на принадлежность workflow запуска.
+    expect(loadTemplate).toHaveBeenCalledWith(templateId, 'wf-spec');
+    expect(renderTemplate).toHaveBeenCalledWith(expect.any(Buffer), {
+      client: 'ACME',
+    });
+    expect(saveGenerated).toHaveBeenCalledWith(
+      expect.any(Buffer),
+      'docx',
+      RUN_ID,
+      'A',
+    );
+    // Inline-рендерер в template-режиме не вызывается.
+    expect(documentFromMarkdown).not.toHaveBeenCalled();
+
+    expect(fake.rows[0]?.outputs).toMatchObject({
+      mode: 'template',
+      templateId,
+      templateName: 'Шаблон договора',
+      missingVariables: ['amount'],
+      format: 'docx',
+    });
+    // warning о незаполненных плейсхолдерах уходит в node_runs.logs.
+    expect(fake.rows[0]?.logs).toHaveLength(1);
+    expect(fake.rows[0]?.logs?.[0]).toContain('warning');
+    expect(fake.rows[0]?.logs?.[0]).toContain('amount');
+  });
+
+  it('v0.11 S4: шаблон чужого workflow — узел failed, рендер не выполняется', async () => {
+    const templateId = '55555555-5555-4555-8555-555555555555';
+    loadTemplate.mockRejectedValue(
+      new DocumentTemplateNotFoundException(templateId),
+    );
+
+    const graph: GraphDto = {
+      nodes: [node('A', 'document_gen', { mode: 'template', templateId })],
+      edges: [],
+    };
+
+    await expect(service.executeAsync(RUN_ID, graph)).rejects.toBeInstanceOf(
+      DocumentTemplateNotFoundException,
+    );
+
+    // Non-retryable: одной попытки достаточно, рендер и сохранение не начаты.
+    expect(loadTemplate).toHaveBeenCalledTimes(1);
+    expect(renderTemplate).not.toHaveBeenCalled();
+    expect(saveGenerated).not.toHaveBeenCalled();
+    expect(fake.rows[0]?.status).toBe('failed');
+    expect(fake.rows[0]?.error).toContain('не найден в workflow');
   });
 
   it('KI-031: повторный прогон графа не создаёт дубли node_runs (upsert)', async () => {

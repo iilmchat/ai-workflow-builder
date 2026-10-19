@@ -15,6 +15,10 @@ import {
   type NodeRunStatus,
 } from '../db/schema.js';
 import { DocumentService } from '../documents/document.service.js';
+// v0.11 S4 (DESIGN § 3.1.7): загрузчик шаблона из БД workflow и его рендерер —
+// зависимости узла `document_gen` в режиме `template`.
+import { DocumentTemplateService } from '../documents/document-template.service.js';
+import { DocumentTemplatesService } from '../documents/document-templates.service.js';
 // v0.10 S7/S8: безопасный файловый workspace узлов read_file/write_file.
 import { FilesystemService } from '../filesystem/filesystem.service.js';
 import {
@@ -277,6 +281,11 @@ export class ExecutionEngineService {
     // MEDIA_STORAGE — из MediaModule; один экземпляр хранилища на приложение.
     private readonly documentService: DocumentService,
     @Inject(MEDIA_STORAGE) private readonly mediaStorage: IMediaStorage,
+    // v0.11 S4 (DESIGN § 3.1.7): шаблоны DOCX. `DocumentTemplatesService` —
+    // CRUD/доступ и `loadAsync(id, workflowId)`; `DocumentTemplateService` —
+    // чистый рендерер `docxtemplater`. Оба экспортирует DocumentsModule.
+    private readonly documentTemplatesService: DocumentTemplatesService,
+    private readonly documentTemplateService: DocumentTemplateService,
     // v0.10 S7/S8 (DESIGN v0.10 § 3.3): единственная точка доступа к
     // workspace workflow. Узлы получают только относительный путь, сервис
     // проверяет path traversal и лимит 5 МБ (RULES 4.38).
@@ -1201,19 +1210,35 @@ export class ExecutionEngineService {
       // v0.10 S6 (DESIGN v0.10 § 3.2): генерация DOCX. Исполнитель валидирует
       // `data`, рендерит Markdown/JSON и сохраняет файл; `storageKey` уходит в
       // `node_runs.storage_key` (KI-451), `storedUrl` — в outputs для UI.
+      //
+      // v0.11 S4 (DESIGN § 3.1.7): режим `template`. workflowId нужен только
+      // ему (проверка принадлежности шаблона), поэтому для `inline` лишний
+      // SELECT по workflow_runs не выполняется.
       case 'document_gen': {
+        const workflowId =
+          node.data.mode === 'template'
+            ? await this.vectorStore.findWorkflowIdByRunAsync(runId)
+            : '';
         const result = await executeDocumentGenerationNodeAsync(
           node,
           inputs,
           runId,
-          this.documentService,
-          this.mediaStorage,
+          {
+            documentService: this.documentService,
+            mediaStorage: this.mediaStorage,
+            templateLoader: this.documentTemplatesService,
+            templateRenderer: this.documentTemplateService,
+            workflowId,
+          },
         );
 
         return {
           kind: 'plain',
           outputs: result.outputs,
           metrics: null,
+          // v0.11 S4: warning о незаполненных плейсхолдерах попадает в
+          // `node_runs.logs` и в событие `node_completed` вместе с outputs.
+          logs: result.logs,
           storageKey: result.storageKey,
         };
       }
