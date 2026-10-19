@@ -32,7 +32,16 @@
  * нет (RULES 1.4).
  */
 import { describe, expect, it } from 'vitest';
-import { ApiDocumentTemplateSchema, ApiRunBudgetSchema, ApiRunSchema } from './api';
+import {
+  ApiDocumentTemplateSchema,
+  ApiRunBudgetSchema,
+  ApiRunSchema,
+  McpServersResponseSchema,
+  McpServerStatusSchema,
+  McpServerSummarySchema,
+  McpToolSummarySchema,
+  McpTransportSchema,
+} from './api';
 import { CollaboratorSchema } from './collaborators-api';
 import { ExportWorkflowSchema } from './export-import-api';
 import { ShareTokenSchema, SharedWorkflowSchema } from './share-api';
@@ -72,6 +81,10 @@ const MIRROR_SCHEMAS: Record<string, MirrorSchema> = {
   // v0.11 S3: публичное представление DOCX-шаблона (document-templates API).
   DocumentTemplateSummary: ApiDocumentTemplateSchema,
   ExportWorkflowDto: ExportWorkflowSchema,
+  // v0.11 S8 (DESIGN § 3.2.6): каталог MCP-серверов для UI agent-узла.
+  McpServersResponse: McpServersResponseSchema,
+  McpServerSummary: McpServerSummarySchema,
+  McpToolSummary: McpToolSummarySchema,
   // v0.11 S12 (DESIGN § 3.4.2): `GET /runs/:id/nodes` отдаёт массив снимков
   // узлов той же Zod-схемой, что и SSE-снимок.
   NodeRunSnapshot: NodeRunSnapshotSchema,
@@ -88,6 +101,8 @@ interface ApiContract {
   version: number;
   /** Имя backend-DTO → отсортированные имена полей ответа. */
   responses: Record<string, string[]>;
+  /** `<DTO>.<поле>` → отсортированные допустимые значения (KI-440). */
+  enums?: Record<string, string[]>;
 }
 
 /** Кэш контракта: `import.meta.glob` возвращает текст сразу, разбор — один раз. */
@@ -273,5 +288,38 @@ describe('REST-контракт: web-зеркала ↔ docs/development/api-con
     );
     expect(contract.responses.NodeRunSnapshot).toContain('outputs');
     expect(contract.responses.NodeRunSnapshot).toContain('error');
+  });
+
+  it('MCP-каталог зеркалит контракт и не содержит секретов (v0.11 S8)', () => {
+    const contract = readContract();
+    const actual = actualContract();
+
+    // Три вложенных DTO каталога MCP: поля совпадают с JSON.
+    expect(actual.McpServersResponse).toEqual(
+      contract.responses.McpServersResponse,
+    );
+    expect(actual.McpServerSummary).toEqual(
+      contract.responses.McpServerSummary,
+    );
+    expect(actual.McpToolSummary).toEqual(contract.responses.McpToolSummary);
+
+    // URL/заголовки/токены не должны появиться в ответе даже как поля.
+    for (const fields of Object.values({
+      McpServersResponse: actual.McpServersResponse,
+      McpServerSummary: actual.McpServerSummary,
+      McpToolSummary: actual.McpToolSummary,
+    })) {
+      expect(fields).not.toContain('url');
+      expect(fields).not.toContain('headers');
+      expect(fields).not.toContain('tokenEnv');
+    }
+
+    // Enum-домены статуса и транспорта совпадают со своей стороной (KI-440).
+    expect([...McpServerStatusSchema.options].sort()).toEqual(
+      contract.enums?.['McpServerSummary.status'],
+    );
+    expect([...McpTransportSchema.options].sort()).toEqual(
+      contract.enums?.['McpServerSummary.transport'],
+    );
   });
 });

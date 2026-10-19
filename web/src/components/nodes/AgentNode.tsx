@@ -6,10 +6,14 @@ import { useAutoResize } from '@/hooks/use-auto-resize';
 import { useNodeDataHistory } from '@/hooks/use-node-data-history';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import {
+  clampMcpToolsLimit,
+  isMcpToolSelected,
   parseAgentNumberInput,
   toggleAgentTool,
+  toggleMcpTool,
   validateAgentTools,
   validateMaxIterations,
+  validateMcpToolRefs,
 } from '@/lib/agent-node-fields';
 import { groupLlmModelsForSelect } from '@/lib/llm-models';
 import { NODE_REGISTRY } from '@/lib/node-registry';
@@ -21,12 +25,21 @@ import {
   DATA_TYPE_COLORS,
   DATA_TYPE_LABELS,
   DEFAULT_AGENT_MAX_ITERATIONS,
+  MCP_MAX_TOOLS_PER_NODE_LIMIT,
   type AgentFlowNode,
 } from '@/types/graph';
 
 /** Классы текстового поля узла (как у LLM/vector-узлов). */
 const FIELD_CLASS =
   'nodrag w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary';
+
+/** Общий класс бейджа аннотации MCP-инструмента (RO/DESTR/IDEM). */
+const MCP_BADGE_CLASS =
+  'rounded bg-muted px-1 text-[8px] font-semibold uppercase text-muted-foreground';
+
+/** Класс бейджа destructive-инструмента: предупреждающий цвет. */
+const MCP_DESTRUCTIVE_BADGE_CLASS =
+  'rounded border border-status-warning-border bg-status-warning-bg px-1 text-[8px] font-semibold uppercase text-status-warning-foreground';
 
 /**
  * Узел агента (R7.4b, DESIGN v0.9 § 3.4).
@@ -51,6 +64,10 @@ export function AgentNode({ id, data }: NodeProps<AgentFlowNode>) {
   const status = useWorkflowStore((state) => state.nodeStatuses[id]);
   const llmModels = useWorkflowStore((state) => state.llmModels);
   const loadLlmModels = useWorkflowStore((state) => state.loadLlmModelsAsync);
+  // v0.11 S8 (DESIGN § 3.2.6/§ 3.2.7): каталог MCP-серверов общий с другими
+  // agent-узлами — грузится один раз на сессию и кэшируется в сторе.
+  const mcpCatalog = useWorkflowStore((state) => state.mcpServers);
+  const loadMcpServers = useWorkflowStore((state) => state.loadMcpServersAsync);
   const removeNode = useWorkflowStore((state) => state.removeNode);
 
   // Список моделей общий с LLM-узлом: грузится один раз на сессию и
@@ -59,11 +76,40 @@ export function AgentNode({ id, data }: NodeProps<AgentFlowNode>) {
     void loadLlmModels();
   }, [loadLlmModels]);
 
+  // Секция MCP видна только когда фича включена администратором
+  // (`MCP_ENABLED=true`). Выключенный MCP не должен даже намекать на выбор.
+  useEffect(() => {
+    void loadMcpServers();
+  }, [loadMcpServers]);
+
   const selected = llmModels.find((model) => model.id === data.model);
   // Модель не подменяем (KI-069): неизвестный id показывается как недоступный.
   const isUnavailable = data.model !== '' && selected === undefined;
   const groups = groupLlmModelsForSelect(llmModels);
   const tools = validateAgentTools(data.tools);
+
+  // MCP-выбор (v0.11 S8): лимит берётся из ответа API — env может задать
+  // значение меньше жёсткого потолка 20 (DESIGN § 3.2.5/§ 3.2.6).
+  const mcpLimit = clampMcpToolsLimit(
+    mcpCatalog?.maxToolsPerNode ?? MCP_MAX_TOOLS_PER_NODE_LIMIT,
+  );
+  // Сохранённые ссылки нормализуются по жёсткому потолку, а не по env-лимиту:
+  // уже выбранные инструменты не должны молча исчезнуть при первом клике
+  // (env-лимит меньше потолка всё равно проверяется на запуске).
+  const mcpTools = validateMcpToolRefs(data.mcpTools);
+  const mcpLimitReached = mcpTools.length >= mcpLimit;
+
+  /**
+   * Переключает MCP-инструмент в `data.mcpTools`.
+   *
+   * @param server - имя MCP-сервера из реестра
+   * @param tool - имя инструмента в каталоге сервера
+   */
+  const handleMcpToolChange = (server: string, tool: string): void => {
+    updateNodeData(id, {
+      mcpTools: toggleMcpTool(mcpTools, server, tool, mcpLimit),
+    });
+  };
 
   // KI-157: текст пишется в стор на каждый символ — сохраняем курсор.
   const handleSystemChange = usePreserveCursor<HTMLTextAreaElement>(
@@ -169,6 +215,145 @@ export function AgentNode({ id, data }: NodeProps<AgentFlowNode>) {
             ))}
           </div>
         </fieldset>
+
+        {mcpCatalog?.enabled === true && (
+          <fieldset className="mt-2" data-agent-mcp="">
+            <legend className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {t('node.agent.mcp.title')}
+            </legend>
+
+            <p className="mb-1 text-[9px] text-muted-foreground">
+              {t('node.agent.mcp.hint')}
+            </p>
+
+            {mcpCatalog.servers.length === 0 ? (
+              <p
+                className="text-[10px] text-muted-foreground"
+                data-agent-mcp-empty=""
+              >
+                {t('node.agent.mcp.empty')}
+              </p>
+            ) : (
+              <div className="space-y-1">
+                {mcpCatalog.servers.map((server) => {
+                  const serverAvailable = server.status === 'ok';
+
+                  return (
+                    <details
+                      key={server.name}
+                      className="nodrag rounded-lg border border-border px-2 py-1"
+                      data-agent-mcp-server={server.name}
+                    >
+                      <summary className="cursor-pointer text-[10px] font-medium text-foreground">
+                        {server.name}
+                        <span className="ml-1 text-[9px] font-normal text-muted-foreground">
+                          {t(`node.agent.mcp.status.${server.status}`)}
+                        </span>
+                      </summary>
+
+                      {server.status === 'error' && (
+                        <p
+                          role="alert"
+                          className="mt-1 text-[9px] text-status-danger-foreground"
+                        >
+                          {t('node.agent.mcp.serverError', {
+                            error: server.error ?? '',
+                          })}
+                        </p>
+                      )}
+
+                      {server.status === 'disabled' && (
+                        <p className="mt-1 text-[9px] text-muted-foreground">
+                          {t('node.agent.mcp.serverDisabled')}
+                        </p>
+                      )}
+
+                      {serverAvailable && server.tools.length === 0 && (
+                        <p className="mt-1 text-[9px] text-muted-foreground">
+                          {t('node.agent.mcp.serverEmpty')}
+                        </p>
+                      )}
+
+                      {server.tools.map((tool) => {
+                        const checked = isMcpToolSelected(
+                          mcpTools,
+                          server.name,
+                          tool.name,
+                        );
+                        // Сверх лимита гасятся только невыбранные чекбоксы:
+                        // уже выбранные остаются снимаемыми (иначе лимит env
+                        // «запирал» бы сохранённые инструменты).
+                        const disabled =
+                          !serverAvailable ||
+                          (!checked && mcpLimitReached);
+
+                        return (
+                          <div key={tool.name} className="mt-0.5">
+                            <label className="flex cursor-pointer items-center gap-1 text-[10px] text-foreground">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                disabled={disabled}
+                                data-agent-mcp-tool={`${server.name}:${tool.name}`}
+                                onChange={() =>
+                                  handleMcpToolChange(server.name, tool.name)
+                                }
+                              />
+                              <span className="truncate">
+                                {tool.title ?? tool.name}
+                              </span>
+
+                              {tool.readOnlyHint === true && (
+                                <span className={MCP_BADGE_CLASS}>
+                                  {t('node.agent.mcp.readOnly')}
+                                </span>
+                              )}
+
+                              {tool.destructiveHint === true && (
+                                <span className={MCP_DESTRUCTIVE_BADGE_CLASS}>
+                                  {t('node.agent.mcp.destructive')}
+                                </span>
+                              )}
+
+                              {tool.idempotentHint === true && (
+                                <span className={MCP_BADGE_CLASS}>
+                                  {t('node.agent.mcp.idempotent')}
+                                </span>
+                              )}
+                            </label>
+
+                            {tool.destructiveHint === true && (
+                              <p
+                                role="note"
+                                className="text-[9px] text-status-warning-foreground"
+                              >
+                                {t('node.agent.mcp.destructiveWarning')}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </details>
+                  );
+                })}
+              </div>
+            )}
+
+            <p className="mt-1 text-[9px] text-muted-foreground">
+              {t('node.agent.mcp.limit', { max: mcpLimit })}
+            </p>
+
+            {mcpLimitReached && (
+              <p
+                role="status"
+                className="text-[9px] text-status-warning-foreground"
+                data-agent-mcp-limit=""
+              >
+                {t('node.agent.mcp.limitReached', { max: mcpLimit })}
+              </p>
+            )}
+          </fieldset>
+        )}
 
         <input
           type="number"

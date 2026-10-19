@@ -6,6 +6,7 @@
     { "prefix": "auth" },
     { "prefix": "engine" },
     { "prefix": "llm" },
+    { "prefix": "mcp" },
     { "prefix": "media" },
     { "prefix": "nodes" },
     { "prefix": "runs", "sse": true },

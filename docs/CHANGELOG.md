@@ -79,8 +79,21 @@ Retry, History), SSRF-защита, Redis Throttler и тёмная тема. 22
   (`WORKFLOW_RUN_HEARTBEAT_MS`, `WORKFLOW_RUN_LEASE_TTL_MS`, `MCP_ENABLED`/`MCP_SERVERS`),
   PROMPT_CURRENT v8.1 (+ архив v8.0), RELEASES (проверка отчётов и ссылок в
   CHANGELOG); в промпте обновлены метрики, Open High и списки KI.
-- **MCP Adapter (S6+S7, DESIGN § 3.2):** `src/mcp` — `McpClientService` (connect-mutex, HTTP/SSE, TTL-кэш каталога, reconnect), `McpToolAdapter` (имена `mcp__server__tool`, JSON Schema → Zod, нормализация контента). `AgentService`: preflight MCP до LLM, side-effect retry-guard, правило про недоверенный контент. Зависимость `@modelcontextprotocol/sdk`. Серверы задаются только операторским env-реестром `MCP_SERVERS`, фича выключена по умолчанию (`MCP_ENABLED=false`). HTTP-ручка каталога `GET /mcp/servers` и UI-выбор инструментов (S8) в релиз **не входят** — KI-518.
-- **Docs:** Создан DESIGN v0.11.0 (шаблоны DOCX, MCP Adapter, Reliability fixes). Отчёты сессий: [S0-S1](development/reports/v0.11.0/S0-S1-foundation.md), [S2-S3](development/reports/v0.11.0/S2-S3-document-templates.md), [S4-S5](development/reports/v0.11.0/S4-S5-document-templates-engine.md), [S6-S7](development/reports/v0.11.0/S6-S7-mcp-adapter.md), [S9](development/reports/v0.11.0/S9-run-lease.md), [S10-S11](development/reports/v0.11.0/S10-S11-retry-metrics.md), [S17](development/reports/v0.11.0/S17-docs-sync.md).
+- **MCP Adapter (S6+S7, DESIGN § 3.2):** `src/mcp` — `McpClientService` (connect-mutex, HTTP/SSE, TTL-кэш каталога, reconnect), `McpToolAdapter` (имена `mcp__server__tool`, JSON Schema → Zod, нормализация контента). `AgentService`: preflight MCP до LLM, side-effect retry-guard, правило про недоверенный контент. Зависимость `@modelcontextprotocol/sdk`. Серверы задаются только операторским env-реестром `MCP_SERVERS`, фича выключена по умолчанию (`MCP_ENABLED=false`).
+- **MCP API/UI (v0.11 S8, DESIGN § 3.2.6/§ 3.2.7, KI-518)** ([отчёт](development/reports/v0.11.0/S8-mcp-ui.md)):
+  ручка `GET /mcp/servers` (`McpController`, JWT) отдаёт `enabled`,
+  действующий `maxToolsPerNode` и серверы реестра со статусами
+  `ok`/`error`/`disabled` и инструментами (включая аннотации); сбой одного
+  сервера изолируется `Promise.allSettled`, URL/заголовки/токены не отдаются,
+  при `MCP_ENABLED=false` — `{ enabled: false, servers: [] }` со статусом 200.
+  DTO `McpServersResponse`/`McpServerSummary`/`McpToolSummary` описаны
+  Zod-схемами и включены в паритет `docs/development/api-contract.json`.
+  В `AgentNode` — секция «MCP-инструменты»: серверы с раскрываемыми списками
+  инструментов, чекбоксы, бейджи `RO`/`DESTR`/`IDEM`, предупреждение у
+  destructive, лимит `maxToolsPerNode` (disabled + подсказка), недоступный
+  сервер — disabled с текстом; выбор пишется в `data.mcpTools`, i18n ru/en,
+  data-атрибуты `data-agent-mcp-server`/`data-agent-mcp-tool` для smoke.
+- **Docs:** Создан DESIGN v0.11.0 (шаблоны DOCX, MCP Adapter, Reliability fixes). Отчёты сессий: [S0-S1](development/reports/v0.11.0/S0-S1-foundation.md), [S2-S3](development/reports/v0.11.0/S2-S3-document-templates.md), [S4-S5](development/reports/v0.11.0/S4-S5-document-templates-engine.md), [S6-S7](development/reports/v0.11.0/S6-S7-mcp-adapter.md), [S8](development/reports/v0.11.0/S8-mcp-ui.md), [S9](development/reports/v0.11.0/S9-run-lease.md), [S10-S11](development/reports/v0.11.0/S10-S11-retry-metrics.md), [S17](development/reports/v0.11.0/S17-docs-sync.md).
 - **Docs:** Зарегистрированы KI-478..480.
 - **API и метрики (KI-077/450, KI-433, KI-472):** история узлов запуска отдаётся
   ручкой `GET /runs/:id/nodes` — массивом `NodeRunSnapshot`, общей проекцией с

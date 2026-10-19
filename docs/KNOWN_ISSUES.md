@@ -8086,24 +8086,37 @@ MediaModelInfo, engine-DTO
 
 ---
 
-### KI-518 — MCP API/UI (S8) отсутствует в релизе v0.11.0
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-10-19
-- **Файлы:** `src/mcp/mcp.module.ts`, `src/app.module.ts`,
+### KI-518 — MCP API/UI (S8) отсутствовал в релизе v0.11.0
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-10-19
+- **Исправлено в:** v0.11.0 (S8; тег `v0.11.0` на момент правки ещё не выставлен)
+- **Файлы:** `src/mcp/mcp.controller.ts` (новый), `src/mcp/dto/mcp-servers.dto.ts`
+  (новый), `src/mcp/mcp.module.ts`, `src/app.module.ts`, `api-prefixes.json`,
+  `docs/development/api-contract.json`, `web/src/lib/api.ts`,
+  `web/src/stores/workflow.ts`, `web/src/lib/agent-node-fields.ts`,
   `web/src/components/nodes/AgentNode.tsx`, `web/src/i18n/ru.json`,
-  `docs/development/v0.11/DESIGN_V011_FEATURES.md` (§ 5, S8)
+  `web/src/i18n/en.json`, `docs/development/v0.11/DESIGN_V011_FEATURES.md`
+  (§ 5, S8)
 - **Описание:** backend MCP-адаптера (S6/S7) реализован: схема `agent.mcpTools`,
   `McpClientService`, `McpToolAdapter`, preflight до LLM, retry-guard. Срез
   **S8** — ручка `GET /mcp/servers`, UI выбора MCP-инструментов в `AgentNode`,
-  i18n-подключение и тесты — на HEAD **отсутствует**: i18n-ключи
-  `node.agent.mcp.*` и тип `McpToolRef` есть, но компонент их не использует;
-  `McpModule` не подключён к `AppModule`. Пользователь не может выбрать
+  i18n-подключение и тесты — на HEAD **отсутствовал**: i18n-ключи
+  `node.agent.mcp.*` и тип `McpToolRef` были, но компонент их не использовал;
+  `McpModule` не подключён к `AppModule`. Пользователь не мог выбрать
   MCP-инструмент из UI — только через JSON сценария/API. DESIGN § 5 включает
   S8 в план v0.11, CHANGELOG и USER_GUIDE описывают MCP как вошедшую фичу.
-- **Решение:** до тега `v0.11.0` реализовать S8 (контроллер каталога, UI-секция
-  в `AgentNode`, i18n-тесты, e2e на «секреты не утекают»); либо выпустить
-  `v0.11.0` как «MCP backend-only», перенеся API/UI в `v0.11.1` и явно указав
-  это в Release Notes.
-- **Связанные:** DESIGN v0.11 § 5 (S8), S17-docs-sync § 5.7, KI-488, KI-492,
+- **Решение:** S8 реализован до тега: `McpController` с `GET /mcp/servers`
+  (JWT; `enabled`, `maxToolsPerNode`, серверы со статусами/инструментами,
+  `Promise.allSettled`, `{enabled:false,servers:[]}` при выключенном MCP,
+  без URL/заголовков/токенов и без host в тексте ошибки); Zod-DTO
+  `McpServersResponse`/`McpServerSummary`/`McpToolSummary` и паритет
+  `docs/development/api-contract.json`; префикс `mcp` в `api-prefixes.json`
+  (SPA-fallback и Vite-прокси); UI-секция «MCP-инструменты» в `AgentNode`
+  (серверы с раскрываемыми списками, чекбоксы с записью в `data.mcpTools`,
+  бейджи `RO`/`DESTR`/`IDEM`, предупреждение destructive, лимит
+  `maxToolsPerNode`, disabled при `status: error`); i18n ru/en и тесты
+  (backend controller + API-контракт; web AgentNode + контракт + префиксы).
+- **Связанные:** DESIGN v0.11 § 3.2.6/§ 3.2.7, § 5 (S8), S17-docs-sync § 5.7,
+  отчёт `docs/development/reports/v0.11.0/S8-mcp-ui.md`, KI-488, KI-492,
   KI-497.
 
 ---
@@ -8121,18 +8134,68 @@ MediaModelInfo, engine-DTO
 
 ---
 
+### KI-522 — Промпт S8 ссылался на устаревшие точки правки API-префиксов
+- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-10-19
+- **Файлы:** `docs/development/PROMPT_CURRENT.md`,
+  `docs/development/RULES.md` (§ 2.17)
+- **Описание:** промпт пакета S8 требовал добавить `{ prefix: 'mcp' }` в
+  `web/src/lib/api-prefixes.ts` и `API_ROUTE_PATTERN` в `app.module.ts`. С
+  v0.10.2 (KI-472) единственный источник правды — `api-prefixes.json`
+  (backend строит RegExp из него, web читает оттуда же). Дословное выполнение
+  промпта вернуло бы два независимых списка — класс дефекта KI-299/072/472.
+- **Решение:** фактическая правка — только `api-prefixes.json`; при следующей
+  правке системных инструкций актуализировать `PROMPT_CURRENT.md` (RULES
+  2.17). В отчётах фиксировать расхождение промпта с архитектурой.
+- **Связанные:** KI-299, KI-472, отчёт `reports/v0.11.0/S8-mcp-ui.md` § 5.
+
+---
+
+### KI-521 — Действующий лимит MCP читается независимо в двух местах
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `src/mcp/mcp.controller.ts`, `src/agent/agent.service.ts`,
+  `src/mcp/mcp.config.ts`
+- **Описание:** `MCP_MAX_TOOLS_PER_NODE` читается через `readIntegerConfig` и в
+  контроллере каталога (для `maxToolsPerNode` в ответе API), и в
+  `AgentService` (для проверки при запуске). Сейчас значения и границы
+  совпадают, но при изменении clamp/дефолта в одном месте они разойдутся:
+  UI покажет один лимит, а запуск проверит другой.
+- **Решение:** вынести чтение лимита в общий провайдер (например,
+  `McpServerRegistry` или отдельный `McpSettingsService`) и использовать его в
+  обоих местах.
+- **Связанные:** DESIGN v0.11 § 3.2.5/§ 3.2.6, отчёт
+  `reports/v0.11.0/S8-mcp-ui.md` § 6.
+
+---
+
+### KI-520 — MCP-ссылки вне каталога не видны в UI узла `agent`
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Файлы:** `web/src/components/nodes/AgentNode.tsx`,
+  `web/src/lib/agent-node-fields.ts`
+- **Описание:** UI рисует только инструменты из `GET /mcp/servers`. Если
+  каталог сервера изменился (инструмент переименован/удалён), сохранённая
+  ссылка `data.mcpTools` остаётся в графе, но в секции не отображается:
+  пользователь не видит её и не может снять. При запуске preflight падает
+  `McpToolNotFoundException`/`McpUnavailableException`, а лимит продолжает
+  считать такие ссылки, уменьшая доступный выбор.
+- **Решение:** показывать отдельную группу «нет в каталоге» с кнопкой снятия
+  (или чистить битые ссылки при открытии узла — с уведомлением, не молча).
+- **Связанные:** DESIGN v0.11 § 3.2.5/§ 3.2.7, отчёт
+  `reports/v0.11.0/S8-mcp-ui.md` § 6.
+
+---
+
 ## Сводка по статусам
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 223 |
+| Fixed | 224 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 1 |
-| Documented | 7 |
-| Open | 271 |
+| Documented | 8 |
+| Open | 272 |
 | Won't Fix | 4 |
-| **Всего** | **507** |
+| **Всего** | **510** |
 
 ---
 

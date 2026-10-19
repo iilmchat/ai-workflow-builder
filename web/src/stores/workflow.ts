@@ -14,6 +14,7 @@ import {
   createRunAsync,
   createWorkflowAsync,
   fetchLlmModelsAsync,
+  fetchMcpServersAsync,
   fetchMediaModelsAsync,
   fetchRunAsync,
   fetchRunBudgetAsync,
@@ -24,6 +25,7 @@ import {
   type ApiGraphNode,
   type ApiWorkflow,
   type LlmModelInfo,
+  type McpServersResponse,
 } from '@/lib/api';
 import { subscribeToRunStream, RunStreamUnavailableError } from '@/lib/run-stream';
 import type { RunStreamHandlers } from '@/lib/run-stream';
@@ -689,6 +691,20 @@ export interface WorkflowState extends HistorySlice {
   llmModels: LlmModelInfo[];
   /** Загружен ли список моделей в этой сессии. */
   llmModelsLoaded: boolean;
+  /**
+   * Каталог MCP-серверов (`GET /mcp/servers`, v0.11 S8, DESIGN § 3.2.6).
+   *
+   * `null` — ещё не загружен (или загрузка упала, см. `mcpServersError`).
+   * Кэшируется в сторе, как `llmModels`: секцию MCP рисует каждый agent-узел,
+   * и запрос на каждый узел был бы лишним.
+   */
+  mcpServers: McpServersResponse | null;
+  /** Загружен ли каталог MCP-серверов в этой сессии. */
+  mcpServersLoaded: boolean;
+  /** Текст ошибки загрузки каталога MCP; `null` — ошибки не было. */
+  mcpServersError: string | null;
+  /** Ленивая загрузка каталога MCP-серверов (кэшируется в сторе). */
+  loadMcpServersAsync: () => Promise<void>;
   /** Доступные media-модели (`GET /media/models?type=IMAGE`, v0.6.0b.2.3). */
   mediaModels: MediaModelInfo[];
   /** Загружен ли список media-моделей в этой сессии. */
@@ -2121,6 +2137,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   llmModels: [],
   llmModelsLoaded: false,
+  mcpServers: null,
+  mcpServersLoaded: false,
+  mcpServersError: null,
   mediaModels: [],
   mediaModelsLoaded: false,
   toolModels: [],
@@ -2853,6 +2872,35 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       // моделей», а причина видна в консоли. Повторная попытка — при следующем
       // монтировании LLM-узла (флаг loaded не выставлен).
       console.warn('Не удалось загрузить список моделей LLM', error);
+    }
+  },
+
+  /**
+   * Загружает каталог MCP-серверов для секции узла `agent` (v0.11 S8).
+   *
+   * Ошибка не критична: узел остаётся рабочим, секция MCP просто не появится
+   * (уже выбранные `data.mcpTools` при этом не теряются). Повторная попытка —
+   * при следующем монтировании узла: флаг `mcpServersLoaded` не выставляется.
+   */
+  loadMcpServersAsync: async () => {
+    if (get().mcpServersLoaded) {
+      return;
+    }
+
+    try {
+      const catalog = await fetchMcpServersAsync();
+
+      set({
+        mcpServers: catalog,
+        mcpServersLoaded: true,
+        mcpServersError: null,
+      });
+    } catch (error: unknown) {
+      console.warn('Не удалось загрузить каталог MCP-серверов', error);
+      set({
+        mcpServersError:
+          error instanceof Error ? error.message : String(error),
+      });
     }
   },
 

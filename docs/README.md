@@ -106,7 +106,7 @@
 
 | Версия | Документ | Статус | О чём |
 |---|---|---|---|
-| v0.11 | [DESIGN_V011_FEATURES.md](development/v0.11/DESIGN_V011_FEATURES.md) | Release prep (S0–S17; тег не выставлен) | DOCX-шаблоны, MCP Adapter, Run Lease/Reliability, History, dark theme |
+| v0.11 | [DESIGN_V011_FEATURES.md](development/v0.11/DESIGN_V011_FEATURES.md) | Release prep (S0–S17 + S8; тег не выставлен) | DOCX-шаблоны, MCP Adapter + API/UI, Run Lease/Reliability, History, dark theme |
 | v0.10 | [DESIGN_V010_FEATURES.md](development/v0.10/DESIGN_V010_FEATURES.md) | Released (v0.10.0) | Web Search, Document Generation, safe filesystem, Docker/GHCR |
 | v0.9 | [DESIGN_V09_FEATURES.md](development/v0.9/DESIGN_V09_FEATURES.md) | Released (v0.9.0) | медиа, состояние (pgvector/Memory), агенты, sandbox, наблюдаемость |
 | v0.8 | [DESIGN_V08_FEATURES.md](development/v0.8/DESIGN_V08_FEATURES.md) | Approved | Auth, Share, sub-workflows, Canvas UX, LLM upgrade |
@@ -142,11 +142,11 @@
 | Показатель | Значение |
 |---|---|
 | Версия продукта | **v0.11.0** |
-| Backend-тесты | **1417** (18 skipped, 102 файла) |
-| Frontend-тесты | **412** (50 файлов) |
+| Backend-тесты | **1424** (18 skipped, 103 файла) |
+| Frontend-тесты | **417** (50 файлов) |
 | Типов узлов | **22** |
-| KI-реестр | **KI-519** — последний номер; всего **507** записей |
-| Открытых High KI | **4** |
+| KI-реестр | **KI-522** — последний номер; всего **510** записей |
+| Открытых High KI | **3** |
 | Языки интерфейса | RU / EN |
 | Стек | NestJS 12 · React 19 · PostgreSQL 17 + pgvector · S3 · OTel · Docker/GHCR |
 

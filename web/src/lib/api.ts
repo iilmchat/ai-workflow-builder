@@ -142,6 +142,60 @@ export const ApiRunBudgetSchema = z.object({
 export type ApiRunBudget = z.infer<typeof ApiRunBudgetSchema>;
 
 /**
+ * Аннотации MCP-инструмента для UI-бейджей (`RO`, `DESTR`, `IDEM`).
+ *
+ * Зеркало backend `McpToolSummary` (`src/mcp/dto/mcp-servers.dto.ts`, v0.11
+ * S8, DESIGN § 3.2.6/§ 3.2.7). Паритет состава полей проверяет
+ * `api-contract.spec.ts` через `docs/development/api-contract.json`.
+ * `inputSchema` в ответ не входит: UI не собирает аргументы вызова.
+ */
+export const McpToolSummarySchema = z.object({
+  name: z.string(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  readOnlyHint: z.boolean().optional(),
+  destructiveHint: z.boolean().optional(),
+  idempotentHint: z.boolean().optional(),
+});
+
+/** MCP-инструмент в каталоге (`GET /mcp/servers`). */
+export type McpToolSummary = z.infer<typeof McpToolSummarySchema>;
+
+/** Транспорт MCP-сервера (как на backend). */
+export const McpTransportSchema = z.enum(['http', 'sse']);
+
+/** Статус MCP-сервера: каталог доступен, ошибка подключения или сервер выключен. */
+export const McpServerStatusSchema = z.enum(['ok', 'error', 'disabled']);
+
+/** MCP-сервер в каталоге (`GET /mcp/servers`). */
+export const McpServerSummarySchema = z.object({
+  name: z.string(),
+  transport: McpTransportSchema,
+  status: McpServerStatusSchema,
+  error: z.string().optional(),
+  tools: z.array(McpToolSummarySchema),
+});
+
+/** MCP-сервер в терминах API. */
+export type McpServerSummary = z.infer<typeof McpServerSummarySchema>;
+
+/**
+ * Ответ `GET /mcp/servers` (v0.11 S8, DESIGN § 3.2.6).
+ *
+ * `enabled: false` — MCP выключен администратором: секция выбора в узле не
+ * рисуется. `maxToolsPerNode` — действующий env-лимит (не больше 20); узел
+ * дополнительно ограничивает выбор этим числом.
+ */
+export const McpServersResponseSchema = z.object({
+  enabled: z.boolean(),
+  maxToolsPerNode: z.number().int(),
+  servers: z.array(McpServerSummarySchema),
+});
+
+/** Каталог MCP-серверов в терминах API. */
+export type McpServersResponse = z.infer<typeof McpServersResponseSchema>;
+
+/**
  * Модальность модели: что она принимает или отдаёт (v0.6.0a).
  *
  * Список совпадает с backend `ModelModality` — порядок и значения обязаны
@@ -665,4 +719,21 @@ export async function fetchMediaModelsAsync(
   const parsed = z.object({ models: z.array(MediaModelInfoSchema) }).parse(data);
 
   return parsed.models;
+}
+
+/**
+ * Возвращает каталог MCP-серверов и их инструментов (v0.11 S8, DESIGN § 3.2.6).
+ *
+ * Нужен секции «MCP-инструменты» узла `agent`: серверы, статусы, инструменты и
+ * annotations для чекбоксов и бейджей `RO`/`DESTR`/`IDEM`. URL, заголовки и
+ * токены backend не отдаёт (RULES 5.1); `enabled: false` — MCP выключен
+ * администратором, и секция не рисуется.
+ *
+ * @returns каталог серверов (пустой при `enabled: false`)
+ * @throws ApiError при сетевой ошибке, не-2xx статусе или неожиданном формате
+ */
+export async function fetchMcpServersAsync(): Promise<McpServersResponse> {
+  const data = await requestAsync<unknown>('/mcp/servers');
+
+  return McpServersResponseSchema.parse(data);
 }

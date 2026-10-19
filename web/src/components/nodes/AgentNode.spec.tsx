@@ -4,8 +4,15 @@ import {
   type NodeProps,
   type ReactFlowInstance,
 } from '@xyflow/react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  type RenderResult,
+} from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fetchMcpServersAsync, type McpServersResponse } from '@/lib/api';
 import ru from '@/i18n/ru.json';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
@@ -15,6 +22,20 @@ import {
   type AgentNodeData,
 } from '@/types/graph';
 import { AgentNode } from './AgentNode';
+
+/**
+ * Мок API каталога MCP (v0.11 S8): реальная сеть в jsdom не нужна, а остальные
+ * экспорты `@/lib/api` (их тянет стор) остаются настоящими — иначе упал бы
+ * импорт стора.
+ */
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>();
+
+  return {
+    ...actual,
+    fetchMcpServersAsync: vi.fn(),
+  };
+});
 
 /** id узла в тестовом графе. */
 const NODE_ID = 'agent-1';
@@ -82,11 +103,12 @@ function FlowProbe() {
  * `onNodesChange`, которого в изолированном тесте нет.
  *
  * @param data - данные узла
+ * @returns результат `render` (нужен `container` для data-атрибутов MCP)
  */
-function renderNode(data: AgentNodeData): void {
+function renderNode(data: AgentNodeData): RenderResult {
   flow = null;
 
-  render(
+  return render(
     <ReactFlowProvider
       defaultNodes={[
         { id: NODE_ID, type: 'agent', position: { x: 0, y: 0 }, data },
@@ -98,9 +120,65 @@ function renderNode(data: AgentNodeData): void {
   );
 }
 
+/**
+ * Каталог MCP для тестов (v0.11 S8).
+ *
+ * Два сервера: `filesystem` с читающим и пишущим инструментом и `broken` с
+ * ошибкой подключения — этого хватает на проверки выбора, бейджей,
+ * предупреждения и disabled-состояния.
+ *
+ * @param overrides - поля ответа, которые нужно переопределить
+ * @returns ответ `GET /mcp/servers`
+ */
+function mcpCatalog(overrides: Partial<McpServersResponse> = {}): McpServersResponse {
+  return {
+    enabled: true,
+    maxToolsPerNode: 5,
+    servers: [
+      {
+        name: 'filesystem',
+        transport: 'http',
+        status: 'ok',
+        tools: [
+          {
+            name: 'read_file',
+            title: 'Read file',
+            description: 'Прочитать файл',
+            readOnlyHint: true,
+            idempotentHint: true,
+          },
+          {
+            name: 'write_file',
+            title: 'Write file',
+            description: 'Записать файл',
+            destructiveHint: true,
+          },
+        ],
+      },
+      {
+        name: 'broken',
+        transport: 'http',
+        status: 'error',
+        error: 'не удалось получить каталог инструментов',
+        tools: [],
+      },
+    ],
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
-  // Стор — модульный синглтон: сбрасываем запуск, каталог моделей и историю.
-  // `loadLlmModelsAsync` не должен ходить в сеть из `useEffect` узла.
+  vi.clearAllMocks();
+  // По умолчанию MCP выключен: старые тесты узла не должны видеть секцию.
+  vi.mocked(fetchMcpServersAsync).mockResolvedValue({
+    enabled: false,
+    maxToolsPerNode: 20,
+    servers: [],
+  });
+
+  // Стор — модульный синглтон: сбрасываем запуск, каталоги и историю.
+  // `loadLlmModelsAsync`/`loadMcpServersAsync` не должны ходить в сеть из
+  // `useEffect` узла, кроме замоканного каталога MCP.
   useWorkflowStore.setState({
     nodes: [],
     edges: [],
@@ -109,6 +187,17 @@ beforeEach(() => {
     nodeMetrics: {},
     llmModels: [],
     llmModelsLoaded: true,
+    mcpServers: null,
+    mcpServersLoaded: false,
+    mcpServersError: null,
+    loadMcpServersAsync: async () => {
+      const catalog = await fetchMcpServersAsync();
+
+      useWorkflowStore.setState({
+        mcpServers: catalog,
+        mcpServersLoaded: true,
+      });
+    },
     loadLlmModelsAsync: async () => undefined,
     pushHistoryCoalesced: () => undefined,
   });
@@ -147,5 +236,121 @@ describe('AgentNode — рендер и правки полей (KI-405)', () =>
         'Сначала проверь факты',
       );
     });
+  });
+});
+
+describe('AgentNode — секция MCP-инструментов (v0.11 S8)', () => {
+  it('при MCP_ENABLED=false секция не рендерится', async () => {
+    renderNode(agentData());
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchMcpServersAsync)).toHaveBeenCalled();
+    });
+
+    expect(
+      screen.queryByText(ru['node.agent.mcp.title']),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(ru['node.agent.mcp.hint'])).not.toBeInTheDocument();
+  });
+
+  it('показывает серверы, бейджи и записывает выбор в data.mcpTools', async () => {
+    vi.mocked(fetchMcpServersAsync).mockResolvedValue(mcpCatalog());
+
+    const { container } = renderNode(agentData());
+
+    expect(
+      await screen.findByText(ru['node.agent.mcp.title']),
+    ).toBeInTheDocument();
+    // Секция видна, серверы помечены data-атрибутами для smoke.
+    expect(
+      container.querySelector('[data-agent-mcp-server="filesystem"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-agent-mcp-server="broken"]'),
+    ).not.toBeNull();
+    // Аннотации инструментов превращаются в бейджи.
+    expect(screen.getByText(ru['node.agent.mcp.readOnly'])).toBeInTheDocument();
+    expect(screen.getByText(ru['node.agent.mcp.idempotent'])).toBeInTheDocument();
+    expect(screen.getByText(ru['node.agent.mcp.destructive'])).toBeInTheDocument();
+    // Destructive-инструмент сопровождается предупреждением.
+    expect(
+      screen.getByText(ru['node.agent.mcp.destructiveWarning']),
+    ).toBeInTheDocument();
+
+    const readFile = container.querySelector<HTMLInputElement>(
+      '[data-agent-mcp-tool="filesystem:read_file"]',
+    );
+
+    expect(readFile).not.toBeNull();
+    expect(readFile).not.toBeChecked();
+
+    fireEvent.click(readFile as HTMLInputElement);
+
+    await waitFor(() => {
+      expect(flow?.getNode(NODE_ID)?.data.mcpTools).toEqual([
+        { server: 'filesystem', tool: 'read_file' },
+      ]);
+    });
+  });
+
+  it('при status=error инструменты disabled, текст ошибки показан', async () => {
+    vi.mocked(fetchMcpServersAsync).mockResolvedValue(
+      mcpCatalog({
+        servers: [
+          {
+            name: 'broken',
+            transport: 'sse',
+            status: 'error',
+            error: 'не удалось получить каталог инструментов',
+            tools: [{ name: 'search', title: 'Search' }],
+          },
+        ],
+      }),
+    );
+
+    const { container } = renderNode(agentData());
+
+    await screen.findByText(ru['node.agent.mcp.title']);
+
+    expect(
+      container.querySelector<HTMLInputElement>(
+        '[data-agent-mcp-tool="broken:search"]',
+      ),
+    ).toBeDisabled();
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      ru['node.agent.mcp.serverError'].replace(
+        '{{error}}',
+        'не удалось получить каталог инструментов',
+      ),
+    );
+  });
+
+  it('при достигнутом maxToolsPerNode невыбранные инструменты disabled', async () => {
+    vi.mocked(fetchMcpServersAsync).mockResolvedValue(
+      mcpCatalog({ maxToolsPerNode: 1 }),
+    );
+
+    const { container } = renderNode(
+      agentData({
+        mcpTools: [{ server: 'filesystem', tool: 'read_file' }],
+      }),
+    );
+
+    await screen.findByText(ru['node.agent.mcp.title']);
+
+    const selected = container.querySelector<HTMLInputElement>(
+      '[data-agent-mcp-tool="filesystem:read_file"]',
+    );
+    const other = container.querySelector<HTMLInputElement>(
+      '[data-agent-mcp-tool="filesystem:write_file"]',
+    );
+
+    expect(selected).toBeChecked();
+    expect(selected).toBeEnabled();
+    // Уже выбранный инструмент снимается даже при достигнутом лимите.
+    expect(other).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      ru['node.agent.mcp.limitReached'].replace('{{max}}', '1'),
+    );
   });
 });

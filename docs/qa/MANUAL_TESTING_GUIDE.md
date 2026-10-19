@@ -1,7 +1,7 @@
 # Гайд по ручному тестированию — IIChatTools AI Workflow Builder
 
 **Файл:** `docs/qa/MANUAL_TESTING_GUIDE.md`
-**Версия документа:** 1.2 (2026-10-19)
+**Версия документа:** 1.3 (2026-10-19)
 **Версия продукта:** 0.11.0
 **Область:** ручная проверка релиза v0.11.0 — Auth, Canvas UI, Engine,
 LLM/Media, Vector/Agent, Share/Access, S3/Storage, Edge Cases, Web Search /
@@ -49,8 +49,8 @@ Documents / Files, Docker, V0.11 (DOCX-шаблоны, MCP, heartbeat, исто�
 | [EDGE CASES](#9-edge-cases) | 18 | бюджет, Redis, ключи, БД, нагрузка |
 | [CONTRACT](#10-регресс-контрактов) | 4 | api/sse/prefixes/enums |
 | [V0.10](#11-web-search--documents--files--docker) | 13 | Web Search, DOCX, workspace, Docker |
-| [V0.11](#12-v011--docx-templates--mcp--reliability--history) | 8 | DOCX-шаблоны, MCP, heartbeat, история после F5, тёмная тема |
-| **Итого** | **137** | |
+| [V0.11](#12-v011--docx-templates--mcp--reliability--history) | 10 | DOCX-шаблоны, MCP API/UI, heartbeat, история после F5, тёмная тема |
+| **Итого** | **139** | |
 
 ---
 
@@ -153,10 +153,9 @@ UUID участников нужны для приглашений: `GET /auth/m
 10. `QA-TPL` — `Текст (JSON-переменные) → Генерация документа (режим «Шаблон»)` →
     `Вывод`; шаблон `contract.docx` с плейсхолдерами `{client}`, `{amount}`,
     `{date}` и циклом `{#items}…{/items}`.
-11. `QA-MCP` — `Текст (задача) → Агент` с `mcpTools` в JSON определения узла;
-    mock MCP-сервер поднят локально (см. `MCP-01`). **UI выбора MCP-инструментов
-    в v0.11.0 нет** (S8 не входит в релиз, KI-518) — узел готовится через
-    JSON/API.
+11. `QA-MCP` — `Текст (задача) → Агент` с MCP-инструментом, выбранным в
+    карточке узла (секция «MCP-инструменты»); mock MCP-сервер поднят локально
+    (см. `MCP-01`).
 12. `QA-LONG` — `Текст → HTTP (медленный локальный endpoint, ответ через
     150 с) → Вывод`; нужен для проверки heartbeat (`HB-01`).
 13. `QA-HIST` — уже завершённый `QA-BASE` с сохранённым `?runId=…`; нужен для
@@ -169,6 +168,7 @@ UUID участников нужны для приглашений: `GET /auth/m
 | `POST` | `/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout` | сессия |
 | `GET` | `/auth/me` | текущий пользователь |
 | `GET` | `/llm/models` | каталог LLM-моделей |
+| `GET` | `/mcp/servers` | каталог MCP-серверов и инструментов (JWT; без URL/токенов) |
 | `GET` | `/media/models?type=IMAGE\|VIDEO\|AUDIO\|MUSIC\|TOOL` | каталог медиа |
 | `POST` | `/engine/plan`, `/engine/validate`, `/engine/sort` | план/валидация графа |
 | `POST` | `/workflow`, `GET/PATCH/DELETE /workflow/:id` | CRUD сценария |
@@ -197,7 +197,7 @@ UUID участников нужны для приглашений: `GET /auth/m
 | Холст | `[data-catalog-toggle]`, `[data-node-catalog="open"]`, `[data-canvas-mode]`, `[data-canvas-minimap-toggle]`, `[data-canvas-fit-selection]` |
 | Узлы | `[data-http-node]`, `[data-condition-node]`, `[data-compare-node]`, `[data-output-node]`, `[data-agent-node]`, `[data-vector-upsert-node]`, `[data-vector-query-node]`, `[data-memory-read-node]`, `[data-memory-write-node]`, `[data-sub-workflow-node]`, `[data-comment-node]`, `[data-document-gen-node]` |
 | DOCX-шаблоны | `[data-document-gen-mode]`, `[data-document-gen-source]`, `[data-document-gen-content]`, `[data-document-template-panel]`, `[data-document-template-select]`, `[data-document-template-upload]`, `[data-document-template-file]`, `[data-document-template-placeholders]`, `[data-document-template-variables]`, `[data-document-template-variables-error]`, `[data-document-template-delete]`, `[data-document-gen-download]`, `[data-document-gen-missing]` |
-| Агент / MCP | `[data-agent-model]`, `[data-agent-system-prompt]`, `[data-agent-tools]`, `[data-agent-tool="<name>"]`, `[data-agent-iterations]` (UI выбора MCP в v0.11.0 нет — KI-518) |
+| Агент / MCP | `[data-agent-model]`, `[data-agent-system-prompt]`, `[data-agent-tools]`, `[data-agent-tool="<name>"]`, `[data-agent-iterations]`, `[data-agent-mcp]`, `[data-agent-mcp-server="<name>"]`, `[data-agent-mcp-tool="<server>:<tool>"]`, `[data-agent-mcp-limit]` |
 | История запуска | `[data-result-panel]`, `[data-agent-timeline]`, `[data-agent-step]`, `[data-cache-read]`, `[data-node-skipped-reason]` |
 | Медиа | `[data-media-expired]`, `[data-reasoning]`, `[data-max-tokens]`, `[data-system-toggle]` |
 | Панель результата | `[data-result-panel]`, `[data-panel-toggle]` |
@@ -1945,16 +1945,18 @@ down -v`), затем `up -d --build`.
 ## 12. V0.11 — DOCX TEMPLATES / MCP / RELIABILITY / HISTORY
 
 **Что проверяем:** режим «Шаблон» узла `document_gen` (загрузка `.docx`,
-плейсхолдеры, переменные, `missingVariables`), MCP-инструменты агента на
-mock-сервере, heartbeat/аренду запуска (запуск дольше 2 минут), восстановление
-панели результата после F5 через `GET /runs/:id/nodes`, а также статусы узлов в
-тёмной теме. Требования — DESIGN v0.11 § 3.1, § 3.2, § 3.3.1, § 3.4, § 3.6;
-KI-077, KI-489, KI-518.
+плейсхолдеры, переменные, `missingVariables`), API каталога MCP
+(`GET /mcp/servers`) и UI выбора MCP-инструментов в узле «Агент», heartbeat и
+аренду запуска (запуск дольше 2 минут), восстановление панели результата после
+F5 через `GET /runs/:id/nodes`, а также статусы узлов в тёмной теме.
+Требования — DESIGN v0.11 § 3.1, § 3.2, § 3.3.1, § 3.4, § 3.6; KI-077,
+KI-489, KI-518.
 
-> **Границы релиза.** MCP-адаптер в v0.11.0 реализован на backend (S6/S7), но
-> UI выбора MCP-инструментов и ручка `GET /mcp/servers` (S8) в релиз **не
-> входят** — KI-518. Поэтому `MCP-01`/`MCP-02` проверяют backend-поведение
-> через JSON сценария/API; отсутствие UI — ожидаемое, а не баг.
+> **Границы релиза.** MCP-адаптер (S6/S7) и его API/UI (S8) входят в v0.11.0:
+> `MCP-01`/`MCP-02` проверяют backend-поведение и запуск агента, `MCP-03` —
+> выбор инструментов в карточке узла, `MCP-04` — контракт и безопасность
+> `GET /mcp/servers`. При `MCP_ENABLED=false` секция выбора не рисуется, а
+> узел с `mcpTools` падает preflight'ом — это ожидаемо.
 
 #### TPL-01 — Загрузка DOCX-шаблона в узле `document_gen`
 **Приоритет:** P1 · **Тип:** smoke
@@ -2035,8 +2037,13 @@ workflow `QA-MCP`: `Текст → Агент`, в JSON узла
 `"mcpTools": [{"server":"mock","tool":"echo"}]`, `"tools": []`.
 **Шаги:**
 1. Поднять mock-сервер, проверить, что backend стартует без ошибок конфигурации.
-2. Создать workflow с `mcpTools` через API (`POST /workflow` / импорт JSON) —
-   UI выбора MCP в v0.11.0 нет (KI-518).
+2. Создать workflow `Текст → Агент`, открыть карточку узла: в секции
+   «MCP-инструменты» (`[data-agent-mcp]`) раскрыть сервер `mock`
+   (`[data-agent-mcp-server="mock"]`) и отметить инструмент `echo`
+   (`[data-agent-mcp-tool="mock:echo"]`). Нативные инструменты можно снять —
+   MCP-only узел допустим. Убедиться, что в данных узла появились
+   `"mcpTools": [{"server":"mock","tool":"echo"}]`, а в DevTools → Network
+   ушёл `GET /mcp/servers` со статусом 200.
 3. Запустить сценарий, открыть раздел «Шаги агента»
    (`[data-agent-timeline]`, `[data-agent-step]`).
 4. Найти шаг вызова MCP-инструмента и его результат.
@@ -2044,14 +2051,16 @@ workflow `QA-MCP`: `Текст → Агент`, в JSON узла
    и логи.
 6. Остановить mock-сервер и запустить снова.
 **Ожидаемый результат:**
+- `GET /mcp/servers` отдаёт сервер `mock` со `status: ok` и инструментом
+  `echo`; URL/токена в ответе нет.
 - Preflight MCP выполняется **до** вызова LLM; шаг агента содержит вызов
   `mcp__mock__echo` и нормализованный результат.
 - Узел `completed`; run `completed`; в `node_runs`/SSE — только имя сервера и
   инструмента, без секретов и URL.
 - При недоступном сервере узел `failed` до LLM с понятной ошибкой; для
   side-effect MCP-инструментов повторов нет (retry-guard).
-- При `MCP_ENABLED=false` узел с `mcpTools` падает preflight'ом; узел без MCP
-  работает как раньше.
+- При `MCP_ENABLED=false` секция выбора не рисуется, а узел с `mcpTools`
+  падает preflight'ом; узел без MCP работает как раньше.
 
 #### MCP-02 — Конфигурация MCP: выключено, битый JSON, недоступный сервер
 **Приоритет:** P2
@@ -2069,6 +2078,61 @@ workflow `QA-MCP`: `Текст → Агент`, в JSON узла
 - Недоступный сервер: таймаут/ошибка подключения, узел `failed`, остальные
   узлы и запуски не затронуты.
 - Агент без `mcpTools` работает идентично v0.10 (7 встроенных инструментов).
+
+#### MCP-03 — UI выбора MCP-инструментов в узле «Агент»
+**Приоритет:** P1 · **Тип:** smoke
+**Предусловие:** `MCP_ENABLED=true`; в `MCP_SERVERS` два сервера: рабочий
+`mock` (инструменты `echo` с `readOnlyHint`, `write` с `destructiveHint` и
+`idempotentHint`) и недоступный `broken`;
+`MCP_MAX_TOOLS_PER_NODE=1`; пользователь — editor; backend перезапущен.
+**Шаги:**
+1. Добавить узел «Агент», дождаться секции «MCP-инструменты»
+   (`[data-agent-mcp]`). Проверить `GET /mcp/servers` в Network.
+2. Раскрыть сервер `mock` и отметить `echo`; проверить, что чекбокс
+   `[data-agent-mcp-tool="mock:echo"]` отмечен, а у `data.mcpTools` появилась
+   пара `{server:"mock",tool:"echo"}`.
+3. Проверить бейджи `RO`/`DESTR`/`IDEM` и предупреждение у destructive-строки.
+4. Отметить второй инструмент (`write`) при лимите 1.
+5. Раскрыть сервер `broken` и посмотреть состояния чекбоксов.
+6. Сохранить workflow, нажать F5 и открыть узел снова; переключить язык EN.
+7. Выключить `MCP_ENABLED` и перезагрузить страницу.
+**Ожидаемый результат:**
+- Секция появляется только при `MCP_ENABLED=true`; список серверов и
+  инструментов соответствует ответу API, у серверов виден статус.
+- Второй инструмент при лимите 1 **disabled**, показывается подсказка
+  «Достигнут лимит: не более 1 инструментов» (`[data-agent-mcp-limit]`);
+  уже выбранный инструмент снимается.
+- У `broken` (status `error`) чекбоксы disabled, рядом — текст
+  «Сервер недоступен: …», узел при этом сохраняется.
+- После F5 выбранный `echo` остаётся отмеченным (`data.mcpTools` в графе);
+  строки на EN переведены, ошибок в консоли нет.
+- При `MCP_ENABLED=false` секции нет, а старый граф с `mcpTools` не ломает
+  редактор (ошибка проявится только при запуске).
+
+#### MCP-04 — `GET /mcp/servers`: контракт и отсутствие секретов
+**Приоритет:** P1 · **Тип:** contract
+**Предусловие:** доступ к backend; JWT/`AUTH_DISABLED=true`; сервер `mock` из
+`MCP-01` поднят, `broken` с недоступным `url`; в `mock` задан `tokenEnv` с
+секретом и несекретный header.
+**Шаги:**
+1. Выполнить `GET /mcp/servers` с токеном (или при `AUTH_DISABLED=true`).
+2. Повторить запрос с `Accept: text/html` и на несуществующий `/mcp/ghost`.
+3. Включить `MCP_ENABLED=false`, перезапустить backend, повторить запрос.
+4. Сравнить поля ответа с `docs/development/api-contract.json`
+   (`McpServersResponse`, `McpServerSummary`, `McpToolSummary`).
+**Ожидаемый результат:**
+- 200 `application/json`, поля `enabled`, `maxToolsPerNode`, `servers[...]`,
+  статусы `ok`/`error`/`disabled`; инструменты содержат `name`, при наличии —
+  `title`/`description` и `readOnlyHint`/`destructiveHint`/`idempotentHint`,
+  но **не** `inputSchema`.
+- Ошибка одного сервера не роняет ручку: `broken` получает `status: error` с
+  обобщённым текстом, остальные серверы остаются в ответе.
+- В ответе нет `url`, `headers`, `tokenEnv` и значения токена; в тексте ошибки
+  нет host/порта сервера.
+- `Accept: text/html` не подменяет ответ на `index.html`; `/mcp/ghost` — JSON
+  404 (префикс исключён из SPA-fallback).
+- При `MCP_ENABLED=false` — 200
+  `{"enabled":false,"maxToolsPerNode":20,"servers":[]}`.
 
 #### HB-01 — Heartbeat: запуск дольше 2 минут не считается зависшим
 **Приоритет:** P1
@@ -2152,8 +2216,8 @@ backend и БД доступны.
 6. **Флажок «Разрешить копирование»** — не влияет на доступ.
 7. **Realtime-совместное редактирование** — не поддерживается.
 8. **3D/motion-генерация и отдельный vector service** — вне релиза
-   (DESIGN § 6). MCP: backend-адаптер есть (S6/S7), но UI выбора инструментов
-   и `GET /mcp/servers` в v0.11.0 не входят (S8, KI-518).
+   (DESIGN § 6). MCP `stdio`-транспорт, OAuth 2.1, resources/prompts/sampling и
+   MCP-сервер по URL из графа — вне scope v0.11 (DESIGN § 6).
 9. **PDF в `document_gen`** — не реализован, только DOCX (KI-463).
 10. **Разбор JSON/CSV в `read_file`** — селект «Формат» не применяется:
     узел отдаёт сырой UTF-8; `json`/`rows` появятся в следующих версиях.
@@ -2200,16 +2264,17 @@ backend и БД доступны.
 - [ ] `CONTRACT-01`, `CONTRACT-02`
 - [ ] `WS-01`, `WS-02`, `WS-03`, `DOC-01`, `DOC-02`, `FILE-01`, `FILE-03`,
       `DOCKER-01`, `DOCKER-02`, `DOCKER-03`
-- [ ] `TPL-01`, `TPL-02`, `MCP-01`, `HB-01`, `HIST-01` (v0.11.0)
+- [ ] `TPL-01`, `TPL-02`, `MCP-01`, `MCP-03`, `MCP-04`, `HB-01`, `HIST-01`
+      (v0.11.0)
 
 Дополнительно перед релизом:
 
 - [ ] `pnpm build` — 0 errors, 0 warnings.
 - [ ] `pnpm build:migrate` — `dist/migrate.js` создан.
-- [ ] `pnpm test` — все зелёные (на момент v0.11.0: **1417 passed / 18 skipped**,
-      102 файла).
+- [ ] `pnpm test` — все зелёные (на момент v0.11.0: **1424 passed / 18 skipped**,
+      103 файла).
 - [ ] `pnpm --dir web build` — 0 errors, 0 warnings.
-- [ ] `pnpm --dir web test` — все зелёные (v0.11.0: **412 passed**, 50 файлов).
+- [ ] `pnpm --dir web test` — все зелёные (v0.11.0: **417 passed**, 50 файлов).
 - [ ] `pnpm test:parity` — зелёный при доступной БД (RULES § 3.19).
 - [ ] `docker compose -f docker-compose.prod.yml config --quiet` — без ошибок.
 - [ ] В браузере нет ошибок в консоли на основном пути (вход → граф → запуск →
@@ -2252,5 +2317,6 @@ backend и БД доступны.
 | 2026-10-18 | 1.0 | Первая версия: 116 кейсов по 9 блокам, включая Edge Cases (бюджет, Redis, ключи, БД), регресс контрактов и чек-лист приёмки для v0.9.1 |
 | 2026-10-19 | 1.1 | v0.10.0: +13 кейсов (WS/DOC/FILE/DOCKER), итого 129; новые env (`TAVILY_API_KEY`, `S3_PUBLIC_BUCKET`), проверки Docker и SPA; обновлены ограничения |
 | 2026-10-19 | 1.2 | v0.11.0: +8 кейсов блока V0.11 (DOCX-шаблоны, MCP, heartbeat, история после F5, тёмная тема), итого 137; новые env (`MCP_*`, `DOCUMENT_TEMPLATE_*`, `WORKFLOW_RUN_*`, `THROTTLER_STORAGE`), ручки шаблонов и `/runs/:id/nodes`; обновлены границы релиза и приёмка |
+| 2026-10-19 | 1.3 | v0.11.0 S8: +2 кейса (MCP-03 UI выбора инструментов, MCP-04 контракт `GET /mcp/servers`), итого 139; селекторы MCP в узле, ручка каталога MCP, обновлены MCP-01/границы релиза/приёмка и метрики (1424/417) |
 
 **Конец документа.**

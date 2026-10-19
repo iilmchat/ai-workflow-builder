@@ -6,7 +6,9 @@ import {
   AGENT_TOOLS,
   DEFAULT_AGENT_MAX_ITERATIONS,
   DEFAULT_AGENT_TOOLS,
+  MCP_MAX_TOOLS_PER_NODE_LIMIT,
   type AgentToolName,
+  type McpToolRef,
 } from '@/types/graph';
 
 /**
@@ -141,4 +143,132 @@ export function parseAgentNumberInput(raw: string): number | undefined {
   const parsed = Number(raw);
 
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * Приводит лимит MCP-инструментов к допустимому диапазону.
+ *
+ * Ответ API (`maxToolsPerNode`) — внешние данные (RULES 1.17): env-лимит может
+ * быть меньше жёсткого потолка, но не больше. Если значение пришло мусором,
+ * используется потолок, а не «ноль инструментов» — иначе UI молча запретил бы
+ * любой выбор.
+ *
+ * @param value - значение из `maxToolsPerNode` ответа API
+ * @returns целое 1…{@link MCP_MAX_TOOLS_PER_NODE_LIMIT}
+ */
+export function clampMcpToolsLimit(value: number): number {
+  if (!Number.isFinite(value)) {
+    return MCP_MAX_TOOLS_PER_NODE_LIMIT;
+  }
+
+  return Math.min(
+    Math.max(Math.trunc(value), 1),
+    MCP_MAX_TOOLS_PER_NODE_LIMIT,
+  );
+}
+
+/**
+ * Проверяет и нормализует ссылки на MCP-инструменты из `data.mcpTools`.
+ *
+ * Данные приходят из jsonb без типов (RULES 1.17): невалидные записи
+ * отбрасываются, дубли сервер+инструмент схлопываются, сверх `limit` —
+ * обрезаются. Пустой массив валиден: MCP-инструменты не обязательны, если
+ * выбраны нативные.
+ *
+ * @param value - значение из `data.mcpTools`
+ * @param limit - действующий лимит (из `GET /mcp/servers`)
+ * @returns валидные ссылки без дублей и в пределах лимита
+ */
+export function validateMcpToolRefs(
+  value: unknown,
+  limit: number = MCP_MAX_TOOLS_PER_NODE_LIMIT,
+): McpToolRef[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const max = clampMcpToolsLimit(limit);
+  const refs: McpToolRef[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of value) {
+    if (refs.length >= max) {
+      break;
+    }
+
+    if (typeof entry !== 'object' || entry === null) {
+      continue;
+    }
+
+    const { server, tool } = entry as { server?: unknown; tool?: unknown };
+    const serverName = typeof server === 'string' ? server.trim() : '';
+    const toolName = typeof tool === 'string' ? tool.trim() : '';
+
+    if (serverName.length === 0 || toolName.length === 0) {
+      continue;
+    }
+
+    const key = `${serverName}\u0000${toolName}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    refs.push({ server: serverName, tool: toolName });
+  }
+
+  return refs;
+}
+
+/**
+ * Проверяет, выбран ли MCP-инструмент в узле.
+ *
+ * @param refs - текущие ссылки узла
+ * @param server - имя сервера
+ * @param tool - имя инструмента
+ * @returns `true`, если пара «сервер + инструмент» уже выбрана
+ */
+export function isMcpToolSelected(
+  refs: readonly McpToolRef[],
+  server: string,
+  tool: string,
+): boolean {
+  return refs.some((ref) => ref.server === server && ref.tool === tool);
+}
+
+/**
+ * Переключает MCP-инструмент в наборе узла.
+ *
+ * Лимит `maxToolsPerNode` — жёсткий: при попытке добавить сверх лимита набор
+ * не меняется (UI одновременно гасит чекбокс, поэтому это защита от гонки).
+ * Снятие выбранного инструмента лимитом не ограничено.
+ *
+ * @param current - текущие ссылки (могут быть мусором из jsonb)
+ * @param server - имя сервера
+ * @param tool - имя инструмента
+ * @param limit - действующий лимит (из `GET /mcp/servers`)
+ * @returns новый набор ссылок
+ */
+export function toggleMcpTool(
+  current: readonly McpToolRef[],
+  server: string,
+  tool: string,
+  limit: number = MCP_MAX_TOOLS_PER_NODE_LIMIT,
+): McpToolRef[] {
+  // Валидируем по жёсткому потолку, а не по env-лимиту: уже сохранённые ссылки
+  // сверх лимита не должны молча исчезнуть из графа при первом же клике
+  // (env-лимит меньше потолка проверяется на запуске). Ограничение применяется
+  // только к добавлению нового инструмента.
+  const refs = validateMcpToolRefs(current);
+
+  if (isMcpToolSelected(refs, server, tool)) {
+    return refs.filter((ref) => !(ref.server === server && ref.tool === tool));
+  }
+
+  if (refs.length >= clampMcpToolsLimit(limit)) {
+    return refs;
+  }
+
+  return [...refs, { server, tool }];
 }

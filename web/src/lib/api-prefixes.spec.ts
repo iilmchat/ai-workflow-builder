@@ -166,7 +166,7 @@ describe('API_PREFIXES (KI-299/072/120)', () => {
     expect(source).toMatch(/from '\.\/src\/lib\/api-prefixes(\.ts)?'/);
     expect(source).toMatch(/proxy:\s*buildProxy\(\)/);
     expect(source).not.toMatch(
-      /['"]\/(auth|engine|llm|media|nodes|runs|templates|workflow)['"]\s*:/,
+      /['"]\/(auth|engine|llm|mcp|media|nodes|runs|templates|workflow)['"]\s*:/,
     );
   });
 });

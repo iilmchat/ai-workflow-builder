@@ -27,6 +27,8 @@ import { DocumentsModule } from './documents/documents.module.js';
 // v0.10 S7: безопасный файловый workspace (FilesystemService).
 import { FilesystemModule } from './filesystem/filesystem.module.js';
 import { LlmModule } from './llm/llm.module.js';
+// v0.11 S8: MCP-модуль также отдаёт HTTP-ручку каталога `GET /mcp/servers`.
+import { McpModule } from './mcp/mcp.module.js';
 import { MediaModule } from './media/media.module.js';
 import { WorkflowModule } from './workflow/workflow.module.js';
 import { EngineModule } from './engine/engine.module.js';
@@ -129,6 +131,10 @@ const WEB_DIST_PATH = join(
     DocumentsModule,
     FilesystemModule,
     MediaModule,
+    // v0.11 S8 (DESIGN § 3.2.6): контроллер `GET /mcp/servers` для UI
+    // agent-узла. Сам MCP-адаптер (S6/S7) уже импортируется RunsModule'ом;
+    // здесь модуль нужен ради HTTP-ручки, а Nest дедуплицирует модуль.
+    McpModule,
     WorkflowModule,
     EngineModule,
     NodesModule,

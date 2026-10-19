@@ -53,6 +53,13 @@ import {
   WORKFLOW_RUN_STATUSES,
 } from '../../db/schema.js';
 import { ExportWorkflowSchema } from '../../workflow/dto/export-workflow.dto.js';
+import {
+  McpServersResponseSchema,
+  McpServerStatusSchema,
+  McpServerSummarySchema,
+  McpToolSummarySchema,
+  McpTransportSchema,
+} from '../../mcp/dto/mcp-servers.dto.js';
 import { NodeRunSnapshotSchema } from './run-stream-message.dto.js';
 
 /** Каталог этого spec'а (`src/runs/dto`). */
@@ -176,6 +183,23 @@ type DtoSource =
     schema: ExportWorkflowSchema,
     label: 'src/workflow/dto/export-workflow.dto.ts',
   },
+  // v0.11 S8 (DESIGN § 3.2.6): каталог MCP-серверов для UI agent-узла.
+  // Три вложенных DTO описаны Zod-схемами, поэтому поля читаются из `shape`.
+  McpServersResponse: {
+    kind: 'zod',
+    schema: McpServersResponseSchema,
+    label: 'src/mcp/dto/mcp-servers.dto.ts',
+  },
+  McpServerSummary: {
+    kind: 'zod',
+    schema: McpServerSummarySchema,
+    label: 'src/mcp/dto/mcp-servers.dto.ts',
+  },
+  McpToolSummary: {
+    kind: 'zod',
+    schema: McpToolSummarySchema,
+    label: 'src/mcp/dto/mcp-servers.dto.ts',
+  },
 };
 
 /**
@@ -229,6 +253,17 @@ const ENUM_SOURCES: Record<string, EnumSource> = {
     path: COST_BUDGET_SERVICE_PATH,
     typeName: 'BudgetMode',
     label: 'src/runs/cost-budget.service.ts',
+  },
+  // v0.11 S8 (DESIGN § 3.2.6): домены статуса и транспорта MCP-сервера.
+  'McpServerSummary.status': {
+    kind: 'zod',
+    schema: McpServerStatusSchema,
+    label: 'src/mcp/dto/mcp-servers.dto.ts',
+  },
+  'McpServerSummary.transport': {
+    kind: 'zod',
+    schema: McpTransportSchema,
+    label: 'src/mcp/dto/mcp-servers.dto.ts',
   },
   'RunResponse.status': {
     kind: 'zod',

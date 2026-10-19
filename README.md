@@ -2,8 +2,8 @@
 
 [![CI](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml/badge.svg)](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-0.11.0-blue.svg)](docs/CHANGELOG.md)
-[![Backend tests](https://img.shields.io/badge/backend_tests-1417-brightgreen.svg)](docs/development/RELEASES.md)
-[![Frontend tests](https://img.shields.io/badge/frontend_tests-412-brightgreen.svg)](docs/development/RELEASES.md)
+[![Backend tests](https://img.shields.io/badge/backend_tests-1424-brightgreen.svg)](docs/development/RELEASES.md)
+[![Frontend tests](https://img.shields.io/badge/frontend_tests-417-brightgreen.svg)](docs/development/RELEASES.md)
 [![License](https://img.shields.io/badge/license-proprietary-lightgrey.svg)](#лицензия)
 
 > **Визуальный конструктор AI-сценариев.** Собирайте LLM-, медиа- и агентные
@@ -85,12 +85,13 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 - **Memory-узлы:** чтение и запись долговременной памяти сценария.
 - **Agent node:** LLM-цикл с 7 инструментами (HTTP, vector, memory и др.),
   SSRF-защитой, hard-cap и span `agent.step` в OTel.
-- **MCP-инструменты (v0.11 S6/S7):** подключение внешних MCP-серверов по
+- **MCP-инструменты (v0.11 S6–S8):** подключение внешних MCP-серверов по
   Streamable HTTP/SSE через `MCP_SERVERS`; каталог инструментов с TTL-кэшем,
   JSON Schema → Zod, preflight до LLM и retry-guard для side-effect
-  инструментов. `MCP_ENABLED=false` по умолчанию — фича не влияет на старт.
-  Выбор MCP-инструментов в UI и `GET /mcp/servers` (S8) **не входят** в
-  v0.11.0 — инструменты задаются в JSON сценария (KI-518).
+  инструментов. Ручка `GET /mcp/servers` (JWT) отдаёт серверы, статусы и
+  инструменты без URL/заголовков/токенов, а в узле «Агент» — секция выбора с
+  бейджами `RO`/`DESTR`/`IDEM`, предупреждением destructive и лимитом
+  `maxToolsPerNode`. `MCP_ENABLED=false` по умолчанию — фича не влияет на старт.
 
 ### 🔎 Контент и файлы
 
@@ -237,10 +238,10 @@ backend должен быть запущен первым.
 | Показатель | Значение |
 |---|---|
 | Версия | **v0.11.0** |
-| Backend-тесты | **1417** (18 skipped, 102 файла) |
-| Frontend-тесты | **412** (50 файлов) |
+| Backend-тесты | **1424** (18 skipped, 103 файла) |
+| Frontend-тесты | **417** (50 файлов) |
 | Типов узлов | **22** |
-| KI-реестр | **KI-519** — последний номер; всего **507** записей (4 Open High) |
+| KI-реестр | **KI-522** — последний номер; всего **510** записей (3 Open High) |
 | CI | GitHub Actions: build, typecheck, migrations, tests (backend + web) |
 | Docker | multi-stage образ + `docker-compose.prod.yml`, публикация в GHCR |
 
