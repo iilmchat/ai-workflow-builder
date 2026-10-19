@@ -19,7 +19,8 @@
 
 ### Added
 
-- **Docs:** Создан DESIGN v0.11.0 (шаблоны DOCX, MCP Adapter, Reliability fixes).
+- **MCP Adapter (S6+S7, DESIGN § 3.2):** `src/mcp` — `McpClientService` (connect-mutex, HTTP/SSE, TTL-кэш каталога, reconnect), `McpToolAdapter` (имена `mcp__server__tool`, JSON Schema → Zod, нормализация контента). `AgentService`: preflight MCP до LLM, side-effect retry-guard, правило про недоверенный контент. Зависимость `@modelcontextprotocol/sdk`.
+- **Docs:** Создан DESIGN v0.11.0 (шаблоны DOCX, MCP Adapter, Reliability fixes). Отчёты сессий: [S0-S1](reports/v0.11.0/S0-S1-foundation.md), [S2-S3](reports/v0.11.0/S2-S3-document-templates.md), [S6-S7](reports/v0.11.0/S6-S7-mcp-adapter.md).
 - **Docs:** Зарегистрированы KI-478..480.
 - **API и метрики (KI-077/450, KI-433, KI-472):** `GET /runs/:id` отдаёт `nodes` —
   проекцию `node_runs`, общую с SSE (`src/runs/run-node-snapshots.ts`), чтобы
@@ -28,7 +29,7 @@
   `node_runs` наравне с LLM-узлами. API-префиксы сведены в единый
   `api-prefixes.json`: из него строятся RegExp SPA-fallback'а backend'а и
   Vite-прокси, дублирование списков устранено.
-- **DOCX-шаблоны — ядро (v0.11 S2, DESIGN § 3.1.3–3.1.4):** новый
+- **DOCX-шаблоны — API (v0.11 S3, DESIGN § 3.1.5)** ([отчёт](reports/v0.11.0/S2-S3-document-templates.md)): новый
   `DocumentTemplateService` (`src/documents/document-template.service.ts`) на
   `docxtemplater` 3.71 + `pizzip` 3.3: компиляция шаблона, список простых
   плейсхолдеров, рендер с `nullGetter` (отсутствующая переменная → пустая
