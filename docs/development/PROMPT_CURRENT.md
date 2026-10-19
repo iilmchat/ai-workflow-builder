@@ -1,9 +1,9 @@
-# PROMPT_CURRENT — системный промпт ассистента (v8.0)
+# PROMPT_CURRENT — системный промпт ассистента (v8.1)
 
-**Версия промпта:** 8.0
+**Версия промпта:** 8.1
 **Дата:** 2026-10-19
-**Статус:** актуален для HEAD после релиза **v0.10.1**
-**Заменяет:** `PROMPT_CURRENT.md` v7.2 (архив: `archive/prompts/PROMPT_V7.md`) и `archive/prompts/PROMPT_V4.md` (v4.1 — оттуда взяты структура и правила поведения)
+**Статус:** актуален для HEAD после S9 (`v0.11.0`; релизный тег ещё не выставлен, `package.json` пока `0.10.1`)
+**Заменяет:** `PROMPT_CURRENT.md` v8.0 (архив: `archive/prompts/PROMPT_V8.md`); структура и правила поведения унаследованы от v7.2 (архив: `archive/prompts/PROMPT_V7.md`) и v4.1 (`archive/prompts/PROMPT_V4.md`)
 **Правила ведения:** RULES § 2.17 (старые версии промпта — в `archive/prompts/`)
 **Источники фактов:** `CHANGELOG.md`, `KNOWN_ISSUES.md`, `RULES.md` на HEAD; цифры пересчитываются по факту (RULES § 3.20, 3.21)
 
@@ -22,13 +22,13 @@
 | Параметр | Значение |
 |---|---|
 | **Релиз** | `v0.10.1` (версии `package.json` и `web/package.json`; теги — сверять `git tag --list`) |
-| **HEAD** | актуальный; перед сессией — `git log -1` и `git status --short` |
+| **HEAD** | актуальный; после S9 реализован `v0.11.0` (DOCX-шаблоны, MCP, run lease), релизный тег ещё не выставлен |
 | **Репозиторий** | `https://github.com/iilmchat/ai-workflow-builder` |
 | **Рабочий путь** | локальный клон — **зависит от машины**; брать из задания, не угадывать |
-| **Backend-тесты** | **1123** passed, 17 skipped (`pnpm test`), пересчитано на HEAD 2026-10-19 |
-| **Frontend-тесты** | **375** passed (`pnpm --dir web test`), пересчитано на HEAD 2026-10-19 |
-| **KI** | последний номер **KI-480**, в реестре **468** записей; **Open — 251** (248 на момент аудита + KI-478..480) |
-| **Open High** | **6** (список — § 5.2) |
+| **Backend-тесты** | **1359** passed, 18 skipped (`pnpm test`), пересчитано на HEAD после S9 |
+| **Frontend-тесты** | **395** passed (`pnpm --dir web test`) |
+| **KI** | последний номер **KI-496**, в реестре **484** записи; **Open — 253** (сводку пересчитывать grep'ом, RULES § 3.20) |
+| **Open High** | **3** (список — § 5.2) |
 | **Типы узлов** | **22** |
 | **Стек** | NestJS 12 · TypeScript 6 (strict, ESM) · React 19 · Drizzle ORM · PostgreSQL 17 + pgvector · BullMQ + Redis · S3 · OpenTelemetry · QuickJS-WASM · Docker/GHCR |
 
@@ -39,7 +39,7 @@
 - **Инструменты:** pnpm-workspace (`pmOnFail: ignore`), Husky 9 + lint-staged, oxlint (type-aware), Prettier, Docker + `docker-compose.prod.yml`, GitHub Actions (backend + web), GHCR.
 - **dsh** (DeepSeek Harness) — Web UI; **адрес брать из окружения текущей сессии**, не хардкодить.
 
-### 1.3. Что уже реализовано (v0.10.1)
+### 1.3. Что уже реализовано (v0.11.0 на HEAD, S0–S9)
 
 - **Ядро.** Визуальный редактор на `@xyflow/react` v12, **22 типа узлов**, типизированные порты, undo/redo, автосохранение, импорт/экспорт, шаблоны, sub-workflows, тёмная тема, i18n RU/EN, логотип и копирайт.
 - **Выполнение.** BullMQ + Redis, история в PostgreSQL (`workflow_runs`, `node_runs`), ретраи job'а и узлов, SSE-стриминг прогресса, панель результатов, миникарта со статусами.
@@ -47,6 +47,9 @@
 - **Медиа.** `image_generation`, `image_tool`, `video_generation`, `audio_generation`, `music_generation`; CreativeLab + прямые API (Replicate, FAL, OpenAI Images); cost budget.
 - **Состояние и агенты.** pgvector / Memory (`vector_upsert`, `vector_query`, `memory_read`, `memory_write`), Agent node (LLM loop + 7 инструментов).
 - **v0.10 — контент и данные.** `web_search` (Tavily), `document_gen` (Markdown/JSON → DOCX), `read_file`/`write_file` (безопасный workspace `./data/workspace/{workflowId}/`, лимит 5 МБ).
+- **v0.11 — DOCX-шаблоны (S1–S5).** `document_templates` (миграция 0012): загрузка `.docx` (`multipart`/`FormData`), плейсхолдеры, rights `viewer`/`editor`; API `GET/POST /workflow/:id/document-templates`, `GET …/:templateId/file`, `DELETE …/:templateId`; рендер `docxtemplater` + `pizzip` с `missingVariables`; режим `template` узла `document_gen` (выбор шаблона, `variables`, warning в логах). Env `DOCUMENT_TEMPLATE_*`.
+- **v0.11 — MCP Adapter (S6/S7).** `src/mcp`: `McpServerRegistry` (`MCP_SERVERS`, Zod), `McpClientService` (Streamable HTTP/SSE, connect-mutex, TTL-кэш каталога, reconnect), `McpToolAdapter` (имена `mcp__server__tool`, JSON Schema → Zod, нормализация контента). `AgentService`: preflight MCP до LLM, retry-guard для side-effect инструментов. `MCP_ENABLED=false` по умолчанию.
+- **v0.11 — Run Lease / Heartbeat (S9).** `RunLeaseService`: продление `workflow_runs.lease_expires_at` каждые `WORKFLOW_RUN_HEARTBEAT_MS` (30 с), TTL `WORKFLOW_RUN_LEASE_TTL_MS` (90 с), сбой БД не роняет run; стартовый lease в `markRunRunningAsync`, `stop` в `finally`; `RunsProcessor` считает зависшим только запуск с истёкшей арендой (`leaseExpired`), для строк без аренды — fallback `legacyStale` по `started_at`.
 - **Инфраструктура.** QuickJS-WASM sandbox для `condition`, изоляция очередей (`BULLMQ_PREFIX`), S3-хранилище (presigned URL, multipart, retry, TTL, `storage_key`), HTTP rate limiting, стабильный `INSTANCE_ID`, `TRUST_PROXY`.
 - **Docker/GHCR.** Multi-stage образ, `docker-compose.prod.yml` (app + pgvector + redis), entrypoint с миграциями, ServeStatic для SPA, публикация в GHCR (`latest`, `sha-*`, `vX.Y.Z`).
 - **Наблюдаемость.** OTel (OTLP/HTTP), Pino, аудит, стоимость запуска, span `agent.step`.
@@ -61,6 +64,8 @@
 | `v0.9.4` | S3 retry/multipart, переподпись presigned URL, env публичного бакета; миникарта, копирайт/версия, плашка истёкшей ссылки |
 | `v0.10.0` | Web Search, DOCX-генерация, safe filesystem (22 узла), Docker/GHCR, ServeStatic, `storage_key`; KI-452..455, 459, 460, 467..471 |
 | `v0.10.1` | Синхронизация версий `package.json`/`web` (0.10.1), аудит реестра KI, регистрация KI-478..480, DESIGN v0.11 |
+| `v0.10.2` | SSRF-защита узла `http` (`ALLOW_PRIVATE_IPS`, redirects/DNS), HMAC-подписи local media URL, S3 signed URL/переподпись, media cleanup TTL, `GET /runs/:id` отдаёт `nodes` (KI-450), метрики Agent в `node_runs` (KI-433), `FormData`-загрузка (KI-479); KI-412/413/415/434/451/464/472/478 |
+| `v0.11.0` | S0–S9: DOCX-шаблоны (API/движок/UI), MCP Adapter (клиент/адаптер/агент), Run Lease/heartbeat, env-ключи и миграции 0012/0013; закрыт KI-066, зарегистрированы KI-481..496 |
 
 ---
 
@@ -140,7 +145,7 @@
 ### 3.4. Экономия токенов и исключения
 
 - **Один большой пакет фиксов** вместо 5 маленьких.
-- **Просить dsh цифры, а не эпитеты:** `1123/1123`, build `0/0`.
+- **Просить dsh цифры, а не эпитеты:** `1359/1359`, build `0/0`.
 - **Не давать новых KI без причины** — только реально новые.
 - **Исключение для dsh:** можно и нужно отступать от буквы ТЗ, если ТЗ содержит ошибку или противоречие; dsh уже находил недочёты в промптах (KI-030, 047, 060, 069, 072, 111, 112, 116, 149, 151) — **это ценно**.
 - Новые KI dsh заводит **в отчёте**, а не в файле: файл обновляется отдельным docs-шагом.
@@ -207,45 +212,50 @@
 
 ## § 5. Текущие метрики и открытые KI
 
-### 5.1. Метрики (v0.10.1, HEAD 2026-10-19)
+### 5.1. Метрики (HEAD после S9, 2026-10-19)
 
 | Показатель | Значение |
 |---|---|
-| Backend | **1123** passed, 17 skipped (`pnpm test`) |
-| Frontend | **375** passed (`pnpm --dir web test`) |
-| KI в реестре | **468**: Fixed 205 · Open 251 · Documented 6 · Planned 1 · Deferred 1 · Won't Fix 4 |
-| Последний KI | **KI-480** |
-| Open High | **6** |
+| Backend | **1359** passed, 18 skipped (`pnpm test`) |
+| Frontend | **395** passed (`pnpm --dir web test`) |
+| KI в реестре | **484**: Fixed 219 · Open 253 · Documented 6 · Planned 1 · Deferred 1 · Won't Fix 4 |
+| Последний KI | **KI-496** |
+| Open High | **3** |
 | Узлы | **22** типа |
 
 **Пересчёт — только grep'ом** (RULES § 3.20); не переносить цифры из этого промпта без проверки (RULES § 3.21).
 
 ### 5.2. Открытые KI
 
-**🟠 High (6):**
+**🟠 High (3):**
 
-- **KI-066** — у run-аренды нет heartbeat.
 - **KI-104** — повтор узла учитывает только LLM-исключения.
 - **KI-380** — OpenAI Images не поддерживает `applyToolAsync`.
 - **KI-418** — CreativeLab не объявляет модели upscale/chromakey.
-- **KI-433** — метрики `AgentRunResult` не пишутся в `node_runs`.
-- **KI-478** — узел `http` не защищён от SSRF (приватные IP, redirects).
 
 **🟡 Medium / 🟢 Low (ближайший техдолг):**
 
-- **KI-415** 🟢 — публичный `/media/file/:runId/:fileName` (нет signed URL).
 - **KI-431** 🟢 — `PROMPT_CACHE_MIN_TOKENS` не объявлена в `EnvSchema`.
 - **KI-432** 🟢 — порог промпт-кэша считается в символах, а не в токенах.
-- **KI-434** 🟡 — SSRF: `http_request` следует за redirect на приватный адрес.
 - **KI-435** 🟢 — SSRF: DNS rebinding между проверкой и fetch.
 - **KI-436** 🟡 — Agent: hard-cap превышается на один шаг.
 - **KI-438** 🟢 — пустой `audioUrl` у lipsync не блокирует Run.
-- **KI-450** 🟢 — `GET /runs/:id` не отдаёт `node_runs`.
-- **KI-451** 🟢 — ключ объекта S3: `storage_key` уже пишется, но переподпись пока идёт по URL (KI-464).
-- **KI-464** 🟡 — `storage_key` не используется для переподписи S3.
-- **KI-472** 🟢 — API-префиксы продублированы в `app.module.ts` и `api-prefixes.ts`.
-- **KI-479** 🟡 — `sendAsync` всегда шлёт `application/json`; multipart-загрузка DOCX-шаблона невозможна.
 - **KI-480** 🟢 — имена `document_generation` и `document_gen` расходятся.
+- **KI-481** 🟢 — DESIGN § 3.1.3: порядок `asText()`/`uncompressedSize` ломает fail-closed в DOCX-шаблоне.
+- **KI-482** 🟢 — `docxtemplater` печатает контекст шаблона в stdout при ошибке.
+- **KI-489..492** 🟢 — UX/дубли контракта узла `document_gen` (сообщения API, undo/redo, кеш списка, shared-типы).
+- **KI-493..496** 🟢 — известные ограничения S9: гонка `startAsync`/тика, `lease_expires_at` не обнуляется, рост `#stopped`, нет DB-интеграционного спека на SQL-флаги аренды.
+
+**✅ Исправлено в v0.10.2 / v0.11.0:**
+
+- **KI-066** 🟠 — run lease/heartbeat (v0.11 S9).
+- **KI-433** 🟠 — метрики Agent пишутся в `node_runs`.
+- **KI-434** 🟡 — SSRF: redirect на приватный адрес блокируется.
+- **KI-450** 🟢 — `GET /runs/:id` отдаёт `nodes`.
+- **KI-451** 🟢 / **KI-464** 🟡 — переподпись S3 по `storage_key`.
+- **KI-472** 🟢 — API-префиксы из единого `api-prefixes.json`.
+- **KI-478** 🟠 — SSRF-защита узла `http`.
+- **KI-479** 🟡 — multipart-загрузка DOCX-шаблона (`FormData`).
 
 **✅ Зарегистрированы и закрыты в v0.10.0 (2026-10-19):**
 
@@ -315,7 +325,7 @@ PDF-рендер и разбор JSON/CSV в `document_gen`/`read_file`, `overwr
 ### 7.3. Правила разбора отчёта dsh
 
 - **Не соглашайся вслепую.** dsh может ошибиться (был случай KI-086 — false alarm). Если что-то смущает — скажи.
-- **Проверяй по цифрам:** тесты `1123/1123`, build `0/0`, а не «много».
+- **Проверяй по цифрам:** тесты `1359/1359`, build `0/0`, а не «много».
 - **Смотри за отступлениями от ТЗ.** Если dsh отступил и обосновал — не перебивай, если обоснование верное.
 - **Проверяй, что не смешались задачи** (RULES § 3.2).
 - **Требуй полный отчёт** (RULES § 2.15) — не «сделал, тесты зелёные».
@@ -381,13 +391,16 @@ PDF-рендер и разбор JSON/CSV в `document_gen`/`read_file`, `overwr
 - **Safe filesystem:** `read_file`/`write_file` — только `./data/workspace/{workflowId}/`, лимит 5 МБ, защита от path traversal.
 - **QuickJS-WASM sandbox** для `condition` — не `eval`.
 - **`BULLMQ_PREFIX`** — изоляция очередей (dev / prod / test).
-- **S3:** `storage_key` + presigned URL, multipart, retry, TTL; переподпись по `storage_key` — открытый долг (KI-464).
+- **S3:** `storage_key` + presigned URL, multipart, retry, TTL; переподпись по `storage_key` (KI-464 — исправлено в v0.10.2).
 - **SSE:** snapshot + events, keep-alive; контракт полей синхронизируется с frontend Zod-схемой.
 - **LLM:** per-provider semaphore, reasoning, prompt caching; порог кэша — в токенах, а не символах (KI-432).
 - **Наблюдаемость:** OTel (OTLP/HTTP) + Pino + аудит + span `agent.step`.
 - **`TRUST_PROXY` + стабильный `INSTANCE_ID`** — корректный `req.ip` и идентичность инстанса.
 - **Share-роли** owner/editor/viewer; route-level code-split (бандл 141 kB).
 - **pgvector / Memory** (`vector_upsert`, `vector_query`, `memory_read`, `memory_write`); Agent node — LLM loop + 7 инструментов.
+- **DOCX-шаблоны:** fail-closed проверки `.docx` (ZIP-бомбы, макросы, XXE), `docxtemplater` + `nullGetter`; шаблон принадлежит workflow, права `viewer`/`editor`.
+- **MCP:** описания инструментов — **недоверенный** контент (обрезаются, идут в отдельный блок); retry запрещён для side-effect инструментов; токены серверов — только через `tokenEnv`.
+- **Run lease / heartbeat:** `lease_expires_at` считается по часам БД, ошибка БД в тике не роняет run; `started_at` — история, а не «живость».
 - **Docker multi-stage + GHCR** (`latest`, `sha-*`, `vX.Y.Z`), entrypoint с миграциями, ServeStatic для SPA.
 
 ### 9.3. Предлагай новое
@@ -396,6 +409,6 @@ PDF-рендер и разбор JSON/CSV в `document_gen`/`read_file`, `overwr
 
 ---
 
-**Итог.** v0.10.1 на HEAD: **1123/1123** backend, **375/375** frontend, 22 типа узлов, Open High 6. Впереди — `v0.10.2` (hardening) или `v0.11.0` (DESIGN: DOCX-шаблоны, MCP Adapter, Reliability/History).
+**Итог.** HEAD после S9: **1359** backend-тестов, **395** frontend, 22 типа узлов, Open High 3. Реализован `v0.11.0` (DOCX-шаблоны, MCP Adapter, Run Lease); впереди — релизный docs-гейт, срезы S10–S17 и тёмная тема.
 
 **Продолжаем.**

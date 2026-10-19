@@ -49,6 +49,12 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 
 - **BullMQ + Redis:** фоновые запуски, ретраи job'а и отдельных узлов,
   изоляция очередей между инстансами (`BULLMQ_PREFIX`).
+- **Run Lease / Heartbeat (v0.11 S9):** запуск продлевает
+  `workflow_runs.lease_expires_at` каждые 30 с (`WORKFLOW_RUN_HEARTBEAT_MS`,
+  TTL — `WORKFLOW_RUN_LEASE_TTL_MS`, 90 с), поэтому легитимно долгий прогон не
+  считается зависшим и не переигрывается параллельно; падение worker'а
+  обнаруживается за TTL, а для старых строк без аренды сохранён fallback по
+  `started_at`.
 - **История в PostgreSQL:** `workflow_runs`, `node_runs`, версии workflow,
   аудит действий.
 - **SSE-стриминг:** snapshot состояния и события узлов в реальном времени.
@@ -72,6 +78,10 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 - **Memory-узлы:** чтение и запись долговременной памяти сценария.
 - **Agent node:** LLM-цикл с 7 инструментами (HTTP, vector, memory и др.),
   SSRF-защитой, hard-cap и span `agent.step` в OTel.
+- **MCP-инструменты (v0.11 S6/S7):** подключение внешних MCP-серверов по
+  Streamable HTTP/SSE через `MCP_SERVERS`; каталог инструментов с TTL-кэшем,
+  JSON Schema → Zod, preflight до LLM и retry-guard для side-effect
+  инструментов. `MCP_ENABLED=false` по умолчанию — фича не влияет на старт.
 
 ### 🔎 Контент и файлы
 
@@ -80,12 +90,15 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 - **Document Generation (`document_gen`):** Markdown или JSON → DOCX
   (заголовки, списки, код, таблицы, инлайн-разметка) с сохранением в
   local/S3 и кнопкой скачивания.
-- **DOCX-шаблоны (v0.11 S2/S3):** загрузка `.docx` с плейсхолдерами
-  `{name}`/`{#items}` через `POST /workflow/:id/document-templates`; список,
-  скачивание и удаление — `GET`/`GET …/file`/`DELETE …/:templateId`.
-  Права `viewer` (чтение) и `editor` (изменение), хранение в PostgreSQL
-  (`sha256`, `bytes`, `placeholders`), защита от ZIP-бомб, макросов и XXE.
-  Загрузка из UI — multipart/`FormData` (KI-479).
+- **DOCX-шаблоны (v0.11 S2–S5):** загрузка корпоративных форм `.docx` с
+  плейсхолдерами `{name}`/`{#items}` через
+  `POST /workflow/:id/document-templates`; список, скачивание и удаление —
+  `GET`/`GET …/file`/`DELETE …/:templateId`. Права `viewer` (чтение) и
+  `editor` (изменение), хранение в PostgreSQL (`sha256`, `bytes`,
+  `placeholders`), защита от ZIP-бомб, макросов и XXE. Узел `document_gen`
+  в режиме `template` подставляет `variables` (`docxtemplater` + `pizzip`),
+  показывает незаполненные плейсхолдеры (`missingVariables`) и пишет warning
+  в логи. Загрузка из UI — multipart/`FormData` (KI-479).
 - **Safe Filesystem (`read_file`/`write_file`):** чтение и запись TXT/CSV/JSON
   в изолированном `./data/workspace/{workflowId}/` с защитой от path traversal
   и лимитом 5 МБ на файл.
@@ -129,6 +142,10 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 ## Быстрый старт
 
 **Требования:** Node.js 22+, pnpm 12+, Docker Desktop.
+
+> Для DOCX (генерация из Markdown/JSON и шаблоны) backend использует
+> `docxtemplater` и `pizzip`. Отдельно ставить не нужно — они приходят с
+> зависимостями при `pnpm install`; версии фиксируются в `pnpm-lock.yaml`.
 
 ```bash
 # 1. Клонировать репозиторий

@@ -244,7 +244,34 @@ WEB_SEARCH_PROVIDER=tavily
 
 # S3 (опционально): true — прямые URL публичного бакета, false — presigned
 S3_PUBLIC_BUCKET=false
+
+# Run lease / heartbeat (v0.11): период продления и TTL аренды запуска.
+# TTL обязан быть >= 2 × heartbeat — проверяется при старте (fail-fast).
+WORKFLOW_RUN_HEARTBEAT_MS=30000
+WORKFLOW_RUN_LEASE_TTL_MS=90000
+
+# MCP (v0.11): по умолчанию ВЫКЛЮЧЕН. Серверы — JSON-объект «имя → конфиг».
+MCP_ENABLED=false
+MCP_SERVERS={}
 ```
+
+> **MCP выключен по умолчанию** (`MCP_ENABLED=false`): приложение стартует без
+> внешних MCP-серверов, узел `agent` работает с нативными инструментами. Для
+> включения задайте `MCP_ENABLED=true` и `MCP_SERVERS` — JSON-объект:
+>
+> ```env
+> MCP_SERVERS={"filesystem":{"transport":"http","url":"http://mcp-filesystem:8080/mcp","tokenEnv":"MCP_FS_TOKEN"}}
+> ```
+>
+> `transport` — `http` (Streamable HTTP) или `sse`; `tokenEnv` — **имя**
+> переменной окружения с bearer-токеном (сам токен в JSON не попадает);
+> `enabled` (default `true`) выключает отдельный сервер. Битый JSON при
+> `MCP_ENABLED=true` останавливает старт с понятной ошибкой (Zod, RULES 4.5), а
+> при `false` — только предупреждение в логе.
+>
+> **Heartbeat** (`WORKFLOW_RUN_HEARTBEAT_MS`) — период продления аренды
+> запуска, `WORKFLOW_RUN_LEASE_TTL_MS` — срок аренды. Менять их по отдельности
+> не стоит: схема требует `TTL >= 2 × heartbeat`.
 
 > **`WORKSPACE_ROOT` в v0.10 не используется.** Узлы `read_file`/`write_file`
 > работают в `./data/workspace/{workflowId}/` от `process.cwd()`; каталог

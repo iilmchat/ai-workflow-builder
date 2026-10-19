@@ -234,6 +234,12 @@ Copy-Item docs/development/PROMPT_CURRENT.md `
 - [ ] Все code fence'ы закрыты, таблицы не «съехали».
 - [ ] В текстах нет реальных API-ключей и паролей (RULES § 2.13, § 5).
 - [ ] Нет битых якорей в оглавлениях.
+- [ ] **Все отчёты сессий сохранены** в `docs/development/reports/<version>/`
+  (RULES § 2.18): для каждого шага из плана релиза есть `.md`-отчёт с
+  YAML-frontmatter и 7 разделами.
+- [ ] **На каждый отчёт есть ссылка в `CHANGELOG.md`** (в записи `[X.Y.Z]` или
+  `[Unreleased]`, RULES § 2.1/2.18), а `docs/development/reports/README.md`
+  содержит строку этого отчёта.
 
 ---
 
@@ -428,9 +434,12 @@ gh release create vX.Y.Z `
 - [ ] USER_GUIDE.md — версия, UI, ограничения
 - [ ] MANUAL_TESTING_GUIDE.md — новые кейсы, сводка
 - [ ] PROMPT_CURRENT.md — метрики, KI, план; старая версия в archive/prompts/
-- [ ] CHANGELOG.md — [X.Y.Z], пустой [Unreleased]
+- [ ] reports/<version>/ — все отчёты сессий сохранены (RULES § 2.18)
+- [ ] reports/README.md — строки на все отчёты версии
+- [ ] CHANGELOG.md — [X.Y.Z], пустой [Unreleased], ссылки на отчёты
 - [ ] KNOWN_ISSUES.md — статусы, сводка grep'ом
 - [ ] README.md — бейдж и статус
+- [ ] ARCHITECTURE.md / GETTING_STARTED.md — новые модули, env-переменные
 - [ ] docs/README.md — метрики и ссылки
 - [ ] RULES.md — правила/история (если менялись)
 

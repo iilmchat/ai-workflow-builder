@@ -154,10 +154,11 @@ Vite проксирует префиксы из `web/src/lib/api-prefixes.ts`:
 | `AuthModule` | `src/auth/` | Регистрация/логин, JWT access, refresh-cookie, guards |
 | `WorkflowModule` | `src/workflow/` | CRUD графа, версии, Share, collaborators, export/import |
 | `EngineModule` | `src/engine/` | Валидация, топологическая сортировка, план, исполнители |
-| `RunsModule` | `src/runs/` | Очередь, `workflow_runs`, SSE, события, бюджет |
+| `RunsModule` | `src/runs/` | Очередь, `workflow_runs`, SSE, события, бюджет, run lease (heartbeat) |
 | `LlmModule` | `src/llm/` | Провайдеры, реестр моделей, стоимость, semaphore, кэш-токены |
 | `MediaModule` | `src/media/` | Модели, провайдеры, генерация, storage, cleanup |
-| `DocumentsModule` | `src/documents/` | DOCX из Markdown/JSON (`docx`), лимиты и ошибки рендера |
+| `DocumentsModule` | `src/documents/` | DOCX из Markdown/JSON (`docx`); шаблоны: CRUD, рендер `docxtemplater` + `pizzip`, лимиты и ошибки |
+| `McpModule` | `src/mcp/` | MCP-клиент (Streamable HTTP/SSE), реестр серверов из `MCP_SERVERS`, адаптер инструментов в `AgentTool` |
 | `FilesystemModule` | `src/filesystem/` | Безопасный workspace `read_file`/`write_file` |
 | `WebSearchModule` | `src/web-search/` | Провайдер Tavily для узла `web_search` |
 | `SandboxModule` | `src/sandbox/` | QuickJS-WASM для `condition`/`code_eval` |
@@ -176,7 +177,7 @@ Vite проксирует префиксы из `web/src/lib/api-prefixes.ts`:
 | `LoadModal` | `web/src/components/LoadModal.tsx` | Список workflow, удаление, шаблоны |
 | `RunResultPanel` | `web/src/components/RunResultPanel.tsx` | Outputs, метрики, ошибки, логи |
 | `ShareViewPage` | `web/src/components/ShareViewPage.tsx` | Read-only граф по Share-ссылке |
-| `nodes/*` | `web/src/components/nodes/` | 22 компонента узлов (lazy), включая `WebSearchNode`, `DocumentGenNode`, `ReadFileNode`, `WriteFileNode` |
+| `nodes/*` | `web/src/components/nodes/` | 22 компонента узлов (lazy), включая `WebSearchNode`, `DocumentGenNode` (режим `inline`/`template` + список шаблонов workflow), `ReadFileNode`, `WriteFileNode` |
 | `workflow` store | `web/src/stores/workflow.ts` | Граф, selection, run-state, план, notice |
 | `run-stream` | `web/src/lib/run-stream.ts` | SSE через `fetch` + `ReadableStream`, reconnect |
 | `sse-parser` | `web/src/lib/sse-parser.ts` | Разбор SSE-кадров (без `EventSource`) |
@@ -193,6 +194,7 @@ Vite проксирует префиксы из `web/src/lib/api-prefixes.ts`:
 | Runs | `POST /runs`; `GET /runs/:id`, `/runs/:id/budget`, `/runs/:id/stream` (SSE) |
 | LLM / Media | `GET /llm/models`; `GET /media/models`; `GET /media/file/:runId/:fileName` |
 | Templates | `GET /templates`; `POST /templates/:id/instantiate` |
+| Document templates (v0.11) | `GET/POST /workflow/:id/document-templates`; `GET …/:templateId/file`; `DELETE …/:templateId` |
 
 > REST-контракт ответов фиксируется в `docs/development/api-contract.json`,
 > SSE — в `docs/development/sse-contract.json`; оба проверяются
@@ -208,8 +210,9 @@ Vite проксирует префиксы из `web/src/lib/api-prefixes.ts`:
 | `workflow_collaborators` | Share-участники | PK `(workflow_id, user_id)`, роли `viewer/editor` |
 | `workflow_vectors` | Векторы | `vector(1536)`, HNSW, коллекция + workflow |
 | `workflow_memory` | Key-value память | PK `(workflow_id, key)`, JSONB-значение |
-| `workflow_runs` | Запуск | `snapshot` графа, статус, `error`, timestamps |
+| `workflow_runs` | Запуск | `snapshot` графа, статус, `error`, timestamps, `lease_expires_at` (v0.11 S9) |
 | `node_runs` | Узел запуска | Уникальный `(run_id, node_id)`, inputs/outputs, метрики, `stored_url`, `storage_key` (v0.10) |
+| `document_templates` | DOCX-шаблоны workflow | `bytea`-контент, `sha256`, `bytes`, `placeholders`, FK на `workflows` (v0.11 S1) |
 
 **Redis:**
 
@@ -247,12 +250,15 @@ Vite проксирует префиксы из `web/src/lib/api-prefixes.ts`:
    `run:<runId>`, затем читает `workflow_runs` + `node_runs`, переподписывает
    просроченные `stored_url` и отправляет `snapshot` первым сообщением.
 7. **Worker берёт job.** `RunsProcessor` валидирует payload, проверяет
-   `instanceId`, lease (`started_at` + `RUN_STALE_THRESHOLD_MS`) и статус.
+   `instanceId`, аренду (`lease_expires_at`, v0.11 S9; для старых строк без
+   аренды — fallback по `started_at` + `RUN_STALE_THRESHOLD_MS`) и статус.
    Повторная доставка обрабатывается только для `failed` (job-level retry).
 8. **Планирование.** `EngineService.buildExecutionPlanAsync` отбрасывает
    аннотации (`comment`), строит уровни Кана и `executionMap` (входы/потомки).
    Цикл или битые связи — детерминированный `failed` без исключения.
-9. **Старт запуска.** Executor пишет `running`, публикует `run_started`.
+9. **Старт запуска.** Executor пишет `running` и стартовую аренду
+   `lease_expires_at`, запускает `RunLeaseService` (heartbeat), публикует
+   `run_started`.
 10. **Уровни.** Для каждого уровня:
     - узлы с упавшим/пропущенным предшественником закрываются `skipped`
       (транзитивно) и публикуют `node_skipped`;
@@ -262,7 +268,8 @@ Vite проксирует префиксы из `web/src/lib/api-prefixes.ts`:
     входы глубоко равны (KI-046). Строка `node_runs` — UPSERT по
     `(run_id, node_id)`. Публикуются `node_started` → `node_completed` /
     `node_failed`.
-12. **Финал.** Executor пишет статус, outputs и ошибку в `workflow_runs`.
+12. **Финал.** Executor пишет статус, outputs и ошибку в `workflow_runs` и
+    гасит heartbeat (`stop` в `finally`).
     Если был упавший узел — бросает исключение, и BullMQ делает retry
     (если попытки остались). `RunsProcessor` публикует `run_completed` с
     `final: true|false`; SSE закрывается только на `final: true`.
@@ -367,11 +374,22 @@ const results = await Promise.allSettled(
 | Механизм | Где | Что защищает |
 |---|---|---|
 | **BullMQ attempts/backoff** | `RunsModule` (`attempts: 3`, exponential 2s) | Падение job'а |
-| **Lease по `started_at`** | `RunsProcessor` + `RUN_STALE_THRESHOLD_MS` | Два worker'а на один run |
+| **Run lease / heartbeat** | `RunLeaseService` + `workflow_runs.lease_expires_at` | Два worker'а на один run; живой долгий запуск не считается зависшим (v0.11 S9) |
+| **Fallback по `started_at`** | `RunsProcessor.legacyStale` + `RUN_STALE_THRESHOLD_MS` | Строки без аренды (`lease_expires_at IS NULL`, до миграции 0013) |
 | **`instanceId` в payload** | `RunsService` → `RunsProcessor` | Чужие инстансы на одном Redis (KI-387) |
 | **UPSERT `node_runs`** | `(run_id, node_id)` unique | Дубли строк при retry (KI-031) |
 | **Переиспользование outputs** | `isDeepStrictEqual(inputs)` (KI-046) | Повторные платные вызовы |
 | **Node-level retry** | 3 попытки, 500 мс × 2 | Временные ошибки LLM (KI-036) |
+
+**Heartbeat.** `ExecutionEngineService` после перевода запуска в `running` ставит
+стартовый `lease_expires_at = now() + WORKFLOW_RUN_LEASE_TTL_MS` и запускает
+`RunLeaseService.startAsync`: `UPDATE … SET lease_expires_at = now() + TTL WHERE
+id = $1 AND status = 'running'` каждые `WORKFLOW_RUN_HEARTBEAT_MS` (30 с по
+умолчанию, TTL 90 с). Сбой БД в тике только логируется — запуск продолжается,
+BullMQ-лок держит job. После завершения heartbeat гасится, а «зависшим»
+`RunsProcessor` считает только запуск с истёкшей арендой: падение worker'а
+обнаруживается за ≤ `WORKFLOW_RUN_LEASE_TTL_MS`, а не за
+`RUN_STALE_THRESHOLD_MS` (5 мин).
 
 **Ограничение:** node-level retry сейчас срабатывает только для
 `LlmProviderException` с `retryable=true`. Ошибки media/HTTP не
@@ -625,6 +643,8 @@ entrypoint запустятся после готовности Postgres. `COOKI
 | Новое SSE-событие | `RunEventSchema`, `sse-contract.json`, `applyEvent` в сторе |
 | Новое хранилище | `IMediaStorage` + `createMediaStorage` |
 | Новая песочница | `QuickJsRunnerService` (не заменять на `eval`/`vm`) |
+| Новый MCP-транспорт | `McpServerConfigSchema.transport` (`http`/`sse`) + `McpClientService`; `stdio` в v0.11 не поддержан — точка расширения там же |
+| Новый формат шаблонов | `DocumentTemplateService` (конвейер рендера, сигнатура/лимиты) + `DocumentTemplatesService` (хранение и права) |
 
 **Правило:** любой новый внешний вызов — с таймаутом, Zod-валидацией ответа,
 классификацией `retryable` и записью метрик/логов (RULES 1.17, 4.18, 4.19).
@@ -636,6 +656,7 @@ entrypoint запустятся после готовности Postgres. `COOKI
 - [RULES.md](RULES.md) — правила кода, docs, workflow, безопасности.
 - [DESIGN v0.9](v0.9/DESIGN_V09_FEATURES.md) — медиа, pgvector, агенты, sandbox.
 - [DESIGN v0.10](v0.10/DESIGN_V010_FEATURES.md) — web search, документы, файлы.
+- [DESIGN v0.11](v0.11/DESIGN_V011_FEATURES.md) — DOCX-шаблоны, MCP Adapter, run lease/reliability.
 - [GETTING_STARTED.md](GETTING_STARTED.md) — разворачивание.
 - [RELEASES.md](RELEASES.md) — релизный чек-лист.
 - [api-contract.json](api-contract.json), [sse-contract.json](sse-contract.json) — контракты.
