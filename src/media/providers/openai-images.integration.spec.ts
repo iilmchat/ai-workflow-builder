@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { SafeHttpClient } from '../../common/http/safe-http.client.js';
 import { MediaProviderException } from '../media-provider.interface.js';
 import { OpenAiImagesProvider } from './openai-images.provider.js';
 
@@ -46,9 +47,12 @@ function configStub(): ConfigService {
 
 describe('OpenAiImagesProvider — интеграция (R7.3)', () => {
   it('без ключа провайдер не сконфигурирован и бросает при вызове', async () => {
-    const provider = new OpenAiImagesProvider({
-      get: () => undefined,
-    } as unknown as ConfigService);
+    const provider = new OpenAiImagesProvider(
+      {
+        get: () => undefined,
+      } as unknown as ConfigService,
+      new SafeHttpClient(),
+    );
 
     expect(provider.isConfigured).toBe(false);
     await expect(provider.listModelsAsync()).rejects.toThrow(
@@ -60,7 +64,7 @@ describe('OpenAiImagesProvider — интеграция (R7.3)', () => {
     it(
       'генерирует картинку gpt-image-1 и отдаёт data:image/png;base64',
       async () => {
-        const provider = new OpenAiImagesProvider(configStub());
+        const provider = new OpenAiImagesProvider(configStub(), new SafeHttpClient());
 
         expect(provider.isConfigured).toBe(true);
 
@@ -86,7 +90,7 @@ describe('OpenAiImagesProvider — интеграция (R7.3)', () => {
     it(
       'каталог моделей собирается при доступном upstream',
       async () => {
-        const provider = new OpenAiImagesProvider(configStub());
+        const provider = new OpenAiImagesProvider(configStub(), new SafeHttpClient());
 
         const models = await provider.listModelsAsync('IMAGE');
 

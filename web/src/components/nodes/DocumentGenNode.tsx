@@ -34,10 +34,26 @@ const DOWNLOAD_CLASS =
 /**
  * Режим интерпретации контента (DESIGN v0.10 § 3.2.1).
  *
- * `format` узла (`docx`/`pdf`) в UI не выбирается: backend реализует только
- * DOCX, а селект «Markdown/JSON» — это `source`, а не формат файла.
+ * Селект «Markdown/JSON» — это `source`; формат файла (`docx`/`pdf`) —
+ * отдельное поле `format` (v0.12 S1).
  */
 type DocumentSource = 'markdown' | 'json';
+
+/** Выходной формат документа (v0.12 S1, DESIGN § 3.1.4). */
+type DocumentFormat = 'docx' | 'pdf';
+
+/**
+ * Читает `data.format` из jsonb.
+ *
+ * Отсутствие поля трактуется как `docx`: так backend валидирует старые графы
+ * (Zod-дефолт), и UI не должен показывать «PDF» для старого узла.
+ *
+ * @param value - значение из `data.format` (`unknown`)
+ * @returns `pdf` только при точном совпадении, иначе `docx`
+ */
+function readFormat(value: unknown): DocumentFormat {
+  return value === 'pdf' ? 'pdf' : 'docx';
+}
 
 /**
  * Режим узла (v0.11 S4/S5, DESIGN § 3.1.2).
@@ -230,8 +246,9 @@ function readMissingVariables(
  *   чипы плейсхолдеров, textarea `variables` (только без входящей связи) и
  *   удаление шаблона (disabled для `viewer`).
  *
- * После Run — ссылка «Скачать DOCX» (как раньше); если `outputs` содержит
- * `missingVariables`, под ссылкой показывается жёлтая подсказка.
+ * После Run — ссылка «Скачать DOCX»/«Скачать PDF» (v0.12 S1: формат берётся
+ * из `outputs.format`); если `outputs` содержит `missingVariables`, под
+ * ссылкой показывается жёлтая подсказка.
  */
 export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
   const updateNodeData = useNodeDataHistory();
@@ -250,10 +267,15 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
 
   const mode = readMode(data.mode);
   const source = readSource(data.source);
+  const format = readFormat(data.format);
   const content = readContent(data.content);
   const templateId = readTemplateId(data.templateId);
   const downloadUrl = readDocumentUrl(outputs);
   const fileName = readFileName(outputs);
+  // Формат уже сгенерированного файла: по нему строятся подпись ссылки и
+  // fallback-имя, даже если `fileName` не пришёл из старых запусков.
+  const outputFormat: DocumentFormat =
+    outputs?.format === 'pdf' ? 'pdf' : 'docx';
   const missingVariables = readMissingVariables(outputs);
 
   /** Список шаблонов workflow (`GET …/document-templates`). */
@@ -428,9 +450,19 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
             aria-label={t('node.document_gen.mode')}
             data-document-gen-mode=""
             className="nodrag rounded-lg border border-border bg-background px-1.5 py-1 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-            onChange={(event) =>
-              updateNodeData(id, { mode: readMode(event.target.value) })
-            }
+            onChange={(event) => {
+              const nextMode = readMode(event.target.value);
+
+              // Шаблоны существуют только в DOCX (backend `superRefine`).
+              // Оставить `format: 'pdf'` при переходе в template значило бы
+              // получить ошибку валидации при Run без видимой причины.
+              updateNodeData(
+                id,
+                nextMode === 'template'
+                  ? { mode: nextMode, format: 'docx' }
+                  : { mode: nextMode },
+              );
+            }}
           >
             <option value="inline">
               {t('node.document_gen.mode.inline')}
@@ -459,6 +491,28 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
                 </option>
                 <option value="json">
                   {t('node.document_gen.source.json')}
+                </option>
+              </select>
+            </label>
+
+            <label className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+              {t('node.document_gen.format')}
+              <select
+                value={format}
+                aria-label={t('node.document_gen.format')}
+                data-document-gen-format=""
+                className="nodrag rounded-lg border border-border bg-background px-1.5 py-1 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                onChange={(event) =>
+                  updateNodeData(id, {
+                    format: readFormat(event.target.value),
+                  })
+                }
+              >
+                <option value="docx">
+                  {t('node.document_gen.format.docx')}
+                </option>
+                <option value="pdf">
+                  {t('node.document_gen.format.pdf')}
                 </option>
               </select>
             </label>
@@ -644,14 +698,19 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
         {downloadUrl !== null ? (
           <a
             href={downloadUrl}
-            download={fileName ?? 'document.docx'}
+            download={fileName ?? `document.${outputFormat}`}
             target="_blank"
             rel="noreferrer"
             data-document-gen-download=""
+            data-document-gen-output-format={outputFormat}
             className={DOWNLOAD_CLASS}
           >
             <span aria-hidden="true">⬇</span>
-            {t('node.document_gen.download')}
+            {t(
+              outputFormat === 'pdf'
+                ? 'node.document_gen.downloadPdf'
+                : 'node.document_gen.download',
+            )}
           </a>
         ) : (
           <p className="mt-1 text-[9px] text-muted-foreground">

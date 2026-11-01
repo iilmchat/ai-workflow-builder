@@ -636,10 +636,11 @@ describe('Document templates env (v0.11 S0)', () => {
   });
 });
 
-describe('MCP env (v0.11 S0)', () => {
-  it('дефолты: MCP выключен, реестр пустой, лимиты DESIGN § 4.3', () => {
+describe('MCP env (v0.11 S0, stdio — v0.12 S4)', () => {
+  it('дефолты: MCP выключен, stdio выключен, реестр пустой, лимиты DESIGN § 4.3', () => {
     expect(McpEnvSchema.parse({})).toMatchObject({
       MCP_ENABLED: false,
+      MCP_ENABLE_STDIO: false,
       MCP_SERVERS: '{}',
       MCP_CONNECT_TIMEOUT_MS: 10_000,
       MCP_REQUEST_TIMEOUT_MS: 30_000,
@@ -658,6 +659,21 @@ describe('MCP env (v0.11 S0)', () => {
     expect(McpEnvSchema.safeParse({ MCP_ENABLED: '1' }).success).toBe(false);
     // KI-084: пустая переменная в .env — «не задана», уходит в дефолт false.
     expect(McpEnvSchema.parse({ MCP_ENABLED: '' }).MCP_ENABLED).toBe(false);
+  });
+
+  it("MCP_ENABLE_STDIO (v0.12 S4): строгий boolean, default false", () => {
+    expect(McpEnvSchema.parse({}).MCP_ENABLE_STDIO).toBe(false);
+    expect(McpEnvSchema.parse({ MCP_ENABLE_STDIO: 'true' }).MCP_ENABLE_STDIO).toBe(
+      true,
+    );
+    expect(
+      McpEnvSchema.parse({ MCP_ENABLE_STDIO: 'false' }).MCP_ENABLE_STDIO,
+    ).toBe(false);
+    // Запуск локального процесса не включается «сам» из '1'/'yes'.
+    expect(McpEnvSchema.safeParse({ MCP_ENABLE_STDIO: '1' }).success).toBe(false);
+    expect(McpEnvSchema.parse({ MCP_ENABLE_STDIO: '' }).MCP_ENABLE_STDIO).toBe(
+      false,
+    );
   });
 
   it('MCP_SERVERS — строка (разбор JSON отложен до S6)', () => {

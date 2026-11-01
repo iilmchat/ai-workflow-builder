@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -45,6 +46,83 @@ const sdk = vi.hoisted(() => {
       this.url = url;
       this.options = options;
       FakeTransport.instances.push(this);
+    }
+
+    async start(): Promise<void> {}
+
+    async close(): Promise<void> {
+      this.closeCalls += 1;
+    }
+
+    async send(): Promise<void> {}
+  }
+
+  /**
+   * Фейк `stderr` дочернего процесса: минимальный emitter.
+   *
+   * `PassThrough` из `node:stream` здесь не подходит: `vi.hoisted`
+   * выполняется **до** инициализации импортов, и ссылка на модуль упала бы.
+   */
+  class FakeStderr {
+    private readonly listeners = new Map<
+      string,
+      ((payload?: unknown) => void)[]
+    >();
+
+    on(event: string, listener: (payload?: unknown) => void): this {
+      const list = this.listeners.get(event) ?? [];
+
+      list.push(listener);
+      this.listeners.set(event, list);
+
+      return this;
+    }
+
+    write(chunk: string): void {
+      for (const listener of this.listeners.get('data') ?? []) {
+        listener(Buffer.from(chunk));
+      }
+    }
+
+    end(): void {
+      for (const listener of this.listeners.get('end') ?? []) {
+        listener();
+      }
+    }
+  }
+
+  /**
+   * Управляемый фейк `stdio`-транспорта (v0.12 S4, KI-526).
+   *
+   * Повторяет только тот контракт SDK, который использует наш клиент:
+   * `params` (команда/аргументы/`stderr`), `pid` и `stderr`.
+   */
+  class FakeStdioTransport {
+    static instances: FakeStdioTransport[] = [];
+
+    readonly params: {
+      command: string;
+      args?: readonly string[];
+      stderr?: unknown;
+    };
+    readonly stderrStream = new FakeStderr();
+    pid: number | null = 4321;
+    onclose?: () => void;
+    onerror?: (error: Error) => void;
+    onmessage?: (message: unknown) => void;
+    closeCalls = 0;
+
+    constructor(params: {
+      command: string;
+      args?: readonly string[];
+      stderr?: unknown;
+    }) {
+      this.params = params;
+      FakeStdioTransport.instances.push(this);
+    }
+
+    get stderr(): FakeStderr {
+      return this.stderrStream;
     }
 
     async start(): Promise<void> {}
@@ -147,7 +225,7 @@ const sdk = vi.hoisted(() => {
     }
   }
 
-  return { FakeClient, FakeTransport };
+  return { FakeClient, FakeTransport, FakeStdioTransport };
 });
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
@@ -158,6 +236,11 @@ vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
 }));
 vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
   SSEClientTransport: sdk.FakeTransport,
+}));
+// v0.12 S4 (KI-526): stdio-транспорт тоже подменяется — реальный процесс в
+// юнит-тестах не запускается.
+vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
+  StdioClientTransport: sdk.FakeStdioTransport,
 }));
 
 /** Базовый реестр из трёх серверов: http, sse и выключенный. */
@@ -223,6 +306,7 @@ async function createHarness(overrides: Record<string, unknown> = {}): Promise<{
 beforeEach(() => {
   sdk.FakeClient.instances.length = 0;
   sdk.FakeTransport.instances.length = 0;
+  sdk.FakeStdioTransport.instances.length = 0;
   sdk.FakeClient.defaultConnectError = null;
   sdk.FakeClient.defaultListToolsHandler = async () => ({ tools: [] });
   sdk.FakeClient.defaultCallToolHandler = async () => ({
@@ -528,6 +612,119 @@ describe('McpClientService — подключение и каталог (v0.11 S
     await expect(service.listToolsAsync('filesystem')).rejects.toBeInstanceOf(
       McpUnavailableException,
     );
+  });
+
+  it('stdio-сервер: command/args уходят в StdioClientTransport без shell', async () => {
+    const { service } = await createHarness({
+      MCP_ENABLE_STDIO: true,
+      MCP_SERVERS: JSON.stringify({
+        local: {
+          transport: 'stdio',
+          command: 'docker',
+          args: ['run', '-i', '--rm', 'mcp/filesystem', '/data'],
+        },
+      }),
+    });
+
+    await service.listToolsAsync('local');
+
+    const transport = sdk.FakeStdioTransport.instances[0];
+
+    expect(transport?.params).toMatchObject({
+      command: 'docker',
+      args: ['run', '-i', '--rm', 'mcp/filesystem', '/data'],
+      // stderr забираем в лог; stdout/stdin — канал протокола.
+      stderr: 'pipe',
+    });
+    // `shell` не передаётся вовсе: аргументы — массив, а не строка команды.
+    expect(transport?.params).not.toHaveProperty('shell');
+    expect(sdk.FakeClient.instances[0]?.connectCalls).toBe(1);
+    // HTTP-транспорт (и Authorization) для stdio не создаётся.
+    expect(sdk.FakeTransport.instances).toHaveLength(0);
+  });
+
+  it('stdio запрещён при MCP_ENABLE_STDIO=false — реестр падает на старте', async () => {
+    const servers = JSON.stringify({
+      local: { transport: 'stdio', command: 'node', args: ['server.js'] },
+    });
+
+    await expect(
+      createHarness({ MCP_ENABLED: true, MCP_SERVERS: servers }),
+    ).rejects.toThrow(/MCP_ENABLE_STDIO/);
+    expect(sdk.FakeStdioTransport.instances).toHaveLength(0);
+  });
+
+  it('stdio-команда из denylist отвергается до запуска процесса', async () => {
+    const servers = JSON.stringify({
+      local: {
+        transport: 'stdio',
+        command: 'sh',
+        args: ['-c', 'cat /etc/passwd'],
+      },
+    });
+
+    await expect(
+      createHarness({ MCP_ENABLE_STDIO: true, MCP_SERVERS: servers }),
+    ).rejects.toThrow(/запрещена/);
+    expect(sdk.FakeStdioTransport.instances).toHaveLength(0);
+  });
+
+  it('stderr дочернего процесса пишется в лог с пометкой сервера', async () => {
+    const debug = vi
+      .spyOn(Logger.prototype, 'debug')
+      .mockImplementation(() => undefined);
+    const { service } = await createHarness({
+      MCP_ENABLE_STDIO: true,
+      MCP_SERVERS: JSON.stringify({
+        local: { transport: 'stdio', command: 'node', args: [] },
+      }),
+    });
+
+    await service.listToolsAsync('local');
+
+    const transport = sdk.FakeStdioTransport.instances[0];
+
+    transport?.stderrStream.write('booting MCP server\npartial');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const messages = (): string[] =>
+      debug.mock.calls.map(([message]) => String(message));
+
+    expect(messages()).toContain(
+      "MCP-сервер 'local' stderr: booting MCP server",
+    );
+    // Неполная строка ждёт перевода строки и не теряется.
+    expect(messages().some((line) => line.includes('partial'))).toBe(false);
+
+    transport?.stderrStream.write(' line\n');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(messages()).toContain(
+      "MCP-сервер 'local' stderr: partial line",
+    );
+  });
+
+  it('onApplicationShutdown: SIGTERM, затем SIGKILL для stdio-процесса', async () => {
+    const { service } = await createHarness({
+      MCP_ENABLE_STDIO: true,
+      MCP_SERVERS: JSON.stringify({
+        local: { transport: 'stdio', command: 'node', args: [] },
+      }),
+    });
+
+    await service.listToolsAsync('local');
+
+    const pid = sdk.FakeStdioTransport.instances[0]?.pid ?? 0;
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+
+    await service.onApplicationShutdown();
+
+    // SIGTERM до закрытия клиента, проверка живости, затем SIGKILL выжившему.
+    expect(kill.mock.calls).toEqual([
+      [pid, 'SIGTERM'],
+      [pid, 0],
+      [pid, 'SIGKILL'],
+    ]);
   });
 });
 

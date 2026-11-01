@@ -638,6 +638,11 @@ export type DocumentTemplateEnv = z.infer<typeof DocumentTemplateEnvSchema>;
  * Разбор boolean строгий, как у `ALLOW_PRIVATE_IPS`/`SANDBOX_ENABLED`
  * (RULES 4.35): `z.coerce.boolean()` превратил бы строку `'false'` в `true`
  * и молча включил MCP.
+ *
+ * v0.12 S4 (KI-526): `MCP_ENABLE_STDIO` — второй, более узкий выключатель.
+ * Даже при `MCP_ENABLED=true` сервер с `transport: 'stdio'` отвергается на
+ * старте, если этот флаг не равен `true`: запуск локального процесса — не то
+ * же самое, что HTTP-вызов, и требует отдельного решения администратора.
  */
 export const McpEnvSchema = z.object({
   /** Включён ли MCP-адаптер (default false; пустая строка — «не задано», KI-084). */
@@ -650,6 +655,22 @@ export const McpEnvSchema = z.object({
   ),
   /** JSON-реестр MCP-серверов (default `{}`). Парсинг — в S6, сейчас строка. */
   MCP_SERVERS: z.string().default('{}'),
+  /**
+   * Разрешён ли `stdio`-транспорт MCP (v0.12 S4, KI-526; default false).
+   *
+   * `stdio` — это запуск **локального процесса** по конфигурации из
+   * `MCP_SERVERS`, то есть потенциальный RCE: включать только осознанно и
+   * только на доверенной инсталляции (DESIGN v0.12 § 3.3.3). Разбор строгий,
+   * как у `MCP_ENABLED` (RULES 4.35): `z.coerce.boolean()` превратил бы `'false'`
+   * в `true` и открыл запуск процессов «сам».
+   */
+  MCP_ENABLE_STDIO: z.preprocess(
+    emptyToUndefined,
+    z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+  ),
   /** Таймаут подключения к MCP-серверу, мс (default 10000, 1000–60000). */
   MCP_CONNECT_TIMEOUT_MS: z
     .preprocess(

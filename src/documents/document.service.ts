@@ -235,8 +235,13 @@ const TABLE_SEPARATOR_CELL_PATTERN = /^:?-{3,}:?$/;
 const INLINE_PATTERN =
   /`([^`\n]+)`|\[([^\]\n]+)\]\(([^)\s]+)\)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|(?<!\w)\*([^*\n]+)\*(?!\w)|(?<!\w)_([^_\n]+)_(?!\w)/g;
 
-/** Фрагмент инлайн-текста с применённым форматированием. */
-interface InlineSegment {
+/**
+ * Фрагмент инлайн-текста с применённым форматированием.
+ *
+ * Экспортируется для PDF-рендерера (v0.12 S1): DOCX и PDF обязаны разбирать
+ * Markdown одинаково, поэтому парсер инлайн-разметки один на два рендерера.
+ */
+export interface InlineSegment {
   /** Текст фрагмента. */
   readonly text: string;
   /** Полужирный. */
@@ -306,7 +311,7 @@ function normalizeHeadingLevel(level: number): DocumentHeadingLevel {
  * @param text - строка с разметкой
  * @returns фрагменты в исходном порядке (минимум один, возможно пустой)
  */
-function splitInlineMarkdown(text: string): InlineSegment[] {
+export function splitInlineMarkdown(text: string): InlineSegment[] {
   const segments: InlineSegment[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;

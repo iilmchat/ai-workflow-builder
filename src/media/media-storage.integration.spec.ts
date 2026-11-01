@@ -15,6 +15,7 @@ import { SafeHttpClient } from '../common/http/safe-http.client.js';
 import * as schema from '../db/schema.js';
 import { nodeRuns, workflowRuns, workflows } from '../db/schema.js';
 import { AgentService } from '../agent/agent.service.js';
+import { PdfRenderer } from '../documents/pdf-renderer.service.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import { EngineService } from '../engine/engine.service.js';
 import type { GraphDto, NodeDto } from '../engine/dto/index.js';
@@ -190,6 +191,14 @@ describe.skipIf(!process.env.DATABASE_URL)(
               generateDocxFromJsonAsync: vi.fn() 
             },
           },          
+          // v0.12 S1: PDF-рендерер document_gen (в графе не используется).
+          {
+            provide: PdfRenderer,
+            useValue: {
+              renderFromMarkdownAsync: vi.fn(),
+              renderFromJsonAsync: vi.fn(),
+            },
+          },
           EngineService,
           MediaNodeExecutor,
           { provide: DRIZZLE, useValue: dbHandle },

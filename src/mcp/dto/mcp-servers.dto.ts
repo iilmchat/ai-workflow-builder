@@ -53,8 +53,14 @@ export const McpServerStatusSchema = z.enum(['ok', 'error', 'disabled']);
 /** Статус MCP-сервера. */
 export type McpServerStatus = z.infer<typeof McpServerStatusSchema>;
 
-/** Транспорт MCP-сервера (`http` — Streamable HTTP, `sse` — устаревший SSE). */
-export const McpTransportSchema = z.enum(['http', 'sse']);
+/**
+ * Транспорт MCP-сервера.
+ *
+ * `http` — Streamable HTTP, `sse` — устаревший SSE, `stdio` — локальный
+ * процесс MCP-сервера (v0.12 S4, KI-526). Значение приходит из операторского
+ * `MCP_SERVERS` и никак не влияет на форму ответа.
+ */
+export const McpTransportSchema = z.enum(['http', 'sse', 'stdio']);
 
 /** Транспорт MCP-сервера. */
 export type McpTransport = z.infer<typeof McpTransportSchema>;

@@ -10,6 +10,8 @@ import { DRIZZLE, type Database } from '../db/db.module.js';
 import { workflowRuns, type RunStatus } from '../db/schema.js';
 import { AgentService } from '../agent/agent.service.js';
 import { DocumentService } from '../documents/document.service.js';
+// v0.12 S1: PDF-рендерер узла document_gen (в этом спеке не выполняется).
+import { PdfRenderer } from '../documents/pdf-renderer.service.js';
 // v0.11 S4: зависимости template-режима узла document_gen.
 import { DocumentTemplateService } from '../documents/document-template.service.js';
 import { DocumentTemplatesService } from '../documents/document-templates.service.js';
@@ -581,6 +583,15 @@ describe('ExecutionEngineService', () => {
           useValue: {
             generateDocxFromMarkdownAsync: documentFromMarkdown,
             generateDocxFromJsonAsync: documentFromJson,
+          },
+        },
+        // v0.12 S1: второй рендерер document_gen. PDF в этом спеке не
+        // генерируется, заглушка нужна только для сборки DI-графа.
+        {
+          provide: PdfRenderer,
+          useValue: {
+            renderFromMarkdownAsync: vi.fn(),
+            renderFromJsonAsync: vi.fn(),
           },
         },
         {

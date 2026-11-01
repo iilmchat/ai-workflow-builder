@@ -2,6 +2,8 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v0.12.0 | S1-S2 | PDF Generator: `PdfRenderer` (pdfkit + NotoSans), `document_gen` format, UI | 2026-11-02 | [S1-S2-pdf.md](v0.12.0/S1-S2-pdf.md) |
+| v0.12.0 | S3-S4 | SafeHttpClient Binary (KI-525) + MCP stdio Transport (KI-526) | 2026-11-02 | [S3-S4-infra-mcp.md](v0.12.0/S3-S4-infra-mcp.md) |
 | v0.11.1 | S1 | Hardening: KI-500 (SDK retries) + KI-418 (image_tool) | 2026-10-19 | [S1-hardening.md](v0.11.1/S1-hardening.md) |
 | v0.11.1 | S2 | OpenAI Images: `applyToolAsync` через `/v1/images/edits` | 2026-10-19 | [S2-openai-images.md](v0.11.1/S2-openai-images.md) |
 | v0.11.1 | S17 | Release Prep: версии 0.11.1, CHANGELOG, метрики, финальные гейты | 2026-10-19 | [S17-release.md](v0.11.1/S17-release.md) |

@@ -169,6 +169,10 @@ describe('DocumentGenNode — inline-режим (v0.10 S6)', () => {
     expect(
       screen.getByLabelText(ru['node.document_gen.source']),
     ).toHaveValue('markdown');
+    // v0.12 S1: формат по умолчанию — DOCX (старые графы без поля).
+    expect(
+      screen.getByLabelText(ru['node.document_gen.format']),
+    ).toHaveValue('docx');
     expect(
       screen.getByLabelText(ru['node.document_gen.content']),
     ).toHaveValue('');
@@ -188,6 +192,35 @@ describe('DocumentGenNode — inline-режим (v0.10 S6)', () => {
 
     await waitFor(() => {
       expect(flow?.getNode(NODE_ID)?.data.source).toBe('json');
+    });
+  });
+
+  it('селект формата записывает data.format=pdf (v0.12 S1)', async () => {
+    renderNode(documentData());
+
+    const select = screen.getByLabelText(ru['node.document_gen.format']);
+
+    // data-атрибут для smoke.
+    expect(select).toHaveAttribute('data-document-gen-format');
+    expect(select).toHaveValue('docx');
+
+    fireEvent.change(select, { target: { value: 'pdf' } });
+
+    await waitFor(() => {
+      expect(flow?.getNode(NODE_ID)?.data.format).toBe('pdf');
+    });
+  });
+
+  it('переключение в template сбрасывает формат на DOCX (шаблоны только DOCX)', async () => {
+    renderNode(documentData({ format: 'pdf' }));
+
+    fireEvent.change(screen.getByLabelText(ru['node.document_gen.mode']), {
+      target: { value: 'template' },
+    });
+
+    await waitFor(() => {
+      expect(flow?.getNode(NODE_ID)?.data.mode).toBe('template');
+      expect(flow?.getNode(NODE_ID)?.data.format).toBe('docx');
     });
   });
 
@@ -247,6 +280,51 @@ describe('DocumentGenNode — inline-режим (v0.10 S6)', () => {
       '/media/file/run-1/generated-document-gen-1.docx',
     );
     expect(link).toHaveAttribute('download', 'generated-document-gen-1.docx');
+  });
+
+  it('для PDF показывает «Скачать PDF» и .pdf в download (v0.12 S1)', () => {
+    useWorkflowStore.setState({
+      nodeOutputs: {
+        [NODE_ID]: {
+          storedUrl: '/media/file/run-1/generated-document-gen-1.pdf',
+          fileName: 'generated-document-gen-1.pdf',
+          format: 'pdf',
+          mimeType: 'application/pdf',
+        },
+      },
+    });
+
+    renderNode(documentData({ format: 'pdf' }));
+
+    const link = screen.getByRole('link', {
+      name: ru['node.document_gen.downloadPdf'],
+    });
+
+    expect(link).toHaveAttribute(
+      'href',
+      '/media/file/run-1/generated-document-gen-1.pdf',
+    );
+    expect(link).toHaveAttribute('download', 'generated-document-gen-1.pdf');
+    expect(link).toHaveAttribute('data-document-gen-output-format', 'pdf');
+  });
+
+  it('без fileName подставляет document.pdf для PDF-выхода', () => {
+    useWorkflowStore.setState({
+      nodeOutputs: {
+        [NODE_ID]: {
+          storedUrl: '/media/file/run-1/generated-document-gen-1.pdf',
+          format: 'pdf',
+        },
+      },
+    });
+
+    renderNode(documentData({ format: 'pdf' }));
+
+    expect(
+      screen.getByRole('link', {
+        name: ru['node.document_gen.downloadPdf'],
+      }),
+    ).toHaveAttribute('download', 'document.pdf');
   });
 
   it('принимает fallback-ключ url из outputs', () => {

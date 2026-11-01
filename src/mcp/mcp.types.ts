@@ -65,8 +65,8 @@ export const MCP_CLIENT_VERSION = process.env.npm_package_version ?? '0.0.0';
 /** Имя клиента в `Implementation` MCP. */
 export const MCP_CLIENT_NAME = 'workflow-builder';
 
-/** Транспорт MCP-сервера: Streamable HTTP или устаревший SSE (DESIGN § 3.2.1). */
-export type McpTransportKind = 'http' | 'sse';
+/** Транспорт MCP-сервера: Streamable HTTP, устаревший SSE или локальный stdio. */
+export type McpTransportKind = 'http' | 'sse' | 'stdio';
 
 /** Ссылка узла на MCP-инструмент: имя сервера + имя инструмента (DESIGN § 3.2.5). */
 export interface McpToolRef {

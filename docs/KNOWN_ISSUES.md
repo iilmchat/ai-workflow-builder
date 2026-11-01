@@ -7426,9 +7426,13 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-463 — PDF-режим `document_gen` не реализован в S6 (Low)
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
-- **Запланировано:** v0.10.x
-- **Файлы:** `src/engine/node-executors.ts`,
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Обнаружено:** 2026-10-18
+- **Исправлено в:** v0.12.0 (S1) — `PdfRenderer` на `pdfkit` + NotoSans
+  (`src/documents/pdf-renderer.service.ts`); исполнитель выбирает рендерер по
+  `format`, сохраняет `.pdf` с `mimeType: application/pdf`; в UI добавлен
+  селект DOCX/PDF. Тесты: `pdf-renderer.service.spec.ts`,
+  `document-generation-executor.spec.ts`, `DocumentGenNode.spec.tsx`.
+- **Файлы:** `src/engine/node-executors.ts`, `src/documents/pdf-renderer.service.ts`,
   `web/src/components/nodes/DocumentGenNode.tsx`
 - **Описание:** `DocumentGenerationNodeDataSchema` знает `format: 'docx'|'pdf'`
   (DESIGN § 3.2.1/§ 3.2.3), но `DocumentService` S3 умеет только DOCX.
@@ -7470,7 +7474,7 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-465 — `data.title` игнорируется в Markdown-режиме `document_gen` (Low)
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-10-18
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Исправлено в:** v0.12.0 (S1) | **Обнаружено:** 2026-10-18
 - **Запланировано:** v0.10.x
 - **Файлы:** `src/engine/node-executors.ts`,
   `src/documents/document.service.ts`
@@ -8237,7 +8241,7 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-525 — Скачивание входа OpenAI Images без pinning DNS
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-19
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Исправлено в:** v0.12.0 (S3) | **Обнаружено:** 2026-10-19
 - **Файлы:** `src/media/providers/openai-images.provider.ts`
 - **Описание:** `applyToolAsync` скачивает входное изображение обычным `fetch`.
   До вызова проверяются metadata/локальные имена, приватные IP-литералы,
@@ -8251,18 +8255,33 @@ MediaModelInfo, engine-DTO
 
 ---
 
-## Сводка по статусам
+### KI-527 — PDF-рендер GFM-таблиц плоским текстом (Low)
+- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-02
+- **Файлы:** `src/documents/pdf-renderer.service.ts`
+- **Описание:** DOCX-рендерер (`DocumentService`) рисует GFM-таблицы сеткой с
+  шапкой, а `PdfRenderer` v0.12 S1 выводит заголовки и строки через ` | ` без
+  ячеек и границ. Данные в PDF не теряются, но документ визуально отличается
+  от DOCX и не переносится по колонкам. DESIGN § 3.1.2 не требует таблиц в
+  PDF, поэтому это задокументированное ограничение, а не регресс.
+- **Решение:** при необходимости — PDFKit `table` (в форке/плагине) либо
+  ручная сетка с расчётом ширин колонок и переносом ячеек; проверять на
+  длинных кириллических ячейках.
+- **Связанные:** KI-463, DESIGN v0.12 § 3.1.2.
+
+---
+
+
 
 | Статус | Кол-во |
 |--------|--------|
-| Fixed | 229 |
+| Fixed | 230 |
 | In Progress | 0 |
 | Planned | 1 |
 | Deferred | 1 |
-| Documented | 8 |
-| Open | 270 |
+| Documented | 9 |
+| Open | 269 |
 | Won't Fix | 4 |
-| **Всего** | **513** |
+| **Всего** | **514** |
 
 ---
 
@@ -8282,3 +8301,42 @@ MediaModelInfo, engine-DTO
    историческими идентификаторами фич, а не ссылками на реестр.**
    Перед использованием любого «предложенного» номера — сверить
    с реестром (RULES § 3.18, KI-209).
+
+
+### KI-527 — PDF-рендер GFM-таблиц плоским текстом
+- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-02
+- **Файлы:** `src/documents/pdf-renderer.service.ts`
+- **Описание:** В DOCX таблицы рисуются сеткой, а в PDF выводятся плоским текстом через `|`. Данные не теряются.
+- **Решение:** реализовать сетку в v0.13.
+
+### KI-528 — `SafeHttpClient.discardAsync` ронял процесс на редиректе
+- **Приоритет:** 🔴 High | **Статус:** Fixed | **Обнаружено:** 2026-11-02
+- **Файлы:** `src/common/http/safe-http.client.ts`, `src/common/http/safe-http.client.spec.ts`
+- **Описание:** `undici` 8 эмитит `RequestAbortedError` на непрочитанном теле. Без слушателя — uncaught exception и падение бэкенда.
+- **Решение:** `discardBodyAsync` ставит слушатель `error` до `destroy()`. Найдено smoke-тестом S3.
+
+### KI-529 — MCP `stdio`: нет способа передать env-переменные
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-11-02
+- **Файлы:** `src/mcp/mcp.config.ts`, `src/mcp/mcp-client.service.ts`
+- **Описание:** Серверы, которым нужен токен (GitHub, БД), нельзя запустить без записи секрета в JSON.
+- **Решение:** `MCP_STDIO_ENV_ALLOWLIST` в v0.13.
+
+### KI-530 — MCP `stdio`: нет изоляции процесса
+- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-11-02
+- **Файлы:** `src/mcp/mcp.config.ts`
+- **Описание:** Нет `cwd`, лимитов памяти/CPU. Denylist — эвристика. Защита только через `docker run`.
+- **Решение:** обязательный `cwd`, лимиты `MCP_STDIO_MAX_*` в v0.13.
+
+### KI-531 — UI не различает `stdio`-транспорт MCP-сервера
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-11-02
+- **Файлы:** `web/src/lib/api.ts`, `web/src/components/nodes/AgentNode.tsx`
+- **Описание:** В UI нет бейджа/подписи, что сервер запущен локально.
+- **Решение:** добавить бейдж `LOCAL` и i18n-строки.
+
+### KI-532 — `isPidAlive` трактует `EPERM` как «процесс мёртв»
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-11-02
+- **Файлы:** `src/mcp/mcp-client.service.ts`
+- **Описание:** `process.kill(pid, 0)` при `EPERM` возвращает false → `SIGKILL` не отправляется, возможен orphan.
+- **Решение:** различать `ESRCH` (мёртв) и `EPERM` (жив).
+
+## Сводка по статусам

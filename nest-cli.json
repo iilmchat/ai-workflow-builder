@@ -9,6 +9,11 @@
         "include": "templates/**/*.json",
         "outDir": "dist",
         "watchAssets": true
+      },
+      {
+        "include": "documents/assets/**/*",
+        "outDir": "dist",
+        "watchAssets": true
       }
     ]
   }

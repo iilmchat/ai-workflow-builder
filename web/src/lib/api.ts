@@ -161,8 +161,13 @@ export const McpToolSummarySchema = z.object({
 /** MCP-инструмент в каталоге (`GET /mcp/servers`). */
 export type McpToolSummary = z.infer<typeof McpToolSummarySchema>;
 
-/** Транспорт MCP-сервера (как на backend). */
-export const McpTransportSchema = z.enum(['http', 'sse']);
+/**
+ * Транспорт MCP-сервера (как на backend).
+ *
+ * `stdio` добавлен в v0.12 S4 (KI-526): сервер, запущенный локальным
+ * процессом, тоже виден в каталоге `GET /mcp/servers`.
+ */
+export const McpTransportSchema = z.enum(['http', 'sse', 'stdio']);
 
 /** Статус MCP-сервера: каталог доступен, ошибка подключения или сервер выключен. */
 export const McpServerStatusSchema = z.enum(['ok', 'error', 'disabled']);

@@ -4,6 +4,7 @@ import { DocumentTemplateService } from './document-template.service.js';
 import { DocumentTemplatesController } from './document-templates.controller.js';
 import { DocumentTemplatesService } from './document-templates.service.js';
 import { DocumentService } from './document.service.js';
+import { PdfRenderer } from './pdf-renderer.service.js';
 
 /**
  * Модуль генерации документов (v0.10 S6; шаблоны — v0.11 S2/S3).
@@ -18,6 +19,9 @@ import { DocumentService } from './document.service.js';
  * Модуль экспортирует сервисы: `RunsModule` собирает `ExecutionEngineService`
  * и передаёт их исполнителям. `AuthModule` импортируется ради `JwtAuthGuard`
  * контроллера шаблонов (guard инжектит `JwtService`/`ConfigService`).
+ *
+ * v0.12 S1 (DESIGN § 3.1.3): `PdfRenderer` — чистый рендерер Markdown/JSON →
+ * PDF; движок передаёт его исполнителю `document_gen` для `format='pdf'`.
  */
 @Module({
   imports: [AuthModule],
@@ -26,7 +30,13 @@ import { DocumentService } from './document.service.js';
     DocumentService,
     DocumentTemplateService,
     DocumentTemplatesService,
+    PdfRenderer,
   ],
-  exports: [DocumentService, DocumentTemplateService, DocumentTemplatesService],
+  exports: [
+    DocumentService,
+    DocumentTemplateService,
+    DocumentTemplatesService,
+    PdfRenderer,
+  ],
 })
 export class DocumentsModule {}

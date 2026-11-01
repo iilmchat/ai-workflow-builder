@@ -6,6 +6,7 @@
  * DNS-резолв, pinning IP (rebinding), ручная обработка каждого `Location`,
  * лимит хопов, лимит тела и объединение таймаута с сигналом вызова.
  */
+import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import type { Agent } from 'undici';
 import {
@@ -19,6 +20,7 @@ import {
   SafeHttpDnsException,
   SafeHttpResponseTooLargeException,
   createPinnedLookup,
+  discardBodyAsync,
   type SafeHttpTransportAsync,
   type SafeHttpTransportInit,
   type SafeHttpTransportResponse,
@@ -47,6 +49,31 @@ function transportResponse(
 ): SafeHttpTransportResponse {
   const bytes = Buffer.from(body, 'utf8');
 
+  return {
+    status,
+    headers: new Headers(headers),
+    body: (async function* stream(): AsyncGenerator<Uint8Array> {
+      if (bytes.length > 0) {
+        yield bytes;
+      }
+    })(),
+    discardAsync: (): Promise<void> => Promise.resolve(),
+  };
+}
+
+/**
+ * Собирает ответ транспорта из байтов (бинарное тело).
+ *
+ * @param bytes - тело ответа байтами
+ * @param headers - заголовки (например `content-type`)
+ * @param status - HTTP-код
+ * @returns ответ транспорта
+ */
+function binaryTransportResponse(
+  bytes: Buffer,
+  headers: Record<string, string> = {},
+  status = 200,
+): SafeHttpTransportResponse {
   return {
     status,
     headers: new Headers(headers),
@@ -564,5 +591,177 @@ describe('SafeHttpClient — запрос, редиректы и таймаут'
     ).rejects.toBeInstanceOf(SsrfBlockedException);
 
     expect(transportAsync).not.toHaveBeenCalled();
+  });
+});
+
+describe('SafeHttpClient — бинарный ответ (v0.12 S3, KI-525)', () => {
+  /** Все 256 значений байта: любой UTF-8-проход по такому телу данные испортит. */
+  const BINARY_BYTES = Buffer.from(
+    Array.from({ length: 256 }, (_, index) => index),
+  );
+
+  it('возвращает байты без декодирования и Content-Type', async () => {
+    const { client } = createClient(() =>
+      binaryTransportResponse(BINARY_BYTES, { 'content-type': 'image/png' }),
+    );
+
+    const response = await client.fetchBufferAsync(
+      request({ url: 'https://cdn.example/photo.png' }),
+    );
+
+    // Байт-в-байт: `toString('utf8')` превратил бы 0x80–0xFF в символы
+    // замены и сломал PNG/JPEG.
+    expect(Buffer.compare(response.buffer, BINARY_BYTES)).toBe(0);
+    expect(response.buffer).toHaveLength(256);
+    expect(response.contentType).toBe('image/png');
+    expect(response.status).toBe(200);
+    expect(response.ok).toBe(true);
+    expect(response.finalUrl).toBe('https://cdn.example/photo.png');
+  });
+
+  it('Content-Type с параметрами сохраняется как есть, отсутствие — пустая строка', async () => {
+    const { client } = createClient((call) =>
+      call.url.pathname === '/with-charset'
+        ? binaryTransportResponse(BINARY_BYTES, {
+            'content-type': 'image/jpeg; charset=binary',
+          })
+        : binaryTransportResponse(BINARY_BYTES),
+    );
+
+    const withCharset = await client.fetchBufferAsync(
+      request({ url: 'https://cdn.example/with-charset' }),
+    );
+    const withoutHeader = await client.fetchBufferAsync(
+      request({ url: 'https://cdn.example/no-header' }),
+    );
+
+    expect(withCharset.contentType).toBe('image/jpeg; charset=binary');
+    expect(withoutHeader.contentType).toBe('');
+  });
+
+  it('4xx не бросается: статус и тело доступны вызывающему коду', async () => {
+    const errorBody = Buffer.from('{"error":{"message":"not found"}}', 'utf8');
+    const { client } = createClient(() =>
+      binaryTransportResponse(errorBody, { 'content-type': 'application/json' }, 404),
+    );
+
+    const response = await client.fetchBufferAsync(
+      request({ url: 'https://cdn.example/missing.png' }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.ok).toBe(false);
+    expect(response.buffer.toString('utf8')).toContain('not found');
+  });
+
+  it('тело больше maxResponseBytes — ResponseTooLarge, а не «обрезанное»', async () => {
+    const { client } = createClient(() =>
+      binaryTransportResponse(Buffer.alloc(4_000, 0x89)),
+    );
+
+    await expect(
+      client.fetchBufferAsync(
+        request({ url: 'https://cdn.example/big.png', maxResponseBytes: 3_999 }),
+      ),
+    ).rejects.toBeInstanceOf(SafeHttpResponseTooLargeException);
+  });
+
+  it('тело ровно по лимиту пропускается', async () => {
+    const exactlyLimit = Buffer.alloc(4_096, 0x89);
+    const { client } = createClient(() =>
+      binaryTransportResponse(exactlyLimit),
+    );
+
+    const response = await client.fetchBufferAsync(
+      request({ url: 'https://cdn.example/exact.png', maxResponseBytes: 4_096 }),
+    );
+
+    expect(response.buffer).toHaveLength(4_096);
+  });
+
+  it('SSRF: приватный адрес и metadata блокируются до сетевого вызова', async () => {
+    const { client, transportAsync, lookupAsync } = createClient(() =>
+      binaryTransportResponse(BINARY_BYTES),
+    );
+
+    for (const url of [
+      'http://127.0.0.1/photo.png',
+      'http://169.254.169.254/latest/meta-data',
+      'http://localhost/photo.png',
+    ]) {
+      await expect(client.fetchBufferAsync(request({ url }))).rejects.toBeInstanceOf(
+        SsrfBlockedException,
+      );
+    }
+
+    expect(transportAsync).not.toHaveBeenCalled();
+    expect(lookupAsync).not.toHaveBeenCalled();
+  });
+
+  it('редирект на приватный адрес блокируется, безопасный — переходит', async () => {
+    const { client, transportAsync } = createClient((call) => {
+      if (call.url.pathname === '/start') {
+        return binaryTransportResponse(Buffer.alloc(0), {
+          location: 'https://cdn.example/final.png',
+        }, 302);
+      }
+
+      if (call.url.pathname === '/final.png') {
+        return binaryTransportResponse(BINARY_BYTES, {
+          'content-type': 'image/png',
+        });
+      }
+
+      return binaryTransportResponse(Buffer.alloc(0), {
+        location: 'http://10.0.0.5/internal.png',
+      }, 302);
+    });
+
+    const response = await client.fetchBufferAsync(
+      request({ url: 'https://cdn.example/start' }),
+    );
+
+    expect(response.finalUrl).toBe('https://cdn.example/final.png');
+    expect(response.buffer).toHaveLength(256);
+
+    await expect(
+      client.fetchBufferAsync(request({ url: 'https://cdn.example/evil' })),
+    ).rejects.toBeInstanceOf(SsrfBlockedException);
+    // Хоп на приватный адрес не выполнялся: 2 запроса (start + final) + 1 (evil).
+    expect(transportAsync).toHaveBeenCalledTimes(3);
+  });
+
+  it('maxRedirects: 0 запрещает любой редирект (входной файл не уводим)', async () => {
+    const { client } = createClient(() =>
+      binaryTransportResponse(Buffer.alloc(0), {
+        location: 'https://cdn.example/final.png',
+      }, 302),
+    );
+
+    await expect(
+      client.fetchBufferAsync(
+        request({ url: 'https://cdn.example/start', maxRedirects: 0 }),
+      ),
+    ).rejects.toBeInstanceOf(TooManyRedirectsException);
+  });
+});
+
+
+describe('discardBodyAsync — освобождение непрочитанного тела (KI-527)', () => {
+  it('гасит RequestAbortedError, который undici эмитит при destroy()', async () => {
+    /** Поток, который, как `undici.BodyReadable`, эмитит `error` на destroy. */
+    class AbortingBody extends EventEmitter {
+      destroyed = false;
+
+      destroy(): void {
+        this.destroyed = true;
+        this.emit('error', new Error('RequestAbortedError'));
+      }
+    }
+
+    const body = new AbortingBody();
+
+    await expect(discardBodyAsync(body)).resolves.toBeUndefined();
+    expect(body.destroyed).toBe(true);
   });
 });

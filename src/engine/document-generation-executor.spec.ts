@@ -18,6 +18,7 @@ import {
   type DocumentGenerator,
   type DocumentTemplateLoader,
   type DocumentTemplateRenderer,
+  type PdfGenerator,
 } from './node-executors.js';
 import {
   DocumentStorageUnavailableException,
@@ -49,6 +50,9 @@ const STORED_URL = `/media/file/${STORAGE_KEY}`;
 
 /** Минимальный буфер, который изображает DOCX (содержимое в тесте не важно). */
 const DOCX_BUFFER = Buffer.from('PK\u0003\u0004fake-docx');
+
+/** Минимальный буфер с настоящей сигнатурой PDF (v0.12 S1). */
+const PDF_BUFFER = Buffer.from('%PDF-1.7 fake-pdf');
 
 /** Содержимое загруженного шаблона. */
 const TEMPLATE_CONTENT = Buffer.from('PK\u0003\u0004template-docx');
@@ -91,6 +95,30 @@ function createDocumentService(buffer: Buffer = DOCX_BUFFER): {
 }
 
 /**
+ * Создаёт мок `PdfRenderer` (v0.12 S1).
+ *
+ * @param buffer - что вернёт рендерер
+ * @returns рендерер и моки его методов
+ */
+function createPdfRenderer(buffer: Buffer = PDF_BUFFER): {
+  renderer: PdfGenerator;
+  fromMarkdown: ReturnType<typeof vi.fn>;
+  fromJson: ReturnType<typeof vi.fn>;
+} {
+  const fromMarkdown = vi.fn((_markdown: string) => Promise.resolve(buffer));
+  const fromJson = vi.fn((_json: unknown) => Promise.resolve(buffer));
+
+  return {
+    renderer: {
+      renderFromMarkdownAsync: fromMarkdown,
+      renderFromJsonAsync: fromJson,
+    },
+    fromMarkdown,
+    fromJson,
+  };
+}
+
+/**
  * Создаёт мок хранилища.
  *
  * @param options - переопределения результата/бэкенда
@@ -109,14 +137,19 @@ function createStorage(
   const save = vi.fn(
     (
       _buffer: Buffer,
-      _extension: string,
-      _runId: string,
-      _nodeId: string,
-    ): Promise<{ url: string | null; key: string | null }> =>
-      Promise.resolve({
-        url: options.url === undefined ? STORED_URL : options.url,
-        key: options.key === undefined ? STORAGE_KEY : options.key,
-      }),
+      extension: string,
+      runId: string,
+      nodeId: string,
+    ): Promise<{ url: string | null; key: string | null }> => {
+      // Хранилище строит ключ из расширения (DESIGN § 3.1.3): тест PDF обязан
+      // видеть `.pdf` в key/fileName, а не захардкоженный `.docx`.
+      const key = `${runId}/generated-${nodeId}.${extension}`;
+
+      return Promise.resolve({
+        url: options.url === undefined ? `/media/file/${key}` : options.url,
+        key: options.key === undefined ? key : options.key,
+      });
+    },
   );
 
   return {
@@ -179,6 +212,7 @@ function createRenderer(
 function createDeps(
   options: {
     generator?: DocumentGenerator;
+    pdfRenderer?: PdfGenerator;
     storage?: DocumentGenerationStorage;
     loader?: DocumentTemplateLoader;
     renderer?: DocumentTemplateRenderer;
@@ -187,6 +221,7 @@ function createDeps(
 ): DocumentGenerationDeps {
   return {
     documentService: options.generator ?? createDocumentService().generator,
+    pdfRenderer: options.pdfRenderer ?? createPdfRenderer().renderer,
     mediaStorage: options.storage ?? createStorage().storage,
     templateLoader: options.loader ?? createLoader().loader,
     templateRenderer: options.renderer ?? createRenderer().renderer,
@@ -363,20 +398,117 @@ describe('executeDocumentGenerationNodeAsync — inline (v0.10 S6)', () => {
     expect(fromJson).not.toHaveBeenCalled();
   });
 
-  it('PDF пока не поддержан — явная ошибка, а не подмена формата', async () => {
-    const { generator, fromMarkdown } = createDocumentService();
+  it('PDF-формат без поддержки рендерера больше не отвергается (v0.12 S1)', async () => {
+    const { generator, fromMarkdown, fromJson } = createDocumentService();
+    const { renderer, fromMarkdown: pdfFromMarkdown } = createPdfRenderer();
     const { storage } = createStorage();
 
-    await expect(
-      executeDocumentGenerationNodeAsync(
-        documentNode({ format: 'pdf', source: 'markdown' }),
-        { prompt: '# Документ' },
-        RUN_ID,
-        createDeps({ generator, storage }),
-      ),
-    ).rejects.toThrow(/pdf/);
+    await executeDocumentGenerationNodeAsync(
+      documentNode({ format: 'pdf', source: 'markdown' }),
+      { prompt: '# Документ' },
+      RUN_ID,
+      createDeps({
+        generator,
+        pdfRenderer: renderer,
+        storage,
+      }),
+    );
 
+    // DOCX-рендерер не должен вызываться: формат выбирает рендерер.
     expect(fromMarkdown).not.toHaveBeenCalled();
+    expect(fromJson).not.toHaveBeenCalled();
+    expect(pdfFromMarkdown).toHaveBeenCalledWith('# Документ');
+  });
+});
+
+describe('executeDocumentGenerationNodeAsync — PDF (v0.12 S1)', () => {
+  it('Markdown → PdfRenderer, ключ .pdf и mimeType application/pdf', async () => {
+    const { generator, fromMarkdown } = createDocumentService();
+    const { renderer, fromMarkdown: pdfFromMarkdown, fromJson } =
+      createPdfRenderer();
+    const { storage, save } = createStorage();
+
+    const result = await executeDocumentGenerationNodeAsync(
+      documentNode({ format: 'pdf', source: 'markdown' }),
+      { prompt: '# Отчёт\n\nКириллица' },
+      RUN_ID,
+      createDeps({ generator, pdfRenderer: renderer, storage }),
+    );
+
+    expect(pdfFromMarkdown).toHaveBeenCalledWith('# Отчёт\n\nКириллица');
+    expect(fromMarkdown).not.toHaveBeenCalled();
+    expect(fromJson).not.toHaveBeenCalled();
+    // Расширение в ключе хранилища — `.pdf`, иначе скачается .docx с PDF внутри.
+    expect(save).toHaveBeenCalledWith(PDF_BUFFER, 'pdf', RUN_ID, NODE_ID);
+    expect(result.storageKey).toBe(`${RUN_ID}/generated-${NODE_ID}.pdf`);
+    expect(result.outputs).toEqual({
+      fileUrl: `/media/file/${RUN_ID}/generated-${NODE_ID}.pdf`,
+      storedUrl: `/media/file/${RUN_ID}/generated-${NODE_ID}.pdf`,
+      storedExpiresAt: null,
+      fileName: `generated-${NODE_ID}.pdf`,
+      mimeType: 'application/pdf',
+      bytes: PDF_BUFFER.byteLength,
+      format: 'pdf',
+    });
+  });
+
+  it('JSON → PdfRenderer, title из data.title сохраняется в PDF-документе', async () => {
+    const { generator, fromJson } = createDocumentService();
+    const { renderer, fromJson: pdfFromJson } = createPdfRenderer();
+    const { storage, save } = createStorage();
+
+    const result = await executeDocumentGenerationNodeAsync(
+      documentNode({
+        format: 'pdf',
+        source: 'json',
+        title: 'Отчёт за квартал',
+        content: '{"blocks":[{"type":"paragraph","text":"Текст"}]}',
+      }),
+      {},
+      RUN_ID,
+      createDeps({ generator, pdfRenderer: renderer, storage }),
+    );
+
+    expect(pdfFromJson).toHaveBeenCalledWith({
+      title: 'Отчёт за квартал',
+      blocks: [{ type: 'paragraph', text: 'Текст' }],
+    });
+    expect(fromJson).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledWith(PDF_BUFFER, 'pdf', RUN_ID, NODE_ID);
+    expect(result.outputs.mimeType).toBe('application/pdf');
+    expect(result.outputs.format).toBe('pdf');
+  });
+
+  it('data.fileName с .docx нормализуется в .pdf', async () => {
+    const { generator } = createDocumentService();
+    const { renderer } = createPdfRenderer();
+    const { storage } = createStorage();
+
+    const result = await executeDocumentGenerationNodeAsync(
+      documentNode({ format: 'pdf', fileName: 'отчёт.docx' }),
+      { prompt: '# Отчёт' },
+      RUN_ID,
+      createDeps({ generator, pdfRenderer: renderer, storage }),
+    );
+
+    expect(result.outputs.fileName).toBe('отчёт.pdf');
+  });
+
+  it('DOCX-формат по умолчанию не трогает PdfRenderer', async () => {
+    const { generator, fromMarkdown } = createDocumentService();
+    const { renderer, fromMarkdown: pdfFromMarkdown } = createPdfRenderer();
+    const { storage, save } = createStorage();
+
+    await executeDocumentGenerationNodeAsync(
+      documentNode({ source: 'markdown' }),
+      { prompt: '# Документ' },
+      RUN_ID,
+      createDeps({ generator, pdfRenderer: renderer, storage }),
+    );
+
+    expect(fromMarkdown).toHaveBeenCalledWith('# Документ');
+    expect(pdfFromMarkdown).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledWith(DOCX_BUFFER, 'docx', RUN_ID, NODE_ID);
   });
 });
 

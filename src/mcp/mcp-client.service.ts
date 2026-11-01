@@ -11,16 +11,34 @@
  * доверенная конфигурация оператора и часто живут на приватных адресах;
  * SSRF-блокировка сломала бы основной сценарий. Защита — allowlist в env,
  * `redirectPolicy: 'same-origin'` и отсутствие URL из графа (DESIGN § 3.2.3).
+ *
+ * **`stdio`-транспорт (v0.12 S4, KI-526).** Сервер с `transport: 'stdio'`
+ * запускается как локальный процесс через `StdioClientTransport` (внутри —
+ * `child_process.spawn` с `shell: false`, `stdio: ['pipe','pipe','pipe']`).
+ * Такой сервер включается только при `MCP_ENABLE_STDIO=true`, команда
+ * проверяется denylist'ом ({@link assertStdioCommandAllowed}), а на остановке
+ * приложения процесс получает `SIGTERM`, затем `SIGKILL` — orphan-процесс не
+ * должен переживать backend (DESIGN § 3.3.2/§ 3.3.3).
  */
 import { Injectable, Logger, type OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import {
+  StdioClientTransport,
+  type StdioServerParameters,
+} from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import type { McpServerConfig } from './mcp.config.js';
-import { readIntegerConfig } from './mcp.config.js';
+import {
+  assertStdioCommandAllowed,
+  isStdioServerConfig,
+  readBooleanConfig,
+  readIntegerConfig,
+  type McpServerConfig,
+  type McpStdioServerConfig,
+} from './mcp.config.js';
 import {
   McpConfigurationException,
   McpToolCallException,
@@ -40,6 +58,17 @@ import {
 } from './mcp.types.js';
 
 /**
+ * Максимальная длина строки `stderr` в логе, символов (v0.12 S4, KI-526).
+ *
+ * MCP-сервер пишет в `stderr` что угодно: прогресс `npx`, стек ошибки, дамп
+ * аргументов. Длинные строки обрезаются, поэтому лог не раздувается и не
+ * уносит пользовательские данные целиком (RULES 5.9). Уровень — `debug`:
+ * `stderr` полезен при разборе «почему сервер не стартовал», но не должен
+ * забивать INFO-лог штатной работы.
+ */
+const MCP_STDIO_STDERR_LINE_MAX = 512;
+
+/**
  * Состояние одного MCP-сервера в процессе.
  *
  * Мутируется только клиентом и только под его контролем: `client`/`transport`
@@ -55,6 +84,13 @@ interface ServerState {
   client: Client | null;
   /** Активный транспорт (нужен для `close()` и сверки `onclose`). */
   transport: Transport | null;
+  /**
+   * PID дочернего процесса для `stdio`-сервера либо `null`.
+   *
+   * SDK не отдаёт `ChildProcess` наружу, только `pid`; по нему и выполняется
+   * эскалация `SIGTERM` → `SIGKILL` при остановке приложения (DESIGN § 3.3.2).
+   */
+  stdioPid: number | null;
   /** Кэш каталога инструментов. */
   tools: McpToolDescriptor[] | null;
   /** Момент истечения кэша каталога (мс, `Date.now()`). */
@@ -75,6 +111,27 @@ interface ServerState {
  */
 function toMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Проверяет, жив ли процесс с заданным PID.
+ *
+ * `process.kill(pid, 0)` не отправляет сигнал, а только проверяет право на
+ * него: `ESRCH` означает «процесса нет». Нужен перед `SIGKILL`, чтобы не
+ * убить чужой процесс, получивший тот же PID после завершения нашего
+ * (PID-reuse, KI-526).
+ *
+ * @param pid - идентификатор процесса
+ * @returns `true`, если процесс ещё существует и доступен
+ */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -164,6 +221,15 @@ export class McpClientService implements OnApplicationShutdown {
   /** Максимум инструментов от одного сервера. */
   private readonly maxToolsPerServer: number;
 
+  /**
+   * Разрешён ли `stdio`-транспорт (`MCP_ENABLE_STDIO`, v0.12 S4).
+   *
+   * Реестр уже отвергает такие серверы на старте, но клиент проверяет флаг
+   * ещё раз: конфигурация могла быть подменена, а запуск процесса — не та
+   * операция, где уместно полагаться на одну проверку (DESIGN § 3.3.3).
+   */
+  private readonly stdioEnabled: boolean;
+
   /** Остановлен ли сервис (после `onApplicationShutdown`). */
   private shuttingDown = false;
 
@@ -202,6 +268,9 @@ export class McpClientService implements OnApplicationShutdown {
       MCP_MAX_TOOLS_PER_SERVER_DEFAULT,
       1,
       500,
+    );
+    this.stdioEnabled = readBooleanConfig(
+      config.get<unknown>('MCP_ENABLE_STDIO'),
     );
   }
 
@@ -390,6 +459,9 @@ export class McpClientService implements OnApplicationShutdown {
 
     state.client = null;
     state.transport = null;
+    // SDK закрывает дочерний процесс вместе с транспортом; повторно убивать
+    // его по старому PID нельзя — он мог достаться другому процессу.
+    state.stdioPid = null;
     state.tools = null;
     state.expiresAt = 0;
 
@@ -402,6 +474,14 @@ export class McpClientService implements OnApplicationShutdown {
   /**
    * Закрывает все транспорты при остановке приложения (RULES 4.12).
    *
+   * Порядок для `stdio`-серверов (v0.12 S4, KI-526):
+   * 1. `SIGTERM` — просим процесс завершиться штатно;
+   * 2. `client.close()` — SDK закрывает `stdin` и, если процесс не вышел за
+   *    2 с, сам шлёт `SIGTERM`, затем `SIGKILL`;
+   * 3. `SIGKILL` — добиваем всё, что ещё живо: orphan-процесс MCP-сервера не
+   *    должен переживать приложение (он держит порты/файлы и мешает
+   *    перезапуску).
+   *
    * @returns Promise, завершающийся после закрытия всех клиентов
    */
   async onApplicationShutdown(): Promise<void> {
@@ -409,6 +489,12 @@ export class McpClientService implements OnApplicationShutdown {
 
     const states = [...this.states.values()];
 
+    // 1) SIGTERM до закрытия потоков: сервер успевает снять свои ресурсы.
+    for (const state of states) {
+      this.signalStdioProcess(state, 'SIGTERM');
+    }
+
+    // 2) Штатное закрытие клиентов (для stdio — ещё и эскалация силами SDK).
     await Promise.all(
       states.map(async (state) => {
         const client = state.client;
@@ -431,6 +517,49 @@ export class McpClientService implements OnApplicationShutdown {
         }
       }),
     );
+
+    // 3) SIGKILL выжившим. `isPidAlive` защищает от PID-reuse: за время
+    // закрытия pid мог достаться чужому процессу.
+    for (const state of states) {
+      const pid = state.stdioPid;
+
+      if (pid !== null && isPidAlive(pid)) {
+        this.signalStdioProcess(state, 'SIGKILL');
+        this.logger.warn(
+          `MCP-сервер '${state.name}': stdio-процесс ${pid} не завершился по SIGTERM, отправлен SIGKILL`,
+        );
+      }
+
+      state.stdioPid = null;
+    }
+  }
+
+  /**
+   * Отправляет сигнал `stdio`-процессу сервера, не пробрасывая ошибки.
+   *
+   * `ESRCH` («процесса уже нет») — нормальный исход остановки, а `EPERM` не
+   * повод ронять shutdown: клиент всё равно попробует `close()`.
+   *
+   * @param state - состояние сервера
+   * @param signal - сигнал (`SIGTERM` или `SIGKILL`)
+   */
+  private signalStdioProcess(state: ServerState, signal: NodeJS.Signals): void {
+    const pid = state.stdioPid;
+
+    if (pid === null) {
+      return;
+    }
+
+    try {
+      process.kill(pid, signal);
+      this.logger.debug(
+        `MCP-сервер '${state.name}': stdio-процесс ${pid} — ${signal}`,
+      );
+    } catch (error: unknown) {
+      this.logger.debug(
+        `MCP-сервер '${state.name}': ${signal} процессу ${pid} не отправлен — ${toMessage(error)}`,
+      );
+    }
   }
 
   /**
@@ -471,6 +600,7 @@ export class McpClientService implements OnApplicationShutdown {
       config,
       client: null,
       transport: null,
+      stdioPid: null,
       tools: null,
       expiresAt: 0,
       connecting: null,
@@ -528,7 +658,11 @@ export class McpClientService implements OnApplicationShutdown {
     let client: Client | null = null;
 
     try {
-      const headers = this.buildHeaders(state);
+      // stdio-серверу HTTP-заголовки не нужны: он не ходит по сети. `tokenEnv`
+      // для него и не задаётся (схема запрещает смешивать транспорты).
+      const headers = isStdioServerConfig(config)
+        ? {}
+        : this.buildHeaders(state);
       client = new Client(
         { name: MCP_CLIENT_NAME, version: MCP_CLIENT_VERSION },
         {
@@ -555,7 +689,7 @@ export class McpClientService implements OnApplicationShutdown {
         },
       );
 
-      const transport = this.createTransport(config, headers);
+      const transport = this.createTransport(state, headers);
       const serverName = state.name;
 
       transport.onclose = (): void => {
@@ -582,6 +716,11 @@ export class McpClientService implements OnApplicationShutdown {
 
       state.client = client;
       state.transport = transport;
+      // PID запоминается сразу после connect: shutdown должен уметь убить
+      // процесс, даже если клиент к этому моменту уже отвалился.
+      state.stdioPid = isStdioServerConfig(config)
+        ? (transport as StdioClientTransport).pid
+        : null;
       state.lastError = null;
 
       this.logger.log(
@@ -592,6 +731,7 @@ export class McpClientService implements OnApplicationShutdown {
     } catch (error: unknown) {
       state.client = null;
       state.transport = null;
+      state.stdioPid = null;
       state.tools = null;
       state.expiresAt = 0;
       state.lastError = toMessage(error);
@@ -628,6 +768,12 @@ export class McpClientService implements OnApplicationShutdown {
    */
   private buildHeaders(state: ServerState): Record<string, string> {
     const config = state.config;
+
+    // stdio-сервер не ходит по HTTP: заголовков и токена у него нет.
+    if (isStdioServerConfig(config)) {
+      return {};
+    }
+
     const headers: Record<string, string> = { ...config.headers };
 
     if (config.tokenEnv !== undefined) {
@@ -649,17 +795,28 @@ export class McpClientService implements OnApplicationShutdown {
   /**
    * Создаёт транспорт по конфигурации сервера.
    *
-   * `redirectPolicy: 'same-origin'` не даёт серверу увести клиента на другой
-   * origin (DESIGN § 3.2.1).
+   * `redirectPolicy: 'same-origin'` не даёт HTTP-серверу увести клиента на
+   * другой origin (DESIGN § 3.2.1). Для `stdio` (v0.12 S4) — локальный
+   * процесс без оболочки: `StdioClientTransport` вызывает
+   * `child_process.spawn(command, args, { shell: false, ... })`, поэтому
+   * метасимволы в аргументах не интерпретируются (DESIGN § 3.3.3).
    *
-   * @param config - конфигурация сервера
-   * @param headers - заголовки (включая bearer-токен)
+   * @param state - состояние сервера (нужны имя для логов и конфигурация)
+   * @param headers - HTTP-заголовки (для `stdio` не используются)
    * @returns транспорт SDK
+   * @throws McpConfigurationException если stdio запрещён флагом или команда
+   *   попала в denylist
    */
   private createTransport(
-    config: McpServerConfig,
+    state: ServerState,
     headers: Record<string, string>,
   ): Transport {
+    const config = state.config;
+
+    if (isStdioServerConfig(config)) {
+      return this.createStdioTransport(state, config);
+    }
+
     const url = new URL(config.url);
     const options = {
       requestInit: { headers },
@@ -669,6 +826,115 @@ export class McpClientService implements OnApplicationShutdown {
     return config.transport === 'http'
       ? new StreamableHTTPClientTransport(url, options)
       : new SSEClientTransport(url, options);
+  }
+
+  /**
+   * Создаёт `stdio`-транспорт и подписывается на `stderr` процесса.
+   *
+   * @param state - состояние сервера
+   * @param config - `stdio`-конфигурация (команда и аргументы)
+   * @returns транспорт SDK
+   * @throws McpConfigurationException если `MCP_ENABLE_STDIO=false` или команда
+   *   запрещена denylist'ом
+   */
+  private createStdioTransport(
+    state: ServerState,
+    config: McpStdioServerConfig,
+  ): StdioClientTransport {
+    if (!this.stdioEnabled) {
+      throw new McpConfigurationException(
+        state.name,
+        'stdio-транспорт выключен (MCP_ENABLE_STDIO=false)',
+      );
+    }
+
+    // Повторная проверка (первая — при разборе реестра): конфигурация могла
+    // измениться после старта, а запуск процесса — не та операция, где
+    // уместно верить одной проверке (DESIGN § 3.3.3).
+    assertStdioCommandAllowed(config.command);
+
+    const params: StdioServerParameters = {
+      command: config.command,
+      args: [...config.args],
+      // `stderr: 'pipe'`: SDK отдаёт PassThrough сразу, поэтому ранние строки
+      // (ошибка `npx`, отсутствующий файл) не теряются до `start()`.
+      stderr: 'pipe',
+    };
+    const transport = new StdioClientTransport(params);
+
+    this.attachStderrLogging(transport, state.name);
+    this.logger.log(
+      `MCP-сервер '${state.name}': stdio-процесс ${config.command} ` +
+        `(аргументов: ${config.args.length})`,
+    );
+
+    return transport;
+  }
+
+  /**
+   * Пишет `stderr` дочернего процесса в Pino (Nest `Logger`) с пометкой сервера.
+   *
+   * Строки режутся по `\n`; остаток длиннее {@link MCP_STDIO_STDERR_LINE_MAX}
+   * сбрасывается принудительно — бесконечная строка без переводов не должна
+   * съесть память. Уровень `debug`: см. комментарий к константе.
+   *
+   * @param transport - `stdio`-транспорт SDK
+   * @param serverName - имя сервера для пометки в логе
+   */
+  private attachStderrLogging(
+    transport: StdioClientTransport,
+    serverName: string,
+  ): void {
+    const stderr = transport.stderr;
+
+    if (stderr === null) {
+      return;
+    }
+
+    let pending = '';
+
+    const flushLine = (line: string): void => {
+      const text = line.trimEnd();
+
+      if (text.length === 0) {
+        return;
+      }
+
+      const shown =
+        text.length > MCP_STDIO_STDERR_LINE_MAX
+          ? `${text.slice(0, MCP_STDIO_STDERR_LINE_MAX)}…`
+          : text;
+
+      this.logger.debug(`MCP-сервер '${serverName}' stderr: ${shown}`);
+    };
+
+    stderr.on('data', (chunk: Buffer | string): void => {
+      pending += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+
+      let newline = pending.indexOf('\n');
+
+      while (newline >= 0) {
+        flushLine(pending.slice(0, newline));
+        pending = pending.slice(newline + 1);
+        newline = pending.indexOf('\n');
+      }
+
+      if (pending.length > MCP_STDIO_STDERR_LINE_MAX) {
+        flushLine(pending);
+        pending = '';
+      }
+    });
+
+    stderr.on('error', (error: Error): void => {
+      this.logger.debug(
+        `MCP-сервер '${serverName}' stderr: ошибка потока — ${error.message}`,
+      );
+    });
+
+    stderr.on('end', (): void => {
+      flushLine(pending);
+      pending = '';
+    });
   }
 
   /**
@@ -691,6 +957,9 @@ export class McpClientService implements OnApplicationShutdown {
 
     state.client = null;
     state.transport = null;
+    // Процесс завершился вместе с транспортом (или будет убит SDK при
+    // `close()`), поэтому PID больше не наш: см. `markDisconnected`.
+    state.stdioPid = null;
     state.tools = null;
     state.expiresAt = 0;
 

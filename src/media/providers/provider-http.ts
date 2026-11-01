@@ -35,11 +35,6 @@ export function isRetryableStatus(status: number): boolean {
 /**
  * Строит ошибку провайдера по не-2xx ответу.
  *
- * Текст от upstream добавляется к сообщению, но не заменяет его: у Replicate и
- * FAL ошибка приходит как `{"detail": "..."}`, у OpenAI — как
- * `{"error": {"message": "..."}}`, и без префикса в логе терялось бы, к какому
- * провайдеру относится сообщение.
- *
  * @param provider - имя провайдера (для префикса исключения)
  * @param action - что делали («не удалось создать задачу»)
  * @param response - ответ с не-2xx статусом
@@ -51,15 +46,71 @@ export async function buildHttpErrorAsync(
   action: string,
   response: Response,
 ): Promise<MediaProviderException> {
-  const details = await readErrorTextAsync(response);
+  return buildHttpErrorStatus(
+    provider,
+    action,
+    response.status,
+    response.headers,
+    await readErrorTextAsync(response),
+  );
+}
+
+/**
+ * Строит ошибку провайдера по не-2xx ответу, тело которого уже прочитано.
+ *
+ * Нужен бинарному пути `SafeHttpClient.fetchBufferAsync` (v0.12 S3, KI-525):
+ * там тело приходит `Buffer`, а не `Response`, но `retryable` и `retryAfterMs`
+ * обязаны считаться **так же**, как у `fetch`-пути — иначе повтор платного
+ * вызова разошёлся бы между провайдерами (KI-040).
+ *
+ * @param provider - имя провайдера (для префикса исключения)
+ * @param action - что делали («не удалось скачать входное изображение»)
+ * @param status - HTTP-статус ответа upstream
+ * @param headers - заголовки ответа (нужен `Retry-After`)
+ * @param rawBody - тело ответа как текст (JSON ошибки либо что угодно)
+ * @returns ошибка с `retryable`/`retryAfterMs`
+ */
+export function buildHttpErrorFromBody(
+  provider: string,
+  action: string,
+  status: number,
+  headers: Headers,
+  rawBody: string,
+): MediaProviderException {
+  return buildHttpErrorStatus(
+    provider,
+    action,
+    status,
+    headers,
+    errorTextFromRaw(rawBody),
+  );
+}
+
+/**
+ * Общая сборка ошибки для `fetch`- и `Buffer`-путей.
+ *
+ * @param provider - имя провайдера
+ * @param action - что делали
+ * @param status - HTTP-статус
+ * @param headers - заголовки ответа
+ * @param details - извлечённый текст ошибки upstream либо `null`
+ * @returns ошибка провайдера с `retryable`/`retryAfterMs`
+ */
+function buildHttpErrorStatus(
+  provider: string,
+  action: string,
+  status: number,
+  headers: Headers,
+  details: string | null,
+): MediaProviderException {
   const suffix = details === null ? '' : `: ${details}`;
-  const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
+  const retryAfterMs = parseRetryAfterMs(headers.get('retry-after'));
 
   return new MediaProviderException(
     provider,
-    `${action} — upstream ответил ${response.status}${suffix}`,
+    `${action} — upstream ответил ${status}${suffix}`,
     {
-      retryable: isRetryableStatus(response.status),
+      retryable: isRetryableStatus(status),
       ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
     },
   );
@@ -77,15 +128,23 @@ export async function buildHttpErrorAsync(
 export async function readErrorTextAsync(
   response: Response,
 ): Promise<string | null> {
+  return errorTextFromRaw(await response.text());
+}
+
+/**
+ * Извлекает текст ошибки из уже прочитанного тела.
+ *
+ * @param raw - тело ответа как текст
+ * @returns текст причины либо `null`, если тело пустое/не JSON/без пояснения
+ */
+function errorTextFromRaw(raw: string): string | null {
+  if (raw.trim().length === 0) {
+    return null;
+  }
+
   let payload: unknown;
 
   try {
-    const raw = await response.text();
-
-    if (raw.trim().length === 0) {
-      return null;
-    }
-
     payload = JSON.parse(raw) as unknown;
   } catch {
     return null;

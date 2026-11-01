@@ -23,6 +23,13 @@
  * стандартный `FormData`, поэтому Content-Type с boundary выставляет сам
  * `fetch`, а не наш код.
  *
+ * **Исключение — входной файл (v0.12 S3, KI-525).** Ссылку на входное
+ * изображение задаёт пользователь графа, поэтому скачивание идёт через
+ * `SafeHttpClient.fetchBufferAsync` (pinning IP + лимит байт), а не через
+ * `fetch`: прямой `fetch` позволяет подменить DNS между проверкой и
+ * скачиванием (DNS rebinding). К запросам к `OPENAI_IMAGES_BASE_URL` (операторская
+ * конфигурация) это не относится — там адрес доверенный.
+ *
  * `isConfigured === client !== null` в терминах R7.3 = «ключ задан»: клиент —
  * это `{ apiKey, baseUrl }`, собранный в конструкторе, и он `null`, если ключа
  * нет (провайдер тогда не регистрируется, RULES 4.6).
@@ -43,6 +50,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { isIP } from 'node:net';
 import {
+  SafeHttpClient,
+  SafeHttpResponseTooLargeException,
+  type SafeHttpBufferResponse,
+} from '../../common/http/safe-http.client.js';
+import {
+  SsrfBlockedException,
   isBlockedHostname,
   isBlockedIpAddress,
   isMetadataHostname,
@@ -71,6 +84,7 @@ import {
 } from './provider-catalog.js';
 import {
   buildHttpErrorAsync,
+  buildHttpErrorFromBody,
   isJsonObject,
   readHttpUrl,
   readNumber,
@@ -234,8 +248,14 @@ export class OpenAiImagesProvider implements IMediaProvider {
 
   /**
    * @param config - доступ к переменным окружения OpenAI Images (RULES 4.6)
+   * @param httpClient - безопасный HTTP-клиент для скачивания входного файла
+   *   (v0.12 S3, KI-525): pinning IP, денлист адресов и лимит байт вместо
+   *   прямого `fetch`
    */
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly httpClient: SafeHttpClient,
+  ) {
     const apiKey =
       config.get<string>('OPENAI_IMAGES_API_KEY') ??
       config.get<string>('OPENAI_API_KEY') ??
@@ -627,10 +647,21 @@ export class OpenAiImagesProvider implements IMediaProvider {
   /**
    * Скачивает входное изображение для `/images/edits` в буфер.
    *
-   * `fetch` с `redirect: 'error'`: редирект на приватный адрес — типичный
-   * обход SSRF-проверки, поэтому цепочка редиректов не поддерживается.
-   * `Content-Length` проверяется до чтения, фактический размер — после:
-   * chunked-ответ может не объявлять длину (RULES 4.19).
+   * Скачивание идёт через `SafeHttpClient.fetchBufferAsync` (v0.12 S3,
+   * KI-525), а не через прямой `fetch`: клиент резолвит домен **один раз**,
+   * проверяет все полученные адреса и прибивает IP в `undici.Agent`
+   * (`connect.lookup`), поэтому подмена DNS между проверкой и соединением
+   * (DNS rebinding) не проходит. Тот же клиент держит лимит
+   * `MAX_TOOL_IMAGE_BYTES` на потоке, а не после `arrayBuffer()`.
+   *
+   * `maxRedirects: 0` сохраняет прежнюю семантику `redirect: 'error'`:
+   * входной файл не уводим редиректом. SSRF-проверка клиента всё равно
+   * закрыла бы приватный `Location`, но разрешать цепочку здесь незачем —
+   * лишний хоп к чужому файлу нам не нужен.
+   *
+   * `assertSafeToolInputUrl` остаётся дешёвым предфильтром: он отсекает
+   * запрещённые имена/IP до DNS-резолва и даёт пользователю понятный текст
+   * ошибки; полная защита — в клиенте.
    *
    * @param inputUrl - публично доступный `http(s)`-URL изображения
    * @returns буфер, MIME и имя файла для multipart-части
@@ -642,20 +673,35 @@ export class OpenAiImagesProvider implements IMediaProvider {
   ): Promise<{ buffer: Buffer; mime: string; fileName: string }> {
     assertSafeToolInputUrl(inputUrl, this.name);
 
-    const signal = AbortSignal.timeout(TOOL_DOWNLOAD_TIMEOUT_MS);
-    let response: Response;
+    let response: SafeHttpBufferResponse;
 
     try {
-      response = await fetch(inputUrl, {
+      response = await this.httpClient.fetchBufferAsync({
+        url: inputUrl,
         method: 'GET',
         headers: { Accept: 'image/*' },
-        redirect: 'error',
-        signal,
+        timeoutMs: TOOL_DOWNLOAD_TIMEOUT_MS,
+        maxRedirects: 0,
+        maxResponseBytes: MAX_TOOL_IMAGE_BYTES,
       });
     } catch (error: unknown) {
+      if (error instanceof SafeHttpResponseTooLargeException) {
+        throw new MediaProviderException(
+          this.name,
+          `входное изображение больше лимита ${MAX_TOOL_IMAGE_BYTES} байт`,
+        );
+      }
+
+      if (error instanceof SsrfBlockedException) {
+        throw new MediaProviderException(
+          this.name,
+          'ссылка на входное изображение ведёт на запрещённый адрес',
+        );
+      }
+
       throw new MediaProviderException(
         this.name,
-        signal.aborted
+        isRequestTimeoutError(error)
           ? 'скачивание входного изображения истекло по таймауту'
           : 'не удалось скачать входное изображение',
         { cause: error, retryable: true },
@@ -663,34 +709,16 @@ export class OpenAiImagesProvider implements IMediaProvider {
     }
 
     if (!response.ok) {
-      throw await buildHttpErrorAsync(
+      throw buildHttpErrorFromBody(
         this.name,
         'не удалось скачать входное изображение',
-        response,
+        response.status,
+        response.headers,
+        response.buffer.toString('utf8'),
       );
     }
 
-    const rawLength = response.headers.get('content-length');
-    const declaredLength = rawLength === null ? Number.NaN : Number(rawLength);
-
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_TOOL_IMAGE_BYTES) {
-      throw new MediaProviderException(
-        this.name,
-        `входное изображение больше лимита ${MAX_TOOL_IMAGE_BYTES} байт`,
-      );
-    }
-
-    let buffer: Buffer;
-
-    try {
-      buffer = Buffer.from(await response.arrayBuffer());
-    } catch (error: unknown) {
-      throw new MediaProviderException(
-        this.name,
-        'не удалось прочитать входное изображение',
-        { cause: error, retryable: true },
-      );
-    }
+    const buffer = response.buffer;
 
     if (buffer.length === 0) {
       throw new MediaProviderException(
@@ -699,15 +727,8 @@ export class OpenAiImagesProvider implements IMediaProvider {
       );
     }
 
-    if (buffer.length > MAX_TOOL_IMAGE_BYTES) {
-      throw new MediaProviderException(
-        this.name,
-        `входное изображение больше лимита ${MAX_TOOL_IMAGE_BYTES} байт`,
-      );
-    }
-
     const mime = readToolImageMime(
-      response.headers.get('content-type'),
+      response.contentType.length > 0 ? response.contentType : null,
       inputUrl,
     );
 
@@ -1034,12 +1055,31 @@ function readEditPrompt(
 }
 
 /**
+ * Проверяет, что ошибка — таймаут/отмена запроса (RULES 4.19).
+ *
+ * `SafeHttpClient` объединяет таймаут с сигналом вызова, поэтому наружу
+ * приходит `DOMException` с именем `TimeoutError` (истёк
+ * `AbortSignal.timeout`) либо `AbortError` (отмена вызывающего кода). Проверка
+ * по `name`, а не по классу: `undici` может обернуть причину в свою ошибку.
+ *
+ * @param error - значение из `catch` (тип `unknown`)
+ * @returns `true`, если запрос прерван таймаутом/сигналом
+ */
+function isRequestTimeoutError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === 'TimeoutError' || error.name === 'AbortError')
+  );
+}
+
+/**
  * Проверяет, что URL входного изображения не ведёт во внутреннюю сеть.
  *
- * Полная защита от DNS rebinding живёт в `SafeHttpClient`, но он отдаёт тело
- * строкой и не подходит для бинарного файла. Здесь закрыты дешёвые векторы:
- * `localhost`/metadata-имена, приватные IP-литералы, URL с учётными данными и
- * редиректы (`redirect: 'error'` в {@link downloadToolImageAsync}).
+ * Полная защита от DNS rebinding живёт в `SafeHttpClient` (скачивание идёт
+ * через {@link SafeHttpClient.fetchBufferAsync}): один DNS-резолв, проверка
+ * всех адресов и pinning IP в `undici.Agent`. Здесь закрыты дешёвые векторы,
+ * которые надо отсечь **до** сетевого вызова: `localhost`/metadata-имена,
+ * приватные IP-литералы и URL с учётными данными.
  *
  * @param inputUrl - проверяемая ссылка
  * @param provider - имя провайдера для текста ошибки

@@ -1,4 +1,10 @@
 import { ConfigService } from '@nestjs/config';
+import {
+  SafeHttpClient,
+  SafeHttpResponseTooLargeException,
+  type SafeHttpRequest,
+} from '../../common/http/safe-http.client.js';
+import { SsrfBlockedException } from '../../common/utils/network-safety.js';
 import { MediaProviderException } from '../media-provider.interface.js';
 import { OpenAiImagesProvider } from './openai-images.provider.js';
 
@@ -9,6 +15,11 @@ import { OpenAiImagesProvider } from './openai-images.provider.js';
  * сборка запроса к `/v1/images/generations`, разбор `b64_json` в `data:`-URI,
  * обработка ошибок (`retryable`-классы) и `applyToolAsync` через
  * `multipart/form-data` в `/v1/images/edits` (KI-380).
+ *
+ * v0.12 S3 (KI-525): входной файл скачивается через `SafeHttpClient`
+ * (`fetchBufferAsync`), поэтому вместо глобального `fetch` в тестах
+ * подставляется заглушка клиента — проверяется контракт вызова (URL, лимит,
+ * таймаут) и обработка статусов/ошибок клиента.
  *
  * Реальный вызов `gpt-image-1` — в `openai-images.integration.spec.ts` (под
  * `skipIf` по ключу).
@@ -138,16 +149,141 @@ function stubUpstream(
   return calls;
 }
 
+/** Запись о вызове `SafeHttpClient.fetchBufferAsync` (скачивание входа). */
+interface DownloadCall {
+  /** URL запроса. */
+  readonly url: string;
+  /** HTTP-метод. */
+  readonly method: string;
+  /** Заголовки запроса. */
+  readonly headers: Record<string, string> | undefined;
+  /** Таймаут запроса, мс. */
+  readonly timeoutMs: number;
+  /** Лимит редиректов. */
+  readonly maxRedirects: number | undefined;
+  /** Лимит тела ответа, байт. */
+  readonly maxResponseBytes: number | undefined;
+}
+
+/** Ответ заглушки бинарного клиента. */
+interface DownloadRoute {
+  /** Подстрока URL, к которой относится ответ (без `match` — по умолчанию). */
+  match?: string;
+  /** Тело ответа как текст (бинарная форма здесь не нужна). */
+  rawBody?: string;
+  /** `Content-Type` ответа. */
+  contentType?: string;
+  /** Дополнительные заголовки ответа. */
+  headers?: Record<string, string>;
+  /** HTTP-статус. */
+  status?: number;
+}
+
+/**
+ * Подменяет `SafeHttpClient` (только `fetchBufferAsync`) маршрутизатором.
+ *
+ * v0.12 S3 (KI-525): скачивание входного файла больше не идёт через глобальный
+ * `fetch`, поэтому `stubUpstream` его не перехватывает. Заглушка повторяет
+ * контракт бинарного метода (`buffer`/`contentType`/`status`/`ok`/`headers`),
+ * чтобы провайдер проверялся без реального DNS и сети.
+ *
+ * @param routes - пары «подстрока URL → ответ»; элемент без `match` — ответ по
+ *   умолчанию
+ * @returns клиент-заглушка и список ушедших вызовов
+ */
+function stubHttpClient(routes: readonly DownloadRoute[]): {
+  httpClient: SafeHttpClient;
+  calls: DownloadCall[];
+} {
+  const calls: DownloadCall[] = [];
+  const fetchBufferAsync = vi.fn(
+    async (
+      request: SafeHttpRequest,
+    ): Promise<{
+      status: number;
+      ok: boolean;
+      headers: Headers;
+      buffer: Buffer;
+      contentType: string;
+      finalUrl: string;
+    }> => {
+      calls.push({
+        url: request.url,
+        method: request.method,
+        headers: request.headers,
+        timeoutMs: request.timeoutMs,
+        maxRedirects: request.maxRedirects,
+        maxResponseBytes: request.maxResponseBytes,
+      });
+
+      const route =
+        routes.find(
+          (candidate) =>
+            candidate.match !== undefined &&
+            request.url.includes(candidate.match),
+        ) ?? routes.find((candidate) => candidate.match === undefined);
+
+      if (route === undefined) {
+        throw new Error(`Нет заглушки скачивания для ${request.url}`);
+      }
+
+      const status = route.status ?? 200;
+      const headers = new Headers();
+
+      for (const [name, value] of Object.entries(route.headers ?? {})) {
+        headers.set(name, value);
+      }
+
+      if (route.contentType !== undefined) {
+        headers.set('content-type', route.contentType);
+      }
+
+      return {
+        status,
+        ok: status >= 200 && status < 300,
+        headers,
+        buffer: Buffer.from(route.rawBody ?? '', 'utf8'),
+        contentType: route.contentType ?? '',
+        finalUrl: request.url,
+      };
+    },
+  );
+
+  return {
+    httpClient: { fetchBufferAsync } as unknown as SafeHttpClient,
+    calls,
+  };
+}
+
+/**
+ * Клиент-заглушка «скачивание не ожидалось».
+ *
+ * Нужен тестам, которые не доходят до скачивания: если провайдер всё-таки
+ * вызовет клиент, тест упадёт с понятной причиной, а не полезет в сеть.
+ *
+ * @returns клиент, любое скачивание которого — ошибка
+ */
+function createUnusedHttpClient(): SafeHttpClient {
+  return {
+    fetchBufferAsync: vi.fn(() =>
+      Promise.reject(new Error('скачивание в этом тесте не ожидалось')),
+    ),
+  } as unknown as SafeHttpClient;
+}
+
 /**
  * Создаёт провайдер с заданной конфигурацией.
  *
  * @param values - значения env для ConfigService
+ * @param httpClient - безопасный клиент (по умолчанию — «скачивание не
+ *   ожидалось»)
  * @returns экземпляр провайдера
  */
 function createProvider(
   values: Record<string, string | number | undefined> = configured,
+  httpClient: SafeHttpClient = createUnusedHttpClient(),
 ): OpenAiImagesProvider {
-  return new OpenAiImagesProvider(configStub(values));
+  return new OpenAiImagesProvider(configStub(values), httpClient);
 }
 
 /** Ответ `/v1/images/generations` с base64-содержимым. */
@@ -395,27 +531,32 @@ describe('OpenAiImagesProvider', () => {
     );
   });
 
-  it('applyToolAsync: скачивает файл и отправляет multipart в /images/edits (b64)', async () => {
-    const calls = stubUpstream([
-      {
-        match: 'cdn.example.com/photo.png',
-        rawBody: IMAGE_BYTES,
-        contentType: 'image/png',
-      },
-      { match: '/images/edits', body: imagesResponse },
+  it('applyToolAsync: скачивает файл через SafeHttpClient и отправляет multipart (b64)', async () => {
+    const calls = stubUpstream([{ match: '/images/edits', body: imagesResponse }]);
+    const download = stubHttpClient([
+      { rawBody: IMAGE_BYTES, contentType: 'image/png' },
     ]);
-    const provider = createProvider();
+    const provider = createProvider(configured, download.httpClient);
 
     const task = await provider.applyToolAsync(INPUT_URL, 'upscale', {
       model: 'openai_images:gpt-image-1',
       idempotencyKey: IDEMPOTENCY_KEY,
     });
 
-    const download = calls.find((call) => call.method === 'GET');
     const edit = calls.find((call) => call.method === 'POST');
     const image = edit?.formData?.get('image');
 
-    expect(download?.url).toBe(INPUT_URL);
+    expect(download.calls).toHaveLength(1);
+    expect(download.calls[0]).toMatchObject({
+      url: INPUT_URL,
+      method: 'GET',
+      headers: { Accept: 'image/*' },
+      timeoutMs: 30_000,
+      // Входной файл не уводим редиректом (прежний `redirect: 'error'`).
+      maxRedirects: 0,
+      // Лимит тот же, что OpenAI принимает в `/images/edits`.
+      maxResponseBytes: 25 * 1024 * 1024,
+    });
     expect(edit?.url).toBe(`${BASE_URL}/images/edits`);
     expect(edit?.authorization).toBe(`Bearer ${KEY}`);
     expect(edit?.formData).toBeInstanceOf(FormData);
@@ -430,15 +571,11 @@ describe('OpenAiImagesProvider', () => {
   });
 
   it('applyToolAsync: bg_removal получает свой промпт и скалярные параметры', async () => {
-    const calls = stubUpstream([
-      {
-        match: 'cdn.example.com/photo.png',
-        rawBody: IMAGE_BYTES,
-        contentType: 'image/png',
-      },
-      { match: '/images/edits', body: imagesResponse },
+    const calls = stubUpstream([{ match: '/images/edits', body: imagesResponse }]);
+    const download = stubHttpClient([
+      { rawBody: IMAGE_BYTES, contentType: 'image/png' },
     ]);
-    const provider = createProvider();
+    const provider = createProvider(configured, download.httpClient);
 
     await provider.applyToolAsync(INPUT_URL, 'bg_removal', {
       model: 'gpt-image-1',
@@ -458,11 +595,6 @@ describe('OpenAiImagesProvider', () => {
   it('applyToolAsync: ответ с url разбирается так же, как b64_json', async () => {
     stubUpstream([
       {
-        match: 'cdn.example.com/photo.png',
-        rawBody: IMAGE_BYTES,
-        contentType: 'image/png',
-      },
-      {
         match: '/images/edits',
         body: {
           created: 1,
@@ -470,7 +602,10 @@ describe('OpenAiImagesProvider', () => {
         },
       },
     ]);
-    const provider = createProvider();
+    const download = stubHttpClient([
+      { rawBody: IMAGE_BYTES, contentType: 'image/png' },
+    ]);
+    const provider = createProvider(configured, download.httpClient);
 
     const task = await provider.applyToolAsync(INPUT_URL, 'upscale', {
       idempotencyKey: IDEMPOTENCY_KEY,
@@ -480,15 +615,11 @@ describe('OpenAiImagesProvider', () => {
   });
 
   it('applyToolAsync: идемпотентность не повторяет скачивание и редактирование', async () => {
-    const calls = stubUpstream([
-      {
-        match: 'cdn.example.com/photo.png',
-        rawBody: IMAGE_BYTES,
-        contentType: 'image/png',
-      },
-      { match: '/images/edits', body: imagesResponse },
+    const calls = stubUpstream([{ match: '/images/edits', body: imagesResponse }]);
+    const download = stubHttpClient([
+      { rawBody: IMAGE_BYTES, contentType: 'image/png' },
     ]);
-    const provider = createProvider();
+    const provider = createProvider(configured, download.httpClient);
     const params = {
       model: 'gpt-image-1',
       idempotencyKey: IDEMPOTENCY_KEY,
@@ -497,7 +628,7 @@ describe('OpenAiImagesProvider', () => {
     const first = await provider.applyToolAsync(INPUT_URL, 'upscale', params);
     const second = await provider.applyToolAsync(INPUT_URL, 'upscale', params);
 
-    expect(calls.filter((call) => call.method === 'GET')).toHaveLength(1);
+    expect(download.calls).toHaveLength(1);
     expect(calls.filter((call) => call.method === 'POST')).toHaveLength(1);
     expect(second).toEqual(first);
   });
@@ -554,15 +685,15 @@ describe('OpenAiImagesProvider', () => {
   });
 
   it('applyToolAsync: 404 при скачивании — ошибка без POST в /images/edits', async () => {
-    const calls = stubUpstream([
+    const calls = stubUpstream([{ match: '/images/edits', body: imagesResponse }]);
+    const download = stubHttpClient([
       {
-        match: 'cdn.example.com/photo.png',
-        body: { error: { message: 'not found' } },
+        rawBody: JSON.stringify({ error: { message: 'not found' } }),
+        contentType: 'application/json',
         status: 404,
       },
-      { match: '/images/edits', body: imagesResponse },
     ]);
-    const provider = createProvider();
+    const provider = createProvider(configured, download.httpClient);
 
     const error = await provider
       .applyToolAsync(INPUT_URL, 'upscale', {
@@ -575,17 +706,14 @@ describe('OpenAiImagesProvider', () => {
     expect(calls.some((call) => call.url.includes('/images/edits'))).toBe(false);
   });
 
-  it('applyToolAsync: слишком большой вход не скачивается полностью', async () => {
-    const calls = stubUpstream([
-      {
-        match: 'cdn.example.com/photo.png',
-        rawBody: 'x',
-        contentType: 'image/png',
-        headers: { 'Content-Length': String(30 * 1024 * 1024) },
-      },
-      { match: '/images/edits', body: imagesResponse },
-    ]);
-    const provider = createProvider();
+  it('applyToolAsync: лимит байт клиента превращается в понятную ошибку', async () => {
+    const calls = stubUpstream([{ match: '/images/edits', body: imagesResponse }]);
+    const httpClient = {
+      fetchBufferAsync: vi.fn(() =>
+        Promise.reject(new SafeHttpResponseTooLargeException(25 * 1024 * 1024)),
+      ),
+    } as unknown as SafeHttpClient;
+    const provider = createProvider(configured, httpClient);
 
     await expect(
       provider.applyToolAsync(INPUT_URL, 'upscale', {
@@ -594,5 +722,41 @@ describe('OpenAiImagesProvider', () => {
     ).rejects.toThrow('больше лимита');
 
     expect(calls.some((call) => call.url.includes('/images/edits'))).toBe(false);
+  });
+
+  it('applyToolAsync: SSRF-блокировка клиента превращается в ошибку провайдера', async () => {
+    const calls = stubUpstream([{ match: '/images/edits', body: imagesResponse }]);
+    const httpClient = {
+      fetchBufferAsync: vi.fn(() =>
+        Promise.reject(
+          new SsrfBlockedException('cdn.example.com', '10.0.0.5', null),
+        ),
+      ),
+    } as unknown as SafeHttpClient;
+    const provider = createProvider(configured, httpClient);
+
+    const error = await provider
+      .applyToolAsync(INPUT_URL, 'upscale', {
+        idempotencyKey: IDEMPOTENCY_KEY,
+      })
+      .catch((caught: unknown) => caught);
+
+    expect((error as Error).message).toContain('запрещённый адрес');
+    expect(calls.some((call) => call.url.includes('/images/edits'))).toBe(false);
+  });
+
+  it('applyToolAsync: клиент получает отмену/таймаут как ошибку скачивания', async () => {
+    const httpClient = {
+      fetchBufferAsync: vi.fn(() =>
+        Promise.reject(new DOMException('timeout', 'TimeoutError')),
+      ),
+    } as unknown as SafeHttpClient;
+    const provider = createProvider(configured, httpClient);
+
+    await expect(
+      provider.applyToolAsync(INPUT_URL, 'upscale', {
+        idempotencyKey: IDEMPOTENCY_KEY,
+      }),
+    ).rejects.toThrow('истекло по таймауту');
   });
 });

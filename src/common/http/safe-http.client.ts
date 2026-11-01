@@ -20,6 +20,13 @@
  * тела ответа с потоковым чтением (по умолчанию 1 МБ): мегабайтные ответы не
  * должны раздувать `node_runs.outputs` (KI-025).
  *
+ * **Бинарное тело (v0.12 S3, KI-525).** {@link SafeHttpClient.fetchBufferAsync}
+ * проходит **тот же** путь (денлист → один DNS-резолв → pinned `Agent` →
+ * ручные редиректы → лимит байт), но отдаёт `Buffer`, а не строку. Причина:
+ * `OpenAI Images` скачивает входное изображение, и `toString('utf8')` испортил
+ * бы байты, а прямой `fetch` терял бы pinning IP (DNS rebinding). Оба метода
+ * используют один приватный `executeAsync`, поэтому защиты не могут разойтись.
+ *
  * **Почему `undici`, а не глобальный `fetch`.** `fetch` не даёт подменить
  * резолвер на уровне сокета: проверенный адрес и адрес фактического соединения
  * — разные вещи. `undici.request` + `Agent` с `connect.lookup` — минимальный
@@ -97,6 +104,46 @@ export interface SafeHttpResponse {
   readonly finalUrl: string;
 }
 
+/**
+ * Успешный (в т. ч. 4xx/5xx) ответ {@link SafeHttpClient.fetchBufferAsync}.
+ *
+ * Контракт метода — `{ buffer, contentType }`, но наружу отдаются ещё `status`,
+ * `ok`, `headers` и `finalUrl`: вызывающему коду (провайдеру изображений)
+ * нужно отличить 4xx/5xx от 2xx и собрать `retryable`-ошибку, не делая второй
+ * запрос. Возврат более широкого типа контракту не противоречит.
+ */
+export interface SafeHttpBufferResponse {
+  /** HTTP-код финального ответа. */
+  readonly status: number;
+  /** `true` для 2xx. */
+  readonly ok: boolean;
+  /** Заголовки финального ответа. */
+  readonly headers: Headers;
+  /** Тело ответа байтами (≤ `maxResponseBytes`), без декодирования. */
+  readonly buffer: Buffer;
+  /** `Content-Type` ответа либо пустая строка, если заголовка нет. */
+  readonly contentType: string;
+  /** URL последнего хопа (после редиректов). */
+  readonly finalUrl: string;
+}
+
+/**
+ * Сырой ответ {@link SafeHttpClient.executeAsync}: тело ещё не декодировано.
+ *
+ * Общий промежуточный вид для {@link SafeHttpClient.fetchAsync} (UTF-8) и
+ * {@link SafeHttpClient.fetchBufferAsync} (байты).
+ */
+interface SafeHttpRawResponse {
+  /** HTTP-код финального ответа. */
+  readonly status: number;
+  /** Заголовки финального ответа. */
+  readonly headers: Headers;
+  /** Тело ответа байтами (≤ `maxResponseBytes`). */
+  readonly body: Buffer;
+  /** URL последнего хопа. */
+  readonly finalUrl: string;
+}
+
 /** Инициализация одного сетевого хопа (то, что уходит в транспорт). */
 export interface SafeHttpTransportInit {
   /** Метод хопа. */
@@ -123,6 +170,46 @@ export interface SafeHttpTransportResponse {
    * @returns промис без значения
    */
   discardAsync(): Promise<void>;
+}
+
+/**
+ * Минимальный контракт тела, которое нужно освободить, не читая его.
+ *
+ * Совпадает с `undici.BodyReadable` (и `Readable` в целом), но не тянет тип
+ * `undici` в тесты: проверяется ровно то, что использует
+ * {@link discardBodyAsync}.
+ */
+export interface DiscardableBody {
+  /**
+   * Подписывает слушатель события.
+   *
+   * @param event - имя события (нужен только `error`)
+   * @param listener - обработчик
+   * @returns сам поток (для цепочки)
+   */
+  on(event: 'error', listener: (error: unknown) => void): unknown;
+  /** Уничтожает поток, не дочитывая тело. */
+  destroy(): void;
+}
+
+/**
+ * Освобождает тело ответа, не читая его (редирект/превышение лимита).
+ *
+ * **Почему не просто `destroy()` (smoke v0.12 S3, KI-527).** В `undici` 8
+ * `BodyReadable._destroy` на непрочитанном теле создаёт
+ * `RequestAbortedError` и эмитит его событием `error`. Без слушателя это
+ * uncaught exception — процесс падает на любом редиректе или на теле,
+ * превысившем лимит (в юнит-тестах транспорт подменён, поэтому дефект не
+ * проявлялся). Слушатель ставится **до** `destroy()`, иначе `setImmediate`-
+ * колбэк `_destroy` успевает эмитить ошибку раньше.
+ *
+ * @param body - тело ответа (поток)
+ * @returns промис, завершающийся после `destroy()`
+ */
+export async function discardBodyAsync(body: DiscardableBody): Promise<void> {
+  body.on('error', () => undefined);
+  body.destroy();
+  await Promise.resolve();
 }
 
 /**
@@ -281,9 +368,9 @@ async function undiciTransportAsync(
     headers: toHeaders(response.headers),
     body: response.body,
     async discardAsync(): Promise<void> {
-      // `destroy()` освобождает сокет, не дочитывая тело редиректа.
-      response.body.destroy();
-      await Promise.resolve();
+      // `destroy()` освобождает сокет, не дочитывая тело редиректа; ошибка
+      // `RequestAbortedError` гасится внутри helper'а (KI-527).
+      await discardBodyAsync(response.body);
     },
   };
 }
@@ -331,17 +418,21 @@ async function closeAgentAsync(agent: Agent): Promise<void> {
 }
 
 /**
- * Читает тело потоком с лимитом байт.
+ * Читает тело потоком с лимитом байт, возвращая байты.
+ *
+ * Общий путь для текстовых и бинарных ответов: лимит проверяется по сумме
+ * фактически прочитанных байт, а не по `Content-Length` (chunked-ответ может
+ * не объявлять длину или объявить её неверно).
  *
  * @param body - поток тела
  * @param maxBytes - предельный размер
- * @returns текст тела
+ * @returns тело байтами (≤ `maxBytes`)
  * @throws SafeHttpResponseTooLargeException если тело превысило лимит
  */
-async function readBodyLimitedAsync(
+async function readBufferLimitedAsync(
   body: AsyncIterable<Uint8Array>,
   maxBytes: number,
-): Promise<string> {
+): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let total = 0;
 
@@ -357,7 +448,7 @@ async function readBodyLimitedAsync(
     chunks.push(buffer);
   }
 
-  return Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks);
 }
 
 /**
@@ -430,10 +521,14 @@ export class SafeHttpClient {
   }
 
   /**
-   * Выполняет HTTP-запрос с SSRF-защитой и ручным обходом редиректов.
+   * Выполняет HTTP-запрос с SSRF-защитой и ручным обходом редиректов,
+   * возвращая тело текстом.
+   *
+   * Обёртка над {@link SafeHttpClient.executeAsync}: вся защита живёт там,
+   * поэтому текстовый и бинарный пути не могут разойтись.
    *
    * @param requestOptions - URL, метод, тело, таймаут и лимиты
-   * @returns финальный ответ (тело ≤ `maxResponseBytes`)
+   * @returns финальный ответ (тело ≤ `maxResponseBytes`, UTF-8)
    * @throws SsrfBlockedException если любой хоп ведёт на запрещённый адрес
    * @throws SafeHttpDnsException если имя не разрешилось (fail closed)
    * @throws TooManyRedirectsException если цепочка длиннее лимита
@@ -442,6 +537,61 @@ export class SafeHttpClient {
    *   учётные данные
    */
   async fetchAsync(requestOptions: SafeHttpRequest): Promise<SafeHttpResponse> {
+    const raw = await this.executeAsync(requestOptions);
+
+    return {
+      status: raw.status,
+      ok: raw.status >= 200 && raw.status < 300,
+      headers: raw.headers,
+      body: raw.body.toString('utf8'),
+      finalUrl: raw.finalUrl,
+    };
+  }
+
+  /**
+   * Выполняет HTTP-запрос и отдаёт тело байтами (v0.12 S3, KI-525).
+   *
+   * Нужен там, где ответ — файл, а не текст: декодирование UTF-8 испортило бы
+   * бинарные данные, а прямой `fetch` потерял бы pinning IP (DNS rebinding).
+   * Лимит `maxResponseBytes` тот же, что у {@link SafeHttpClient.fetchAsync}:
+   * скачивание изображения не должно уносить гигабайты в память.
+   *
+   * @param requestOptions - URL, метод, тело, таймаут и лимиты
+   * @returns финальный ответ: байты, `Content-Type`, статус и заголовки
+   * @throws SsrfBlockedException если любой хоп ведёт на запрещённый адрес
+   * @throws SafeHttpDnsException если имя не разрешилось (fail closed)
+   * @throws TooManyRedirectsException если цепочка длиннее лимита
+   * @throws SafeHttpResponseTooLargeException если тело больше лимита
+   * @throws Error если URL/Location невалиден, схема не http(s) или в URL есть
+   *   учётные данные
+   */
+  async fetchBufferAsync(
+    requestOptions: SafeHttpRequest,
+  ): Promise<SafeHttpBufferResponse> {
+    const raw = await this.executeAsync(requestOptions);
+
+    return {
+      status: raw.status,
+      ok: raw.status >= 200 && raw.status < 300,
+      headers: raw.headers,
+      buffer: raw.body,
+      contentType: raw.headers.get('content-type') ?? '',
+      finalUrl: raw.finalUrl,
+    };
+  }
+
+  /**
+   * Общий путь запроса: проверка адреса, pinned `Agent`, редиректы, лимит тела.
+   *
+   * @param requestOptions - URL, метод, тело, таймаут и лимиты
+   * @returns сырой ответ (тело — байты, без декодирования)
+   * @throws SsrfBlockedException / SafeHttpDnsException /
+   *   TooManyRedirectsException / SafeHttpResponseTooLargeException / Error —
+   *   см. {@link SafeHttpClient.fetchAsync}
+   */
+  private async executeAsync(
+    requestOptions: SafeHttpRequest,
+  ): Promise<SafeHttpRawResponse> {
     const timeoutMs = Math.max(1, requestOptions.timeoutMs);
     const maxRedirects = requestOptions.maxRedirects ?? HTTP_MAX_REDIRECTS;
     const maxBytes =
@@ -504,14 +654,13 @@ export class SafeHttpClient {
         location.trim().length === 0
       ) {
         try {
-          const responseBody = await readBodyLimitedAsync(
+          const responseBody = await readBufferLimitedAsync(
             response.body,
             maxBytes,
           );
 
           return {
             status: response.status,
-            ok: response.status >= 200 && response.status < 300,
             headers: response.headers,
             body: responseBody,
             finalUrl: destination.url.href,

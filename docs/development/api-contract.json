@@ -17,7 +17,7 @@
   "enums": {
     "CollaboratorResponse.role": ["editor", "owner", "viewer"],
     "McpServerSummary.status": ["disabled", "error", "ok"],
-    "McpServerSummary.transport": ["http", "sse"],
+    "McpServerSummary.transport": ["http", "sse", "stdio"],
     "RunBudgetResponse.mode": ["hard", "soft"],
     "RunResponse.status": ["cancelled", "completed", "failed", "pending", "running"]
   }

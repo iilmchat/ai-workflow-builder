@@ -13,7 +13,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { McpServerConfig } from './mcp.config.js';
+import type { McpHttpServerConfig, McpServerConfig } from './mcp.config.js';
 import type { McpServerEntry } from './mcp-server.registry.js';
 import { McpClientService } from './mcp-client.service.js';
 import { McpController } from './mcp.controller.js';
@@ -32,11 +32,15 @@ const TOKEN_VALUE = 'super-secret-token-value';
 /**
  * Собирает конфигурацию MCP-сервера для реестра-заглушки.
  *
+ * Все тесты контроллера используют HTTP-транспорт (stdio отличается только
+ * `command`/`args` и на форму ответа не влияет), поэтому переопределения
+ * типизированы HTTP-ветвью union'а.
+ *
  * @param overrides - поля, которые нужно переопределить
  * @returns валидированная конфигурация (тип `McpServerConfig`)
  */
 function serverConfig(
-  overrides: Partial<McpServerConfig> = {},
+  overrides: Partial<McpHttpServerConfig> = {},
 ): McpServerConfig {
   return {
     transport: 'http',

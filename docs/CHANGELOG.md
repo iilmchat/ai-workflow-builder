@@ -17,6 +17,20 @@
 ---
 ## [Unreleased]
 
+### Added
+
+- **PDF-режим узла `document_gen` (v0.12 S1, DESIGN § 3.1, KI-463)** ([отчёт](development/reports/v0.12.0/S1-S2-pdf.md)):
+  `PdfRenderer` (`src/documents/pdf-renderer.service.ts`) на `pdfkit` с
+  встроенным Noto Sans (`src/documents/assets/NotoSans-Regular.ttf`, OFL) —
+  H1–H3, абзацы, списки, код с серым фоном и кликабельные ссылки; при
+  отсутствии шрифта — fallback на Helvetica с warning. Исполнитель выбирает
+  рендерер по `format`, сохраняет файл с расширением `.pdf` и
+  `mimeType: application/pdf`; `DocumentGenerationNodeDataSchema` больше не
+  отвергает `pdf`. В `DocumentGenNode` добавлен селект DOCX/PDF (при переходе
+  в template формат сбрасывается на DOCX), подпись ссылки и `download`
+  учитывают формат. Зависимости: `pdfkit` + `@types/pdfkit`; ассеты
+  копируются в `dist` через `nest-cli.json`.
+
 ## [0.11.1] — 2026-10-19
 
 **Patch-релиз: отключение внутренних ретраев SDK, fallback `image_tool` и

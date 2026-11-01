@@ -19,6 +19,8 @@ import {
   type NodeRunStatus,
 } from '../db/schema.js';
 import { DocumentService } from '../documents/document.service.js';
+// v0.12 S1 (DESIGN § 3.1.3): PDF-рендерер для `document_gen` (format='pdf').
+import { PdfRenderer } from '../documents/pdf-renderer.service.js';
 // v0.11 S4 (DESIGN § 3.1.7): загрузчик шаблона из БД workflow и его рендерер —
 // зависимости узла `document_gen` в режиме `template`.
 import { DocumentTemplateService } from '../documents/document-template.service.js';
@@ -442,6 +444,8 @@ export class ExecutionEngineService {
     // DocumentService — из DocumentsModule (подключён в RunsModule), а
     // MEDIA_STORAGE — из MediaModule; один экземпляр хранилища на приложение.
     private readonly documentService: DocumentService,
+    // v0.12 S1 (DESIGN § 3.1.3): второй рендерер того же узла — PDF.
+    private readonly pdfRenderer: PdfRenderer,
     @Inject(MEDIA_STORAGE) private readonly mediaStorage: IMediaStorage,
     // v0.11 S4 (DESIGN § 3.1.7): шаблоны DOCX. `DocumentTemplatesService` —
     // CRUD/доступ и `loadAsync(id, workflowId)`; `DocumentTemplateService` —
@@ -1456,6 +1460,7 @@ export class ExecutionEngineService {
           runId,
           {
             documentService: this.documentService,
+            pdfRenderer: this.pdfRenderer,
             mediaStorage: this.mediaStorage,
             templateLoader: this.documentTemplatesService,
             templateRenderer: this.documentTemplateService,

@@ -1,6 +1,10 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+// v0.12 S3 (KI-525): бинарное скачивание входного файла OpenAI Images идёт
+// через тот же безопасный клиент, что у узла `http` и инструмента
+// `http_request` агента.
+import { SafeHttpClient } from '../common/http/safe-http.client.js';
 import {
   MEDIA_CLEANUP_QUEUE,
   MEDIA_CLEANUP_QUEUE_DB,
@@ -80,6 +84,9 @@ import { ReplicateProvider } from './providers/replicate.provider.js';
   ],
   controllers: [MediaController, MediaStorageController],
   providers: [
+    // v0.12 S3 (KI-525): клиент без состояния, отдельный экземпляр на модуль
+    // (свой DI-скоуп не нужен: pinning живёт на объект `Agent` одного хопа).
+    SafeHttpClient,
     CreativeLabProvider,
     ReplicateProvider,
     FalProvider,

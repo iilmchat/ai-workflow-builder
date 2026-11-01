@@ -50,20 +50,29 @@ export class McpServerRegistry {
   /** Включён ли MCP-адаптер (`MCP_ENABLED`). */
   private readonly enabledFlag: boolean;
 
+  /** Разрешён ли `stdio`-транспорт (`MCP_ENABLE_STDIO`, v0.12 S4). */
+  private readonly stdioEnabled: boolean;
+
   /** Валидированные серверы в порядке объявления в JSON. */
   private readonly servers: ReadonlyMap<string, McpServerConfig>;
 
   /**
    * @param config - конфигурация приложения (RULES 4.6: env только через DI)
-   * @throws Error если `MCP_ENABLED=true`, а `MCP_SERVERS` невалиден
+   * @throws Error если `MCP_ENABLED=true`, а `MCP_SERVERS` невалиден или
+   *   содержит `stdio`-сервер при `MCP_ENABLE_STDIO=false`
    */
   constructor(config: ConfigService) {
     this.enabledFlag = readBooleanConfig(config.get<unknown>('MCP_ENABLED'));
+    this.stdioEnabled = readBooleanConfig(
+      config.get<unknown>('MCP_ENABLE_STDIO'),
+    );
 
     let parsed: McpServersConfig = {};
 
     try {
-      parsed = parseMcpServersConfig(config.get<unknown>('MCP_SERVERS'));
+      parsed = parseMcpServersConfig(config.get<unknown>('MCP_SERVERS'), {
+        enableStdio: this.stdioEnabled,
+      });
     } catch (error: unknown) {
       const message = toMessage(error);
 
@@ -79,7 +88,10 @@ export class McpServerRegistry {
     this.servers = new Map(Object.entries(parsed));
 
     if (this.enabledFlag) {
-      this.logger.log(`MCP включён: серверов в реестре — ${this.servers.size}`);
+      this.logger.log(
+        `MCP включён: серверов в реестре — ${this.servers.size}` +
+          (this.stdioEnabled ? ', stdio разрешён' : ', stdio выключен'),
+      );
     }
   }
 

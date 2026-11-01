@@ -37,6 +37,10 @@ import {
   DocumentTooLargeException,
 } from '../documents/document.errors.js';
 import { DOCX_MIME_TYPE } from '../documents/document.service.js';
+// v0.12 S1 (DESIGN § 3.1.3): MIME PDF. Сам рендерер подключается через
+// структурный контракт `PdfGenerator` — исполнитель остаётся тестируемым без
+// Nest-DI, как и с DOCX.
+import { PDF_MIME_TYPE } from '../documents/pdf-renderer.service.js';
 // v0.11 S4 (DESIGN § 3.1.4/§ 3.1.7): резолвер переменных шаблона живёт в
 // documents (покрыт S2-тестами), исполнитель только вызывает его. Цикла нет:
 // `document-template.service` импортирует `engine/errors`, а не этот файл.
@@ -327,7 +331,12 @@ export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024;
 /** Источник контента узла `document_gen` (DESIGN § 3.2.1). */
 export type DocumentSource = 'markdown' | 'json';
 
-/** Выходной формат узла `document_gen`; S6 реализует только DOCX. */
+/**
+ * Выходной формат узла `document_gen`.
+ *
+ * v0.12 S1 (DESIGN § 3.1.3): `docx` рендерит `DocumentService`, `pdf` —
+ * `PdfRenderer`. До S1 `pdf` был объявлен, но отвергался исполнителем (KI-463).
+ */
 export type DocumentOutputFormat = 'docx' | 'pdf';
 
 /**
@@ -341,7 +350,7 @@ export type DocumentGenerationMode = 'inline' | 'template';
 
 /** Данные узла `document_gen` (v0.10 S6, DESIGN v0.10 § 3.2.1). */
 export interface DocumentGenerationNodeData {
-  /** Формат файла; S6 поддерживает только `docx`. */
+  /** Формат файла: `docx` (дефолт) или `pdf` (v0.12 S1). */
   format?: DocumentOutputFormat;
   /** Как интерпретировать контент: Markdown или JSON. */
   source?: DocumentSource;
@@ -426,6 +435,31 @@ export interface DocumentGenerator {
 }
 
 /**
+ * Структурный контракт PDF-рендерера (v0.12 S1, DESIGN § 3.1.3).
+ *
+ * Как и {@link DocumentGenerator}, нарочно не импортирует `PdfRenderer` как
+ * значение: исполнитель тестируется без Nest-DI и без `pdfkit`. Настоящий
+ * сервис подходит структурно.
+ */
+export interface PdfGenerator {
+  /**
+   * Рендерит Markdown в PDF.
+   *
+   * @param markdown - исходный Markdown
+   * @returns содержимое .pdf
+   */
+  renderFromMarkdownAsync(markdown: string): Promise<Buffer>;
+
+  /**
+   * Рендерит JSON-документ в PDF.
+   *
+   * @param json - `{ title?, blocks: [...] }`
+   * @returns содержимое .pdf
+   */
+  renderFromJsonAsync(json: unknown): Promise<Buffer>;
+}
+
+/**
  * Структурный контракт хранилища сгенерированных файлов.
  *
  * `IMediaStorage` удовлетворяет ему без адаптера. `backend` нужен, чтобы
@@ -507,8 +541,10 @@ export interface DocumentTemplateRenderer {
  * моков в тестах не ловилась бы типами.
  */
 export interface DocumentGenerationDeps {
-  /** Рендерер Markdown/JSON → DOCX (inline-режим). */
+  /** Рендерер Markdown/JSON → DOCX (inline-режим, `format='docx'`). */
   documentService: DocumentGenerator;
+  /** Рендерер Markdown/JSON → PDF (inline-режим, `format='pdf'`, v0.12 S1). */
+  pdfRenderer: PdfGenerator;
   /** Хранилище сгенерированных файлов (оба режима). */
   mediaStorage: DocumentGenerationStorage;
   /** Загрузчик шаблона из БД workflow (template-режим). */
@@ -695,6 +731,31 @@ function withDocumentTitle(json: unknown, title: string | undefined): unknown {
 }
 
 /**
+ * Приводит расширение пользовательского имени файла к фактическому формату.
+ *
+ * `data.fileName` приходит из jsonb и может быть любым (`report.docx` при
+ * `format='pdf'`). Скачивать PDF под именем `.docx` — значит снова получить
+ * «не тот формат», который убирал KI-463. Имя без расширения дополняется,
+ * незнакомое расширение (`report.final`) не трогается.
+ *
+ * @param fileName - имя из `data.fileName`
+ * @param extension - фактический формат (`docx`/`pdf`)
+ * @returns имя с правильным расширением
+ */
+function normalizeDocumentFileName(
+  fileName: string,
+  extension: DocumentOutputFormat,
+): string {
+  if (/\.(docx|pdf)$/i.test(fileName)) {
+    return fileName.replace(/\.(docx|pdf)$/i, `.${extension}`);
+  }
+
+  const lastSegment = fileName.split(/[\\/]/).at(-1) ?? fileName;
+
+  return lastSegment.includes('.') ? fileName : `${fileName}.${extension}`;
+}
+
+/**
  * Имя файла для `download` в UI.
  *
  * Явное `data.fileName` важнее имени, которое построило хранилище
@@ -704,35 +765,40 @@ function withDocumentTitle(json: unknown, title: string | undefined): unknown {
  * @param savedKey - ключ объекта из `saveGeneratedAsync`
  * @param nodeId - id узла (для дефолтного имени)
  * @param fileName - `data.fileName` (уже обрезан Zod-схемой)
+ * @param extension - расширение без точки (`docx`/`pdf`) для fallback-имени
  * @returns имя файла без пути
  */
 function resolveDocumentFileName(
   savedKey: string,
   nodeId: string,
   fileName: string | undefined,
+  extension: DocumentOutputFormat,
 ): string {
   if (fileName !== undefined && fileName.length > 0) {
-    return fileName;
+    return normalizeDocumentFileName(fileName, extension);
   }
 
-  return savedKey.split('/').at(-1) ?? `generated-${nodeId}.docx`;
+  return savedKey.split('/').at(-1) ?? `generated-${nodeId}.${extension}`;
 }
 
 /**
  * Общая часть сохранения документа: проверка 10 МБ, запись в хранилище и
  * контроль того, что бэкенд вернул ссылку и ключ.
  *
- * @param buffer - готовый DOCX
+ * @param buffer - готовый файл (DOCX или PDF)
+ * @param extension - расширение без точки (`docx`/`pdf`): определяет ключ в
+ *   хранилище и, следовательно, расширение скачиваемого файла
  * @param nodeId - id узла (сегмент ключа хранилища)
  * @param runId - uuid запуска (первый сегмент ключа)
  * @param deps - зависимости исполнителя
  * @returns ссылка, ключ и имя файла для outputs
- * @throws DocumentTooLargeException если DOCX больше 10 МБ
+ * @throws DocumentTooLargeException если файл больше 10 МБ
  * @throws DocumentStorageUnavailableException если сохранение выключено или
  *   бэкенд не вернул ссылку/ключ
  */
 async function saveDocumentAsync(
   buffer: Buffer,
+  extension: DocumentOutputFormat,
   nodeId: string,
   runId: string,
   deps: DocumentGenerationDeps,
@@ -747,7 +813,7 @@ async function saveDocumentAsync(
 
   const saved = await deps.mediaStorage.saveGeneratedAsync(
     buffer,
-    'docx',
+    extension,
     runId,
     nodeId,
   );
@@ -827,8 +893,19 @@ async function executeTemplateDocumentAsync(
     variables,
   );
 
-  const saved = await saveDocumentAsync(rendered.buffer, node.id, runId, deps);
-  const fileName = resolveDocumentFileName(saved.key, node.id, data.fileName);
+  const saved = await saveDocumentAsync(
+    rendered.buffer,
+    'docx',
+    node.id,
+    runId,
+    deps,
+  );
+  const fileName = resolveDocumentFileName(
+    saved.key,
+    node.id,
+    data.fileName,
+    'docx',
+  );
 
   // Только имена ключей, без значений (RULES 5.9): warning помогает понять,
   // какие поля не заполнила модель, но не раскрывает содержимое документа.
@@ -866,10 +943,10 @@ async function executeTemplateDocumentAsync(
  * Исполнитель узла `document_gen` (v0.10 S6; режим `template` — v0.11 S4).
  *
  * Два режима (DESIGN § 3.1.2):
- * - `inline` (дефолт, старые графы) — без изменений: выбор контента
- *   (`inputs.prompt` важнее `data.content`) → {@link DocumentGenerator}
+ * - `inline` (дефолт, старые графы) — выбор контента (`inputs.prompt` важнее
+ *   `data.content`) → {@link DocumentGenerator} или {@link PdfGenerator}
  *   (Markdown/JSON → `Buffer`) → лимит 10 МБ → `saveGeneratedAsync`;
- * - `template` — {@link executeTemplateDocumentAsync}.
+ * - `template` — {@link executeTemplateDocumentAsync} (только DOCX).
  *
  * Ключ хранилища возвращается отдельным полем: движок кладёт его в
  * `node_runs.storage_key`, чтобы ссылку можно было переподписать по ключу, а
@@ -883,7 +960,7 @@ async function executeTemplateDocumentAsync(
  * @returns выходы и `storageKey` для `node_runs`
  * @throws NodeDataValidationException если `data`/контент не проходят проверки
  * @throws DocumentTemplateNotFoundException если шаблон не принадлежит workflow
- * @throws DocumentTooLargeException если DOCX больше 10 МБ
+ * @throws DocumentTooLargeException если готовый файл больше 10 МБ
  * @throws DocumentStorageUnavailableException если сохранение выключено или
  *   бэкенд не вернул ссылку/ключ
  * @throws DocumentRenderException если рендерер не смог собрать документ
@@ -900,16 +977,9 @@ export async function executeDocumentGenerationNodeAsync(
     node.data,
   );
 
-  // PDF есть в DESIGN § 3.2.3, но в S6 реализован только DOCX-рендерер.
-  // Молча отдавать .docx на запрос PDF нельзя: UI/пользователь получит не тот
-  // формат, поэтому — явная ошибка (KI-463). Для template-режима это же
-  // ограничение дублирует `superRefine` схемы.
-  if (data.format !== 'docx') {
-    throw new NodeDataValidationException(
-      'document_gen',
-      `формат '${data.format}' пока не поддерживается: v0.10 S6 генерирует DOCX`,
-    );
-  }
+  // v0.12 S1 (DESIGN § 3.1.3): `format` выбирает рендерер. Для `template`
+  // остаётся только DOCX — это ограничение проверяет `superRefine` выше, до
+  // загрузки шаблона и рендера.
 
   // DESIGN § 3.2.4: без хранилища отдать документ нечем — падаем до рендера,
   // чтобы не тратить CPU на файл, который некуда положить.
@@ -922,16 +992,35 @@ export async function executeDocumentGenerationNodeAsync(
   }
 
   const content = resolveDocumentContent(data.source, inputs.prompt, data.content);
+  const format = data.format;
 
-  const buffer =
-    content.kind === 'markdown'
-      ? await deps.documentService.generateDocxFromMarkdownAsync(content.markdown)
-      : await deps.documentService.generateDocxFromJsonAsync(
-          withDocumentTitle(content.json, data.title),
-        );
+  let buffer: Buffer;
 
-  const saved = await saveDocumentAsync(buffer, node.id, runId, deps);
-  const fileName = resolveDocumentFileName(saved.key, node.id, data.fileName);
+  if (content.kind === 'markdown') {
+    buffer =
+      format === 'pdf'
+        ? await deps.pdfRenderer.renderFromMarkdownAsync(content.markdown)
+        : await deps.documentService.generateDocxFromMarkdownAsync(
+            content.markdown,
+          );
+  } else {
+    const json = withDocumentTitle(content.json, data.title);
+
+    buffer =
+      format === 'pdf'
+        ? await deps.pdfRenderer.renderFromJsonAsync(json)
+        : await deps.documentService.generateDocxFromJsonAsync(json);
+  }
+
+  // Расширение ключа в хранилище обязано совпадать с форматом: по нему
+  // строится `fileName` и, значит, имя скачиваемого файла (DESIGN § 3.1.3).
+  const saved = await saveDocumentAsync(buffer, format, node.id, runId, deps);
+  const fileName = resolveDocumentFileName(
+    saved.key,
+    node.id,
+    data.fileName,
+    format,
+  );
 
   return {
     storageKey: saved.key,
@@ -944,9 +1033,9 @@ export async function executeDocumentGenerationNodeAsync(
       // ссылка local не истекает, а presigned S3 переподписывается по ключу.
       storedExpiresAt: null,
       fileName,
-      mimeType: DOCX_MIME_TYPE,
+      mimeType: format === 'pdf' ? PDF_MIME_TYPE : DOCX_MIME_TYPE,
       bytes: buffer.byteLength,
-      format: 'docx',
+      format,
     },
   };
 }
