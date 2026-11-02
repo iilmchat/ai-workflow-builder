@@ -100,6 +100,8 @@ export class TemplatesController {
       throw new NotFoundException(`Шаблон ${params.id} не найден`);
     }
 
-    return this.workflowService.importAsync(template, user.sub);
+    // Владелец и арендатор — из токена: новый workflow получает организацию
+    // пользователя (v1.0 S1, DESIGN § 3.1).
+    return this.workflowService.importAsync(template, user.sub, user.orgId);
   }
 }

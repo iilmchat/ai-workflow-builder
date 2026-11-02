@@ -7,10 +7,13 @@ import { WorkflowService } from './workflow.service.js';
 
 /** Стабильный uuid для тестовых данных. */
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
+/** Организация-арендатор workflow (v1.0 S1). */
+const ORG_ID = '55555555-5555-4555-8555-555555555555';
 
 const baseWorkflow: Workflow = {
   id: WORKFLOW_ID,
   userId: 'user-1',
+  organizationId: ORG_ID,
   name: 'My workflow',
   description: null,
   nodes: [],
@@ -221,11 +224,12 @@ describe('WorkflowService', () => {
     it('вставляет запись через Drizzle и возвращает созданный workflow', async () => {
       const dto = { name: 'My workflow', nodes: [], edges: [] };
 
-      const result = await service.createAsync(dto, 'user-1');
+      const result = await service.createAsync(dto, 'user-1', ORG_ID);
 
       expect(db.insert).toHaveBeenCalledWith(workflows);
       expect(insertChain.values).toHaveBeenCalledWith({
         userId: 'user-1',
+        organizationId: ORG_ID,
         name: 'My workflow',
         description: undefined,
         nodes: [],
@@ -247,16 +251,42 @@ describe('WorkflowService', () => {
           edges,
         },
         'user-2',
+        ORG_ID,
       );
 
       expect(insertChain.values).toHaveBeenCalledWith(
         expect.objectContaining({
           userId: 'user-2',
+          organizationId: ORG_ID,
           description: 'описание',
           nodes,
           edges,
         }),
       );
+    });
+  });
+
+  describe('importAsync', () => {
+    it('создаёт новый workflow в организации пользователя (v1.0 S1)', async () => {
+      const dto = {
+        version: 1 as const,
+        name: 'Imported',
+        nodes: [],
+        edges: [],
+        exportedAt: '2026-10-16T00:00:00.000Z',
+      };
+
+      const result = await service.importAsync(dto, 'user-2', ORG_ID);
+
+      // Импорт делегирует вставку createAsync — путь записи один.
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-2',
+          organizationId: ORG_ID,
+          name: 'Imported',
+        }),
+      );
+      expect(result).toEqual(baseWorkflow);
     });
   });
 

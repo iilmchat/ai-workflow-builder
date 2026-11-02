@@ -11,7 +11,7 @@ import { promisify } from 'node:util';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { parseDurationToMs } from '../common/utils/parse-duration.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { refreshTokens, users, type User } from '../db/schema.js';
+import { organizations, refreshTokens, users, type User } from '../db/schema.js';
 import type { LoginDto } from './dto/login.dto.js';
 import type { RegisterDto } from './dto/register.dto.js';
 import type { JwtPayload } from './interfaces/jwt-payload.js';
@@ -85,6 +85,9 @@ function toPublic(user: User): UserPublic {
  *
  * Пароли хранятся как `scrypt$<salt_b64>$<hash_b64>` (node:crypto, без
  * внешних зависимостей). Хэш и пароль никогда не логируются (RULES 5.3).
+ *
+ * v1.0 S1 (DESIGN_V100_ENTERPRISE § 3.1): регистрация создаёт личную
+ * организацию (арендатора), её id уезжает в `orgId` access-токена.
  */
 @Injectable()
 export class AuthService {
@@ -135,11 +138,16 @@ export class AuthService {
   }
 
   /**
-   * Регистрирует пользователя и сразу выдаёт токен.
+   * Регистрирует пользователя вместе с личной организацией и сразу выдаёт токен.
+   *
+   * Проверка занятости email — до транзакции (снаружи): это чтение, конфликт
+   * не требует отката. Создание организации и пользователя неделимо (RULES
+   * 4.22): сбой между INSERT'ами оставил бы пользователя без арендатора, а
+   * организация осталась бы сиротой.
    *
    * @param dto - валидированные email/пароль
    * @returns токен и публичные данные пользователя
-   * @throws ConflictException если email уже занят
+   * @throws ConflictException если email уже занят (проверка вне транзакции)
    */
   async registerAsync(dto: RegisterDto): Promise<AuthResult> {
     const email = this.normalizeEmail(dto.email);
@@ -154,10 +162,20 @@ export class AuthService {
     }
 
     const passwordHash = await this.hashPasswordAsync(dto.password);
-    const [created] = await this.db
-      .insert(users)
-      .values({ email, passwordHash })
-      .returning();
+
+    const created = await this.db.transaction(async (tx) => {
+      const [organization] = await tx
+        .insert(organizations)
+        .values({ name: `Personal Workspace - ${email}` })
+        .returning();
+
+      const [user] = await tx
+        .insert(users)
+        .values({ email, passwordHash, organizationId: organization.id })
+        .returning();
+
+      return user;
+    });
 
     return {
       accessToken: await this.generateAccessTokenAsync(created),
@@ -224,11 +242,18 @@ export class AuthService {
    * шаблонные литералы (`'24h'`), а строка из окружения — обычный `string`,
    * поэтому тип берём от самого параметра, без приведения (RULES 4.15).
    *
-   * @param user - строка `users`
+   * `orgId` берётся из строки `users` (NOT NULL после бэкфилла v1.0.0), поэтому
+   * каждый подписанный токен несёт арендатора (DESIGN § 3.1/§ 4).
+   *
+   * @param user - строка `users` (с `organizationId`)
    * @returns подписанный JWT
    */
   async generateAccessTokenAsync(user: User): Promise<string> {
-    const payload: JwtPayload = { sub: user.id, email: user.email };
+    const payload: JwtPayload = {
+      sub: user.id,
+      email: user.email,
+      orgId: user.organizationId,
+    };
 
     return this.jwt.signAsync(payload, {
       expiresIn: this.config.getOrThrow<JwtSignOptions['expiresIn']>('JWT_EXPIRES_IN'),

@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { DEMO_USER_ID } from '../auth/auth.constants.js';
+import { DEMO_ORG_ID, DEMO_USER_ID } from '../auth/auth.constants.js';
 import type { Workflow } from '../db/schema.js';
 import type { ExportWorkflowDto } from './dto/index.js';
 import { WorkflowController } from './workflow.controller.js';
@@ -12,11 +12,12 @@ import { WorkflowService } from './workflow.service.js';
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
 
 /** Владелец из access-токена: контроллер берёт userId только отсюда (R6.1a). */
-const USER = { sub: 'user-1', email: 'user@example.com' };
+const USER = { sub: 'user-1', email: 'user@example.com', orgId: DEMO_ORG_ID };
 
 const workflow: Workflow = {
   id: WORKFLOW_ID,
   userId: 'user-1',
+  organizationId: DEMO_ORG_ID,
   name: 'My workflow',
   description: null,
   nodes: [],
@@ -72,8 +73,8 @@ describe('WorkflowController', () => {
 
       await expect(controller.create(dto, USER)).resolves.toEqual(workflow);
       // KI-204: `userId` из тела игнорируется — владелец приходит из токена
-      // вторым аргументом сервиса.
-      expect(service.createAsync).toHaveBeenCalledWith(dto, USER.sub);
+      // вторым аргументом сервиса, арендатор — третьим (v1.0 S1).
+      expect(service.createAsync).toHaveBeenCalledWith(dto, USER.sub, USER.orgId);
     });
   });
 
@@ -239,7 +240,11 @@ describe('WorkflowController — export/import (R6.6.1)', () => {
 
     expect(response.body).toEqual({ ...workflow, createdAt: expect.any(String), updatedAt: expect.any(String) });
     // Лишние ключи отброшены Zod'ом: подменить владельца или id через body нельзя.
-    expect(service.importAsync).toHaveBeenCalledWith(artifact, DEMO_USER_ID);
+    expect(service.importAsync).toHaveBeenCalledWith(
+      artifact,
+      DEMO_USER_ID,
+      DEMO_ORG_ID,
+    );
   });
 
   it('POST /workflow/import — 400 без обязательного version', async () => {

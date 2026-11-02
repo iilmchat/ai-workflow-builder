@@ -71,15 +71,25 @@ export class WorkflowService {
    * Владелец приходит из access-токена аргументом (KI-204: в DTO его больше
    * нет), `nodes`/`edges` — уже с применёнными значениями по умолчанию `[]`.
    *
+   * `organizationId` — арендатор из того же токена (v1.0 S1, DESIGN § 3.1):
+   * колонка NOT NULL, поэтому клиент не может создать граф без организации.
+   * Фильтрация выборок по `orgId` — следующий срез (S2), здесь только запись.
+   *
    * @param dto - валидированные данные создания workflow
    * @param userId - id владельца (uuid из токена)
+   * @param organizationId - id организации-арендатора (uuid из токена)
    * @returns созданная запись workflow
    */
-  async createAsync(dto: CreateWorkflowDto, userId: string): Promise<Workflow> {
+  async createAsync(
+    dto: CreateWorkflowDto,
+    userId: string,
+    organizationId: string,
+  ): Promise<Workflow> {
     const [created] = await this.db
       .insert(workflows)
       .values({
         userId,
+        organizationId,
         name: dto.name,
         description: dto.description,
         nodes: dto.nodes,
@@ -110,12 +120,18 @@ export class WorkflowService {
    *
    * @param dto - валидированный артефакт (то, что отдаёт `GET /workflow/:id/export`)
    * @param userId - владелец нового workflow (uuid из access-токена)
+   * @param organizationId - id организации-арендатора (uuid из access-токена)
    * @returns созданный workflow
    */
-  async importAsync(dto: ImportWorkflowDto, userId: string): Promise<Workflow> {
+  async importAsync(
+    dto: ImportWorkflowDto,
+    userId: string,
+    organizationId: string,
+  ): Promise<Workflow> {
     const created = await this.createAsync(
       { name: dto.name, nodes: dto.nodes, edges: dto.edges },
       userId,
+      organizationId,
     );
 
     this.logger.debug(

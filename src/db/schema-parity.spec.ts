@@ -36,7 +36,7 @@ const TABLE_SCHEMA = 'public';
 /**
  * Колонки, обязательные к покрытию гейтом (перечислены в задаче KI-298).
  * Фактический список таблиц берётся из `src/db/schema.ts` — новые `pgTable`
- * попадают под гейт автоматически, но эти пять должны присутствовать всегда.
+ * попадают под гейт автоматически, но эти шесть должны присутствовать всегда.
  */
 const REQUIRED_TABLE_NAMES = [
   'workflows',
@@ -44,6 +44,8 @@ const REQUIRED_TABLE_NAMES = [
   'node_runs',
   'users',
   'refresh_tokens',
+  // v1.0 S1 (DESIGN § 3.1): корневая таблица арендаторов.
+  'organizations',
 ] as const;
 
 /**

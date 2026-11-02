@@ -21,11 +21,15 @@ const PARTICIPANT_ID = '33333333-3333-4333-8333-333333333333';
 const INVITED_AT = new Date('2026-10-17T10:00:00.000Z');
 /** id системного пользователя в AUTH_DISABLED-режиме (R6.1a). */
 const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000001';
+/** Организация-арендатор workflow (v1.0 S1). */
+const ORG_ID = '55555555-5555-4555-8555-555555555555';
 
 /** Workflow владельца — нужен для findOneAsync в getCollaboratorsAsync. */
 const baseWorkflow: Workflow = {
   id: WORKFLOW_ID,
   userId: OWNER_ID,
+  // v1.0 S1: организация-арендатор обязательна в схеме.
+  organizationId: ORG_ID,
   name: 'Shared graph',
   description: null,
   nodes: [],

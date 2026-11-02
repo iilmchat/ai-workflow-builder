@@ -5,7 +5,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import { of } from 'rxjs';
 import request from 'supertest';
-import { DEMO_USER_EMAIL, DEMO_USER_ID } from '../auth/auth.constants.js';
+import { DEMO_ORG_ID, DEMO_USER_EMAIL, DEMO_USER_ID } from '../auth/auth.constants.js';
 import { CostBudgetService } from './cost-budget.service.js';
 import { RunsController, RunsHistoryController } from './runs.controller.js';
 import { RunsService, type RunResponse } from './runs.service.js';
@@ -14,7 +14,7 @@ import type { NodeRunSnapshot, RunHistoryResponse } from './dto/index.js';
 import { decodeRunHistoryCursor, encodeRunHistoryCursor } from './dto/index.js';
 
 /** Владелец, которого guard подставляет при `AUTH_DISABLED=true`. */
-const USER = { sub: DEMO_USER_ID, email: DEMO_USER_EMAIL };
+const USER = { sub: DEMO_USER_ID, email: DEMO_USER_EMAIL, orgId: DEMO_ORG_ID };
 
 /** Стабильные идентификаторы тестовых данных. */
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';

@@ -46,6 +46,8 @@ const CREATED_AT = new Date('2023-12-31T23:00:00.000Z');
 const baseWorkflow: Workflow = {
   id: WORKFLOW_ID,
   userId: 'user-1',
+  // v1.0 S1: организация-арендатор обязательна в схеме.
+  organizationId: '55555555-5555-4555-8555-555555555555',
   name: 'My workflow',
   description: null,
   nodes: [{ id: 'n1', type: 'llm', data: {} }],

@@ -64,19 +64,59 @@ export const NODE_RUN_STATUSES = [...WORKFLOW_RUN_STATUSES, 'skipped'] as const;
 export type NodeRunStatus = (typeof NODE_RUN_STATUSES)[number];
 
 /**
- * users — учётные записи (R6.1a, KI-106).
+ * organizations — арендатор (workspace/tenant), v1.0 S1, DESIGN § 3.1.
  *
- * Пароль хранится как `scrypt$<salt_b64>$<hash_b64>` (node:crypto, без
- * внешних зависимостей), соль уникальна на пользователя.
+ * Верхний уровень изоляции данных: пользователь и его workflow принадлежат
+ * организации, а слой доступа фильтрует запросы по `organizationId` (следующие
+ * срезы v1.0). `ON DELETE CASCADE` на дочерних таблицах означает, что удаление
+ * арендатора удаляет и его данные — «осиротевших» строк быть не может.
+ *
+ * UNIQUE на `name` намеренно **не** объявлен: имена двух арендаторов могут
+ * совпасть, а идемпотентность backfill'а персональных организаций держится на
+ * проверке `NOT EXISTS` по имени (`src/db/migrations/backfill-organizations.ts`),
+ * а не на ограничении БД. Для демо-пользователя id детерминированный
+ * (`DEMO_ORG_ID` в `src/auth/auth.constants.ts`), поэтому повторный backfill не
+ * плодит организации.
  */
-export const users = pgTable('users', {
+export const organizations = pgTable('organizations', {
   id: uuid('id').primaryKey().defaultRandom(),
-  email: text('email').notNull().unique(),
-  passwordHash: text('password_hash').notNull(),
+  name: text('name').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .defaultNow(),
 });
+
+/** Строка таблицы `organizations`. */
+export type Organization = typeof organizations.$inferSelect;
+/** Значения для INSERT в `organizations`. */
+export type NewOrganization = typeof organizations.$inferInsert;
+
+/**
+ * users — учётные записи (R6.1a, KI-106; v1.0 S1 — арендатор).
+ *
+ * Пароль хранится как `scrypt$<salt_b64>$<hash_b64>` (node:crypto, без
+ * внешних зависимостей), соль уникальна на пользователя.
+ *
+ * `organization_id` обязателен (NOT NULL): пользователь без организации
+ * невозможен. Существующим пользователям персональные организации заводит
+ * backfill (`src/db/migrations/backfill-organizations.ts`) — миграция добавляет
+ * колонку nullable и включает NOT NULL только после заполнения данных.
+ */
+export const users = pgTable(
+  'users',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    email: text('email').notNull().unique(),
+    passwordHash: text('password_hash').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index('users_organization_id_idx').on(table.organizationId)],
+);
 
 /** Строка таблицы `users`. */
 export type User = typeof users.$inferSelect;
@@ -109,23 +149,37 @@ export type RefreshToken = typeof refreshTokens.$inferSelect;
 export type NewRefreshToken = typeof refreshTokens.$inferInsert;
 
 /**
- * workflows — определение графа (узлы + связи), принадлежащее пользователю.
+ * workflows — определение графа (узлы + связи), принадлежащее пользователю
+ * и его организации.
+ *
+ * `organization_id` (v1.0 S1) — арендатор, к которому относится граф;
+ * `ON DELETE CASCADE` удаляет workflow вместе с организацией, а индекс
+ * `workflows_organization_id_idx` обслуживает выборку графов арендатора.
+ * Колонка NOT NULL: backfill проставляет её по владельцу
+ * (`workflows.user_id → users.organization_id`) до включения ограничения.
  */
-export const workflows = pgTable('workflows', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  // R6.1a: владелец — uuid пользователя. До 0004 колонка была `text` со
-  // значением 'demo-user', миграция переводит её на системного пользователя.
-  userId: uuid('user_id').notNull(),
-  name: text('name').notNull(),
-  description: text('description'),
-  nodes: jsonb('nodes').$type<NodeDto[]>().notNull().default([]),
-  edges: jsonb('edges').$type<EdgeDto[]>().notNull().default([]),
-  version: integer('version').notNull().default(1),
-  // Задел под R6.2 (Share): публичная ссылка на граф.
-  shareToken: uuid('share_token').unique(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const workflows = pgTable(
+  'workflows',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    // R6.1a: владелец — uuid пользователя. До 0004 колонка была `text` со
+    // значением 'demo-user', миграция переводит её на системного пользователя.
+    userId: uuid('user_id').notNull(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description: text('description'),
+    nodes: jsonb('nodes').$type<NodeDto[]>().notNull().default([]),
+    edges: jsonb('edges').$type<EdgeDto[]>().notNull().default([]),
+    version: integer('version').notNull().default(1),
+    // Задел под R6.2 (Share): публичная ссылка на граф.
+    shareToken: uuid('share_token').unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('workflows_organization_id_idx').on(table.organizationId)],
+);
 
 /**
  * Роли участников workflow (R7.6, DESIGN v0.9 § 3.6, KI-197).

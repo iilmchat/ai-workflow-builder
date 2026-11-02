@@ -1,4 +1,5 @@
-import { getTableColumns } from 'drizzle-orm';
+import { getTableColumns, getTableName } from 'drizzle-orm';
+import { getTableConfig, type PgTable } from 'drizzle-orm/pg-core';
 import { expectTypeOf } from 'vitest';
 import type { EdgeDto, GraphSnapshotDto, NodeDto } from '../engine/dto/index.js';
 import {
@@ -6,11 +7,17 @@ import {
   TERMINAL_WORKFLOW_RUN_STATUSES,
   WORKFLOW_RUN_STATUSES,
   nodeRuns,
+  organizations,
+  users,
   workflowRuns,
   workflows,
+  type NewOrganization,
+  type NewWorkflow,
   type NodeRun,
   type NodeRunStatus,
+  type Organization,
   type RunStatus,
+  type User,
   type Workflow,
   type WorkflowRun,
 } from './schema.js';
@@ -112,5 +119,98 @@ describe('Drizzle schema (KI-014, KI-015)', () => {
     expectTypeOf<(typeof TERMINAL_WORKFLOW_RUN_STATUSES)[number]>().toEqualTypeOf<
       'completed' | 'failed'
     >();
+  });
+});
+
+/**
+ * Ищет внешний ключ таблицы по имени колонки.
+ *
+ * @param table - таблица Drizzle-схемы.
+ * @param columnName - snake_case-имя колонки в БД.
+ * @returns Найденный внешний ключ или `undefined`.
+ */
+function findForeignKeyByColumn(
+  table: PgTable,
+  columnName: string,
+): ReturnType<typeof getTableConfig>['foreignKeys'][number] | undefined {
+  return getTableConfig(table).foreignKeys.find((foreignKey) =>
+    foreignKey.reference().columns.some((column) => column.name === columnName),
+  );
+}
+
+/**
+ * Арендатор (organizations) в Drizzle-схеме: v1.0 S1, DESIGN § 3.1.
+ *
+ * Живая БД не нужна — проверяются метаданные таблиц и выведенные TS-типы.
+ * Колонки в БД nullable до backfill'а (см. `backfill-organizations.ts`), но
+ * схема обязана объявлять NOT NULL: parity-гейт сверяет итоговое состояние.
+ */
+describe('Organizations / multi-tenancy (v1.0 S1)', () => {
+  it('organizations: id uuid PK default, name text NOT NULL, created_at timestamptz NOT NULL', () => {
+    expect(getTableName(organizations)).toBe('organizations');
+
+    const columns = getTableColumns(organizations);
+
+    expect(columns.id.name).toBe('id');
+    expect(columns.id.columnType).toBe('PgUUID');
+    expect(columns.id.primary).toBe(true);
+    expect(columns.id.hasDefault).toBe(true);
+
+    expect(columns.name.name).toBe('name');
+    expect(columns.name.columnType).toBe('PgText');
+    expect(columns.name.notNull).toBe(true);
+    expect(columns.name.hasDefault).toBe(false);
+
+    expect(columns.createdAt.name).toBe('created_at');
+    expect(columns.createdAt.columnType).toBe('PgTimestamp');
+    expect(columns.createdAt.notNull).toBe(true);
+    expect(columns.createdAt.hasDefault).toBe(true);
+
+    expectTypeOf<Organization['id']>().toEqualTypeOf<string>();
+    expectTypeOf<Organization['name']>().toEqualTypeOf<string>();
+    expectTypeOf<Organization['createdAt']>().toEqualTypeOf<Date>();
+    expectTypeOf<NewOrganization['name']>().toEqualTypeOf<string>();
+  });
+
+  it('users и workflows: organization_id — uuid NOT NULL, FK на organizations ON DELETE CASCADE, индекс', () => {
+    for (const table of [users, workflows]) {
+      const tableName = getTableName(table);
+      const columns = getTableColumns(table);
+      const organizationId = columns.organizationId;
+
+      expect(organizationId.name).toBe('organization_id');
+      expect(organizationId.columnType).toBe('PgUUID');
+      expect(organizationId.notNull).toBe(true);
+      expect(organizationId.hasDefault).toBe(false);
+
+      const foreignKey = findForeignKeyByColumn(table, 'organization_id');
+
+      if (foreignKey === undefined) {
+        throw new Error(`${tableName}: нет FK по organization_id`);
+      }
+
+      const reference = foreignKey.reference();
+
+      expect(getTableName(reference.foreignTable)).toBe('organizations');
+      expect(reference.foreignColumns.map((column) => column.name)).toEqual(['id']);
+      expect(foreignKey.onDelete).toBe('cascade');
+
+      const organizationIndex = getTableConfig(table).indexes.find(
+        (index) => index.config.name === `${tableName}_organization_id_idx`,
+      );
+      // Колонки индекса в Drizzle — `IndexedColumn | SQL`; имя есть только у
+      // колонки, SQL-выражения (например, `lower(email)`) в этот индекс не
+      // входят.
+      const indexedColumnNames = (organizationIndex?.config.columns ?? []).flatMap(
+        (column) =>
+          'name' in column && typeof column.name === 'string' ? [column.name] : [],
+      );
+
+      expect(indexedColumnNames).toEqual(['organization_id']);
+    }
+
+    expectTypeOf<User['organizationId']>().toEqualTypeOf<string>();
+    expectTypeOf<Workflow['organizationId']>().toEqualTypeOf<string>();
+    expectTypeOf<NewWorkflow['organizationId']>().toEqualTypeOf<string>();
   });
 });

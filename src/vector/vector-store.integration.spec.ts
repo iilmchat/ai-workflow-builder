@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DEFAULT_EMBEDDING_DIMENSIONS } from '../llm/llm-constants.js';
 import type { Database } from '../db/db.module.js';
 import * as schema from '../db/schema.js';
-import { workflowRuns, workflows } from '../db/schema.js';
+import { organizations, workflowRuns, workflows } from '../db/schema.js';
 import { VectorStoreService } from './vector-store.service.js';
 
 /**
@@ -46,6 +46,7 @@ describe.skipIf(!process.env.DATABASE_URL)(
     let pool: Pool | undefined;
     let store: VectorStoreService | undefined;
     let db: NodePgDatabase<typeof schema> | undefined;
+    let organizationId = '';
     let workflowId = '';
     let runId = '';
 
@@ -62,11 +63,20 @@ describe.skipIf(!process.env.DATABASE_URL)(
       // типах `$client` не выводит, хотя в рантайме он есть.
       store = new VectorStoreService(db as unknown as Database);
 
+      // v1.0 S1: workflow принадлежит организации — заводим её на тест и
+      // удаляем в afterAll (каскад снимет workflow и его дочерние строки).
+      organizationId = randomUUID();
       workflowId = randomUUID();
+
+      await db.insert(organizations).values({
+        id: organizationId,
+        name: `R7.4a integration org ${Date.now()}`,
+      });
 
       await db.insert(workflows).values({
         id: workflowId,
         userId: randomUUID(),
+        organizationId,
         name: `R7.4a integration ${Date.now()}`,
         nodes: [],
         edges: [],
@@ -87,6 +97,10 @@ describe.skipIf(!process.env.DATABASE_URL)(
       if (db !== undefined) {
         // CASCADE снимает workflow_vectors, workflow_memory и workflow_runs.
         await db.delete(workflows).where(eq(workflows.id, workflowId));
+
+        // Организацию удаляем после workflow (на неё ссылаются оба: users и
+        // workflows); каскад страхует, если workflow остался.
+        await db.delete(organizations).where(eq(organizations.id, organizationId));
       }
 
       if (pool !== undefined) {

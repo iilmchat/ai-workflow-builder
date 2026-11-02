@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { SafeHttpClient } from '../common/http/safe-http.client.js';
 import * as schema from '../db/schema.js';
-import { nodeRuns, workflowRuns, workflows } from '../db/schema.js';
+import { nodeRuns, organizations, workflowRuns, workflows } from '../db/schema.js';
 import { AgentService } from '../agent/agent.service.js';
 import { PdfRenderer } from '../documents/pdf-renderer.service.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
@@ -75,6 +75,7 @@ describe.skipIf(!process.env.DATABASE_URL)(
     let server: Server | undefined;
     let sourceUrl = '';
     let mediaDir = '';
+    let organizationId = '';
     let workflowId = '';
     let runId = '';
 
@@ -116,10 +117,19 @@ describe.skipIf(!process.env.DATABASE_URL)(
 
       workflowId = randomUUID();
       runId = randomUUID();
+      // v1.0 S1: workflow принадлежит организации — заводим её на тест и
+      // удаляем в afterAll.
+      organizationId = randomUUID();
+
+      await db.insert(organizations).values({
+        id: organizationId,
+        name: `R7.8 media storage org ${Date.now()}`,
+      });
 
       await db.insert(workflows).values({
         id: workflowId,
         userId: randomUUID(),
+        organizationId,
         name: `R7.8 media storage ${Date.now()}`,
         nodes: [MEDIA_NODE],
         edges: [],
@@ -138,6 +148,10 @@ describe.skipIf(!process.env.DATABASE_URL)(
       if (db !== undefined) {
         // CASCADE снимает node_runs.
         await db.delete(workflows).where(eq(workflows.id, workflowId));
+
+        // Организацию удаляем после workflow (на неё ссылаются users и
+        // workflows); каскад страхует, если workflow остался.
+        await db.delete(organizations).where(eq(organizations.id, organizationId));
       }
 
       if (server !== undefined) {

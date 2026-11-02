@@ -3,7 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import type { INestApplication } from '@nestjs/common';
-import { DEMO_USER_ID } from '../auth/auth.constants.js';
+import { DEMO_ORG_ID, DEMO_USER_ID } from '../auth/auth.constants.js';
 import type { Workflow } from '../db/schema.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
 import { TemplateLoaderService } from './template-loader.service.js';
@@ -13,6 +13,7 @@ import { TemplatesController } from './templates.controller.js';
 const createdWorkflow: Workflow = {
   id: '77777777-7777-4777-8777-777777777777',
   userId: DEMO_USER_ID,
+  organizationId: DEMO_ORG_ID,
   name: 'Text → LLM',
   description: null,
   nodes: [],
@@ -89,16 +90,18 @@ describe('TemplatesController (R6.6.1)', () => {
 
     expect(response.body).toEqual({ ...createdWorkflow, createdAt: expect.any(String), updatedAt: expect.any(String) });
 
-    const [artifact, userId] = service.importAsync.mock.calls[0] as [
+    const [artifact, userId, organizationId] = service.importAsync.mock.calls[0] as [
       { name: string; nodes: unknown[]; edges: unknown[] },
+      string,
       string,
     ];
 
     expect(artifact.name).toBe('Text → LLM');
     expect(artifact.nodes).toHaveLength(2);
     expect(artifact.edges).toHaveLength(1);
-    // Владелец — из токена (AUTH_DISABLED → системный пользователь).
+    // Владелец и арендатор — из токена (AUTH_DISABLED → системный пользователь).
     expect(userId).toBe(DEMO_USER_ID);
+    expect(organizationId).toBe(DEMO_ORG_ID);
   });
 
   it('POST /templates/nonexistent/instantiate — 404 без вызова сервиса', async () => {

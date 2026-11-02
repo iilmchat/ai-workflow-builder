@@ -5,7 +5,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
-import { DEMO_USER_EMAIL, DEMO_USER_ID } from '../auth/auth.constants.js';
+import { DEMO_ORG_ID, DEMO_USER_EMAIL, DEMO_USER_ID } from '../auth/auth.constants.js';
 import { DOCUMENT_TEMPLATE_MAX_BYTES } from './document-template.constants.js';
 import { DocumentTemplatesController } from './document-templates.controller.js';
 import { DocumentTemplatesService } from './document-templates.service.js';
@@ -26,7 +26,7 @@ import type { DocumentTemplateSummary } from './dto/document-template.dto.js';
  */
 
 /** Пользователь, которого подставляет guard при `AUTH_DISABLED=true`. */
-const USER = { sub: DEMO_USER_ID, email: DEMO_USER_EMAIL };
+const USER = { sub: DEMO_USER_ID, email: DEMO_USER_EMAIL, orgId: DEMO_ORG_ID };
 
 /** Стабильные uuid тестовых данных. */
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';

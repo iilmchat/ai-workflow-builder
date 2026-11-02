@@ -83,8 +83,9 @@ export class WorkflowController {
     @Body(ZodValidationPipe.create(CreateWorkflowSchema)) dto: CreateWorkflowDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<Workflow> {
-    // Владелец — только из токена (R6.1a); в body его больше нет (KI-204).
-    return this.workflowService.createAsync(dto, user.sub);
+    // Владелец и арендатор — только из токена (R6.1a, v1.0 S1); в body их нет
+    // (KI-204, DESIGN_V100_ENTERPRISE § 3.1).
+    return this.workflowService.createAsync(dto, user.sub, user.orgId);
   }
 
   /**
@@ -131,7 +132,7 @@ export class WorkflowController {
     @Body(ZodValidationPipe.create(ImportWorkflowSchema)) dto: ImportWorkflowDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<Workflow> {
-    return this.workflowService.importAsync(dto, user.sub);
+    return this.workflowService.importAsync(dto, user.sub, user.orgId);
   }
 
   /**

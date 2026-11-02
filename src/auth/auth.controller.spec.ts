@@ -13,6 +13,8 @@ const USER_ID = '33333333-3333-4333-8333-333333333333';
 const EMAIL = 'user@example.com';
 const TOKEN = 'signed.jwt.token';
 const CREATED_AT = '2024-01-01T00:00:00.000Z';
+/** Организация из payload access-токена (v1.0 S1). */
+const ORG_ID = '55555555-5555-4555-8555-555555555555';
 /** Opaque refresh-токен и имя его cookie (R6.1b). */
 const REFRESH_TOKEN = 'opaque-refresh-token';
 const REFRESH_COOKIE = 'refresh_token';
@@ -40,7 +42,9 @@ describe('AuthController', () => {
 
   beforeEach(async () => {
     authDisabled = false;
-    verifyAsync = vi.fn(() => Promise.resolve({ sub: USER_ID, email: EMAIL }));
+    verifyAsync = vi.fn(() =>
+      Promise.resolve({ sub: USER_ID, email: EMAIL, orgId: ORG_ID }),
+    );
 
     service = {
       registerAsync: vi.fn(() => Promise.resolve(authResult)),
@@ -175,6 +179,17 @@ describe('AuthController', () => {
         .get('/auth/me')
         .set('Authorization', 'Bearer broken')
         .expect(401);
+    });
+
+    it('отвечает 401 на legacy-токен без orgId (DESIGN § 4)', async () => {
+      // Токен, подписанный до v1.0.0: guard отклоняет его до вызова сервиса.
+      verifyAsync.mockResolvedValue({ sub: USER_ID, email: EMAIL });
+
+      await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .expect(401);
+      expect(service.getMeAsync).not.toHaveBeenCalled();
     });
 
     it('отвечает 200 с валидным токеном', async () => {

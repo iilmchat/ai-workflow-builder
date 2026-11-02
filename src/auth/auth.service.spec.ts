@@ -15,10 +15,15 @@ const CREATED_AT = new Date('2024-01-01T00:00:00.000Z');
 const TOKEN = 'signed.jwt.token';
 /** id строки `refresh_tokens` в моках. */
 const TOKEN_ID = '44444444-4444-4444-8444-444444444444';
+/** Организация, которую создаёт регистрация (v1.0 S1). */
+const ORG_ID = '55555555-5555-4555-8555-555555555555';
+/** Ожидаемое имя личной организации по нормализованному email. */
+const ORG_NAME = `Personal Workspace - ${EMAIL}`;
 
 /** Строка `users` без учёта `passwordHash` (его подставляет тест). */
 const baseUser: Omit<User, 'passwordHash'> = {
   id: USER_ID,
+  organizationId: ORG_ID,
   email: EMAIL,
   createdAt: CREATED_AT,
 };
@@ -30,6 +35,8 @@ describe('AuthService', () => {
   let insertReturning: ReturnType<typeof vi.fn>;
   let updateReturning: ReturnType<typeof vi.fn>;
   let updateSet: ReturnType<typeof vi.fn>;
+  let transaction: ReturnType<typeof vi.fn>;
+  let signAsync: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     selectLimit = vi.fn(() => Promise.resolve([]));
@@ -39,6 +46,7 @@ describe('AuthService', () => {
     updateSet = vi.fn(() => ({
       where: vi.fn(() => ({ returning: updateReturning })),
     }));
+    signAsync = vi.fn(() => Promise.resolve(TOKEN));
 
     const update = vi.fn(() => ({ set: updateSet }));
     const insert = vi.fn(() => ({ values: insertValues }));
@@ -46,21 +54,24 @@ describe('AuthService', () => {
       from: vi.fn(() => ({ where: vi.fn(() => ({ limit: selectLimit })) })),
     }));
 
+    // Регистрация (RULES 4.22): организация + пользователь в одной транзакции.
+    // Ротация refresh-токена (R6.1b) тоже идёт в транзакции.
+    transaction = vi.fn((callback: (tx: unknown) => Promise<unknown>) =>
+      callback({ select, insert, update }),
+    );
+
     const db = {
       select,
       insert,
       update,
-      // R6.1b: ротация refresh-токена идёт в транзакции (RULES 4.22).
-      transaction: vi.fn((callback: (tx: unknown) => Promise<unknown>) =>
-        callback({ select, insert, update }),
-      ),
+      transaction,
     };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         AuthService,
         { provide: DRIZZLE, useValue: db as unknown as Database },
-        { provide: JwtService, useValue: { signAsync: vi.fn(() => Promise.resolve(TOKEN)) } },
+        { provide: JwtService, useValue: { signAsync } },
         {
           provide: ConfigService,
           useValue: { getOrThrow: vi.fn(() => '24h') },
@@ -75,9 +86,70 @@ describe('AuthService', () => {
     vi.restoreAllMocks();
   });
 
+  /**
+   * Задаёт ответы INSERT'ов регистрации: организация, затем пользователь.
+   *
+   * @param organization - строка `organizations`, которую вернёт первый INSERT
+   * @param user - строка `users`, которую вернёт второй INSERT
+   */
+  function mockRegisterInserts(
+    organization: { id: string; name: string },
+    user: User,
+  ): void {
+    insertReturning
+      .mockResolvedValueOnce([organization])
+      .mockResolvedValueOnce([user]);
+  }
+
+  /** Строка `users`, которую возвращает INSERT при регистрации. */
+  function registeredUser(): User {
+    return { ...baseUser, passwordHash: 'scrypt$x$y' };
+  }
+
+  /** Значения второго INSERT'а регистрации — в `users`. */
+  function userInsertValues(): {
+    email: string;
+    passwordHash: string;
+    organizationId: string;
+  } {
+    return insertValues.mock.calls[1][0] as {
+      email: string;
+      passwordHash: string;
+      organizationId: string;
+    };
+  }
+
   describe('registerAsync', () => {
+    it('создаёт организацию и пользователя в одной транзакции (RULES 4.22)', async () => {
+      mockRegisterInserts({ id: ORG_ID, name: ORG_NAME }, registeredUser());
+
+      await service.registerAsync({ email: EMAIL, password: PASSWORD });
+
+      // Организация и пользователь неделимы: иначе пользователь остался бы
+      // без арендатора, а организация — сиротой.
+      expect(transaction).toHaveBeenCalledTimes(1);
+      expect(insertValues).toHaveBeenNthCalledWith(1, { name: ORG_NAME });
+      expect(insertValues).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ organizationId: ORG_ID }),
+      );
+      expect(userInsertValues().organizationId).toBe(ORG_ID);
+    });
+
+    it('выдаёт токен с orgId созданной организации', async () => {
+      mockRegisterInserts({ id: ORG_ID, name: ORG_NAME }, registeredUser());
+
+      const result = await service.registerAsync({ email: EMAIL, password: PASSWORD });
+
+      expect(result.accessToken).toBe(TOKEN);
+      expect(signAsync).toHaveBeenCalledWith(
+        { sub: USER_ID, email: EMAIL, orgId: ORG_ID },
+        expect.objectContaining({ expiresIn: '24h' }),
+      );
+    });
+
     it('создаёт пользователя и возвращает токен', async () => {
-      insertReturning.mockResolvedValue([{ ...baseUser, passwordHash: 'scrypt$x$y' }]);
+      mockRegisterInserts({ id: ORG_ID, name: ORG_NAME }, registeredUser());
 
       const result = await service.registerAsync({ email: EMAIL, password: PASSWORD });
 
@@ -87,17 +159,17 @@ describe('AuthService', () => {
     });
 
     it('сохраняет email нормализованным, а пароль — только хэшем (RULES 5.3)', async () => {
-      insertReturning.mockResolvedValue([{ ...baseUser, passwordHash: 'scrypt$x$y' }]);
+      mockRegisterInserts({ id: ORG_ID, name: ORG_NAME }, registeredUser());
 
       await service.registerAsync({ email: '  User@Example.COM ', password: PASSWORD });
 
-      const [values] = insertValues.mock.calls[0] as [
-        { email: string; passwordHash: string },
-      ];
+      const values = userInsertValues();
 
       expect(values.email).toBe('user@example.com');
       expect(values.passwordHash.startsWith('scrypt$')).toBe(true);
       expect(values.passwordHash).not.toContain(PASSWORD);
+      // Имя личной организации строится от того же нормализованного email.
+      expect(insertValues).toHaveBeenNthCalledWith(1, { name: ORG_NAME });
     });
 
     it('бросает ConflictException на занятый email', async () => {
@@ -106,11 +178,13 @@ describe('AuthService', () => {
       await expect(
         service.registerAsync({ email: EMAIL, password: PASSWORD }),
       ).rejects.toThrow(ConflictException);
+      // Проверка занятости — до транзакции, INSERT'ов нет.
       expect(insertReturning).not.toHaveBeenCalled();
+      expect(transaction).not.toHaveBeenCalled();
     });
 
     it('нормализует email (нижний регистр, без пробелов)', async () => {
-      insertReturning.mockResolvedValue([{ ...baseUser, passwordHash: 'scrypt$x$y' }]);
+      mockRegisterInserts({ id: ORG_ID, name: ORG_NAME }, registeredUser());
 
       const result = await service.registerAsync({
         email: '  User@Example.COM ',
@@ -130,6 +204,18 @@ describe('AuthService', () => {
 
       expect(result.accessToken).toBe(TOKEN);
       expect(result.user.email).toBe(EMAIL);
+    });
+
+    it('кладёт organizationId пользователя в orgId токена (v1.0 S1)', async () => {
+      const passwordHash = await service.hashPasswordAsync(PASSWORD);
+      selectLimit.mockResolvedValue([{ ...baseUser, passwordHash }]);
+
+      await service.loginAsync({ email: EMAIL, password: PASSWORD });
+
+      expect(signAsync).toHaveBeenCalledWith(
+        { sub: USER_ID, email: EMAIL, orgId: ORG_ID },
+        expect.objectContaining({ expiresIn: '24h' }),
+      );
     });
 
     it('бросает UnauthorizedException, если пользователя нет', async () => {
@@ -239,15 +325,10 @@ describe('AuthService', () => {
     });
 
     it('rotateRefreshTokenAsync отзывает старый и выдаёт access + новый refresh', async () => {
-      selectLimit.mockResolvedValue([
-        {
-          id: TOKEN_ID,
-          userId: USER_ID,
-          email: EMAIL,
-          createdAt: CREATED_AT,
-          passwordHash: 'scrypt$x$y',
-        },
-      ]);
+      // Первый SELECT — строка refresh_tokens, второй — пользователь в транзакции.
+      selectLimit
+        .mockResolvedValueOnce([{ id: TOKEN_ID, userId: USER_ID }])
+        .mockResolvedValueOnce([{ ...baseUser, passwordHash: 'scrypt$x$y' }]);
 
       const result = await service.rotateRefreshTokenAsync('opaque-old');
 
@@ -264,9 +345,28 @@ describe('AuthService', () => {
       expect(inserted.tokenHash).not.toBe(result?.newRefresh.token);
     });
 
+    it('rotateRefreshTokenAsync кладёт organizationId в orgId нового токена (v1.0 S1)', async () => {
+      selectLimit
+        .mockResolvedValueOnce([{ id: TOKEN_ID, userId: USER_ID }])
+        .mockResolvedValueOnce([{ ...baseUser, passwordHash: 'scrypt$x$y' }]);
+
+      await service.rotateRefreshTokenAsync('opaque-old');
+
+      expect(signAsync).toHaveBeenCalledWith(
+        { sub: USER_ID, email: EMAIL, orgId: ORG_ID },
+        expect.objectContaining({ expiresIn: '24h' }),
+      );
+    });
+
     it('rotateRefreshTokenAsync возвращает null при гонке (токен уже отозван)', async () => {
       selectLimit.mockResolvedValue([
-        { id: TOKEN_ID, userId: USER_ID, email: EMAIL, createdAt: CREATED_AT },
+        {
+          id: TOKEN_ID,
+          userId: USER_ID,
+          organizationId: ORG_ID,
+          email: EMAIL,
+          createdAt: CREATED_AT,
+        },
       ]);
       updateReturning.mockResolvedValue([]);
 

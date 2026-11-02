@@ -19,6 +19,22 @@
 
 ### Added
 
+- **Organizations DB & Auth — фундамент мультитенантности (v1.0.0 S1, DESIGN
+  § 3.1)** ([отчёт](development/reports/v1.0.0/S1-orgs-db.md)): таблица
+  `organizations` (`id` uuid `defaultRandom`, `name` text NOT NULL,
+  `created_at` timestamptz); `users.organization_id` и
+  `workflows.organization_id` — uuid NOT NULL, FK `ON DELETE CASCADE` на
+  `organizations`, индексы `users_organization_id_idx`/
+  `workflows_organization_id_idx`. Миграция `0014_heavy_iron_patriot.sql`
+  добавляет колонки nullable (на непустой БД `ADD COLUMN ... NOT NULL` без
+  DEFAULT упал бы), идемпотентный backfill
+  `src/db/migrations/backfill-organizations.ts` (вызывается из `migrate.ts`
+  после `migrate()`) заводит каждому существующему пользователю
+  «Personal Workspace - {email}», привязывает его workflow и только затем
+  включает NOT NULL; демо-пользователь получает детерминированную организацию
+  `00000000-0000-0000-0000-000000000002`. Регистрация создаёт организацию и
+  пользователя в одной транзакции, `JwtPayload` несёт `orgId`. Отложенные
+  ограничения — KI-552..558.
 - **Web Search: провайдеры Bing и Brave (v0.15 S3, DESIGN V014 § 3.3)** ([отчёт](development/reports/v0.15.0/S1-web-search.md)):
   узел `web_search` поддерживает три провайдера — Tavily (дефолт), Bing Web
   Search API v7 и Brave Search API. `WEB_SEARCH_PROVIDER` расширен до
@@ -62,6 +78,27 @@
   учитывают формат. Зависимости: `pdfkit` + `@types/pdfkit`; ассеты
   копируются в `dist` через `nest-cli.json`.
 
+### Changed
+
+- **JWT-контракт: `orgId` обязателен (v1.0.0 S1, DESIGN § 3.1/§ 4):**
+  `JwtPayload = { sub, email, orgId }`; `AuthService.loginAsync`/
+  `rotateRefreshTokenAsync` берут `orgId` из `users.organization_id`,
+  `registerAsync` создаёт личный workspace и выдаёт токен с его id. Создание и
+  импорт workflow пишут `organization_id` из токена
+  (`WorkflowService.createAsync`/`importAsync`); фильтрация выборок по
+  арендатору — S2.
+- **Фикстуры и схемы тестов:** `Workflow`/`User` в тестах и интеграционных
+  спеках получили `organization_id`; parity-гейт KI-298 покрывает
+  `organizations` (обязательные таблицы — шесть).
+
+### Security
+
+- **Старые access-JWT без `orgId` отклоняются (v1.0.0 S1, DESIGN § 4):**
+  `JwtAuthGuard` после проверки подписи требует непустой `orgId` и отвечает 401
+  «Токен устарел, войдите заново…». Действующая refresh-cookie восстанавливает
+  сессию через `POST /auth/refresh` (новый access уже с `orgId`); иначе —
+  повторный вход. Поведение задокументировано в KI-553.
+
 ### Fixed
 
 - **История запусков: keyset-пагинация (v0.16 S1, KI-542)** ([отчёт](development/reports/v0.16.0/S1-tech-debt.md)):
@@ -98,6 +135,13 @@
   `nextCursor` (KI-549); `offset` удалён без deprecation-окна — старый клиент
   молча получает первую страницу (KI-550); счётчик «Показано N из M» может
   опережать список, если запуск появился при открытой модалке (KI-551).
+- **Ограничения мультитенантности S1 (v1.0.0):** `document_templates` и
+  `workflow_runs` пока без `organization_id` — S2 (KI-552); старые access-JWT
+  дают 401 до refresh/повторного входа (KI-553); guard не сверяет `orgId` с БД
+  (KI-554); `/auth/me` не отдаёт арендатора (KI-555); NOT NULL включается
+  backfill-скриптом, обход `pnpm db:migrate` оставит колонки nullable (KI-556);
+  гонка регистрации с одинаковым email → 500 вместо 409 (KI-557); политика
+  `ON DELETE CASCADE` организации продуктом не определена (KI-558).
 
 ## [0.14.0] — 2026-11-02
 
@@ -2009,6 +2053,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 
