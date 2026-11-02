@@ -19,6 +19,23 @@
 
 ### Added
 
+- **Журнал аудита действий (v1.0.0 S3, DESIGN § 3.2)** ([отчёт](development/reports/v1.0.0/S3-audit.md)):
+  таблица `audit_logs` (`id` uuid PK, `created_at` timestamptz,
+  `user_id`/`organization_id` uuid NOT NULL FK CASCADE, `action` text,
+  `resource_id` uuid nullable, `metadata` jsonb) + индекс keyset-пагинации
+  `audit_logs_org_created_id_idx`; миграция `0015_short_risque.sql`. Глобальный
+  `AuditInterceptor` пишет успешные мутирующие запросы (`POST`/`PATCH`/`DELETE`)
+  с действием по URL+методу (`workflow.create`/`update`/`delete`,
+  `collaborator.*`, `document_template.*`, `run.start`, …), автором и
+  организацией из токена, `resource_id` из ответа/`params`, очищенным от
+  секретов телом (лимит 16 KiB). `AuditService` — запись и keyset-чтение;
+  `GET /admin/audit?limit=20&cursor=…` (JwtAuthGuard + OrgOwnerGuard, только
+  owner/admin, только своя организация, `Cache-Control: no-store`).
+  Роль пользователя — `users.role` (`owner|admin|member|viewer`, CHECK), при
+  регистрации создатель организации получает `owner`; существующим
+  пользователям миграция проставила `owner` (каждый — единственный член личной
+  организации). `admin` добавлен в единый реестр `api-prefixes.json`.
+  Ограничения — KI-565..573.
 - **Изоляция workflow по организациям (v1.0.0 S2, DESIGN § 3.1)** ([отчёт](development/reports/v1.0.0/S2-isolation.md)):
   все выборки и записи workflow/runs/document-templates/sub_workflow ограничены
   `organization_id` из access-токена. Введён `WorkflowAccess { userId, orgId }`
@@ -94,6 +111,12 @@
 
 ### Changed
 
+- **Роль пользователя и административный доступ (v1.0.0 S3):** `users.role`
+  (`owner|admin|member|viewer`, NOT NULL default `member`, CHECK
+  `users_role_check`); `registerAsync` создаёт создателя личной организации
+  сразу `owner`; миграция 0015 проставила `owner` всем существующим
+  пользователям. Новый префикс `admin` в `api-prefixes.json` (SPA-fallback и
+  Vite-proxy подхватывают его автоматически).
 - **Кросс-организационные объекты → 404 (v1.0.0 S2, DESIGN § 3.1):**
   `GET /workflow`, `GET/PATCH/DELETE /workflow/:id`, export/share/collaborators,
   `GET /workflow/:id/runs`, `POST /runs`, `GET /runs/:id*`,
@@ -115,6 +138,14 @@
 
 ### Security
 
+- **Аудит действий и доступ к журналу только для owner/admin (v1.0.0 S3):**
+  мутирующие HTTP-запросы журналируются с автором и арендатором; секретные поля
+  (`password`/`token`/`secret`/`apiKey`/`authorization`/`cookie`) вырезаются из
+  metadata на любой глубине, тело ограничено 16 KiB. `GET /admin/audit`
+  защищён `JwtAuthGuard` + `OrgOwnerGuard` (роль читается из БД на каждый
+  запрос) и изолирован по организации. Запись best-effort: сбой аудита
+  логируется и не ломает операцию пользователя; `/auth/*` и неудачные
+  запросы пока не аудируются — KI-566/KI-569.
 - **Изоляция арендаторов на уровне SQL (v1.0.0 S2, DESIGN § 3.1):**
   `workflows.organization_id` добавлен в каждый предикат доступа к workflow и в
   подзапрос «доступные workflow» для запусков/истории/шаблонов;
@@ -161,6 +192,16 @@
 
 ### Documented
 
+- **Ограничения аудита S3 (v1.0.0):** политика retention/immutability не
+  определена — CASCADE удаляет журнал вместе с арендатором (KI-565); мутирующие
+  `/auth/*` (login/register/refresh/logout) не аудируются — нужен сервисный
+  вызов в S5 (KI-566); запись fire-and-forget может потеряться при падении
+  процесса (KI-567); таблица route→action поддерживается вручную без
+  паритет-теста (KI-568); неудачные 4xx/5xx мутации не журналируются (KI-569);
+  `users.role` — глобальная роль, не членство в организации (KI-570); `total`
+  в `GET /admin/audit` — отдельный `count(*)` (KI-571); metadata может
+  содержать пользовательские промпты/графы (KI-572, RULES 5.9); UI аудита
+  появится в S5 (KI-573).
 - **Ограничения изоляции S2 (v1.0.0):** удаление организации может упасть на
   FK `workflow_collaborators.invited_by` (KI-559); legacy кросс-организационные
   участники не используются и не чистятся (KI-560); необязательный
@@ -2091,6 +2132,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 

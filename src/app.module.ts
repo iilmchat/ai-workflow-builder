@@ -4,11 +4,14 @@ import type { NextFunction, Request, Response } from 'express';
 import { BullModule } from '@nestjs/bullmq';
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
+// v1.0.0 S3: журнал аудита — AuditModule отдаёт AuditService и GET /admin/audit.
+import { AuditModule } from './audit/audit.module.js';
+import { AuditInterceptor } from './audit/audit.interceptor.js';
 import { AuthModule } from './auth/auth.module.js';
 import {
   HTTP_THROTTLE_DEFAULT_LIMIT,
@@ -126,6 +129,10 @@ const WEB_DIST_PATH = join(
     RedisModule,
     ObservabilityModule,
     AuthModule,
+    // v1.0.0 S3 (DESIGN V100 § 3.2): подсистема аудита. Импорт нужен и ради
+    // контроллера GET /admin/audit, и потому что AuditService экспортируется
+    // в контекст AppModule для глобального AuditInterceptor (ниже).
+    AuditModule,
     LlmModule,
     WebSearchModule,
     DocumentsModule,
@@ -150,6 +157,11 @@ const WEB_DIST_PATH = join(
     // KI-206/KI-234: guard глобальный — новые маршруты получают общий лимит
     // автоматически; чувствительные ручки ужесточают его через `@Throttle`.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // v1.0.0 S3 (DESIGN V100 § 3.2): глобальный журнал аудита. Регистрация
+    // через APP_INTERCEPTOR (а не декоратор на каждом контроллере) — новые
+    // ручки пишутся в аудит автоматически; интерсептор сам решает, что
+    // журналировать (POST/PATCH/DELETE, кроме /auth/* и запросов без user).
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
   ],
 })
 export class AppModule implements NestModule {

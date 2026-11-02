@@ -1,23 +1,29 @@
-import { getTableColumns, getTableName } from 'drizzle-orm';
-import { getTableConfig, type PgTable } from 'drizzle-orm/pg-core';
+import { getTableColumns, getTableName, is } from 'drizzle-orm';
+import { getTableConfig, PgTimestamp, type PgTable } from 'drizzle-orm/pg-core';
 import { expectTypeOf } from 'vitest';
 import type { EdgeDto, GraphSnapshotDto, NodeDto } from '../engine/dto/index.js';
 import {
   NODE_RUN_STATUSES,
   TERMINAL_WORKFLOW_RUN_STATUSES,
+  USER_ROLES,
   WORKFLOW_RUN_STATUSES,
+  auditLogs,
   nodeRuns,
   organizations,
   users,
   workflowRuns,
   workflows,
+  type AuditLog,
+  type NewAuditLog,
   type NewOrganization,
+  type NewUser,
   type NewWorkflow,
   type NodeRun,
   type NodeRunStatus,
   type Organization,
   type RunStatus,
   type User,
+  type UserRole,
   type Workflow,
   type WorkflowRun,
 } from './schema.js';
@@ -212,5 +218,140 @@ describe('Organizations / multi-tenancy (v1.0 S1)', () => {
     expectTypeOf<User['organizationId']>().toEqualTypeOf<string>();
     expectTypeOf<Workflow['organizationId']>().toEqualTypeOf<string>();
     expectTypeOf<NewWorkflow['organizationId']>().toEqualTypeOf<string>();
+  });
+});
+
+/**
+ * Роли пользователей и журнал аудита (v1.0.0 S3, DESIGN V100 § 3.2).
+ *
+ * Живая БД не нужна — проверяются метаданные таблиц и выведенные TS-типы.
+ * CHECK на `users.role` и FK `audit_logs` дублируют правила уровня сервиса:
+ * Zod валидирует только вход API, а прямые записи ограничивает БД (RULES 1.17).
+ */
+describe('Роли и журнал аудита (v1.0.0 S3)', () => {
+  it('users.role: text NOT NULL DEFAULT member и CHECK users_role_check', () => {
+    const columns = getTableColumns(users);
+    const role = columns.role;
+
+    expect(role.name).toBe('role');
+    expect(role.columnType).toBe('PgText');
+    expect(role.notNull).toBe(true);
+    expect(role.hasDefault).toBe(true);
+    // DEFAULT — безопасный дефолт для будущих участников (S5); создатель
+    // личной организации пишется явно с ролью `owner`.
+    expect(role.default).toBe('member');
+
+    const roleCheck = getTableConfig(users).checks.find(
+      (check) => check.name === 'users_role_check',
+    );
+
+    expect(roleCheck).toBeDefined();
+    expect(roleCheck?.value).toBeDefined();
+
+    expect(USER_ROLES).toEqual(['owner', 'admin', 'member', 'viewer']);
+    expectTypeOf<UserRole>().toEqualTypeOf<
+      'owner' | 'admin' | 'member' | 'viewer'
+    >();
+    expectTypeOf<User['role']>().toEqualTypeOf<UserRole>();
+    // Поле необязательно при INSERT: DEFAULT `member` заполняет его сам.
+    expectTypeOf<NewUser['role']>().toEqualTypeOf<UserRole | undefined>();
+  });
+
+  it('audit_logs: 7 колонок, PK, FK с CASCADE и index под keyset-пагинацию', () => {
+    expect(getTableName(auditLogs)).toBe('audit_logs');
+
+    const columns = getTableColumns(auditLogs);
+
+    expect(Object.keys(columns)).toHaveLength(7);
+
+    expect(columns.id.name).toBe('id');
+    expect(columns.id.columnType).toBe('PgUUID');
+    expect(columns.id.primary).toBe(true);
+    expect(columns.id.hasDefault).toBe(true);
+
+    expect(columns.createdAt.name).toBe('created_at');
+    expect(columns.createdAt.columnType).toBe('PgTimestamp');
+    expect(
+      is(columns.createdAt, PgTimestamp) && columns.createdAt.withTimezone,
+    ).toBe(true);
+    expect(columns.createdAt.notNull).toBe(true);
+    expect(columns.createdAt.hasDefault).toBe(true);
+
+    const userIdForeignKey = findForeignKeyByColumn(auditLogs, 'user_id');
+
+    expect(columns.userId.name).toBe('user_id');
+    expect(columns.userId.columnType).toBe('PgUUID');
+    expect(columns.userId.notNull).toBe(true);
+    expect(columns.userId.hasDefault).toBe(false);
+
+    if (userIdForeignKey === undefined) {
+      throw new Error('audit_logs: нет FK по user_id');
+    }
+
+    expect(getTableName(userIdForeignKey.reference().foreignTable)).toBe('users');
+    expect(
+      userIdForeignKey.reference().foreignColumns.map((column) => column.name),
+    ).toEqual(['id']);
+    expect(userIdForeignKey.onDelete).toBe('cascade');
+
+    const organizationIdForeignKey = findForeignKeyByColumn(
+      auditLogs,
+      'organization_id',
+    );
+
+    expect(columns.organizationId.name).toBe('organization_id');
+    expect(columns.organizationId.columnType).toBe('PgUUID');
+    expect(columns.organizationId.notNull).toBe(true);
+    expect(columns.organizationId.hasDefault).toBe(false);
+
+    if (organizationIdForeignKey === undefined) {
+      throw new Error('audit_logs: нет FK по organization_id');
+    }
+
+    expect(
+      getTableName(organizationIdForeignKey.reference().foreignTable),
+    ).toBe('organizations');
+    expect(
+      organizationIdForeignKey
+        .reference()
+        .foreignColumns.map((column) => column.name),
+    ).toEqual(['id']);
+    expect(organizationIdForeignKey.onDelete).toBe('cascade');
+
+    expect(columns.action.name).toBe('action');
+    expect(columns.action.columnType).toBe('PgText');
+    expect(columns.action.notNull).toBe(true);
+    expect(columns.action.hasDefault).toBe(false);
+
+    // resource_id nullable: id объекта известен не для каждого действия.
+    expect(columns.resourceId.name).toBe('resource_id');
+    expect(columns.resourceId.columnType).toBe('PgUUID');
+    expect(columns.resourceId.notNull).toBe(false);
+    expect(columns.resourceId.hasDefault).toBe(false);
+
+    expect(columns.metadata.name).toBe('metadata');
+    expect(columns.metadata.columnType).toBe('PgJsonb');
+    expect(columns.metadata.notNull).toBe(true);
+    expect(columns.metadata.hasDefault).toBe(true);
+    expect(columns.metadata.default).toEqual({});
+
+    const auditIndex = getTableConfig(auditLogs).indexes.find(
+      (index) => index.config.name === 'audit_logs_org_created_id_idx',
+    );
+
+    expect(auditIndex).toBeDefined();
+    // Колонки индекса в Drizzle — `IndexedColumn | SQL`; SQL-выражений здесь
+    // нет, поэтому имена собираются без потерь.
+    const indexedColumnNames = (auditIndex?.config.columns ?? []).flatMap(
+      (column) =>
+        'name' in column && typeof column.name === 'string' ? [column.name] : [],
+    );
+
+    expect(indexedColumnNames).toEqual(['organization_id', 'created_at', 'id']);
+
+    expectTypeOf<AuditLog['createdAt']>().toEqualTypeOf<Date>();
+    expectTypeOf<AuditLog['resourceId']>().toEqualTypeOf<string | null>();
+    expectTypeOf<AuditLog['metadata']>().toEqualTypeOf<Record<string, unknown>>();
+    expectTypeOf<NewAuditLog['action']>().toEqualTypeOf<string>();
   });
 });

@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.0.0 | S3 | Audit Logs: `audit_logs`, глобальный `AuditInterceptor` (POST/PATCH/DELETE), `AuditService`, `GET /admin/audit` (owner/admin, keyset), `users.role` | 2026-11-02 | [S3-audit.md](v1.0.0/S3-audit.md) |
 | v1.0.0 | S2 | Workflow Isolation: `WorkflowAccess`/`toWorkflowAccess`, org-фильтр во всех выборках workflow/runs/document-templates/`sub_workflow`, кросс-организационные инвайты 404, публичный share без org-фильтра | 2026-11-02 | [S2-isolation.md](v1.0.0/S2-isolation.md) |
 | v1.0.0 | S1 | Organizations DB & Auth: таблица `organizations`, `organization_id` в `users`/`workflows`, идемпотентный backfill, `orgId` в JWT, создание организации при регистрации | 2026-11-02 | [S1-orgs-db.md](v1.0.0/S1-orgs-db.md) |
 | v0.16.0 | S1 | Tech Debt Sprint: keyset-пагинация истории (KI-542), F5 `?runId=` (KI-541), неймспейс `status.*` (KI-545), web-search контракт (KI-548), MCP allowlist WARN (KI-534) | 2026-11-02 | [S1-tech-debt.md](v0.16.0/S1-tech-debt.md) |

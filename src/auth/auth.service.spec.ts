@@ -4,7 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import { createHash } from 'node:crypto';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import type { User } from '../db/schema.js';
+import type { User, UserRole } from '../db/schema.js';
 import { AuthService } from './auth.service.js';
 
 /** Стабильные данные тестового пользователя. */
@@ -25,6 +25,8 @@ const baseUser: Omit<User, 'passwordHash'> = {
   id: USER_ID,
   organizationId: ORG_ID,
   email: EMAIL,
+  // Регистрация создаёт владельца личной организации (v1.0 S3).
+  role: 'owner',
   createdAt: CREATED_AT,
 };
 
@@ -111,11 +113,13 @@ describe('AuthService', () => {
     email: string;
     passwordHash: string;
     organizationId: string;
+    role: UserRole;
   } {
     return insertValues.mock.calls[1][0] as {
       email: string;
       passwordHash: string;
       organizationId: string;
+      role: UserRole;
     };
   }
 
@@ -131,9 +135,12 @@ describe('AuthService', () => {
       expect(insertValues).toHaveBeenNthCalledWith(1, { name: ORG_NAME });
       expect(insertValues).toHaveBeenNthCalledWith(
         2,
-        expect.objectContaining({ organizationId: ORG_ID }),
+        expect.objectContaining({ organizationId: ORG_ID, role: 'owner' }),
       );
       expect(userInsertValues().organizationId).toBe(ORG_ID);
+      // Создатель личной организации — владелец (v1.0 S3): по роли guard
+      // `OrgOwnerGuard` пускает в журнал аудита.
+      expect(userInsertValues().role).toBe('owner');
     });
 
     it('выдаёт токен с orgId созданной организации', async () => {

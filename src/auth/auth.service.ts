@@ -145,6 +145,10 @@ export class AuthService {
    * 4.22): сбой между INSERT'ами оставил бы пользователя без арендатора, а
    * организация осталась бы сиротой.
    *
+   * Создатель личной организации получает роль `owner` (v1.0 S3): она даёт
+   * доступ к журналу аудита (`GET /admin/audit`). DEFAULT `member` в схеме —
+   * безопасный дефолт для будущих участников (S5), а не для регистрации.
+   *
    * @param dto - валидированные email/пароль
    * @returns токен и публичные данные пользователя
    * @throws ConflictException если email уже занят (проверка вне транзакции)
@@ -171,7 +175,7 @@ export class AuthService {
 
       const [user] = await tx
         .insert(users)
-        .values({ email, passwordHash, organizationId: organization.id })
+        .values({ email, passwordHash, organizationId: organization.id, role: 'owner' })
         .returning();
 
       return user;

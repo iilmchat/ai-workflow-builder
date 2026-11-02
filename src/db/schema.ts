@@ -92,7 +92,21 @@ export type Organization = typeof organizations.$inferSelect;
 export type NewOrganization = typeof organizations.$inferInsert;
 
 /**
- * users — учётные записи (R6.1a, KI-106; v1.0 S1 — арендатор).
+ * Роли пользователя в организации (v1.0.0 S3, DESIGN V100 § 3.2; полноценные
+ * роли — S5).
+ *
+ * `owner` — создатель личной организации (единственная роль в S3; она даёт
+ * доступ к `GET /admin/audit`). `admin` зарезервирован под S5 (управление
+ * командой), `member`/`viewer` — будущие роли участников. Список — единый
+ * источник для CHECK-ограничения, типов и guard'а.
+ */
+export const USER_ROLES = ['owner', 'admin', 'member', 'viewer'] as const;
+
+/** Роль пользователя в организации (v1.0.0 S3). */
+export type UserRole = (typeof USER_ROLES)[number];
+
+/**
+ * users — учётные записи (R6.1a, KI-106; v1.0 S1 — арендатор; v1.0 S3 — роль).
  *
  * Пароль хранится как `scrypt$<salt_b64>$<hash_b64>` (node:crypto, без
  * внешних зависимостей), соль уникальна на пользователя.
@@ -101,6 +115,12 @@ export type NewOrganization = typeof organizations.$inferInsert;
  * невозможен. Существующим пользователям персональные организации заводит
  * backfill (`src/db/migrations/backfill-organizations.ts`) — миграция добавляет
  * колонку nullable и включает NOT NULL только после заполнения данных.
+ *
+ * `role` (v1.0 S3) — роль в организации. Существующие пользователи S1 стали
+ * единственными членами своих личных организаций, поэтому миграция 0015
+ * проставляет им `owner`; регистрация (`AuthService.registerAsync`) создаёт
+ * пользователя сразу с `owner`. DEFAULT `member` — безопасный дефолт для
+ * будущих участников (S5), а не для создателя организации.
  */
 export const users = pgTable(
   'users',
@@ -111,11 +131,20 @@ export const users = pgTable(
       .references(() => organizations.id, { onDelete: 'cascade' }),
     email: text('email').notNull().unique(),
     passwordHash: text('password_hash').notNull(),
+    role: text('role').notNull().default('member').$type<UserRole>(),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
-  (table) => [index('users_organization_id_idx').on(table.organizationId)],
+  (table) => [
+    index('users_organization_id_idx').on(table.organizationId),
+    // RULES 1.17: роль валидируется Zod на входе API, а прямые записи в БД
+    // (миграции/ручные правки) ограничивает CHECK.
+    check(
+      'users_role_check',
+      sql`${table.role} in ('owner', 'admin', 'member', 'viewer')`,
+    ),
+  ],
 );
 
 /** Строка таблицы `users`. */
@@ -147,6 +176,58 @@ export const refreshTokens = pgTable('refresh_tokens', {
 export type RefreshToken = typeof refreshTokens.$inferSelect;
 /** Значения для INSERT в `refresh_tokens`. */
 export type NewRefreshToken = typeof refreshTokens.$inferInsert;
+
+/**
+ * audit_logs — журнал действий пользователей (v1.0.0 S3, DESIGN V100 § 3.2).
+ *
+ * Пишется `AuditInterceptor` после успешных мутирующих HTTP-запросов
+ * (POST/PATCH/DELETE). Таблица append-only: строки не обновляются и не
+ * удаляются сервисом; удаление пользователя/организации каскадно убирает и
+ * журнал арендатора (`ON DELETE CASCADE`) — политика retention ещё не
+ * определена (KI-565).
+ *
+ * `action` — строковый код вида `workflow.create`/`run.start` (см.
+ * `src/audit/audit.constants.ts`); CHECK на набор не ставим, чтобы новое действие
+ * не требовало миграции. `resource_id` — id затронутого объекта, если он
+ * известен; `metadata` — санитизированные детали запроса (метод, путь, params,
+ * тело без секретов, статус).
+ *
+ * Индекс `(organization_id, created_at, id)` обслуживает keyset-пагинацию
+ * `GET /admin/audit` (`ORDER BY created_at DESC, id DESC`) и org-фильтр изоляции.
+ */
+export const auditLogs = pgTable(
+  'audit_logs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    action: text('action').notNull(),
+    resourceId: uuid('resource_id'),
+    metadata: jsonb('metadata')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+  },
+  (table) => [
+    index('audit_logs_org_created_id_idx').on(
+      table.organizationId,
+      table.createdAt,
+      table.id,
+    ),
+  ],
+);
+
+/** Строка таблицы `audit_logs`. */
+export type AuditLog = typeof auditLogs.$inferSelect;
+/** Значения для INSERT в `audit_logs`. */
+export type NewAuditLog = typeof auditLogs.$inferInsert;
 
 /**
  * workflows — определение графа (узлы + связи), принадлежащее пользователю
