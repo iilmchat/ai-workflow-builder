@@ -30,7 +30,7 @@ const REGISTRY_PATH = join(PROJECT_ROOT, 'api-prefixes.json');
 const SRC_DIR = join(PROJECT_ROOT, 'src');
 
 /**
- * Ожидаемые префиксы с контроллерами (9).
+ * Ожидаемые префиксы с контроллерами (10).
  *
  * `/api` сюда не входит: это legacy-префикс backend'а без собственного
  * `@Controller` (`controller: false` в реестре).
@@ -44,6 +44,7 @@ const EXPECTED_CONTROLLER_PREFIXES = [
   'nodes',
   'runs',
   'templates',
+  'web-search',
   'workflow',
 ] as const;
 
@@ -317,7 +318,7 @@ describe('API_PREFIXES: паритет с @Controller (KI-299/072/120/472)', () 
     );
   });
 
-  it('реестр содержит все 9 префиксов с контроллерами', async () => {
+  it('реестр содержит все 10 префиксов с контроллерами', async () => {
     const entries = await readRegistryAsync();
     const registryPrefixes = await readRegistryPrefixesAsync();
 

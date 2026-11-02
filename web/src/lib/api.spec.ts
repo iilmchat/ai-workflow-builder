@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   deleteDocumentTemplateAsync,
+  fetchWebSearchProvidersAsync,
   fetchWorkflowRunsAsync,
   listDocumentTemplatesAsync,
   requestAsync,
@@ -296,5 +297,36 @@ describe('fetchWorkflowRunsAsync (v0.14 S1 API ↔ S2 UI)', () => {
 
     const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(`/workflow/${WORKFLOW_ID}/runs?limit=5&offset=10`);
+  });
+});
+
+describe('fetchWebSearchProvidersAsync (v0.15 S3)', () => {
+  it('GET /web-search/providers и Zod-разбор ответа', async () => {
+    const payload = {
+      defaultProvider: 'bing',
+      providers: [
+        { name: 'tavily', configured: false },
+        { name: 'bing', configured: true },
+        { name: 'brave', configured: true },
+      ],
+    };
+    const fetchMock = stubFetch(() => jsonResponse(payload));
+
+    const result = await fetchWebSearchProvidersAsync();
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/web-search/providers');
+    expect(result).toEqual(payload);
+  });
+
+  it('отвергает неизвестного провайдера и битый ответ', async () => {
+    stubFetch(() =>
+      jsonResponse({
+        defaultProvider: 'google',
+        providers: [{ name: 'google', configured: true }],
+      }),
+    );
+
+    await expect(fetchWebSearchProvidersAsync()).rejects.toThrow();
   });
 });

@@ -47,8 +47,7 @@ import {
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
-import { WEB_SEARCH_PROVIDER } from '../web-search/web-search.module.js';
-import type { IWebSearchProvider } from '../web-search/web-search.interface.js';
+import { WebSearchRegistryService } from '../web-search/web-search.registry.js';
 import type { GraphDto, NodeDto } from './dto/index.js';
 import { EngineService, type ExecutionPlanDto } from './engine.service.js';
 import {
@@ -436,10 +435,9 @@ export class ExecutionEngineService {
     // v0.11 S14 (KI-478/434/435): единственный безопасный HTTP-клиент. Узел
     // `http` и `http_request` агента ходят через него — второй SSRF-пути нет.
     private readonly httpClient: SafeHttpClient,
-    // v0.10 S2 (DESIGN v0.10 § 3.1): web-search-провайдер узла web_search.
-    // Токен выбирается в WebSearchModule по env WEB_SEARCH_PROVIDER.
-    @Inject(WEB_SEARCH_PROVIDER)
-    private readonly webSearchProvider: IWebSearchProvider,
+    // v0.10 S2 / v0.15 S3 (DESIGN v0.14 § 3.3): web-search-провайдеры узла
+    // web_search. Реестр знает дефолт из env и провайдера из `data.provider`.
+    private readonly webSearchRegistry: WebSearchRegistryService,
     // v0.10 S6 (DESIGN v0.10 § 3.2): DOCX-рендерер и хранилище документа.
     // DocumentService — из DocumentsModule (подключён в RunsModule), а
     // MEDIA_STORAGE — из MediaModule; один экземпляр хранилища на приложение.
@@ -1430,14 +1428,15 @@ export class ExecutionEngineService {
 
         return { kind: 'plain', outputs, metrics: null };
       }
-      // v0.10 S2 (DESIGN v0.10 § 3.1): веб-поиск. Провайдер выбран в
-      // WebSearchModule по env; исполнитель валидирует data, формирует
-      // `{ results, text }` и не пропускает `rawContent` в outputs (KI-459).
+      // v0.10 S2 (DESIGN v0.10 § 3.1): веб-поиск. Реестр выбирает провайдера:
+      // `data.provider` узла важнее env `WEB_SEARCH_PROVIDER` (v0.15 S3);
+      // исполнитель валидирует data, формирует `{ results, text }` и не
+      // пропускает `rawContent` в outputs (KI-459).
       case 'web_search': {
         const outputs = await executeWebSearchNodeAsync(
           node.data,
           inputs,
-          this.webSearchProvider,
+          this.webSearchRegistry,
         );
 
         return { kind: 'plain', outputs, metrics: null };

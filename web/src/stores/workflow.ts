@@ -19,6 +19,7 @@ import {
   fetchRunAsync,
   fetchRunBudgetAsync,
   fetchRunNodesAsync,
+  fetchWebSearchProvidersAsync,
   getWorkflowAsync,
   updateWorkflowAsync,
   type ApiGraphEdge,
@@ -26,6 +27,7 @@ import {
   type ApiWorkflow,
   type LlmModelInfo,
   type McpServersResponse,
+  type WebSearchProvidersResponse,
 } from '@/lib/api';
 import { subscribeToRunStream, RunStreamUnavailableError } from '@/lib/run-stream';
 import type { RunStreamHandlers } from '@/lib/run-stream';
@@ -691,6 +693,18 @@ export interface WorkflowState extends HistorySlice {
   llmModels: LlmModelInfo[];
   /** Загружен ли список моделей в этой сессии. */
   llmModelsLoaded: boolean;
+  /**
+   * Конфигурация web-search-провайдеров (`GET /web-search/providers`, v0.15 S3).
+   *
+   * `null` — ещё не загружена (или загрузка упала). Кэшируется в сторе, как
+   * `llmModels`: узел `web_search` монтируется/перемонтируется часто, а ответ
+   * одинаков для всей сессии. Ключи backend не отдаёт — только флаги.
+   */
+  webSearchProviders: WebSearchProvidersResponse | null;
+  /** Загружена ли конфигурация web-search в этой сессии. */
+  webSearchProvidersLoaded: boolean;
+  /** Ленивая загрузка конфигурации web-search (кэшируется в сторе). */
+  loadWebSearchProvidersAsync: () => Promise<void>;
   /**
    * Каталог MCP-серверов (`GET /mcp/servers`, v0.11 S8, DESIGN § 3.2.6).
    *
@@ -2137,6 +2151,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   llmModels: [],
   llmModelsLoaded: false,
+  webSearchProviders: null,
+  webSearchProvidersLoaded: false,
   mcpServers: null,
   mcpServersLoaded: false,
   mcpServersError: null,
@@ -2872,6 +2888,31 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       // моделей», а причина видна в консоли. Повторная попытка — при следующем
       // монтировании LLM-узла (флаг loaded не выставлен).
       console.warn('Не удалось загрузить список моделей LLM', error);
+    }
+  },
+
+  /**
+   * Загружает конфигурацию web-search-провайдеров для узла `web_search`
+   * (v0.15 S3).
+   *
+   * Ошибка не критична: узел продолжает работать с env-провайдером, селект
+   * провайдера просто не появится. Повторная попытка — при следующем
+   * монтировании узла: флаг `webSearchProvidersLoaded` не выставляется.
+   */
+  loadWebSearchProvidersAsync: async () => {
+    if (get().webSearchProvidersLoaded) {
+      return;
+    }
+
+    try {
+      const config = await fetchWebSearchProvidersAsync();
+
+      set({
+        webSearchProviders: config,
+        webSearchProvidersLoaded: true,
+      });
+    } catch (error: unknown) {
+      console.warn('Не удалось загрузить конфигурацию web-search', error);
     }
   },
 

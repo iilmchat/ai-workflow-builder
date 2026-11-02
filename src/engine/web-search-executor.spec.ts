@@ -1,9 +1,10 @@
 /**
- * Исполнитель узла `web_search` (v0.10 S2, DESIGN v0.10 § 3.1).
+ * Исполнитель узла `web_search` (v0.10 S2; v0.15 S3 — выбор провайдера).
  *
- * Провайдер подменяется моком: тест не ходит в Tavily и проверяет только
- * контракт исполнителя — приоритет запроса, Zod-валидацию, формат `text` и
- * отсутствие `rawContent` в выходах (KI-459).
+ * Провайдер подменяется моком, реестр — заглушкой: тест не ходит в сеть и
+ * проверяет только контракт исполнителя — приоритет запроса, выбор провайдера
+ * (`data.provider` важнее env-дефолта), Zod-валидацию, передачу `searchDepth`
+ * и формат `text` без `rawContent` в выходах (KI-459).
  */
 import {
   DEFAULT_WEB_SEARCH_MAX_RESULTS,
@@ -13,7 +14,9 @@ import {
 } from './node-executors.js';
 import type {
   IWebSearchProvider,
+  IWebSearchProviderRegistry,
   WebSearchOptions,
+  WebSearchProviderName,
   WebSearchResult,
 } from '../web-search/web-search.interface.js';
 
@@ -25,52 +28,64 @@ const RESULT: WebSearchResult = {
 };
 
 /**
- * Создаёт провайдера-заглушку.
+ * Создаёт провайдера-заглушку и реестр с одним провайдером.
  *
  * @param results - результаты, которые «вернул» поиск
- * @returns провайдер и мок `searchAsync` для проверки аргументов
+ * @returns реестр, провайдер и мок `searchAsync` для проверки аргументов
  */
-function createProvider(results: WebSearchResult[]): {
+function createRegistry(
+  results: WebSearchResult[],
+  name: WebSearchProviderName = 'tavily',
+): {
+  registry: IWebSearchProviderRegistry;
   provider: IWebSearchProvider;
   search: ReturnType<typeof vi.fn>;
+  getProvider: ReturnType<typeof vi.fn>;
 } {
   const search = vi.fn(
     (_query: string, _options?: WebSearchOptions): Promise<WebSearchResult[]> =>
       Promise.resolve(results),
   );
-
-  return {
-    provider: {
-      name: 'fake',
-      isConfigured: true,
-      searchAsync: search,
-    },
-    search,
+  const provider: IWebSearchProvider = {
+    name,
+    isConfigured: true,
+    searchAsync: search,
   };
+  const getProvider = vi.fn(
+    (_name?: WebSearchProviderName): IWebSearchProvider => provider,
+  );
+  const registry: IWebSearchProviderRegistry = {
+    defaultName: name,
+    getProvider,
+    list: () => [{ name, configured: true }],
+  };
+
+  return { registry, provider, search, getProvider };
 }
 
-describe('executeWebSearchNodeAsync (v0.10 S2)', () => {
+describe('executeWebSearchNodeAsync (v0.10 S2, v0.15 S3)', () => {
   it('берёт запрос из inputs.prompt и передаёт maxResults провайдеру', async () => {
-    const { provider, search } = createProvider([RESULT]);
+    const { registry, search, getProvider } = createRegistry([RESULT]);
 
     const outputs = await executeWebSearchNodeAsync(
       { query: 'поле узла', maxResults: 3 },
       { prompt: 'запрос из связи' },
-      provider,
+      registry,
     );
 
+    expect(getProvider).toHaveBeenCalledWith(undefined);
     expect(search).toHaveBeenCalledWith('запрос из связи', { maxResults: 3 });
     // KI-459: в outputs только results и text.
     expect(Object.keys(outputs).sort()).toEqual(['results', 'text']);
   });
 
   it('использует data.query, если входной prompt пуст, и дефолт maxResults', async () => {
-    const { provider, search } = createProvider([RESULT]);
+    const { registry, search } = createRegistry([RESULT]);
 
     const outputs = await executeWebSearchNodeAsync(
       { query: '  запрос из узла  ' },
       { prompt: '   ' },
-      provider,
+      registry,
     );
 
     expect(search).toHaveBeenCalledWith('запрос из узла', {
@@ -79,11 +94,79 @@ describe('executeWebSearchNodeAsync (v0.10 S2)', () => {
     expect(outputs.results).toEqual([RESULT]);
   });
 
-  it('пустой запрос — NodeDataValidationException', async () => {
-    const { provider, search } = createProvider([RESULT]);
+  it('выбирает провайдера из data.provider', async () => {
+    const { registry, getProvider } = createRegistry([RESULT]);
+
+    await executeWebSearchNodeAsync(
+      { query: 'q', provider: 'bing' },
+      {},
+      registry,
+    );
+
+    expect(getProvider).toHaveBeenCalledWith('bing');
+  });
+
+  it('передаёт searchDepth провайдеру', async () => {
+    const { registry, search } = createRegistry([RESULT]);
+
+    await executeWebSearchNodeAsync(
+      { query: 'q', searchDepth: 'advanced' },
+      {},
+      registry,
+    );
+
+    expect(search).toHaveBeenCalledWith('q', {
+      maxResults: DEFAULT_WEB_SEARCH_MAX_RESULTS,
+      searchDepth: 'advanced',
+    });
+  });
+
+  it('передаёт freshness провайдеру', async () => {
+    const { registry, search } = createRegistry([RESULT]);
+
+    await executeWebSearchNodeAsync(
+      { query: 'q', freshness: 'week' },
+      {},
+      registry,
+    );
+
+    expect(search).toHaveBeenCalledWith('q', {
+      maxResults: DEFAULT_WEB_SEARCH_MAX_RESULTS,
+      freshness: 'week',
+    });
+  });
+
+  it('не отправляет searchDepth провайдеру без поддержки (KI-546)', async () => {
+    const { registry, search } = createRegistry([RESULT], 'bing');
+
+    await executeWebSearchNodeAsync(
+      { query: 'q', searchDepth: 'advanced', freshness: 'week' },
+      {},
+      registry,
+    );
+
+    // Bing не поддерживает глубину, но поддерживает свежесть.
+    expect(search).toHaveBeenCalledWith('q', {
+      maxResults: DEFAULT_WEB_SEARCH_MAX_RESULTS,
+      freshness: 'week',
+    });
+  });
+
+  it('неизвестный provider отклоняется Zod-схемой', async () => {
+    const { registry, search } = createRegistry([RESULT]);
 
     await expect(
-      executeWebSearchNodeAsync({}, { prompt: '' }, provider),
+      executeWebSearchNodeAsync({ query: 'q', provider: 'google' }, {}, registry),
+    ).rejects.toBeInstanceOf(NodeDataValidationException);
+
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it('пустой запрос — NodeDataValidationException', async () => {
+    const { registry, search } = createRegistry([RESULT]);
+
+    await expect(
+      executeWebSearchNodeAsync({}, { prompt: '' }, registry),
     ).rejects.toBeInstanceOf(NodeDataValidationException);
 
     expect(search).not.toHaveBeenCalled();
@@ -92,14 +175,10 @@ describe('executeWebSearchNodeAsync (v0.10 S2)', () => {
   it.each([0, 11, 2.5])(
     'maxResults=%s отклоняется Zod-схемой',
     async (maxResults) => {
-      const { provider, search } = createProvider([RESULT]);
+      const { registry, search } = createRegistry([RESULT]);
 
       await expect(
-        executeWebSearchNodeAsync(
-          { query: 'q', maxResults },
-          {},
-          provider,
-        ),
+        executeWebSearchNodeAsync({ query: 'q', maxResults }, {}, registry),
       ).rejects.toBeInstanceOf(NodeDataValidationException);
 
       expect(search).not.toHaveBeenCalled();
@@ -107,14 +186,14 @@ describe('executeWebSearchNodeAsync (v0.10 S2)', () => {
   );
 
   it('не пропускает rawContent в results (KI-459)', async () => {
-    const { provider } = createProvider([
+    const { registry } = createRegistry([
       { ...RESULT, rawContent: 'полный текст страницы '.repeat(1000) },
     ]);
 
     const outputs = await executeWebSearchNodeAsync(
       { query: 'q' },
       {},
-      provider,
+      registry,
     );
 
     expect(outputs.results).toEqual([RESULT]);
@@ -122,7 +201,7 @@ describe('executeWebSearchNodeAsync (v0.10 S2)', () => {
   });
 
   it('формирует нумерованный текст для LLM', async () => {
-    const { provider } = createProvider([
+    const { registry } = createRegistry([
       RESULT,
       { title: '', url: 'https://example.com/empty', snippet: '' },
     ]);
@@ -130,7 +209,7 @@ describe('executeWebSearchNodeAsync (v0.10 S2)', () => {
     const outputs = await executeWebSearchNodeAsync(
       { query: 'typescript' },
       {},
-      provider,
+      registry,
     );
     const text = String(outputs.text);
 
@@ -144,12 +223,12 @@ describe('executeWebSearchNodeAsync (v0.10 S2)', () => {
   });
 
   it('пустой результат — понятный текст, а не пустая строка', async () => {
-    const { provider } = createProvider([]);
+    const { registry } = createRegistry([]);
 
     const outputs = await executeWebSearchNodeAsync(
       { query: 'редкий запрос' },
       {},
-      provider,
+      registry,
     );
 
     expect(outputs.results).toEqual([]);
@@ -160,14 +239,14 @@ describe('executeWebSearchNodeAsync (v0.10 S2)', () => {
     // Кириллица: каждый символ — 2 байта UTF-8, проверяем границу по байтам,
     // а не по длине JS-строки.
     const huge = 'я'.repeat(WEB_SEARCH_MAX_TEXT_BYTES / 2 + 1024);
-    const { provider } = createProvider([
+    const { registry } = createRegistry([
       { title: 'Огромный сниппет', url: 'https://example.com/huge', snippet: huge },
     ]);
 
     const outputs = await executeWebSearchNodeAsync(
       { query: 'huge' },
       {},
-      provider,
+      registry,
     );
     const text = String(outputs.text);
 

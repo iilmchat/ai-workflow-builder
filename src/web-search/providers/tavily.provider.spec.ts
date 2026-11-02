@@ -1,19 +1,20 @@
 /**
- * Unit-тесты `TavilyProvider` (v0.10 S1).
+ * Unit-тесты `TavilyProvider` (v0.10 S1; v0.15 S3 — searchDepth/freshness).
  *
  * Сеть не используется: глобальный `fetch` подменяется моком. Проверяются
- * контракт запроса, маппинг результатов (включая `rawContent`), а также
- * классификация ошибок: 401/403 — детерминированные, 429/5xx/сеть — retryable
- * (DESIGN v0.10 § 3.1.6).
+ * контракт запроса, маппинг результатов (включая `rawContent`), новые опции
+ * глубины/свежести, а также классификация ошибок: 401/403 —
+ * детерминированные, 429/5xx/сеть — retryable (DESIGN v0.10 § 3.1.6).
  */
 import { ConfigService } from '@nestjs/config';
-import { RetryableNodeException } from '../engine/errors.js';
+import { RetryableNodeException } from '../../engine/errors.js';
 import {
   TAVILY_PROVIDER_NAME,
   TAVILY_SEARCH_URL,
   TavilyProvider,
+  mapTavilyTimeRange,
 } from './tavily.provider.js';
-import { WebSearchProviderException } from './web-search.interface.js';
+import { WebSearchProviderException } from '../web-search.interface.js';
 
 /** Тестовый ключ: в upstream не уходит — fetch замокан. */
 const API_KEY = 'tvly-test-key';
@@ -85,7 +86,7 @@ function providerWithKey(): TavilyProvider {
   return new TavilyProvider(configStub({ TAVILY_API_KEY: API_KEY }));
 }
 
-describe('TavilyProvider (v0.10 S1)', () => {
+describe('TavilyProvider (v0.10 S1, v0.15 S3)', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -163,6 +164,29 @@ describe('TavilyProvider (v0.10 S1)', () => {
       max_results: 3,
       include_raw_content: true,
     });
+  });
+
+  it('передаёт searchDepth как search_depth', async () => {
+    const mock = mockFetch({ results: [] });
+    const provider = providerWithKey();
+
+    await provider.searchAsync('nestjs', { searchDepth: 'advanced' });
+
+    expect(bodyOf(firstCall(mock).init)).toMatchObject({
+      search_depth: 'advanced',
+    });
+  });
+
+  it('передаёт freshness как time_range (алиасы day/week/month/year)', async () => {
+    const mock = mockFetch({ results: [] });
+    const provider = providerWithKey();
+
+    await provider.searchAsync('nestjs', { freshness: 'week' });
+
+    expect(bodyOf(firstCall(mock).init)).toMatchObject({ time_range: 'week' });
+    expect(mapTavilyTimeRange('year')).toBe('year');
+    expect(mapTavilyTimeRange('2026-01-01..2026-02-01')).toBeUndefined();
+    expect(mapTavilyTimeRange('')).toBeUndefined();
   });
 
   it('пустой результат Tavily — пустой массив, а не ошибка', async () => {

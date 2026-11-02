@@ -6,6 +6,7 @@ import {
   fetchRunAsync,
   fetchRunBudgetAsync,
   fetchRunNodesAsync,
+  fetchWebSearchProvidersAsync,
   type ApiRun,
 } from '@/lib/api';
 import type { AppNode } from '@/types/graph';
@@ -64,6 +65,9 @@ vi.mock('@/lib/api', async (importOriginal) => {
     ...original,
     fetchRunAsync: vi.fn(),
     fetchRunNodesAsync: vi.fn(),
+    // v0.15 S3: конфигурация web-search грузится лениво; тест узла её не
+    // вызывает, а `loadWebSearchProvidersAsync` проверяется отдельным describe.
+    fetchWebSearchProvidersAsync: vi.fn(),
     // `restoreRunAsync` после подписки на SSE обновляет прогресс-бар бюджета;
     // без заглушки тест ждал бы реальный `fetch` (jsdom, относительный URL).
     fetchRunBudgetAsync: vi.fn(() =>
@@ -868,6 +872,55 @@ describe('useWorkflowStore — восстановление запуска по�
     // Состояние запуска не заполнено, но `?runId=` не тронут: следующий F5
     // попробует восстановить его снова.
     expect(replaceState).not.toHaveBeenCalled();
+  });
+});
+
+describe('loadWebSearchProvidersAsync (v0.15 S3)', () => {
+  /** Конфигурация, которую «отдаёт» backend. */
+  const CATALOG = {
+    defaultProvider: 'tavily' as const,
+    providers: [
+      { name: 'tavily' as const, configured: true },
+      { name: 'bing' as const, configured: false },
+      { name: 'brave' as const, configured: true },
+    ],
+  };
+
+  beforeEach(() => {
+    useWorkflowStore.setState({
+      webSearchProviders: null,
+      webSearchProvidersLoaded: false,
+    });
+    vi.mocked(fetchWebSearchProvidersAsync).mockReset();
+  });
+
+  it('загружает конфигурацию и кэширует её в сторе', async () => {
+    vi.mocked(fetchWebSearchProvidersAsync).mockResolvedValue(CATALOG);
+
+    await state().loadWebSearchProvidersAsync();
+
+    expect(state().webSearchProviders).toEqual(CATALOG);
+    expect(state().webSearchProvidersLoaded).toBe(true);
+
+    // Повторный вызов (следующее монтирование узла) не ходит в сеть.
+    await state().loadWebSearchProvidersAsync();
+    expect(fetchWebSearchProvidersAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('ошибка не критична: loaded не выставляется, повтор возможен', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    vi.mocked(fetchWebSearchProvidersAsync).mockRejectedValue(
+      new Error('network down'),
+    );
+
+    await state().loadWebSearchProvidersAsync();
+
+    expect(state().webSearchProviders).toBeNull();
+    expect(state().webSearchProvidersLoaded).toBe(false);
+    expect(warn).toHaveBeenCalled();
+
+    warn.mockRestore();
   });
 });
 

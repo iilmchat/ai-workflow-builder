@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { getAccessToken, useAuthStore } from '@/stores/auth';
 import {
+  WEB_SEARCH_PROVIDER_NAMES,
+} from '@/types/graph';
+import {
   MediaModelInfoSchema,
   type MediaModelInfo,
   type MediaModelType,
@@ -276,6 +279,32 @@ export const LlmModelInfoSchema = z.object({
 
 /** Модель в терминах API: id для вызова, label и модальности для интерфейса. */
 export type LlmModelInfo = z.infer<typeof LlmModelInfoSchema>;
+
+/** Провайдер веб-поиска и его состояние (v0.15 S3, `GET /web-search/providers`). */
+export const WebSearchProviderInfoSchema = z.object({
+  name: z.enum(WEB_SEARCH_PROVIDER_NAMES),
+  configured: z.boolean(),
+});
+
+/** Провайдер веб-поиска в терминах API. */
+export type WebSearchProviderInfo = z.infer<typeof WebSearchProviderInfoSchema>;
+
+/**
+ * Ответ `GET /web-search/providers` (v0.15 S3).
+ *
+ * `defaultProvider` — из env `WEB_SEARCH_PROVIDER`; `providers` — все известные
+ * с флагом `configured`. UI показывает селект только когда доступно больше
+ * одного провайдера (DESIGN v0.14 § 3.3).
+ */
+export const WebSearchProvidersResponseSchema = z.object({
+  defaultProvider: z.enum(WEB_SEARCH_PROVIDER_NAMES),
+  providers: z.array(WebSearchProviderInfoSchema),
+});
+
+/** Конфигурация web-search в терминах API. */
+export type WebSearchProvidersResponse = z.infer<
+  typeof WebSearchProvidersResponseSchema
+>;
 
 /** Ошибка обращения к API (сеть, HTTP-статус или неожиданный формат ответа). */
 export class ApiError extends Error {
@@ -781,6 +810,22 @@ export async function fetchLlmModelsAsync(): Promise<LlmModelInfo[]> {
   const data = await requestAsync<unknown>('/llm/models');
 
   return z.array(LlmModelInfoSchema).parse(data);
+}
+
+/**
+ * Возвращает конфигурацию web-search-провайдеров (v0.15 S3).
+ *
+ * Нужна селекту провайдера в узле `web_search`: UI показывает его только когда
+ * сконфигурировано больше одного провайдера, а провайдера по умолчанию берёт из
+ * env (через `defaultProvider`). Ключи backend не отдаёт (RULES 5.1).
+ *
+ * @returns провайдер по умолчанию и список с флагом `configured`
+ * @throws ApiError при сетевой ошибке, не-2xx статусе или неожиданном формате
+ */
+export async function fetchWebSearchProvidersAsync(): Promise<WebSearchProvidersResponse> {
+  const data = await requestAsync<unknown>('/web-search/providers');
+
+  return WebSearchProvidersResponseSchema.parse(data);
 }
 
 /**

@@ -789,12 +789,57 @@ export const WEB_SEARCH_MAX_RESULTS_LIMIT = 10;
 export const DEFAULT_WEB_SEARCH_MAX_RESULTS = 5;
 
 /**
- * Данные узла `web_search` (v0.10 S2, DESIGN v0.10 § 3.1).
+ * Допустимые web-search-провайдеры (v0.15 S3, DESIGN v0.14 § 3.3).
  *
- * Backend S2 валидирует `query`/`maxResults`, а поля DESIGN `searchDepth`,
- * `includeAnswer`, `topic`, `days` пока не отправляются провайдеру (S1 принимает
- * только `maxResults`, KI-461): они сохраняются в графе между Save/Load и будут
- * задействованы после расширения `IWebSearchProvider`.
+ * Зеркалит backend-константу `WEB_SEARCH_PROVIDER_NAMES`. Зеркало проверяется
+ * паритет-тестом `web-search-providers.spec.ts`, чтобы список не разъехался.
+ */
+export const WEB_SEARCH_PROVIDER_NAMES = ['tavily', 'bing', 'brave'] as const;
+
+/** Идентификатор web-search-провайдера. */
+export type WebSearchProviderName = (typeof WEB_SEARCH_PROVIDER_NAMES)[number];
+
+/**
+ * Провайдеры, поддерживающие глубину поиска (Tavily: `basic`/`advanced`).
+ *
+ * UI показывает селект `searchDepth` только для них: у Bing Web Search API v7
+ * и Brave Search API такого параметра нет — настройка была бы мёртвой (KI-546).
+ */
+export const WEB_SEARCH_DEPTH_PROVIDERS: readonly WebSearchProviderName[] = [
+  'tavily',
+];
+
+/**
+ * Допустимые значения свежести результатов (v0.15 S3).
+ *
+ * Провайдеро-независимые алиасы: backend переводит их в `time_range` (Tavily),
+ * `Day`/`Week`/`Month`/диапазон дат (Bing) и `pd`/`pw`/`pm`/`py` (Brave).
+ */
+export const WEB_SEARCH_FRESHNESS_VALUES = [
+  'day',
+  'week',
+  'month',
+  'year',
+] as const;
+
+/** Значение свежести результатов. */
+export type WebSearchFreshness = (typeof WEB_SEARCH_FRESHNESS_VALUES)[number];
+
+/**
+ * Провайдеры, поддерживающие свежесть (`freshness`).
+ *
+ * Поддерживают все три: Tavily (`time_range`), Bing (`freshness`), Brave
+ * (`freshness`).
+ */
+export const WEB_SEARCH_FRESHNESS_PROVIDERS: readonly WebSearchProviderName[] =
+  ['tavily', 'bing', 'brave'];
+
+/**
+ * Данные узла `web_search` (v0.10 S2; v0.15 S3 — провайдер и глубина).
+ *
+ * Backend валидирует `query`/`maxResults`/`provider`/`searchDepth`; поля
+ * `includeAnswer`/`topic`/`days` остаются в графе между Save/Load как
+ * forward-compat (KI-461): провайдерский контракт их пока не принимает.
  *
  * Запрос приоритетно берётся из входа `prompt`; `query` — fallback для узла,
  * к которому не подключён Text/LLM.
@@ -805,9 +850,16 @@ export interface WebSearchNodeData extends Record<string, unknown> {
   query?: string;
   /** Сколько результатов вернуть (1–10; дефолт backend — 5). */
   maxResults?: number;
-  /** Глубина поиска Tavily. */
+  /**
+   * Провайдер конкретного узла (v0.15 S3); `undefined` — из env
+   * `WEB_SEARCH_PROVIDER` (дефолт отдаёт `GET /web-search/providers`).
+   */
+  provider?: WebSearchProviderName;
+  /** Глубина поиска Tavily (`basic`/`advanced`). */
   searchDepth?: 'basic' | 'advanced';
-  /** Просить ли у провайдера готовый ответ. */
+  /** Свежесть результатов: `day`/`week`/`month`/`year` (v0.15 S3). */
+  freshness?: WebSearchFreshness;
+  /** Просить ли у провайдера готовый ответ (поле графа, не отправляется). */
   includeAnswer?: boolean;
   /** Тема поиска (`news` включает фильтр по дням). */
   topic?: 'general' | 'news';

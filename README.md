@@ -105,8 +105,13 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 
 ### 🔎 Контент и файлы
 
-- **Web Search (`web_search`):** поиск через Tavily, топ-N источников
-  `{ title, url, snippet }` и готовый текст для следующего LLM-узла.
+- **Web Search (`web_search`):** три провайдера — Tavily (дефолт), Bing Web
+  Search API v7 и Brave Search API (`WEB_SEARCH_PROVIDER`, v0.15 S3). Узел
+  отдаёт топ-N источников `{ title, url, snippet }` и готовый текст для
+  следующего LLM-узла; поддерживает `maxResults`, глубину поиска Tavily и
+  свежесть результатов (Tavily/Bing/Brave). Провайдер можно переопределить на
+  конкретном узле, а список доступных (по заданным ключам) UI получает из
+  `GET /web-search/providers` (JWT) — сами ключи наружу не отдаются.
 - **Document Generation (`document_gen`):** Markdown или JSON → DOCX
   (заголовки, списки, код, таблицы, инлайн-разметка) с сохранением в
   local/S3 и кнопкой скачивания.

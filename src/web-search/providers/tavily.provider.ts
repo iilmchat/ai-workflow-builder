@@ -1,62 +1,52 @@
 /**
- * Web-search-провайдер Tavily (v0.10 S1).
+ * Web-search-провайдер Tavily (v0.10 S1, v0.15 S3).
  *
  * Ходит в REST API `POST https://api.tavily.com/search` встроенным `fetch`
  * (как CreativeLab/replicate: без SDK-зависимости). Ключ уходит только в
  * заголовке `Authorization: Bearer …` и не попадает ни в тело, ни в логи.
  *
- * ### Почему отдельный провайдер, а не вызов в узле
+ * ### Параметры (v0.15 S3)
  *
- * Узел `web_search` (S2) работает с {@link IWebSearchProvider}. Tavily — первая
- * реализация; `WEB_SEARCH_PROVIDER` уже enum, поэтому Bing/Google/Brave
- * добавляются без изменения узла и executor'а (DESIGN v0.10 § 2.2).
+ * - `max_results` — лимит результатов (1–10, дефолт 5);
+ * - `search_depth` — `basic`/`advanced` из {@link WebSearchOptions.searchDepth};
+ * - `time_range` — `day`/`week`/`month`/`year` из
+ *   {@link WebSearchOptions.freshness} (Tavily поддерживает его для `general`
+ *   и `news`);
+ * - `include_raw_content: true` — полный текст страницы для LLM.
  *
  * ### Ошибки и retry
  *
- * - `401`/`403` — ключ не принят: {@link WebSearchProviderException},
- *   повтор бессмыслен;
- * - `429` — rate limit, `5xx` — сбой upstream: `RetryableNodeException`,
- *   движок повторит узел (KI-036);
- * - таймаут/сетевой сбой — тоже `RetryableNodeException`;
- * - прочие `4xx` — детерминированная ошибка провайдера.
- *
- * ### Raw content
- *
- * В запросе всегда `include_raw_content: true`: исполнитель S2 сможет отдать
- * LLM полный текст страницы, а не только сниппет. Если Tavily `raw_content` не
- * вернул, поля `rawContent` в результате нет.
+ * Классификация общая с Bing/Brave ({@link classifyHttpStatus}): `401`/`403` —
+ * ключ не принят, `429`/`5xx`/таймаут/сеть — retryable.
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { z } from 'zod';
-import { RetryableNodeException } from '../engine/errors.js';
+import { RetryableNodeException } from '../../engine/errors.js';
 import {
   WebSearchProviderException,
   type IWebSearchProvider,
   type WebSearchOptions,
+  type WebSearchProviderName,
   type WebSearchResult,
-} from './web-search.interface.js';
+} from '../web-search.interface.js';
+import {
+  REQUEST_TIMEOUT_MS,
+  SNIPPET_MAX_LENGTH,
+  WEB_SEARCH_NODE_TYPE,
+  classifyHttpStatus,
+  normalizeMaxResults,
+  truncate,
+} from './provider-utils.js';
 
 /** Идентификатор провайдера в логах, ошибках и env `WEB_SEARCH_PROVIDER`. */
-export const TAVILY_PROVIDER_NAME = 'tavily';
+export const TAVILY_PROVIDER_NAME = 'tavily' satisfies WebSearchProviderName;
 
 /** Endpoint Tavily Search API (DESIGN v0.10 § 3.1.2). */
 export const TAVILY_SEARCH_URL = 'https://api.tavily.com/search';
 
-/** Тип узла для `RetryableNodeException` (маркер для движка). */
-const NODE_TYPE = 'web_search';
-
-/** Таймаут запроса к Tavily (RULES 4.19). */
-const REQUEST_TIMEOUT_MS = 15_000;
-
-/** Дефолт `max_results`, если вызывающий код не задал лимит. */
-const DEFAULT_MAX_RESULTS = 5;
-
-/** Жёсткий cap `max_results` (DESIGN v0.10 § 3.1.4/§ 7.2). */
-const MAX_RESULTS_LIMIT = 10;
-
-/** Длина сниппета, отдаваемого в LLM (DESIGN v0.10 § 3.1.2). */
-const SNIPPET_MAX_LENGTH = 500;
+/** Человекочитаемое имя провайдера для текстов ошибок. */
+const TAVILY_LABEL = 'Tavily';
 
 /**
  * Схема одного результата Tavily.
@@ -75,8 +65,8 @@ const TavilyResultSchema = z.object({
 /**
  * Схема ответа Tavily Search API.
  *
- * Остальные поля (`answer`, `response_time`, `request_id`, …) не нужны S1 и
- * отбрасываются Zod'ом: контракт узла — только список результатов.
+ * Остальные поля (`answer`, `response_time`, `request_id`, …) не нужны узлу
+ * и отбрасываются Zod'ом: контракт узла — только список результатов.
  */
 const TavilySearchResponseSchema = z.object({
   results: z.array(TavilyResultSchema).default([]),
@@ -124,7 +114,7 @@ export class TavilyProvider implements IWebSearchProvider {
    * Выполняет поиск через Tavily.
    *
    * @param query - поисковый запрос (PII не логируется — только длина)
-   * @param options - лимит результатов (1–10, дефолт 5)
+   * @param options - лимит результатов (1–10, дефолт 5), глубина и свежесть
    * @returns результаты в порядке релевантности
    * @throws WebSearchProviderException если ключ не задан, запрос пуст,
    *   ключ не принят (401/403), upstream ответил прочим 4xx или тело не по схеме
@@ -150,7 +140,7 @@ export class TavilyProvider implements IWebSearchProvider {
       );
     }
 
-    const maxResults = normalizeMaxResults(options?.maxResults);
+    const timeRange = mapTavilyTimeRange(options?.freshness);
     const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     let response: Response;
 
@@ -164,15 +154,19 @@ export class TavilyProvider implements IWebSearchProvider {
         },
         body: JSON.stringify({
           query: normalizedQuery,
-          max_results: maxResults,
+          max_results: normalizeMaxResults(options?.maxResults),
           // Полный текст страницы — если Tavily его отдаст (DESIGN § 3.1.2).
           include_raw_content: true,
+          ...(options?.searchDepth !== undefined
+            ? { search_depth: options.searchDepth }
+            : {}),
+          ...(timeRange !== undefined ? { time_range: timeRange } : {}),
         }),
         signal,
       });
     } catch (error: unknown) {
       throw new RetryableNodeException(
-        NODE_TYPE,
+        WEB_SEARCH_NODE_TYPE,
         signal.aborted
           ? `Tavily: истёк таймаут запроса (${REQUEST_TIMEOUT_MS} мс)`
           : 'Tavily: не удалось обратиться к API поиска',
@@ -181,7 +175,7 @@ export class TavilyProvider implements IWebSearchProvider {
     }
 
     if (!response.ok) {
-      throw this.toProviderError(response.status);
+      throw classifyHttpStatus(this.name, TAVILY_LABEL, response.status);
     }
 
     let payload: unknown;
@@ -194,7 +188,7 @@ export class TavilyProvider implements IWebSearchProvider {
       // иначе большой `raw_content` на медленном канале не повторялся бы.
       if (signal.aborted) {
         throw new RetryableNodeException(
-          NODE_TYPE,
+          WEB_SEARCH_NODE_TYPE,
           `Tavily: истёк таймаут чтения ответа (${REQUEST_TIMEOUT_MS} мс)`,
           { cause: error },
         );
@@ -234,56 +228,27 @@ export class TavilyProvider implements IWebSearchProvider {
 
     return parsed.data.results.map(toWebSearchResult);
   }
-
-  /**
-   * Превращает HTTP-статус ошибки upstream в исключение нужного типа.
-   *
-   * @param status - не-2xx статус ответа Tavily
-   * @returns детерминированная ошибка либо retryable-исключение
-   */
-  private toProviderError(
-    status: number,
-  ): WebSearchProviderException | RetryableNodeException {
-    if (status === 401 || status === 403) {
-      return new WebSearchProviderException(
-        this.name,
-        `ключ Tavily не принят (${status})`,
-      );
-    }
-
-    if (status === 429) {
-      return new RetryableNodeException(
-        NODE_TYPE,
-        'Tavily: превышен лимит запросов (429)',
-      );
-    }
-
-    if (status >= 500) {
-      return new RetryableNodeException(
-        NODE_TYPE,
-        `Tavily: временная ошибка upstream (${status})`,
-      );
-    }
-
-    return new WebSearchProviderException(
-      this.name,
-      `Tavily отклонил запрос (${status})`,
-    );
-  }
 }
 
 /**
- * Нормализует `maxResults` к диапазону 1–{@link MAX_RESULTS_LIMIT}.
+ * Переводит `freshness` в параметр Tavily `time_range`.
  *
- * @param value - значение из опций (может быть `undefined`, дробным, NaN)
- * @returns целое число в допустимом диапазоне
+ * Tavily принимает `day`/`week`/`month`/`year`; те же алиасы приходят из узла.
+ * Нераспознанное значение игнорируется: неподдерживаемый параметр не должен
+ * ронять поиск (поле опциональное).
+ *
+ * @param value - `freshness` из опций узла
+ * @returns значение для `time_range` либо `undefined`
  */
-function normalizeMaxResults(value: number | undefined): number {
-  if (value === undefined || !Number.isFinite(value)) {
-    return DEFAULT_MAX_RESULTS;
-  }
+export function mapTavilyTimeRange(
+  value: string | undefined,
+): string | undefined {
+  const normalized = value?.trim().toLowerCase();
 
-  return Math.min(Math.max(Math.trunc(value), 1), MAX_RESULTS_LIMIT);
+  return normalized !== undefined &&
+    /^(day|week|month|year)$/.test(normalized)
+    ? normalized
+    : undefined;
 }
 
 /**
@@ -301,17 +266,4 @@ function toWebSearchResult(result: TavilyResult): WebSearchResult {
     snippet: truncate(result.content, SNIPPET_MAX_LENGTH),
     ...(rawContent ? { rawContent } : {}),
   };
-}
-
-/**
- * Обрезает текст до лимита, добавляя многоточие.
- *
- * @param value - исходный текст
- * @param maxLength - максимальная длина результата
- * @returns исходный текст либо обрезанный с `…`
- */
-function truncate(value: string, maxLength: number): string {
-  return value.length <= maxLength
-    ? value
-    : `${value.slice(0, maxLength - 1)}…`;
 }

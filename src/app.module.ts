@@ -42,8 +42,8 @@ import { RedisModule } from './redis/redis.module.js';
 import { CostBudgetModule } from './runs/cost-budget.module.js';
 import { RunsModule } from './runs/runs.module.js';
 import { TemplatesModule } from './templates/templates.module.js';
-// v0.10 S1: web-search-провайдер (Tavily) — модуль без HTTP-ручек, отдаёт
-// WEB_SEARCH_PROVIDER исполнителю узла web_search (S2).
+// v0.10 S1 / v0.15 S3: web-search-провайдеры (Tavily/Bing/Brave) и ручка
+// GET /web-search/providers для UI узла web_search.
 import { WebSearchModule } from './web-search/web-search.module.js';
 
 /**

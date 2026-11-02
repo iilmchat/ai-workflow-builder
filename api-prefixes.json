@@ -11,6 +11,7 @@
     { "prefix": "nodes" },
     { "prefix": "runs", "sse": true },
     { "prefix": "templates" },
+    { "prefix": "web-search" },
     { "prefix": "workflow", "htmlFallback": true }
   ]
 }

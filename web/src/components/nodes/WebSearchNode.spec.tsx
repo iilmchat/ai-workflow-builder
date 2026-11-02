@@ -91,6 +91,8 @@ beforeEach(() => {
     nodeMetrics: {},
     llmModels: [],
     llmModelsLoaded: true,
+    webSearchProviders: null,
+    webSearchProvidersLoaded: true,
     pushHistoryCoalesced: () => undefined,
   });
 });
@@ -178,5 +180,168 @@ describe('WebSearchNode — поля и результаты (v0.10 S2)', () => 
     renderNode(searchData());
 
     expect(screen.getByText(ru['node.web_search.empty'])).toBeInTheDocument();
+  });
+
+  it('селект провайдера скрыт, если сконфигурирован один провайдер', () => {
+    useWorkflowStore.setState({
+      webSearchProviders: {
+        defaultProvider: 'tavily',
+        providers: [
+          { name: 'tavily', configured: true },
+          { name: 'bing', configured: false },
+          { name: 'brave', configured: false },
+        ],
+      },
+    });
+
+    renderNode(searchData());
+
+    expect(
+      screen.queryByLabelText(ru['node.web_search.provider']),
+    ).not.toBeInTheDocument();
+  });
+
+  it('при нескольких провайдерах выбор пишется в data.provider', async () => {
+    useWorkflowStore.setState({
+      webSearchProviders: {
+        defaultProvider: 'tavily',
+        providers: [
+          { name: 'tavily', configured: true },
+          { name: 'bing', configured: true },
+          { name: 'brave', configured: false },
+        ],
+      },
+    });
+
+    renderNode(searchData());
+
+    const select = screen.getByLabelText(ru['node.web_search.provider']);
+
+    expect(
+      screen.getByRole('option', {
+        name: ru['node.web_search.provider.default'].replace(
+          '{{provider}}',
+          ru['node.web_search.provider.tavily'],
+        ),
+      }),
+    ).toBeInTheDocument();
+
+    fireEvent.change(select, { target: { value: 'bing' } });
+
+    await waitFor(() => {
+      expect(flow?.getNode(NODE_ID)?.data.provider).toBe('bing');
+    });
+  });
+
+  it('searchDepth показывается для Tavily и пишется в data', async () => {
+    renderNode(searchData());
+
+    const depth = screen.getByLabelText(ru['node.web_search.searchDepth']);
+
+    expect(depth).toHaveValue('basic');
+
+    fireEvent.change(depth, { target: { value: 'advanced' } });
+
+    await waitFor(() => {
+      expect(flow?.getNode(NODE_ID)?.data.searchDepth).toBe('advanced');
+    });
+  });
+
+  it('searchDepth скрыт для провайдера без глубины (Bing)', () => {
+    useWorkflowStore.setState({
+      webSearchProviders: {
+        defaultProvider: 'bing',
+        providers: [
+          { name: 'tavily', configured: false },
+          { name: 'bing', configured: true },
+          { name: 'brave', configured: false },
+        ],
+      },
+    });
+
+    renderNode(searchData({ provider: 'bing' }));
+
+    expect(
+      screen.queryByLabelText(ru['node.web_search.searchDepth']),
+    ).not.toBeInTheDocument();
+  });
+
+  it('freshness пишется в data и сбрасывается в «за всё время»', async () => {
+    renderNode(searchData());
+
+    const freshness = screen.getByLabelText(ru['node.web_search.freshness']);
+
+    expect(freshness).toHaveValue('');
+
+    fireEvent.change(freshness, { target: { value: 'week' } });
+
+    await waitFor(() => {
+      expect(flow?.getNode(NODE_ID)?.data.freshness).toBe('week');
+    });
+
+    fireEvent.change(freshness, { target: { value: '' } });
+
+    await waitFor(() => {
+      expect(flow?.getNode(NODE_ID)?.data.freshness).toBeUndefined();
+    });
+  });
+
+  it('показывает выбор провайдера, если env-дефолт без ключа, даже при одном доступном', async () => {
+    useWorkflowStore.setState({
+      webSearchProviders: {
+        defaultProvider: 'tavily',
+        providers: [
+          { name: 'tavily', configured: false },
+          { name: 'bing', configured: false },
+          { name: 'brave', configured: true },
+        ],
+      },
+    });
+
+    renderNode(searchData());
+
+    const select = screen.getByLabelText(ru['node.web_search.provider']);
+
+    expect(
+      screen.getByRole('option', {
+        name: ru['node.web_search.provider.defaultUnavailable'].replace(
+          '{{provider}}',
+          ru['node.web_search.provider.tavily'],
+        ),
+      }),
+    ).toBeDisabled();
+
+    fireEvent.change(select, { target: { value: 'brave' } });
+
+    await waitFor(() => {
+      expect(flow?.getNode(NODE_ID)?.data.provider).toBe('brave');
+    });
+  });
+
+  it('сохранённый недоступный провайдер показан disabled-опцией (KI-547)', () => {
+    useWorkflowStore.setState({
+      webSearchProviders: {
+        defaultProvider: 'tavily',
+        providers: [
+          { name: 'tavily', configured: true },
+          { name: 'bing', configured: false },
+          { name: 'brave', configured: true },
+        ],
+      },
+    });
+
+    renderNode(searchData({ provider: 'bing' }));
+
+    const select = screen.getByLabelText(ru['node.web_search.provider']);
+
+    expect(select).toHaveValue('bing');
+    expect(
+      screen.getByRole('option', {
+        name: ru['node.web_search.provider.unavailable'].replace(
+          '{{provider}}',
+          ru['node.web_search.provider.bing'],
+        ),
+      }),
+    ).toBeDisabled();
   });
 });

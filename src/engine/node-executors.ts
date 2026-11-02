@@ -60,9 +60,13 @@ import {
   DEFAULT_EMBEDDING_MODEL,
 } from '../llm/llm-constants.js';
 import type { SandboxEvaluation, SandboxOptions } from '../sandbox/quickjs-runner.service.js';
-import type {
-  IWebSearchProvider,
-  WebSearchResult,
+import {
+  WEB_SEARCH_DEPTH_PROVIDERS,
+  WEB_SEARCH_FRESHNESS_PROVIDERS,
+  WEB_SEARCH_PROVIDER_NAMES,
+  type IWebSearchProviderRegistry,
+  type WebSearchProviderName,
+  type WebSearchResult,
 } from '../web-search/web-search.interface.js';
 import type { EdgeDto, GraphDto, NodeDto } from './dto/index.js';
 import { inferInputPortName } from './node-ports.js';
@@ -115,18 +119,29 @@ export const DEFAULT_WEB_SEARCH_MAX_RESULTS = 5;
 export const WEB_SEARCH_MAX_TEXT_BYTES = 2 * 1024 * 1024;
 
 /**
- * Данные узла `web_search` (v0.10 S2, DESIGN v0.10 § 3.1.1).
+ * Данные узла `web_search` (v0.10 S2; v0.15 S3 — провайдер и глубина).
  *
  * Запрос приоритетно берётся из входа `inputs.prompt` (Text/LLM-узел), а
- * `query` — fallback для узла без входящей связи. Остальные поля DESIGN
- * (`searchDepth`, `topic`, …) в v0.10 не поддерживаются: провайдерский
- * контракт S1 принимает только `maxResults`, а лишние ключи Zod отбрасывает.
+ * `query` — fallback для узла без входящей связи.
+ *
+ * `provider` — переопределение env-провайдера на конкретном узле. Поле
+ * аддитивное: старые графы его не содержат и работают через
+ * `WEB_SEARCH_PROVIDER`. `searchDepth` поддерживается провайдерами из
+ * `WEB_SEARCH_DEPTH_PROVIDERS` (Tavily); остальные его не отправляют, а
+ * пишут debug-лог (KI-546). `freshness` — провайдеро-независимые алиасы
+ * `day`/`week`/`month`/`year`; каждый провайдер переводит их в свой формат.
  */
 export interface WebSearchNodeData {
   /** Поисковый запрос, если он не пришёл по связи `inputs.prompt`. */
   query?: string;
   /** Сколько результатов вернуть (1–10; по умолчанию 5). */
   maxResults?: number;
+  /** Провайдер конкретного узла; `undefined` — из env `WEB_SEARCH_PROVIDER`. */
+  provider?: WebSearchProviderName;
+  /** Глубина поиска (Tavily: `basic`/`advanced`). */
+  searchDepth?: 'basic' | 'advanced';
+  /** Свежесть результатов: `day`/`week`/`month`/`year` или нативный формат. */
+  freshness?: string;
 }
 
 /**
@@ -134,6 +149,8 @@ export interface WebSearchNodeData {
  *
  * `maxResults` намеренно не `coerce`: UI передаёт число, а строка из внешнего
  * API — повод для понятной ошибки валидации, а не для молчаливого приведения.
+ * `provider`/`searchDepth` — enum'ы: неизвестное значение из внешнего API
+ * отклоняется, а не уезжает в провайдер как есть.
  */
 const WebSearchNodeDataSchema = z.object({
   query: z.string().trim().max(2_000).optional(),
@@ -146,15 +163,25 @@ const WebSearchNodeDataSchema = z.object({
       `maxResults должен быть не больше ${WEB_SEARCH_MAX_RESULTS_LIMIT}`,
     )
     .default(DEFAULT_WEB_SEARCH_MAX_RESULTS),
+  provider: z.enum(WEB_SEARCH_PROVIDER_NAMES).optional(),
+  searchDepth: z.enum(['basic', 'advanced']).optional(),
+  // Свободная строка до 64 символов: UI передаёт алиасы, внешний API — нативный
+  // формат провайдера. Неизвестное значение провайдер игнорирует.
+  freshness: z.string().trim().min(1).max(64).optional(),
 });
 
 /**
- * Исполнитель узла `web_search` (v0.10 S2, DESIGN v0.10 § 3.1).
+ * Исполнитель узла `web_search` (v0.10 S2, v0.15 S3).
  *
  * Порядок источников запроса: `inputs.prompt` → `data.query`. Пустые оба —
  * {@link NodeDataValidationException}: узел не должен уходить в поиск с пустой
  * строкой (провайдер всё равно отклонит запрос, но ошибка была бы менее
  * понятной).
+ *
+ * Провайдер выбирается реестром: `data.provider` важнее env
+ * `WEB_SEARCH_PROVIDER`. Если выбранный провайдер не сконфигурирован, его
+ * `searchAsync` бросает {@link WebSearchProviderException} с точным именем
+ * переменной окружения — узел падает понятной ошибкой (DESIGN v0.14 § 3.3).
  *
  * Выходы — **только** `{ results, text }`:
  * - `results` — `{ title, url, snippet }[]` без `rawContent` (KI-459):
@@ -166,21 +193,37 @@ const WebSearchNodeDataSchema = z.object({
  *
  * @param data - сырые `data` узла из jsonb-графа
  * @param inputs - нормализованные входы узла (`prompt` от Text/LLM)
- * @param provider - web-search-провайдер (в продакшене — `WEB_SEARCH_PROVIDER`)
+ * @param registry - реестр web-search-провайдеров (в продакшене —
+ *   `WebSearchRegistryService`)
  * @returns `{ results, text }`
  * @throws NodeDataValidationException если `data` не проходят схему или запрос пуст
- * @throws WebSearchProviderException если провайдер отклонил запрос детерминированно
+ * @throws WebSearchProviderException если провайдер не сконфигурирован или
+ *   отклонил запрос детерминированно
  * @throws RetryableNodeException если провайдер вернул временную ошибку
  */
 export async function executeWebSearchNodeAsync(
   data: unknown,
   inputs: Record<string, unknown>,
-  provider: IWebSearchProvider,
+  registry: IWebSearchProviderRegistry,
 ): Promise<Record<string, unknown>> {
   const parsed = parseNodeData('web_search', WebSearchNodeDataSchema, data);
   const query = pickWebSearchQuery(inputs.prompt, parsed.query);
+  const provider = registry.getProvider(parsed.provider);
+  // Capability-гейт на границе исполнителя: не отправляем провайдеру опцию,
+  // которую он не поддерживает, даже если она пришла в `data` (KI-546).
+  // Так «мёртвая» настройка не доходит до чужого API.
+  const supportsDepth = WEB_SEARCH_DEPTH_PROVIDERS.includes(provider.name);
+  const supportsFreshness = WEB_SEARCH_FRESHNESS_PROVIDERS.includes(
+    provider.name,
+  );
   const found = await provider.searchAsync(query, {
     maxResults: parsed.maxResults,
+    ...(parsed.searchDepth !== undefined && supportsDepth
+      ? { searchDepth: parsed.searchDepth }
+      : {}),
+    ...(parsed.freshness !== undefined && supportsFreshness
+      ? { freshness: parsed.freshness }
+      : {}),
   });
 
   // KI-459: `rawContent` отбрасываем на границе исполнителя. Даже если

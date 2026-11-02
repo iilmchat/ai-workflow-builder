@@ -19,6 +19,18 @@
 
 ### Added
 
+- **Web Search: провайдеры Bing и Brave (v0.15 S3, DESIGN V014 § 3.3)** ([отчёт](development/reports/v0.15.0/S1-web-search.md)):
+  узел `web_search` поддерживает три провайдера — Tavily (дефолт), Bing Web
+  Search API v7 и Brave Search API. `WEB_SEARCH_PROVIDER` расширен до
+  `tavily | bing | brave`, ключи Bing/Brave опциональны (без ключа провайдер не
+  предлагается). `WebSearchOptions` дополнен `searchDepth` (Tavily:
+  `basic`/`advanced`) и `freshness` (Tavily `time_range`, Bing `freshness`,
+  Brave `freshness`); узел получил селекты провайдера (когда сконфигурировано
+  больше одного), глубины и свежести. Новый эндпоинт
+  `GET /web-search/providers` (JWT) отдаёт провайдера по умолчанию и флаг
+  «ключ задан» без самих ключей. Bing v7 и Brave не поддерживают глубину
+  поиска — KI-546; недоступный провайдер (нет ключа или stale-выбор) помечается
+  в селекте disabled-опцией — KI-547.
 - **Run History UI (v0.14 S2, DESIGN V014 § 3.2)** ([отчёт](development/reports/v0.14.0/S2-history-ui.md)):
   кнопка «История» (🕒) в `TopBar` (активна только для сохранённого workflow;
   для `viewer` скрыта — история требует `editor`, KI-537) открывает модалку

@@ -64,7 +64,8 @@ import { RUNS_QUEUE_DB, RUNS_QUEUE_PREFIX } from './runs.worker-options.js';
     // R7.5 (KI-364): ExecutionEngineService получает QuickJsRunnerService
     // для режима `sandbox` узла condition.
     SandboxModule,
-    // v0.10 S2: WEB_SEARCH_PROVIDER для исполнителя узла web_search.
+    // v0.10 S2 / v0.15 S3: реестр web-search-провайдеров для исполнителя
+    // узла web_search.
     WebSearchModule,
     // v0.10 S6: DocumentService для исполнителя узла document_gen.
     DocumentsModule,

@@ -1,18 +1,17 @@
-## [0.12.0] — 2026-11-02
+## [0.14.0] — 2026-11-02
 
-**Minor-релиз: PDF Generation, MCP stdio & SafeHttpClient Binary.**
+**Minor-релиз: Run History Browser.**
 
 ### Added
 
-- **PDF Generation (S1+S2, KI-463):** `PdfRenderer` на `pdfkit` + `NotoSans`. Узел `document_gen` теперь поддерживает формат `pdf` в inline-режиме (Markdown/JSON → PDF). Кириллица, списки, ссылки, заголовки. Fallback на Helvetica, если шрифт не найден.
-- **MCP stdio (S4, KI-526):** `StdioClientTransport` для запуска локальных MCP-серверов (через `child_process.spawn`). Защита от orphan-процессов (`SIGTERM` → `SIGKILL`), denylist команд. Env `MCP_ENABLE_STDIO` (default `false`).
-- **SafeHttpClient Binary (S3, KI-525):** Метод `fetchBufferAsync` для безопасного скачивания бинарных файлов (pinned DNS, лимит байт). Провайдер `OpenAI Images` переведен на него.
+- **Run History API (S1, KI-537):** Эндпоинт `GET /workflow/:id/runs` с пагинацией, агрегацией стоимости и длительности из `node_runs`. Новый `RunsHistoryController`.
+- **Run History UI (S2):** Модальное окно «История» с кнопкой в TopBar (🕒). Отображает статус, дату, длительность и стоимость запусков. Клик по запуску открывает панель результатов (`restoreRunAsync`).
 
 ### Fixed
 
-- **KI-528:** `SafeHttpClient.discardAsync` ронял процесс (`undici` 8) на редиректе из-за uncaught `RequestAbortedError`. Исправлено.
+- **Округление длительности:** Исправлен баг, при котором 119.5 секунд отображались как «1 мин 60 с».
 
 ### Documented
 
-- **KI-527:** PDF-таблицы выводятся плоским текстом (в отличие от DOCX).
-- **KI-529..532:** Ограничения MCP stdio (env, изоляция) и UI.
+- **KI-541..545:** Ограничения UI истории (F5 после клика, пагинация со сдвигом, отсутствие real-time обновлений, разница в i18n статусах).
+- **Web Search (S3):** Расширение провайдеров (Bing, Brave) перенесено в v0.15.0.

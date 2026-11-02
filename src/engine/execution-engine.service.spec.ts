@@ -34,7 +34,7 @@ import { LlmRegistryService } from '../llm/llm-registry.service.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
-import { WEB_SEARCH_PROVIDER } from '../web-search/web-search.module.js';
+import { WebSearchRegistryService } from '../web-search/web-search.registry.js';
 import { UnsupportedNodeTypeException, type SubWorkflowRecord } from './node-executors.js';
 import { RetryableNodeException, VectorDisabledException } from './errors.js';
 
@@ -567,13 +567,18 @@ describe('ExecutionEngineService', () => {
             executeMusicAsync: mediaMusicExecute,
           },
         },
-        // v0.10 S2: провайдер узла web_search (Tavily в продакшене).
+        // v0.10 S2 / v0.15 S3: реестр web-search-провайдеров узла web_search
+        // (в продакшене — WebSearchModule; здесь провайдер замокан).
         {
-          provide: WEB_SEARCH_PROVIDER,
+          provide: WebSearchRegistryService,
           useValue: {
-            name: 'fake',
-            isConfigured: true,
-            searchAsync: webSearchExecute,
+            defaultName: 'tavily',
+            getProvider: () => ({
+              name: 'tavily',
+              isConfigured: true,
+              searchAsync: webSearchExecute,
+            }),
+            list: () => [{ name: 'tavily', configured: true }],
           },
         },
         // v0.10 S6: зависимости узла document_gen. В этом спеке узел не

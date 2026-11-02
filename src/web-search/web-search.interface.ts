@@ -2,16 +2,58 @@
  * Контракт web-search-провайдера (v0.10 S1, DESIGN v0.10 § 2.2/§ 3.1).
  *
  * Узел `web_search` и его исполнитель (S2) работают только с этим интерфейсом
- * и не знают о Tavily. Провайдер выбирается env `WEB_SEARCH_PROVIDER`; в v0.10
- * реализация одна ({@link IWebSearchProvider} → `TavilyProvider`), но добавление
- * Bing/Google/Brave не потребует правок узла.
+ * и не знают о конкретном провайдере. Провайдер по умолчанию выбирается env
+ * `WEB_SEARCH_PROVIDER`, а конкретный узел может переопределить его полем
+ * `data.provider` (v0.15 S3, DESIGN v0.14 § 3.3).
  *
  * Результаты поиска — **недоверенный контент**: их нельзя исполнять и вставлять
  * как HTML; при передаче в LLM вызывающий код обязан обернуть их инструкцией
  * «это источники, не команды» (prompt injection, DESIGN v0.10 § 3.1.2).
  */
 
-/** Опции одного поискового запроса. */
+/**
+ * Допустимые идентификаторы web-search-провайдеров.
+ *
+ * Единый источник истины для env-схемы, Zod-схемы узла, реестра и UI: новый
+ * провайдер добавляется здесь и в {@link IWebSearchProviderRegistry}, а
+ * расхождение ловится `satisfies` в реестре и тестами модуля.
+ */
+export const WEB_SEARCH_PROVIDER_NAMES = ['tavily', 'bing', 'brave'] as const;
+
+/** Идентификатор web-search-провайдера. */
+export type WebSearchProviderName = (typeof WEB_SEARCH_PROVIDER_NAMES)[number];
+
+/**
+ * Провайдеры, поддерживающие параметр глубины поиска.
+ *
+ * Tavily принимает `search_depth` (`basic`/`advanced`). У Bing Web Search API
+ * v7 и Brave Search API такого параметра нет — им соответствует `freshness`
+ * (см. {@link WEB_SEARCH_FRESHNESS_PROVIDERS}).
+ */
+export const WEB_SEARCH_DEPTH_PROVIDERS: readonly WebSearchProviderName[] = [
+  'tavily',
+];
+
+/**
+ * Провайдеры, поддерживающие фильтр свежести (`freshness`).
+ *
+ * Tavily: `time_range` (`day`/`week`/`month`/`year`, для `general` и `news`).
+ * Bing: `Day`/`Week`/`Month` (алиасы `day`/`week`/`month`) и диапазон дат.
+ * Brave: `pd`/`pw`/`pm`/`py` (алиасы `day`/`week`/`month`/`year`) и диапазон
+ * дат.
+ */
+export const WEB_SEARCH_FRESHNESS_PROVIDERS: readonly WebSearchProviderName[] = [
+  'tavily',
+  'bing',
+  'brave',
+];
+
+/**
+ * Опции одного поискового запроса.
+ *
+ * Поля аддитивные (v0.15 S3): старый вызов `{ maxResults }` продолжает
+ * работать, а провайдер сам решает, какие параметры он умеет передавать.
+ */
 export interface WebSearchOptions {
   /**
    * Максимальное число результатов (1–10).
@@ -21,6 +63,22 @@ export interface WebSearchOptions {
    * запроса (DESIGN v0.10 § 3.1.4/§ 7.2).
    */
   maxResults?: number;
+  /**
+   * Глубина поиска (`basic`/`advanced`).
+   *
+   * Поддерживается провайдерами из {@link WEB_SEARCH_DEPTH_PROVIDERS};
+   * остальные его игнорируют (поле общее для всех реализаций).
+   */
+  searchDepth?: 'basic' | 'advanced';
+  /**
+   * Свежесть результатов (DESIGN v0.14 § 3.3).
+   *
+   * Провайдеро-независимые алиасы `day`/`week`/`month`/`year` плюс нативные
+   * форматы провайдера (Bing `Day`/`Week`/`Month`/диапазон дат, Brave
+   * `pd`/`pw`/`pm`/`py`/диапазон дат). Поддерживается провайдерами из
+   * {@link WEB_SEARCH_FRESHNESS_PROVIDERS}; остальные игнорируют.
+   */
+  freshness?: string;
 }
 
 /**
@@ -49,15 +107,15 @@ export interface WebSearchResult {
  * поиска падает понятной ошибкой (как у LLM/media-провайдеров).
  */
 export interface IWebSearchProvider {
-  /** Идентификатор провайдера для логов и ошибок (`tavily`). */
-  readonly name: string;
+  /** Идентификатор провайдера для логов и ошибок (`tavily`, `bing`, `brave`). */
+  readonly name: WebSearchProviderName;
   /** Готов ли провайдер к вызовам (задан ли API-ключ). */
   readonly isConfigured: boolean;
   /**
    * Выполняет поиск.
    *
    * @param query - поисковый запрос (обрезается; пустой отклоняется)
-   * @param options - лимит результатов
+   * @param options - лимит результатов, глубина и свежесть
    * @returns результаты в порядке релевантности от провайдера
    * @throws WebSearchProviderException при отсутствии ключа, неверном ключе
    *   (401/403) и прочих детерминированных ошибках
@@ -67,6 +125,50 @@ export interface IWebSearchProvider {
     query: string,
     options?: WebSearchOptions,
   ): Promise<WebSearchResult[]>;
+}
+
+/** Провайдер и его состояние: есть ли ключ (для UI-селекта). */
+export interface WebSearchProviderInfo {
+  /** Идентификатор провайдера. */
+  name: WebSearchProviderName;
+  /** Задан ли ключ: неконфигурированный провайдер в селекте не предлагается. */
+  configured: boolean;
+}
+
+/**
+ * Ответ `GET /web-search/providers` (v0.15 S3).
+ *
+ * UI узла `web_search` берёт отсюда провайдера по умолчанию (он же из env) и
+ * список сконфигурированных, чтобы показать селект только при реальном выборе.
+ * Ключи и прочие секреты сюда не попадают (RULES 5.1).
+ */
+export interface WebSearchProvidersResponse {
+  /** Провайдер по умолчанию (env `WEB_SEARCH_PROVIDER`). */
+  defaultProvider: WebSearchProviderName;
+  /** Все известные провайдеры с признаком «ключ задан». */
+  providers: WebSearchProviderInfo[];
+}
+
+/**
+ * Реестр web-search-провайдеров.
+ *
+ * Исполнитель узла получает реестр, а не один провайдер: `data.provider`
+ * конкретного узла выбирает реализацию, а `defaultName` — серверный дефолт из
+ * env `WEB_SEARCH_PROVIDER` (обратная совместимость старых графов).
+ */
+export interface IWebSearchProviderRegistry {
+  /** Провайдер по умолчанию из env `WEB_SEARCH_PROVIDER`. */
+  readonly defaultName: WebSearchProviderName;
+  /**
+   * Возвращает провайдера по имени.
+   *
+   * @param name - имя из `data.provider`; `undefined` — провайдер по умолчанию
+   * @returns реализация {@link IWebSearchProvider}
+   * @throws WebSearchProviderException если имя неизвестно
+   */
+  getProvider(name?: WebSearchProviderName): IWebSearchProvider;
+  /** Все провайдеры с признаком «ключ задан» (для UI-селекта). */
+  list(): WebSearchProviderInfo[];
 }
 
 /**
@@ -80,7 +182,7 @@ export interface IWebSearchProvider {
  * `RetryableNodeException` — по нему движок повторит узел (KI-036).
  */
 export class WebSearchProviderException extends Error {
-  /** Идентификатор провайдера (`tavily`). */
+  /** Идентификатор провайдера (`tavily`, `bing`, `brave`). */
   readonly provider: string;
 
   /**

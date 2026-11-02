@@ -46,8 +46,8 @@ describe('PGVECTOR_ENABLED (v0.10 S0, KI-455)', () => {
   });
 });
 
-describe('web-search env (v0.10 S1)', () => {
-  it('дефолты: провайдер tavily, ключ не задан', () => {
+describe('web-search env (v0.10 S1, v0.15 S3)', () => {
+  it('дефолты: провайдер tavily, ключи не заданы', () => {
     expect(WebSearchEnvSchema.parse({})).toEqual({
       WEB_SEARCH_PROVIDER: 'tavily',
     });
@@ -56,23 +56,48 @@ describe('web-search env (v0.10 S1)', () => {
 
     expect(parsed.WEB_SEARCH_PROVIDER).toBe('tavily');
     expect(parsed.TAVILY_API_KEY).toBeUndefined();
+    expect(parsed.BING_API_KEY).toBeUndefined();
+    expect(parsed.BRAVE_API_KEY).toBeUndefined();
   });
 
-  it('пустой TAVILY_API_KEY — «не задан» (KI-084), ключ читается как есть', () => {
-    expect(
-      WebSearchEnvSchema.parse({ TAVILY_API_KEY: '' }).TAVILY_API_KEY,
-    ).toBeUndefined();
-    expect(
-      WebSearchEnvSchema.parse({ TAVILY_API_KEY: 'tvly-test' }).TAVILY_API_KEY,
-    ).toBe('tvly-test');
+  it('пустые ключи — «не заданы» (KI-084), значения читаются как есть', () => {
+    const empty = WebSearchEnvSchema.parse({
+      TAVILY_API_KEY: '',
+      BING_API_KEY: '',
+      BRAVE_API_KEY: '',
+    });
+
+    expect(empty.TAVILY_API_KEY).toBeUndefined();
+    expect(empty.BING_API_KEY).toBeUndefined();
+    expect(empty.BRAVE_API_KEY).toBeUndefined();
+
+    const filled = WebSearchEnvSchema.parse({
+      TAVILY_API_KEY: 'tvly-test',
+      BING_API_KEY: 'bing-test',
+      BRAVE_API_KEY: 'brave-test',
+    });
+
+    expect(filled.TAVILY_API_KEY).toBe('tvly-test');
+    expect(filled.BING_API_KEY).toBe('bing-test');
+    expect(filled.BRAVE_API_KEY).toBe('brave-test');
   });
+
+  it.each(['tavily', 'bing', 'brave'] as const)(
+    'принимает провайдера %s',
+    (provider) => {
+      expect(
+        WebSearchEnvSchema.parse({ WEB_SEARCH_PROVIDER: provider })
+          .WEB_SEARCH_PROVIDER,
+      ).toBe(provider);
+    },
+  );
 
   it('отклоняет неизвестного провайдера, а не фолбэчит молча', () => {
     expect(
-      WebSearchEnvSchema.safeParse({ WEB_SEARCH_PROVIDER: 'bing' }).success,
+      WebSearchEnvSchema.safeParse({ WEB_SEARCH_PROVIDER: 'google' }).success,
     ).toBe(false);
     expect(() =>
-      validateEnv({ ...baseEnv, WEB_SEARCH_PROVIDER: 'bing' }),
+      validateEnv({ ...baseEnv, WEB_SEARCH_PROVIDER: 'google' }),
     ).toThrow('Некорректная конфигурация окружения');
   });
 });

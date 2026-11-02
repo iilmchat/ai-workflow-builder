@@ -31,7 +31,7 @@ import { RunLeaseService } from '../runs/run-lease.service.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
-import { WEB_SEARCH_PROVIDER } from '../web-search/web-search.module.js';
+import { WebSearchRegistryService } from '../web-search/web-search.registry.js';
 import type { IMediaProvider } from './media-provider.interface.js';
 import { DocumentService } from '../documents/document.service.js';
 // v0.11 S4: зависимости template-режима document_gen (в графе не используются).
@@ -257,14 +257,18 @@ describe.skipIf(!process.env.DATABASE_URL)(
             provide: AgentService,
             useValue: { runAgentAsync: vi.fn() },
           },
-          // v0.10 S2: web_search в этом графе не выполняется, но
-          // зависимость должна резолвиться при сборке TestingModule.
+          // v0.10 S2 / v0.15 S3: web_search в этом графе не выполняется, но
+          // реестр провайдеров должен резолвиться при сборке TestingModule.
           {
-            provide: WEB_SEARCH_PROVIDER,
+            provide: WebSearchRegistryService,
             useValue: {
-              name: 'fake',
-              isConfigured: false,
-              searchAsync: vi.fn(),
+              defaultName: 'tavily',
+              getProvider: () => ({
+                name: 'tavily',
+                isConfigured: false,
+                searchAsync: vi.fn(),
+              }),
+              list: () => [{ name: 'tavily', configured: false }],
             },
           },
           {

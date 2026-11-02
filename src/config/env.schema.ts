@@ -1,4 +1,7 @@
 import { z } from 'zod';
+// v0.15 S3 (DESIGN v0.14 § 3.3): имена провайдеров — единый источник истины
+// для env-схемы, Zod-схемы узла `web_search` и реестра провайдеров.
+import { WEB_SEARCH_PROVIDER_NAMES } from '../web-search/web-search.interface.js';
 
 /**
  * Приводит пустую строку к `undefined`.
@@ -543,22 +546,34 @@ export const VectorEnvSchema = z.object({
 export type VectorEnv = z.infer<typeof VectorEnvSchema>;
 
 /**
- * Zod-схема web-search-провайдера (v0.10 S1, DESIGN v0.10 § 3.1.4).
+ * Zod-схема web-search-провайдера (v0.10 S1, v0.15 S3, DESIGN v0.14 § 3.3).
  *
- * Ключ Tavily опционален: без него приложение поднимается, провайдер отдаёт
- * `isConfigured === false`, а узел `web_search` падает понятной ошибкой. Такой
- * же контракт у LLM/media-провайдеров (KI-039, KI-084).
+ * Ключи провайдеров опциональны: без них приложение поднимается, провайдер
+ * отдаёт `isConfigured === false`, а узел `web_search` падает понятной
+ * ошибкой. Такой же контракт у LLM/media-провайдеров (KI-039, KI-084).
  *
- * `WEB_SEARCH_PROVIDER` — enum, а не свободная строка: в v0.10 реализован
- * только `tavily`, но контракт фиксирует точку расширения (Bing/Google/Brave —
- * v0.11, DESIGN § 2.2). Неизвестное значение — ошибка старта, а не тихий
- * фолбэк: иначе окружение «настроено», а поиск идёт не тем провайдером.
+ * `WEB_SEARCH_PROVIDER` — enum, а не свободная строка: неизвестное значение —
+ * ошибка старта, а не тихий фолбэк, иначе окружение «настроено», а поиск идёт
+ * не тем провайдером. Набор имён берётся из
+ * {@link WEB_SEARCH_PROVIDER_NAMES} — реестра провайдеров, поэтому новый
+ * провайдер нельзя добавить в код, забыв env-значение.
  */
 export const WebSearchEnvSchema = z.object({
   /** API-ключ Tavily. Обязателен для `isConfigured`; пустое значение → undefined. */
   TAVILY_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
-  /** Провайдер веб-поиска. v0.10 — только `tavily` (дефолт). */
-  WEB_SEARCH_PROVIDER: z.enum(['tavily']).default('tavily'),
+  /** Ключ Bing Web Search API v7 (Azure). Пустое значение → undefined. */
+  BING_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Ключ Brave Search API. Пустое значение → undefined. */
+  BRAVE_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  /**
+   * Провайдер веб-поиска по умолчанию (`tavily` | `bing` | `brave`).
+   *
+   * Используется, когда узел не задал `data.provider`. Дефолт `tavily`
+   * сохраняет поведение графов, созданных до v0.15.
+   */
+  WEB_SEARCH_PROVIDER: z
+    .enum(WEB_SEARCH_PROVIDER_NAMES)
+    .default('tavily'),
 });
 
 /** Валидированные настройки web-search-провайдера (v0.10 S1). */
