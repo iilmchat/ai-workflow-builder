@@ -174,6 +174,32 @@ describe('mcp.config — stdio-транспорт (v0.12 S4)', () => {
     ).toBe(false);
   });
 
+  it('env — Record<string, string>, опционален (v0.13 S1, KI-529)', () => {
+    const parsed = McpServerConfigSchema.parse({
+      ...stdioServer,
+      env: { GITHUB_TOKEN: 'ghp_test', MCP_SERVER_MODE: 'readonly' },
+    });
+
+    expect(parsed).toMatchObject({
+      transport: 'stdio',
+      env: { GITHUB_TOKEN: 'ghp_test', MCP_SERVER_MODE: 'readonly' },
+    });
+    // Без env поле отсутствует, а не превращается в пустой объект.
+    expect(
+      McpServerConfigSchema.parse({ transport: 'stdio', command: 'node' }),
+    ).not.toHaveProperty('env');
+    // Значения — только строки: число/строка "A=1" — ошибка схемы.
+    expect(
+      McpServerConfigSchema.safeParse({
+        ...stdioServer,
+        env: { PORT: 8080 },
+      }).success,
+    ).toBe(false);
+    expect(
+      McpServerConfigSchema.safeParse({ ...stdioServer, env: 'A=1' }).success,
+    ).toBe(false);
+  });
+
   it('stdio запрещён без MCP_ENABLE_STDIO=true', () => {
     expect(() => parseMcpServersConfig({ local: stdioServer })).toThrow(
       /MCP_ENABLE_STDIO/,

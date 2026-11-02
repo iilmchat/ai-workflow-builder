@@ -216,6 +216,7 @@
   "node.agent.mcp.status.ok": "доступен",
   "node.agent.mcp.status.error": "ошибка",
   "node.agent.mcp.status.disabled": "выключен",
+  "node.agent.mcp.transport.stdio": "LOCAL",
   "node.audio.alt": "Результат синтеза речи",
   "node.audio.error": "Ошибка синтеза речи",
   "node.audio.generating": "Синтез речи…",

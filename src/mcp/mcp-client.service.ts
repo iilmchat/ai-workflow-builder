@@ -20,6 +20,8 @@
  * приложения процесс получает `SIGTERM`, затем `SIGKILL` — orphan-процесс не
  * должен переживать backend (DESIGN § 3.3.2/§ 3.3.3).
  */
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Injectable, Logger, type OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -34,8 +36,11 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import {
   assertStdioCommandAllowed,
   isStdioServerConfig,
+  parseStdioEnvAllowlist,
   readBooleanConfig,
   readIntegerConfig,
+  readStringConfig,
+  stdioCommandBase,
   type McpServerConfig,
   type McpStdioServerConfig,
 } from './mcp.config.js';
@@ -53,6 +58,7 @@ import {
   MCP_CONNECT_TIMEOUT_MS_DEFAULT,
   MCP_MAX_TOOLS_PER_SERVER_DEFAULT,
   MCP_REQUEST_TIMEOUT_MS_DEFAULT,
+  MCP_STDIO_CWD_DEFAULT,
   type McpToolAnnotations,
   type McpToolDescriptor,
 } from './mcp.types.js';
@@ -117,20 +123,31 @@ function toMessage(error: unknown): string {
  * Проверяет, жив ли процесс с заданным PID.
  *
  * `process.kill(pid, 0)` не отправляет сигнал, а только проверяет право на
- * него: `ESRCH` означает «процесса нет». Нужен перед `SIGKILL`, чтобы не
- * убить чужой процесс, получивший тот же PID после завершения нашего
- * (PID-reuse, KI-526).
+ * него. Коды различаются (v0.13 S1, KI-532):
+ * - `ESRCH` — процесса нет → `false`;
+ * - `EPERM` — процесс существует, но сигнал ему отправить нельзя (чужой
+ *   пользователь/ограничение ОС) → `true`: процесс жив, и попытку `SIGKILL`
+ *   надо сделать, а не пропустить;
+ * - любая другая ошибка — консервативно `false` (не рискуем убить чужой PID).
+ *
+ * Нужен перед `SIGKILL`, чтобы не убить чужой процесс, получивший тот же PID
+ * после завершения нашего (PID-reuse, KI-526).
  *
  * @param pid - идентификатор процесса
- * @returns `true`, если процесс ещё существует и доступен
+ * @returns `true`, если процесс ещё существует
  */
 function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
 
     return true;
-  } catch {
-    return false;
+  } catch (error: unknown) {
+    // RULES 4.15: `unknown` в catch, без `any`.
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      (error as NodeJS.ErrnoException).code === 'EPERM'
+    );
   }
 }
 
@@ -230,6 +247,31 @@ export class McpClientService implements OnApplicationShutdown {
    */
   private readonly stdioEnabled: boolean;
 
+  /**
+   * Базовый каталог изоляции `stdio`-процессов (`MCP_STDIO_CWD`, v0.13 S1).
+   *
+   * Для каждого сервера создаётся подкаталог `<stdioCwd>/<serverName>` и
+   * передаётся транспорту как `cwd` (KI-530).
+   */
+  private readonly stdioCwd: string;
+
+  /**
+   * Имена env-переменных, которые разрешено передать `stdio`-процессу
+   * (`MCP_STDIO_ENV_ALLOWLIST`, v0.13 S1, KI-529).
+   *
+   * Всё, чего нет в этом множестве, не попадает в дочерний процесс — даже
+   * если задано в `env` сервера в `MCP_SERVERS`.
+   */
+  private readonly stdioEnvAllowlist: ReadonlySet<string>;
+
+  /**
+   * Серверы, по которым уже предупредили о запуске не через Docker.
+   *
+   * WARN нужен один раз на сервер, а не на каждое переподключение: иначе
+   * реконнект после сетевого сбоя забивал бы лог одинаковой строкой.
+   */
+  private readonly warnedNonDocker = new Set<string>();
+
   /** Остановлен ли сервис (после `onApplicationShutdown`). */
   private shuttingDown = false;
 
@@ -271,6 +313,14 @@ export class McpClientService implements OnApplicationShutdown {
     );
     this.stdioEnabled = readBooleanConfig(
       config.get<unknown>('MCP_ENABLE_STDIO'),
+    );
+    this.stdioCwd = readStringConfig(
+      config,
+      'MCP_STDIO_CWD',
+      MCP_STDIO_CWD_DEFAULT,
+    );
+    this.stdioEnvAllowlist = parseStdioEnvAllowlist(
+      config.get<unknown>('MCP_STDIO_ENV_ALLOWLIST'),
     );
   }
 
@@ -689,7 +739,7 @@ export class McpClientService implements OnApplicationShutdown {
         },
       );
 
-      const transport = this.createTransport(state, headers);
+      const transport = await this.createTransport(state, headers);
       const serverName = state.name;
 
       transport.onclose = (): void => {
@@ -807,10 +857,10 @@ export class McpClientService implements OnApplicationShutdown {
    * @throws McpConfigurationException если stdio запрещён флагом или команда
    *   попала в denylist
    */
-  private createTransport(
+  private async createTransport(
     state: ServerState,
     headers: Record<string, string>,
-  ): Transport {
+  ): Promise<Transport> {
     const config = state.config;
 
     if (isStdioServerConfig(config)) {
@@ -829,18 +879,23 @@ export class McpClientService implements OnApplicationShutdown {
   }
 
   /**
-   * Создаёт `stdio`-транспорт и подписывается на `stderr` процесса.
+   * Создаёт `stdio`-транспорт, каталог изоляции и env по allowlist.
+   *
+   * Порядок: проверка флага и denylist'а → WARN о не-Docker команде →
+   * создание `<MCP_STDIO_CWD>/<serverName>` → сборка env → транспорт. Каталог
+   * создаётся **до** `start()` (его делает `client.connect`): SDK передаёт
+   * `cwd` в `spawn`, и несуществующий путь уронил бы запуск процесса.
    *
    * @param state - состояние сервера
-   * @param config - `stdio`-конфигурация (команда и аргументы)
+   * @param config - `stdio`-конфигурация (команда, аргументы, env)
    * @returns транспорт SDK
    * @throws McpConfigurationException если `MCP_ENABLE_STDIO=false` или команда
    *   запрещена denylist'ом
    */
-  private createStdioTransport(
+  private async createStdioTransport(
     state: ServerState,
     config: McpStdioServerConfig,
-  ): StdioClientTransport {
+  ): Promise<StdioClientTransport> {
     if (!this.stdioEnabled) {
       throw new McpConfigurationException(
         state.name,
@@ -853,9 +908,18 @@ export class McpClientService implements OnApplicationShutdown {
     // уместно верить одной проверке (DESIGN § 3.3.3).
     assertStdioCommandAllowed(config.command);
 
+    this.warnIfNotDocker(state.name, config);
+
+    const cwd = await this.prepareStdioCwdAsync(state.name);
+    const env = this.buildStdioEnv(config);
+
     const params: StdioServerParameters = {
       command: config.command,
       args: [...config.args],
+      // Только разрешённые имена; SDK добавит к ним безопасный набор
+      // (PATH/HOME/...), а не весь `process.env` (DESIGN v0.13 § 3.1).
+      env,
+      cwd,
       // `stderr: 'pipe'`: SDK отдаёт PassThrough сразу, поэтому ранние строки
       // (ошибка `npx`, отсутствующий файл) не теряются до `start()`.
       stderr: 'pipe',
@@ -863,12 +927,98 @@ export class McpClientService implements OnApplicationShutdown {
     const transport = new StdioClientTransport(params);
 
     this.attachStderrLogging(transport, state.name);
+    // Значения env не логируются (RULES 5.1) — только количество имён.
     this.logger.log(
       `MCP-сервер '${state.name}': stdio-процесс ${config.command} ` +
-        `(аргументов: ${config.args.length})`,
+        `(аргументов: ${config.args.length}, cwd: ${cwd}, ` +
+        `env-переменных: ${Object.keys(env).length})`,
     );
 
     return transport;
+  }
+
+  /**
+   * Предупреждает, если `stdio`-процесс запускается не через Docker.
+   *
+   * Denylist (DESIGN v0.12 § 3.3.3) — эвристика, а процесс получает права
+   * backend'а. Реальная изоляция — `docker run`; WARN напоминает об этом
+   * оператору при первом подключении сервера (v0.13 S1, KI-530). Повторные
+   * переподключения не дублируют строку — см. {@link warnedNonDocker}.
+   *
+   * @param serverName - имя сервера (ключ в `MCP_SERVERS`)
+   * @param config - `stdio`-конфигурация
+   */
+  private warnIfNotDocker(
+    serverName: string,
+    config: McpStdioServerConfig,
+  ): void {
+    // Basename без `.exe`: `/usr/bin/docker` и `C:\...\docker.exe` — Docker.
+    if (stdioCommandBase(config.command) === 'docker') {
+      return;
+    }
+
+    if (this.warnedNonDocker.has(serverName)) {
+      return;
+    }
+
+    this.warnedNonDocker.add(serverName);
+    this.logger.warn(
+      `MCP-сервер '${serverName}': stdio-команда '${config.command}' ` +
+        'запускается без Docker. Рекомендуется docker run: процесс получает ' +
+        'права backend-процесса (DESIGN v0.13 § 3.2, KI-530)',
+    );
+  }
+
+  /**
+   * Собирает env для `stdio`-процесса строго по allowlist.
+   *
+   * Источники значения: явный `env` сервера в `MCP_SERVERS` (приоритет) и
+   * окружение backend'а, прочитанное через `ConfigService` (RULES 4.6).
+   * Ключи вне `MCP_STDIO_ENV_ALLOWLIST` не передаются даже при явном `env` —
+   * иначе allowlist перестал бы быть границей. Значения не логируются
+   * (RULES 5.1).
+   *
+   * @param config - `stdio`-конфигурация
+   * @returns объект env только с разрешёнными именами
+   */
+  private buildStdioEnv(
+    config: McpStdioServerConfig,
+  ): Record<string, string> {
+    const env: Record<string, string> = {};
+
+    for (const name of this.stdioEnvAllowlist) {
+      const explicit = config.env?.[name];
+      const inherited = this.config.get<unknown>(name);
+      const value =
+        explicit ?? (typeof inherited === 'string' ? inherited : undefined);
+
+      if (value !== undefined) {
+        env[name] = value;
+      }
+    }
+
+    return env;
+  }
+
+  /**
+   * Создаёт каталог изоляции сервера и возвращает его путь.
+   *
+   * `<MCP_STDIO_CWD>/<serverName>` — отдельный cwd на сервер: относительные
+   * пути процесса не указывают в каталог backend'а, а серверы не делят файлы
+   * друг с другом (v0.13 S1, KI-530). Имя сервера уже прошло регулярку
+   * реестра (`^[a-z][a-z0-9_-]{0,23}$`), поэтому `..`/разделители путей в
+   * него попасть не могут.
+   *
+   * @param serverName - имя сервера (ключ в `MCP_SERVERS`)
+   * @returns абсолютный или относительный путь каталога (как задан в env)
+   * @throws Error если каталог создать нельзя (нет прав, путь занят файлом)
+   */
+  private async prepareStdioCwdAsync(serverName: string): Promise<string> {
+    const cwd = join(this.stdioCwd, serverName);
+
+    await mkdir(cwd, { recursive: true });
+
+    return cwd;
   }
 
   /**

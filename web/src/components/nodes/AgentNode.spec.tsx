@@ -325,6 +325,39 @@ describe('AgentNode — секция MCP-инструментов (v0.11 S8)', (
     );
   });
 
+  it('stdio-сервер помечается бейджем LOCAL (v0.13 S1, KI-531)', async () => {
+    vi.mocked(fetchMcpServersAsync).mockResolvedValue(
+      mcpCatalog({
+        servers: [
+          {
+            name: 'local',
+            transport: 'stdio',
+            status: 'ok',
+            tools: [],
+          },
+          {
+            name: 'filesystem',
+            transport: 'http',
+            status: 'ok',
+            tools: [],
+          },
+        ],
+      }),
+    );
+
+    const { container } = renderNode(agentData());
+
+    await screen.findByText(ru['node.agent.mcp.title']);
+
+    // Бейдж только у stdio: HTTP-серверы остаются без пометки.
+    const badges = container.querySelectorAll(
+      '[data-agent-mcp-transport="stdio"]',
+    );
+
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveTextContent(ru['node.agent.mcp.transport.stdio']);
+  });
+
   it('при достигнутом maxToolsPerNode невыбранные инструменты disabled', async () => {
     vi.mocked(fetchMcpServersAsync).mockResolvedValue(
       mcpCatalog({ maxToolsPerNode: 1 }),

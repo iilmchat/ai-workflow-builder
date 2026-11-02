@@ -1,3 +1,6 @@
+import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
@@ -103,6 +106,8 @@ const sdk = vi.hoisted(() => {
     readonly params: {
       command: string;
       args?: readonly string[];
+      env?: Record<string, string>;
+      cwd?: string;
       stderr?: unknown;
     };
     readonly stderrStream = new FakeStderr();
@@ -115,6 +120,8 @@ const sdk = vi.hoisted(() => {
     constructor(params: {
       command: string;
       args?: readonly string[];
+      env?: Record<string, string>;
+      cwd?: string;
       stderr?: unknown;
     }) {
       this.params = params;
@@ -243,6 +250,14 @@ vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
   StdioClientTransport: sdk.FakeStdioTransport,
 }));
 
+/**
+ * Базовый каталог изоляции для тестов (v0.13 S1, KI-530).
+ *
+ * Настоящий `./data/mcp` здесь не годится: тест не должен создавать каталоги в
+ * рабочем дереве. Отдельные тесты переопределяют путь своим `mkdtemp`.
+ */
+const TEST_STDIO_CWD = join(tmpdir(), 'workflow-builder-mcp-tests');
+
 /** Базовый реестр из трёх серверов: http, sse и выключенный. */
 const BASE_CONFIG: Record<string, unknown> = {
   MCP_ENABLED: true,
@@ -265,6 +280,7 @@ const BASE_CONFIG: Record<string, unknown> = {
   MCP_REQUEST_TIMEOUT_MS: 30_000,
   MCP_CATALOG_TTL_MS: 60_000,
   MCP_MAX_TOOLS_PER_SERVER: 200,
+  MCP_STDIO_CWD: TEST_STDIO_CWD,
 };
 
 /**
@@ -641,6 +657,139 @@ describe('McpClientService — подключение и каталог (v0.11 S
     expect(sdk.FakeClient.instances[0]?.connectCalls).toBe(1);
     // HTTP-транспорт (и Authorization) для stdio не создаётся.
     expect(sdk.FakeTransport.instances).toHaveLength(0);
+  });
+
+  it('stdio: env фильтруется по allowlist, cwd — отдельный каталог сервера (v0.13 S1)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wb-mcp-cwd-'));
+    const serverName = 'local';
+
+    try {
+      const { service } = await createHarness({
+        MCP_ENABLE_STDIO: true,
+        MCP_STDIO_ENV_ALLOWLIST: 'MCP_SMOKE_ALLOWED, MCP_SMOKE_INHERITED',
+        MCP_STDIO_CWD: root,
+        // «Окружение backend'а»: сервис читает его через ConfigService
+        // (RULES 4.6), а не напрямую из process.env.
+        MCP_SMOKE_ALLOWED: 'from-process',
+        MCP_SMOKE_INHERITED: 'inherited',
+        MCP_SMOKE_SECRET: 'must-not-leak',
+        MCP_SERVERS: JSON.stringify({
+          local: {
+            transport: 'stdio',
+            command: 'node',
+            args: ['server.js'],
+            env: {
+              MCP_SMOKE_ALLOWED: 'from-config',
+              MCP_SMOKE_SECRET: 'from-json',
+            },
+          },
+        }),
+      });
+
+      await service.listToolsAsync(serverName);
+
+      const params = sdk.FakeStdioTransport.instances[0]?.params;
+      const expectedCwd = join(root, serverName);
+
+      // Явный env сервера побеждает окружение, но только для allowlist-имён;
+      // значение, которого нет в env сервера, берётся из process.env.
+      expect(params?.env).toEqual({
+        MCP_SMOKE_ALLOWED: 'from-config',
+        MCP_SMOKE_INHERITED: 'inherited',
+      });
+      // Секрет backend'а и env вне allowlist в процесс не попадают.
+      expect(params?.env).not.toHaveProperty('MCP_SMOKE_SECRET');
+      expect(params?.cwd).toBe(expectedCwd);
+      // Каталог создан до запуска: spawn с несуществующим cwd упал бы.
+      expect((await stat(expectedCwd)).isDirectory()).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('stdio: не-Docker команда даёт WARN один раз на сервер (v0.13 S1, KI-530)', async () => {
+    const warn = vi
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+    const { service } = await createHarness({
+      MCP_ENABLE_STDIO: true,
+      MCP_SERVERS: JSON.stringify({
+        local: { transport: 'stdio', command: 'node', args: [] },
+      }),
+    });
+
+    await service.listToolsAsync('local');
+
+    // Переподключение не дублирует предупреждение (Set в сервисе).
+    sdk.FakeStdioTransport.instances[0]?.onclose?.();
+    await service.listToolsAsync('local');
+
+    const warnings = warn.mock.calls
+      .map(([message]) => String(message))
+      .filter((message) => message.includes('без Docker'));
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("MCP-сервер 'local'");
+  });
+
+  it('isPidAlive: EPERM считается живым, ESRCH — мёртвым (v0.13 S1, KI-532)', async () => {
+    const config = {
+      MCP_ENABLE_STDIO: true,
+      MCP_SERVERS: JSON.stringify({
+        local: { transport: 'stdio', command: 'node', args: [] },
+      }),
+    };
+
+    // EPERM: процесс существует, но сигнал запрещён → SIGKILL всё равно шлём.
+    const epermHarness = await createHarness(config);
+
+    await epermHarness.service.listToolsAsync('local');
+
+    const epermPid = sdk.FakeStdioTransport.instances[0]?.pid ?? 0;
+    const epermKill = vi
+      .spyOn(process, 'kill')
+      .mockImplementation((_target, signal) => {
+        if (signal === 0) {
+          const error = new Error('operation not permitted') as NodeJS.ErrnoException;
+
+          error.code = 'EPERM';
+          throw error;
+        }
+
+        return true;
+      });
+
+    await epermHarness.service.onApplicationShutdown();
+
+    expect(epermKill.mock.calls).toContainEqual([epermPid, 'SIGKILL']);
+    epermKill.mockRestore();
+
+    sdk.FakeStdioTransport.instances.length = 0;
+    sdk.FakeClient.instances.length = 0;
+
+    // ESRCH: процесса нет → SIGKILL не отправляем.
+    const esrchHarness = await createHarness(config);
+
+    await esrchHarness.service.listToolsAsync('local');
+
+    const esrchPid = sdk.FakeStdioTransport.instances[0]?.pid ?? 0;
+    const esrchKill = vi
+      .spyOn(process, 'kill')
+      .mockImplementation((_target, signal) => {
+        if (signal === 0) {
+          const error = new Error('no such process') as NodeJS.ErrnoException;
+
+          error.code = 'ESRCH';
+          throw error;
+        }
+
+        return true;
+      });
+
+    await esrchHarness.service.onApplicationShutdown();
+
+    expect(esrchKill.mock.calls).toContainEqual([esrchPid, 'SIGTERM']);
+    expect(esrchKill.mock.calls).not.toContainEqual([esrchPid, 'SIGKILL']);
   });
 
   it('stdio запрещён при MCP_ENABLE_STDIO=false — реестр падает на старте', async () => {

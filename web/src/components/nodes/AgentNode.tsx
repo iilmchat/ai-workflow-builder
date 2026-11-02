@@ -249,6 +249,16 @@ export function AgentNode({ id, data }: NodeProps<AgentFlowNode>) {
                         <span className="ml-1 text-[9px] font-normal text-muted-foreground">
                           {t(`node.agent.mcp.status.${server.status}`)}
                         </span>
+                        {/* v0.13 S1 (KI-531): локальный процесс отличается от
+                            HTTP/SSE-сервера — у него другой профиль доверия. */}
+                        {server.transport === 'stdio' && (
+                          <span
+                            className={`${MCP_BADGE_CLASS} ml-1`}
+                            data-agent-mcp-transport="stdio"
+                          >
+                            {t('node.agent.mcp.transport.stdio')}
+                          </span>
+                        )}
                       </summary>
 
                       {server.status === 'error' && (

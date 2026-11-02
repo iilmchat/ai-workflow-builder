@@ -59,6 +59,15 @@ export const MCP_CONNECT_TIMEOUT_MS_DEFAULT = 10_000;
 /** Значение по умолчанию таймаута MCP-вызова, мс. */
 export const MCP_REQUEST_TIMEOUT_MS_DEFAULT = 30_000;
 
+/**
+ * Базовый каталог изоляции `stdio`-процессов по умолчанию (v0.13 S1, KI-530).
+ *
+ * Дублирует дефолт `MCP_STDIO_CWD` из `env.schema.ts` осознанно: клиент можно
+ * собрать без `ConfigModule` (тесты/smoke), и тогда путь должен совпадать с
+ * production-дефолтом, а не быть пустым.
+ */
+export const MCP_STDIO_CWD_DEFAULT = './data/mcp';
+
 /** Версия клиента в `Implementation` MCP (RULES 1.11: версия из окружения). */
 export const MCP_CLIENT_VERSION = process.env.npm_package_version ?? '0.0.0';
 

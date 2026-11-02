@@ -671,6 +671,36 @@ export const McpEnvSchema = z.object({
       .default('false')
       .transform((value) => value === 'true'),
   ),
+  /**
+   * Allowlist имён env-переменных, передаваемых `stdio`-процессу
+   * (v0.13 S1, KI-529; default — пустая строка).
+   *
+   * Формат — через запятую: `GITHUB_TOKEN,OPENAI_API_KEY`. Значения берутся
+   * из окружения backend'а (или из per-server `env` в `MCP_SERVERS`) и **не
+   * логируются**. Пустое значение — «ни одной дополнительной переменной»:
+   * процесс получает только безопасный набор SDK (`PATH`, `HOME`, ...), а не
+   * весь `process.env` — иначе секреты backend'а утекали бы в каждый сервер
+   * (RULES 5.1).
+   *
+   * Это не «передача любых env»: allowlist ограничивает и имена, и значения —
+   * ключ, которого нет в списке, отбрасывается даже при явном `env` в JSON.
+   */
+  MCP_STDIO_ENV_ALLOWLIST: z
+    .preprocess(emptyToUndefined, z.string().optional())
+    .default(''),
+  /**
+   * Базовый каталог изоляции `stdio`-процессов (v0.13 S1, KI-530; default
+   * `./data/mcp`).
+   *
+   * Для каждого сервера создаётся `<MCP_STDIO_CWD>/<serverName>` и передаётся
+   * транспорту как `cwd`: процесс не работает в каталоге backend'а и не видит
+   * его файлы через относительные пути. Значение — операторская env, поэтому
+   * абсолютный путь допустим; имя сервера уже ограничено регуляркой
+   * `^[a-z][a-z0-9_-]{0,23}$` и не может выйти из каталога через `..`.
+   */
+  MCP_STDIO_CWD: z
+    .preprocess(emptyToUndefined, z.string().trim().min(1).optional())
+    .default('./data/mcp'),
   /** Таймаут подключения к MCP-серверу, мс (default 10000, 1000–60000). */
   MCP_CONNECT_TIMEOUT_MS: z
     .preprocess(

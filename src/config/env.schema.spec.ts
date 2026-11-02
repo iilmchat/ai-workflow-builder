@@ -648,6 +648,9 @@ describe('MCP env (v0.11 S0, stdio — v0.12 S4)', () => {
       MCP_MAX_TOOLS_PER_SERVER: 200,
       MCP_MAX_TOOLS_PER_NODE: 20,
       MCP_MAX_RESULT_CHARS: 4000,
+      // v0.13 S1: env allowlist и каталог изоляции stdio-процессов.
+      MCP_STDIO_ENV_ALLOWLIST: '',
+      MCP_STDIO_CWD: './data/mcp',
     });
   });
 
@@ -683,6 +686,32 @@ describe('MCP env (v0.11 S0, stdio — v0.12 S4)', () => {
     ).toBe('{"filesystem":{"transport":"http"}}');
     // Объект принимается только после появления JSON-парсера в S6.
     expect(McpEnvSchema.safeParse({ MCP_SERVERS: {} }).success).toBe(false);
+  });
+
+  it('MCP_STDIO_ENV_ALLOWLIST (v0.13 S1): default — пустая строка', () => {
+    expect(McpEnvSchema.parse({}).MCP_STDIO_ENV_ALLOWLIST).toBe('');
+    // Значение — как есть: разбор списка делает клиент (parseStdioEnvAllowlist).
+    expect(
+      McpEnvSchema.parse({
+        MCP_STDIO_ENV_ALLOWLIST: 'GITHUB_TOKEN, MCP_SERVER_MODE',
+      }).MCP_STDIO_ENV_ALLOWLIST,
+    ).toBe('GITHUB_TOKEN, MCP_SERVER_MODE');
+    // KI-084: пустая переменная в .env — «не задана», а не ошибка старта.
+    expect(
+      McpEnvSchema.parse({ MCP_STDIO_ENV_ALLOWLIST: '' }).MCP_STDIO_ENV_ALLOWLIST,
+    ).toBe('');
+  });
+
+  it('MCP_STDIO_CWD (v0.13 S1): default ./data/mcp, пустое — дефолт', () => {
+    expect(McpEnvSchema.parse({}).MCP_STDIO_CWD).toBe('./data/mcp');
+    expect(
+      McpEnvSchema.parse({ MCP_STDIO_CWD: './var/mcp-servers' }).MCP_STDIO_CWD,
+    ).toBe('./var/mcp-servers');
+    expect(McpEnvSchema.parse({ MCP_STDIO_CWD: '' }).MCP_STDIO_CWD).toBe(
+      './data/mcp',
+    );
+    // Пробельная строка — не путь: лучше ошибка старта, чем cwd «   ».
+    expect(McpEnvSchema.safeParse({ MCP_STDIO_CWD: '   ' }).success).toBe(false);
   });
 
   it('принимает обе границы int-лимитов и отвергает выход за них', () => {

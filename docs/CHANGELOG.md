@@ -32,6 +32,24 @@
   копируются в `dist` через `nest-cli.json`.
 
 
+
+## [0.13.0] — 2026-11-02
+
+**Patch-релиз: MCP Hardening & UI.**
+
+### Added
+
+- **MCP stdio Env Allowlist (KI-529):** `MCP_STDIO_ENV_ALLOWLIST` позволяет безопасно передавать переменные окружения (например, токены) в дочерние MCP-процессы.
+- **MCP stdio Cwd Isolation (KI-530):** Процессы запускаются в изолированных папках `./data/mcp/{serverName}`, добавлен WARN при запуске без Docker.
+- **UI Badge (KI-531):** В узле `AgentNode` добавлен бейдж `LOCAL` для stdio-серверов.
+
+### Fixed
+
+- **KI-532:** `isPidAlive` теперь различает `EPERM` (жив) и `ESRCH` (мертв), что предотвращает orphan-процессы.
+
+### Documented
+
+- **KI-533..536:** Ограничения stdio (глобальный allowlist, отсутствие канонизации путей, диагностика).
 ## [0.12.0] — 2026-11-02
 
 **Minor-релиз: PDF Generation, MCP stdio & SafeHttpClient Binary.**
@@ -1908,3 +1926,4 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+

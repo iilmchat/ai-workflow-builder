@@ -77,7 +77,7 @@ const DESTRUCTIVE_STDIO_COMMANDS: ReadonlySet<string> = new Set([
  * @param command - команда из конфигурации сервера
  * @returns нижний регистр basename без `.exe/.com/.cmd/.bat/.ps1`
  */
-function stdioCommandBase(command: string): string {
+export function stdioCommandBase(command: string): string {
   const trimmed = command.trim();
   const last = trimmed.split(/[\\/]/u).pop() ?? trimmed;
 
@@ -159,6 +159,15 @@ const McpStdioServerConfigSchema = z.strictObject({
   command: z.string().trim().min(1).max(512),
   /** Аргументы процесса (максимум 128 штук по 1024 символа). */
   args: z.array(z.string().max(1024)).max(128).default([]),
+  /**
+   * Явные env-переменные процесса (v0.13 S1, KI-529).
+   *
+   * Ключи, которых нет в `MCP_STDIO_ENV_ALLOWLIST`, отбрасываются клиентом:
+   * allowlist — политика, а `env` — лишь источник значений (например,
+   * per-server путь или несекретный режим). Секреты сюда класть не нужно —
+   * их значения берутся из окружения backend'а по имени (RULES 5.1).
+   */
+  env: z.record(z.string(), z.string()).optional(),
   /** Включён ли сервер (default true). Выключенный сервер не подключается. */
   enabled: z.boolean().default(true),
 });
@@ -374,4 +383,56 @@ export function readIntegerConfig(
  */
 export function readBooleanConfig(value: unknown): boolean {
   return value === true || value === 'true';
+}
+
+/**
+ * Читает непустую строковую настройку из `ConfigService`.
+ *
+ * Env-схема уже применяет дефолты (RULES 4.5), но клиент собирается и в
+ * тестах/смоуках с «сырым» `ConfigService`: пустая/нестроковая настройка там
+ * должна давать тот же дефолт, что и схема, а не пустой путь (KI-104-класс).
+ *
+ * @param config - конфигурация Nest
+ * @param key - имя переменной окружения
+ * @param fallback - значение по умолчанию
+ * @returns обрезанное непустое значение либо `fallback`
+ */
+export function readStringConfig(
+  config: ConfigService,
+  key: string,
+  fallback: string,
+): string {
+  const raw = config.get<unknown>(key);
+
+  if (typeof raw !== 'string') {
+    return fallback;
+  }
+
+  const trimmed = raw.trim();
+
+  return trimmed.length > 0 ? trimmed : fallback;
+}
+
+/**
+ * Разбирает allowlist env-переменных для `stdio`-процессов (v0.13 S1, KI-529).
+ *
+ * Формат `MCP_STDIO_ENV_ALLOWLIST` — имена через запятую. Пустые элементы и
+ * пробелы игнорируются, дубли схлопываются (`Set`). Неизвестные имена не
+ * ошибка: переменная могла быть не задана на этой инсталляции, тогда клиент
+ * просто не передаст её процессу.
+ *
+ * @param raw - сырое значение переменной окружения
+ * @returns множество разрешённых имён (пустое, если allowlist не задан)
+ */
+export function parseStdioEnvAllowlist(raw: unknown): ReadonlySet<string> {
+  if (typeof raw !== 'string') {
+    return new Set();
+  }
+
+  const names = raw
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+
+  return new Set(names);
 }

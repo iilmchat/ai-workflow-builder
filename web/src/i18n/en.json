@@ -212,6 +212,7 @@
   "node.agent.mcp.status.ok": "available",
   "node.agent.mcp.status.error": "error",
   "node.agent.mcp.status.disabled": "disabled",
+  "node.agent.mcp.transport.stdio": "LOCAL",
   "node.audio.alt": "Speech synthesis result",
   "node.audio.error": "Speech synthesis failed",
   "node.audio.generating": "Synthesizing…",
