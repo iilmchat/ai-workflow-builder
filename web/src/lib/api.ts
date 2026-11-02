@@ -715,6 +715,41 @@ export async function fetchRunNodesAsync(
 }
 
 /**
+ * Возвращает страницу истории запусков workflow (`GET /workflow/:id/runs`,
+ * v0.14 S1, DESIGN V014 § 3.1).
+ *
+ * Запрос адресован workflow, а не запуску: ручка живёт под префиксом
+ * `/workflow` и требует прав владельца/`editor` (чужой workflow и `viewer` →
+ * 404, KI-202/KI-537). Поэтому `workflowId` — id **сохранённого** workflow:
+ * у нового графа истории ещё нет, и UI открывает историю только при
+ * `currentWorkflowId !== null`.
+ *
+ * `limit`/`offset` уходят query-параметрами и валидируются на backend Zod'ом
+ * (1..100 и ≥0); дефолты совпадают с серверными (`20`/`0`). Ответ разбирается
+ * `RunHistoryResponseSchema`: состав полей уже сверен с контрактом
+ * (`api-contract.spec.ts`), здесь проверяется только форма данных.
+ *
+ * @param workflowId - uuid сохранённого workflow
+ * @param limit - размер страницы (1..100, по умолчанию 20)
+ * @param offset - смещение от начала истории (по умолчанию 0)
+ * @returns страница истории: `runs` (сначала новые) и общий `total`
+ * @throws ApiError при сетевой ошибке, 401/404 (чужой workflow или `viewer`)
+ *   или неожиданном формате ответа
+ */
+export async function fetchWorkflowRunsAsync(
+  workflowId: string,
+  limit = 20,
+  offset = 0,
+): Promise<ApiRunHistoryResponse> {
+  const query = `?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`;
+  const data = await requestAsync<unknown>(
+    `/workflow/${encodeURIComponent(workflowId)}/runs${query}`,
+  );
+
+  return RunHistoryResponseSchema.parse(data);
+}
+
+/**
  * Возвращает бюджет запуска (R7.1, KI-048).
  *
  * Отдельная ручка, а не поле SSE-снимка: контракт потока в R7.1 не меняется

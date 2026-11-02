@@ -1,9 +1,29 @@
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { fetchWorkflowRunsAsync } from '@/lib/api';
 import { APP_VERSION } from '@/lib/app-version';
 import ru from '@/i18n/ru.json';
+import { useWorkflowStore } from '@/stores/workflow';
 import { TopBar } from './TopBar';
+
+/**
+ * Мок API истории запусков (v0.14 S2).
+ *
+ * При открытии `RunHistoryModal` сразу грузит первую страницу; в тесте шапки
+ * сеть не нужна. Остальные функции `@/lib/api` остаются настоящими — их
+ * импортирует стор, и подменять весь модуль ради одной функции не нужно.
+ */
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>();
+
+  return {
+    ...actual,
+    fetchWorkflowRunsAsync: vi.fn(() =>
+      Promise.resolve({ runs: [], total: 0 }),
+    ),
+  };
+});
 
 /**
  * Копирайт и версия в шапке (RULES 1.11/1.12, KI-446).
@@ -92,5 +112,66 @@ describe('TopBar — версия и копирайт (KI-446)', () => {
     expect(logo.tagName).toBe('IMG');
     expect(logo).toHaveClass('h-6');
     expect(logo).toHaveAttribute('src', '/logo.svg');
+  });
+});
+
+describe('TopBar — история запусков (v0.14 S2)', () => {
+  /** Сохранённый workflow, для которого история доступна. */
+  const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
+
+  afterEach(() => {
+    useWorkflowStore.setState({ currentWorkflowId: null, accessRole: null });
+    vi.mocked(fetchWorkflowRunsAsync).mockClear();
+  });
+
+  it('кнопка «История» disabled, пока workflow не сохранён', () => {
+    const { container } = renderTopBar();
+    const button = container.querySelector('[data-topbar-history]');
+
+    expect(button).not.toBeNull();
+    expect(button).toBeDisabled();
+  });
+
+  it('клик открывает модалку истории сохранённого workflow', async () => {
+    const { container } = renderTopBar();
+    const button = container.querySelector(
+      '[data-topbar-history]',
+    ) as HTMLButtonElement;
+
+    // Сначала новый (несохранённый) workflow: кнопка заблокирована.
+    expect(button).toBeDisabled();
+
+    // Появление id в сторе перерисовывает шапку и снимает блокировку —
+    // проверяем именно переход, а не заранее выставленное состояние.
+    act(() => {
+      useWorkflowStore.setState({ currentWorkflowId: WORKFLOW_ID });
+    });
+
+    await waitFor(() => expect(button).not.toBeDisabled());
+
+    fireEvent.click(button);
+
+    expect(
+      await screen.findByRole('dialog', { name: ru['history.title'] }),
+    ).toBeInTheDocument();
+    // Модалка сразу грузит первую страницу истории.
+    await waitFor(() =>
+      expect(vi.mocked(fetchWorkflowRunsAsync)).toHaveBeenCalledWith(
+        WORKFLOW_ID,
+        20,
+        0,
+      ),
+    );
+  });
+
+  it('viewer не видит кнопку: история требует роль editor (KI-537)', () => {
+    useWorkflowStore.setState({
+      currentWorkflowId: WORKFLOW_ID,
+      accessRole: 'viewer',
+    });
+
+    const { container } = renderTopBar();
+
+    expect(container.querySelector('[data-topbar-history]')).toBeNull();
   });
 });

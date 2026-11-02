@@ -19,6 +19,16 @@
 
 ### Added
 
+- **Run History UI (v0.14 S2, DESIGN V014 § 3.2)** ([отчёт](development/reports/v0.14.0/S2-history-ui.md)):
+  кнопка «История» (🕒) в `TopBar` (активна только для сохранённого workflow;
+  для `viewer` скрыта — история требует `editor`, KI-537) открывает модалку
+  `RunHistoryModal` со списком запусков: статус (иконка + цвет), дата,
+  длительность (`durationMs`) и стоимость (`costUsd`/`costRub`), пагинация
+  «Назад/Вперёд» (`limit=20`). Клик по запуску закрывает модалку, сбрасывает
+  выбранный узел и восстанавливает прогон в панели результата
+  (`restoreRunAsync`, как после F5). `fetchWorkflowRunsAsync` — тонкая обёртка
+  над `GET /workflow/:id/runs` с Zod-разбором. i18n: `history.*` в ru/en.
+  F5 после открытия старого запуска не восстанавливает панель — KI-541.
 - **Run History API (v0.14 S1, DESIGN V014 § 3.1)** ([отчёт](development/reports/v0.14.0/S1-history-api.md)):
   `GET /workflow/:id/runs?limit=20&offset=0` отдаёт историю запусков workflow
   `{ runs: RunSummary[], total }` (сначала новые). `RunSummary`: `id`, `status`,
@@ -42,6 +52,24 @@
 
 
 
+
+## [0.14.0] — 2026-11-02
+
+**Minor-релиз: Run History Browser.**
+
+### Added
+
+- **Run History API (S1, KI-537):** Эндпоинт `GET /workflow/:id/runs` с пагинацией, агрегацией стоимости и длительности из `node_runs`. Новый `RunsHistoryController`.
+- **Run History UI (S2):** Модальное окно «История» с кнопкой в TopBar (🕒). Отображает статус, дату, длительность и стоимость запусков. Клик по запуску открывает панель результатов (`restoreRunAsync`).
+
+### Fixed
+
+- **Округление длительности:** Исправлен баг, при котором 119.5 секунд отображались как «1 мин 60 с».
+
+### Documented
+
+- **KI-541..545:** Ограничения UI истории (F5 после клика, пагинация со сдвигом, отсутствие real-time обновлений, разница в i18n статусах).
+- **Web Search (S3):** Расширение провайдеров (Bing, Brave) перенесено в v0.15.0.
 ## [0.13.0] — 2026-11-02
 
 **Patch-релиз: MCP Hardening & UI.**
@@ -1935,4 +1963,5 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 

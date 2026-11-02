@@ -19,6 +19,7 @@ import { useWorkflowStore } from '@/stores/workflow';
 import type { RunStatus } from '@/types/run-stream';
 import type { ImageToolFlowNode } from '@/types/graph';
 import { LoadModal } from './LoadModal';
+import { RunHistoryModal } from './RunHistoryModal';
 import { ShareModal } from './ShareModal';
 import { computeGraphHash } from '@/lib/graph-hash';
 import {
@@ -115,6 +116,11 @@ function formatUsd(value: number): string {
  */
 export function TopBar() {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  // v0.14 S2: история запусков — локальное UI-состояние TopBar, как у
+  // LoadModal/ShareModal. В стор не вынесено: открытие модалки не влияет на
+  // граф и не нужно другим компонентам (панель результата открывает стор по
+  // `restoreRunAsync`).
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
   // R6.6.2: идёт файловая операция (экспорт/импорт) — кнопки блокируются,
@@ -724,6 +730,25 @@ export function TopBar() {
             {t('topbar.import')}
           </button>
 
+          {/* v0.14 S2 (DESIGN V014 § 3.2): история запусков. Доступна только для
+              сохранённого workflow (у нового графа нет истории). Для viewer
+              скрыта: `GET /workflow/:id/runs` требует роль `editor` (S1), и
+              кнопка не должна предлагать гарантированный 404 (KI-397/KI-537). */}
+          {!isViewer && (
+            <button
+              type="button"
+              data-topbar-history=""
+              onClick={() => setIsHistoryOpen(true)}
+              disabled={currentWorkflowId === null}
+              aria-label={t('topbar.history')}
+              title={t('topbar.history')}
+              className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span aria-hidden="true">🕒</span>
+              {t('topbar.history')}
+            </button>
+          )}
+
           {/* KI-397: viewer не запускает workflow — кнопка скрыта. */}
           {!isViewer && (
             <button
@@ -789,6 +814,13 @@ export function TopBar() {
       </header>
 
       {isModalOpen && <LoadModal onClose={() => setIsModalOpen(false)} />}
+
+      {isHistoryOpen && currentWorkflowId !== null && (
+        <RunHistoryModal
+          workflowId={currentWorkflowId}
+          onClose={() => setIsHistoryOpen(false)}
+        />
+      )}
 
       {isShareOpen && currentWorkflowId !== null && (
         <ShareModal

@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v0.14.0 | S2 | Run History UI: `RunHistoryModal`, кнопка «История» в TopBar, `fetchWorkflowRunsAsync`, i18n | 2026-11-02 | [S2-history-ui.md](v0.14.0/S2-history-ui.md) |
 | v0.14.0 | S1 | Run History API: `GET /workflow/:id/runs`, `RunSummary`, паритет-контракт backend/web | 2026-11-02 | [S1-history-api.md](v0.14.0/S1-history-api.md) |
 | v0.13.0 | S1 | MCP Hardening & UI: stdio env allowlist, cwd-изоляция, `isPidAlive` EPERM, бейдж `LOCAL` | 2026-11-02 | [S1-mcp-hardening.md](v0.13.0/S1-mcp-hardening.md) |
 | v0.12.0 | S1-S2 | PDF Generator: `PdfRenderer` (pdfkit + NotoSans), `document_gen` format, UI | 2026-11-02 | [S1-S2-pdf.md](v0.12.0/S1-S2-pdf.md) |

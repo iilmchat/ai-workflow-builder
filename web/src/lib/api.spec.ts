@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   deleteDocumentTemplateAsync,
+  fetchWorkflowRunsAsync,
   listDocumentTemplatesAsync,
   requestAsync,
   uploadDocumentTemplateAsync,
@@ -255,5 +256,45 @@ describe('document-templates API (v0.11 S5)', () => {
       `/workflow/${WORKFLOW_ID}/document-templates/${TEMPLATE_ID}`,
     );
     expect(init.method).toBe('DELETE');
+  });
+});
+
+describe('fetchWorkflowRunsAsync (v0.14 S1 API ↔ S2 UI)', () => {
+  /** uuid workflow в тестах истории. */
+  const WORKFLOW_ID = '88888888-8888-4888-8888-888888888888';
+
+  /** Один элемент истории, который должен пережить Zod-разбор. */
+  const RUN_SUMMARY = {
+    id: '99999999-9999-4999-8999-999999999999',
+    status: 'completed',
+    createdAt: '2026-11-02T09:00:00.000Z',
+    startedAt: '2026-11-02T09:00:01.000Z',
+    finishedAt: '2026-11-02T09:00:03.000Z',
+    durationMs: 2000,
+    costUsd: 0.012345,
+    costRub: 0,
+  };
+
+  it('GET /workflow/:id/runs с дефолтными limit=20/offset=0 и Zod-разбором', async () => {
+    const fetchMock = stubFetch(() =>
+      jsonResponse({ runs: [RUN_SUMMARY], total: 1 }),
+    );
+
+    const result = await fetchWorkflowRunsAsync(WORKFLOW_ID);
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`/workflow/${WORKFLOW_ID}/runs?limit=20&offset=0`);
+    expect(result).toEqual({ runs: [RUN_SUMMARY], total: 1 });
+  });
+
+  it('передаёт явные limit/offset и падает, если ответ не по контракту', async () => {
+    const fetchMock = stubFetch(() =>
+      jsonResponse({ runs: [{ id: 42 }], total: 1 }),
+    );
+
+    await expect(fetchWorkflowRunsAsync(WORKFLOW_ID, 5, 10)).rejects.toThrow();
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`/workflow/${WORKFLOW_ID}/runs?limit=5&offset=10`);
   });
 });
