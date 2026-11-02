@@ -19,6 +19,7 @@ import {
 } from '../db/schema.js';
 import {
   workflowAccessFilter,
+  type WorkflowAccess,
   type WorkflowAccessRole,
 } from '../workflow/workflow-access.js';
 import {
@@ -47,7 +48,9 @@ import { DOCX_MIME_TYPE } from './document.service.js';
  * **Права.** Список/скачивание — `viewer`; загрузка/удаление — `editor`.
  * Чужой или несуществующий workflow неотличимы и дают 404 (KI-202), а
  * `viewer`, у которого workflow есть, получает 403: он и так знает о
- * существовании графа, скрывать нечего.
+ * существовании графа, скрывать нечего. С v1.0.0 S2 фильтр доступа включает
+ * `organization_id` арендатора: шаблоны workflow другой организации не видны
+ * (тоже 404), даже если uuid workflow известен.
  *
  * **Ошибки домена.** Битый/небезопасный шаблон — `BadRequestException` с кодом
  * из {@link DocumentTemplateInvalidException}; превышение размера —
@@ -88,7 +91,8 @@ export class DocumentTemplatesService {
    * 5 МБ на каждый `GET`.
    *
    * @param workflowId - uuid workflow из path
-   * @param userId - пользователь из access-токена (проверка прав)
+   * @param access - пользователь и его организация из access-токена (проверка
+   *   прав; v1.0.0 S2: workflow другой организации неотличим от несуществующего)
    * @param file - загруженный файл (memory storage)
    * @param body - валидированное тело формы (`name` необязательно)
    * @returns публичное представление созданного шаблона
@@ -100,11 +104,11 @@ export class DocumentTemplatesService {
    */
   async createAsync(
     workflowId: string,
-    userId: string,
+    access: WorkflowAccess,
     file: UploadedFileLike,
     body: UploadDocumentTemplateDto,
   ): Promise<DocumentTemplateSummary> {
-    await this.assertWorkflowAccessAsync(workflowId, userId, 'editor');
+    await this.assertWorkflowAccessAsync(workflowId, access, 'editor');
 
     const upload = this.validateUpload(file, body);
     const placeholders = this.inspectTemplate(upload.content);
@@ -124,7 +128,7 @@ export class DocumentTemplatesService {
       .insert(documentTemplates)
       .values({
         workflowId,
-        createdBy: userId,
+        createdBy: access.userId,
         name: upload.name,
         content: upload.content,
         bytes,
@@ -147,15 +151,16 @@ export class DocumentTemplatesService {
    * Список шаблонов workflow без содержимого.
    *
    * @param workflowId - uuid workflow
-   * @param userId - пользователь из access-токена
+   * @param access - пользователь и его организация из access-токена (S2:
+   *   шаблоны workflow другой организации не видны — 404)
    * @returns шаблоны workflow, сначала новые
    * @throws NotFoundException если workflow не существует или недоступен
    */
   async listAsync(
     workflowId: string,
-    userId: string,
+    access: WorkflowAccess,
   ): Promise<DocumentTemplateSummary[]> {
-    await this.assertWorkflowAccessAsync(workflowId, userId, 'viewer');
+    await this.assertWorkflowAccessAsync(workflowId, access, 'viewer');
 
     const rows = await this.db
       .select({
@@ -216,16 +221,17 @@ export class DocumentTemplatesService {
    *
    * @param templateId - uuid шаблона
    * @param workflowId - uuid workflow из path
-   * @param userId - пользователь из access-токена (права viewer)
+   * @param access - пользователь и его организация из access-токена (права
+   *   viewer; S2: workflow другой организации → 404)
    * @returns имя, содержимое и размер `.docx`
    * @throws NotFoundException если workflow недоступен или шаблона нет
    */
   async getFileAsync(
     templateId: string,
     workflowId: string,
-    userId: string,
+    access: WorkflowAccess,
   ): Promise<{ name: string; content: Buffer; bytes: number }> {
-    await this.assertWorkflowAccessAsync(workflowId, userId, 'viewer');
+    await this.assertWorkflowAccessAsync(workflowId, access, 'viewer');
 
     const [row] = await this.db
       .select({
@@ -254,7 +260,8 @@ export class DocumentTemplatesService {
    *
    * @param templateId - uuid шаблона
    * @param workflowId - uuid workflow из path
-   * @param userId - пользователь из access-токена (права editor)
+   * @param access - пользователь и его организация из access-токена (права
+   *   editor; S2: workflow другой организации → 404)
    * @returns промис без значения
    * @throws NotFoundException если workflow или шаблон не найдены
    * @throws ForbiddenException если доступ есть только на чтение (`viewer`)
@@ -262,9 +269,9 @@ export class DocumentTemplatesService {
   async deleteAsync(
     templateId: string,
     workflowId: string,
-    userId: string,
+    access: WorkflowAccess,
   ): Promise<void> {
-    await this.assertWorkflowAccessAsync(workflowId, userId, 'editor');
+    await this.assertWorkflowAccessAsync(workflowId, access, 'editor');
 
     const deleted = await this.db
       .delete(documentTemplates)
@@ -293,20 +300,21 @@ export class DocumentTemplatesService {
    * факт его существования бессмысленно.
    *
    * @param workflowId - uuid workflow
-   * @param userId - пользователь из access-токена
+   * @param access - пользователь и его организация из access-токена (S2:
+   *   проверка идёт и по `organization_id`, поэтому чужой арендатор → 404)
    * @param minimumRole - требуемая роль (`viewer` или `editor`)
    * @throws NotFoundException если workflow недоступен пользователю
    * @throws ForbiddenException если доступ есть, но роли недостаточно
    */
   private async assertWorkflowAccessAsync(
     workflowId: string,
-    userId: string,
+    access: WorkflowAccess,
     minimumRole: WorkflowAccessRole,
   ): Promise<void> {
     const [accessible] = await this.db
       .select({ id: workflows.id })
       .from(workflows)
-      .where(workflowAccessFilter(this.db, workflowId, userId, 'viewer'))
+      .where(workflowAccessFilter(this.db, workflowId, access, 'viewer'))
       .limit(1);
 
     if (accessible === undefined) {
@@ -320,7 +328,7 @@ export class DocumentTemplatesService {
     const [editable] = await this.db
       .select({ id: workflows.id })
       .from(workflows)
-      .where(workflowAccessFilter(this.db, workflowId, userId, 'editor'))
+      .where(workflowAccessFilter(this.db, workflowId, access, 'editor'))
       .limit(1);
 
     if (editable === undefined) {

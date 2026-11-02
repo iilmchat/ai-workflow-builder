@@ -7,12 +7,15 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import request from 'supertest';
+import { DEMO_ORG_ID, DEMO_USER_ID } from '../auth/auth.constants.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import type { Workflow } from '../db/schema.js';
 import type { CollaboratorResponse } from './dto/index.js';
 import { WorkflowController } from './workflow.controller.js';
 import { WorkflowService } from './workflow.service.js';
+import type { WorkflowAccess } from './workflow-access.js';
 
 /** Стабильные идентификаторы тестовых данных (валидные uuid). */
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
@@ -20,9 +23,27 @@ const OWNER_ID = '22222222-2222-4222-8222-222222222222';
 const PARTICIPANT_ID = '33333333-3333-4333-8333-333333333333';
 const INVITED_AT = new Date('2026-10-17T10:00:00.000Z');
 /** id системного пользователя в AUTH_DISABLED-режиме (R6.1a). */
-const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000001';
+const SYSTEM_USER_ID = DEMO_USER_ID;
 /** Организация-арендатор workflow (v1.0 S1). */
 const ORG_ID = '55555555-5555-4555-8555-555555555555';
+
+/** Контекст доступа владельца: пользователь + организация (v1.0 S2). */
+const ACCESS: WorkflowAccess = { userId: OWNER_ID, orgId: ORG_ID };
+/** Контекст доступа участника-наблюдателя в той же организации. */
+const PARTICIPANT_ACCESS: WorkflowAccess = { userId: PARTICIPANT_ID, orgId: ORG_ID };
+
+/** Диалект нужен только для рендера условий в SQL (запросы в БД не уходят). */
+const dialect = new PgDialect();
+
+/**
+ * Рендерит условие Drizzle в SQL и параметры.
+ *
+ * @param condition - SQL-условие
+ * @returns текст SQL и значения параметров
+ */
+function render(condition: Parameters<PgDialect['sqlToQuery']>[0]) {
+  return dialect.sqlToQuery(condition);
+}
 
 /** Workflow владельца — нужен для findOneAsync в getCollaboratorsAsync. */
 const baseWorkflow: Workflow = {
@@ -153,7 +174,7 @@ describe('WorkflowService — участники (R7.6)', () => {
       ],
     ];
 
-    const result = await service.getCollaboratorsAsync(WORKFLOW_ID, PARTICIPANT_ID);
+    const result = await service.getCollaboratorsAsync(WORKFLOW_ID, PARTICIPANT_ACCESS);
 
     expect(result).toEqual([owner, participant]);
     // DESIGN § 3.6: «owner + participants» — владелец первой строкой.
@@ -191,7 +212,7 @@ describe('WorkflowService — участники (R7.6)', () => {
       ],
     ];
 
-    const result = await service.getCollaboratorsAsync(WORKFLOW_ID, OWNER_ID);
+    const result = await service.getCollaboratorsAsync(WORKFLOW_ID, ACCESS);
 
     expect(result).toHaveLength(2);
     expect(result.filter((row) => row.role === 'owner')).toHaveLength(1);
@@ -202,8 +223,42 @@ describe('WorkflowService — участники (R7.6)', () => {
     selectResults = [[]];
 
     await expect(
-      service.getCollaboratorsAsync(WORKFLOW_ID, PARTICIPANT_ID),
+      service.getCollaboratorsAsync(WORKFLOW_ID, PARTICIPANT_ACCESS),
     ).rejects.toThrow(NotFoundException);
+  });
+
+  it('getCollaboratorsAsync: участники фильтруются по организации (S2)', async () => {
+    selectResults = [
+      [baseWorkflow],
+      [],
+      [{ email: 'owner@example.com' }],
+      [
+        {
+          userId: PARTICIPANT_ID,
+          email: 'viewer@example.com',
+          role: 'viewer',
+          invitedAt: INVITED_AT,
+          invitedBy: OWNER_ID,
+        },
+      ],
+    ];
+
+    await service.getCollaboratorsAsync(WORKFLOW_ID, ACCESS);
+
+    // Запрос участников — четвёртый SELECT (workflow, EXISTS-подзапрос,
+    // email владельца, участники): его WHERE обязан содержать организацию
+    // арендатора, иначе legacy-строка другой организации показала бы email
+    // пользователя чужого тенанта (v1.0 S2).
+    const participantsChain = db.select.mock.results[3]?.value as {
+      where: ReturnType<typeof vi.fn>;
+    };
+    const where = render(
+      participantsChain.where.mock.calls[0][0] as Parameters<PgDialect['sqlToQuery']>[0],
+    );
+
+    expect(where.sql).toContain('"workflow_collaborators"."workflow_id" =');
+    expect(where.sql).toContain('"users"."organization_id" =');
+    expect(where.params).toEqual([WORKFLOW_ID, ORG_ID]);
   });
 
   it('inviteCollaboratorAsync: владелец приглашает editor (R7.6)', async () => {
@@ -222,7 +277,7 @@ describe('WorkflowService — участники (R7.6)', () => {
       },
     ];
 
-    const result = await service.inviteCollaboratorAsync(WORKFLOW_ID, OWNER_ID, {
+    const result = await service.inviteCollaboratorAsync(WORKFLOW_ID, ACCESS, {
       userId: PARTICIPANT_ID,
       role: 'editor',
     });
@@ -242,7 +297,7 @@ describe('WorkflowService — участники (R7.6)', () => {
     selectResults = [[]];
 
     await expect(
-      service.inviteCollaboratorAsync(WORKFLOW_ID, PARTICIPANT_ID, {
+      service.inviteCollaboratorAsync(WORKFLOW_ID, PARTICIPANT_ACCESS, {
         userId: '44444444-4444-4444-8444-444444444444',
         role: 'viewer',
       }),
@@ -254,7 +309,7 @@ describe('WorkflowService — участники (R7.6)', () => {
     selectResults = [[{ ownerId: OWNER_ID }]];
 
     await expect(
-      service.inviteCollaboratorAsync(WORKFLOW_ID, OWNER_ID, {
+      service.inviteCollaboratorAsync(WORKFLOW_ID, ACCESS, {
         userId: OWNER_ID,
         role: 'viewer',
       }),
@@ -265,7 +320,7 @@ describe('WorkflowService — участники (R7.6)', () => {
     selectResults = [[{ ownerId: OWNER_ID }], []];
 
     await expect(
-      service.inviteCollaboratorAsync(WORKFLOW_ID, OWNER_ID, {
+      service.inviteCollaboratorAsync(WORKFLOW_ID, ACCESS, {
         userId: PARTICIPANT_ID,
         role: 'viewer',
       }),
@@ -280,11 +335,38 @@ describe('WorkflowService — участники (R7.6)', () => {
     ];
 
     await expect(
-      service.inviteCollaboratorAsync(WORKFLOW_ID, OWNER_ID, {
+      service.inviteCollaboratorAsync(WORKFLOW_ID, ACCESS, {
         userId: PARTICIPANT_ID,
         role: 'editor',
       }),
     ).rejects.toThrow(ConflictException);
+  });
+
+  it('inviteCollaboratorAsync: пользователь другой организации → NotFoundException (S2)', async () => {
+    // findOwner владельца нашёл, но target-lookup с organization_id пуст:
+    // приглашаемый существует в другой организации. Ответ — тот же 404, что и
+    // для несуществующего пользователя: факт существования не раскрывается.
+    selectResults = [[{ ownerId: OWNER_ID }], []];
+
+    await expect(
+      service.inviteCollaboratorAsync(WORKFLOW_ID, ACCESS, {
+        userId: PARTICIPANT_ID,
+        role: 'viewer',
+      }),
+    ).rejects.toThrow(NotFoundException);
+    expect(db.insert).not.toHaveBeenCalled();
+
+    // WHERE запроса целевого пользователя ограничен организацией арендатора.
+    const targetChain = db.select.mock.results[1]?.value as {
+      where: ReturnType<typeof vi.fn>;
+    };
+    const where = render(
+      targetChain.where.mock.calls[0][0] as Parameters<PgDialect['sqlToQuery']>[0],
+    );
+
+    expect(where.sql).toContain('"users"."id" =');
+    expect(where.sql).toContain('"users"."organization_id" =');
+    expect(where.params).toEqual([PARTICIPANT_ID, ORG_ID]);
   });
 
   it('updateCollaboratorRoleAsync меняет роль', async () => {
@@ -301,7 +383,7 @@ describe('WorkflowService — участники (R7.6)', () => {
 
     const result = await service.updateCollaboratorRoleAsync(
       WORKFLOW_ID,
-      OWNER_ID,
+      ACCESS,
       PARTICIPANT_ID,
       { role: 'editor' },
     );
@@ -318,7 +400,7 @@ describe('WorkflowService — участники (R7.6)', () => {
     updateResult = [];
 
     await expect(
-      service.updateCollaboratorRoleAsync(WORKFLOW_ID, OWNER_ID, PARTICIPANT_ID, {
+      service.updateCollaboratorRoleAsync(WORKFLOW_ID, ACCESS, PARTICIPANT_ID, {
         role: 'viewer',
       }),
     ).rejects.toThrow(NotFoundException);
@@ -329,7 +411,7 @@ describe('WorkflowService — участники (R7.6)', () => {
     deleteResult = [{ userId: PARTICIPANT_ID }];
 
     await expect(
-      service.removeCollaboratorAsync(WORKFLOW_ID, OWNER_ID, PARTICIPANT_ID),
+      service.removeCollaboratorAsync(WORKFLOW_ID, ACCESS, PARTICIPANT_ID),
     ).resolves.toBeUndefined();
     expect(db.delete).toHaveBeenCalled();
   });
@@ -339,7 +421,7 @@ describe('WorkflowService — участники (R7.6)', () => {
     deleteResult = [];
 
     await expect(
-      service.removeCollaboratorAsync(WORKFLOW_ID, OWNER_ID, PARTICIPANT_ID),
+      service.removeCollaboratorAsync(WORKFLOW_ID, ACCESS, PARTICIPANT_ID),
     ).rejects.toThrow(NotFoundException);
   });
 });
@@ -386,10 +468,10 @@ describe('Collaborator-эндпоинты (R7.6)', () => {
       .expect(200);
 
     expect(response.body).toEqual([participant]);
-    expect(service.getCollaboratorsAsync).toHaveBeenCalledWith(
-      WORKFLOW_ID,
-      SYSTEM_USER_ID,
-    );
+    expect(service.getCollaboratorsAsync).toHaveBeenCalledWith(WORKFLOW_ID, {
+      userId: SYSTEM_USER_ID,
+      orgId: DEMO_ORG_ID,
+    });
   });
 
   it('POST /workflow/:id/collaborators — 201 и приглашение', async () => {
@@ -401,7 +483,7 @@ describe('Collaborator-эндпоинты (R7.6)', () => {
     expect(response.body).toEqual(participant);
     expect(service.inviteCollaboratorAsync).toHaveBeenCalledWith(
       WORKFLOW_ID,
-      SYSTEM_USER_ID,
+      { userId: SYSTEM_USER_ID, orgId: DEMO_ORG_ID },
       { userId: PARTICIPANT_ID, role: 'viewer' },
     );
   });
@@ -429,7 +511,7 @@ describe('Collaborator-эндпоинты (R7.6)', () => {
     expect(response.body).toEqual(participant);
     expect(service.updateCollaboratorRoleAsync).toHaveBeenCalledWith(
       WORKFLOW_ID,
-      SYSTEM_USER_ID,
+      { userId: SYSTEM_USER_ID, orgId: DEMO_ORG_ID },
       PARTICIPANT_ID,
       { role: 'editor' },
     );
@@ -442,7 +524,7 @@ describe('Collaborator-эндпоинты (R7.6)', () => {
 
     expect(service.removeCollaboratorAsync).toHaveBeenCalledWith(
       WORKFLOW_ID,
-      SYSTEM_USER_ID,
+      { userId: SYSTEM_USER_ID, orgId: DEMO_ORG_ID },
       PARTICIPANT_ID,
     );
   });

@@ -90,18 +90,17 @@ describe('TemplatesController (R6.6.1)', () => {
 
     expect(response.body).toEqual({ ...createdWorkflow, createdAt: expect.any(String), updatedAt: expect.any(String) });
 
-    const [artifact, userId, organizationId] = service.importAsync.mock.calls[0] as [
+    const [artifact, access] = service.importAsync.mock.calls[0] as [
       { name: string; nodes: unknown[]; edges: unknown[] },
-      string,
-      string,
+      { userId: string; orgId: string },
     ];
 
     expect(artifact.name).toBe('Text → LLM');
     expect(artifact.nodes).toHaveLength(2);
     expect(artifact.edges).toHaveLength(1);
-    // Владелец и арендатор — из токена (AUTH_DISABLED → системный пользователь).
-    expect(userId).toBe(DEMO_USER_ID);
-    expect(organizationId).toBe(DEMO_ORG_ID);
+    // Владелец и арендатор — из токена одним контекстом доступа
+    // (AUTH_DISABLED → системный пользователь).
+    expect(access).toEqual({ userId: DEMO_USER_ID, orgId: DEMO_ORG_ID });
   });
 
   it('POST /templates/nonexistent/instantiate — 404 без вызова сервиса', async () => {

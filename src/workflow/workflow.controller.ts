@@ -37,6 +37,7 @@ import {
   type WorkflowListItem,
 } from './dto/index.js';
 import { WorkflowService } from './workflow.service.js';
+import { toWorkflowAccess } from './workflow-access.js';
 
 /** Zod-схема path-параметра `:id`. */
 const UuidParamSchema = z.object({
@@ -64,6 +65,10 @@ type CollaboratorParamDto = z.infer<typeof CollaboratorParamSchema>;
  * R6.1a: контроллер целиком закрыт JwtAuthGuard, владелец берётся из токена
  * (`@CurrentUser`), а не из тела/query — клиент не может выбрать чужой
  * `userId`.
+ *
+ * v1.0.0 S2: в сервис передаётся `toWorkflowAccess(user)` — пара «пользователь
+ * + организация» из токена. Так изоляция арендаторов строится только на
+ * проверенных данных guard'а: подменить организацию через body/query нельзя.
  */
 @UseGuards(JwtAuthGuard)
 @Controller('workflow')
@@ -74,7 +79,7 @@ export class WorkflowController {
    * `POST /workflow` — создаёт workflow.
    *
    * @param dto - тело запроса, валидированное по CreateWorkflowSchema
-   * @param user - владелец из access-токена
+   * @param user - владелец и организация из access-токена
    * @returns созданный workflow со статусом 201
    */
   @Post()
@@ -85,7 +90,7 @@ export class WorkflowController {
   ): Promise<Workflow> {
     // Владелец и арендатор — только из токена (R6.1a, v1.0 S1); в body их нет
     // (KI-204, DESIGN_V100_ENTERPRISE § 3.1).
-    return this.workflowService.createAsync(dto, user.sub, user.orgId);
+    return this.workflowService.createAsync(dto, toWorkflowAccess(user));
   }
 
   /**
@@ -97,7 +102,7 @@ export class WorkflowController {
    *
    * @param query - query-параметры `limit`, `offset` (устаревший `userId`
    *   игнорируется: доступ определяется пользователем из токена)
-   * @param user - пользователь из access-токена
+   * @param user - пользователь и организация из access-токена
    * @returns массив workflow с ролью (сначала новые)
    */
   @Get()
@@ -105,7 +110,11 @@ export class WorkflowController {
     @Query(ZodValidationPipe.create(ListWorkflowsQuerySchema)) query: ListWorkflowsQueryDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<WorkflowListItem[]> {
-    return this.workflowService.findAllAsync(user.sub, query.limit, query.offset);
+    return this.workflowService.findAllAsync(
+      toWorkflowAccess(user),
+      query.limit,
+      query.offset,
+    );
   }
 
   /**
@@ -123,7 +132,7 @@ export class WorkflowController {
    * и подставить чужого владельца через body невозможно.
    *
    * @param dto - тело запроса, валидированное по ImportWorkflowSchema
-   * @param user - владелец нового workflow из access-токена
+   * @param user - владелец нового workflow и организация из access-токена
    * @returns созданный workflow со статусом 201
    */
   @Post('import')
@@ -132,7 +141,7 @@ export class WorkflowController {
     @Body(ZodValidationPipe.create(ImportWorkflowSchema)) dto: ImportWorkflowDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<Workflow> {
-    return this.workflowService.importAsync(dto, user.sub, user.orgId);
+    return this.workflowService.importAsync(dto, toWorkflowAccess(user));
   }
 
   /**
@@ -145,7 +154,7 @@ export class WorkflowController {
    * структурно, а не фильтрацией после выборки.
    *
    * @param params - path-параметр `id` (uuid)
-   * @param user - владелец из access-токена
+   * @param user - пользователь и организация из access-токена
    * @returns артефакт `{ version, name, nodes, edges, exportedAt }`
    * @throws NotFoundException если workflow не существует или чужой
    */
@@ -155,7 +164,7 @@ export class WorkflowController {
     @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<ExportWorkflowDto> {
-    return this.workflowService.exportAsync(params.id, user.sub);
+    return this.workflowService.exportAsync(params.id, toWorkflowAccess(user));
   }
 
   /**
@@ -165,7 +174,7 @@ export class WorkflowController {
    * видит. Чужой или несуществующий workflow — 404 (KI-202).
    *
    * @param params - path-параметр `id` (uuid)
-   * @param user - пользователь из access-токена
+   * @param user - пользователь и организация из access-токена
    * @returns участники, отсортированные по дате приглашения
    * @throws NotFoundException если workflow недоступен
    */
@@ -174,7 +183,10 @@ export class WorkflowController {
     @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<CollaboratorResponse[]> {
-    return this.workflowService.getCollaboratorsAsync(params.id, user.sub);
+    return this.workflowService.getCollaboratorsAsync(
+      params.id,
+      toWorkflowAccess(user),
+    );
   }
 
   /**
@@ -186,7 +198,7 @@ export class WorkflowController {
    *
    * @param params - path-параметр `id` (uuid)
    * @param dto - тело `{ userId, role }`, валидированное Zod
-   * @param user - пользователь из access-токена (должен быть владельцем)
+   * @param user - пользователь и организация из access-токена (должен быть владельцем)
    * @returns созданное участие со статусом 201
    * @throws NotFoundException если workflow чужой или пользователь не найден
    * @throws BadRequestException если приглашают владельца
@@ -199,7 +211,11 @@ export class WorkflowController {
     @Body(ZodValidationPipe.create(InviteCollaboratorSchema)) dto: InviteCollaboratorDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<CollaboratorResponse> {
-    return this.workflowService.inviteCollaboratorAsync(params.id, user.sub, dto);
+    return this.workflowService.inviteCollaboratorAsync(
+      params.id,
+      toWorkflowAccess(user),
+      dto,
+    );
   }
 
   /**
@@ -209,7 +225,7 @@ export class WorkflowController {
    *
    * @param params - path-параметры `id` и `userId` (uuid)
    * @param dto - тело `{ role }`, валидированное Zod
-   * @param user - пользователь из access-токена (должен быть владельцем)
+   * @param user - пользователь и организация из access-токена (должен быть владельцем)
    * @returns обновлённое участие
    * @throws NotFoundException если workflow чужой или участник не найден
    */
@@ -221,7 +237,7 @@ export class WorkflowController {
   ): Promise<CollaboratorResponse> {
     return this.workflowService.updateCollaboratorRoleAsync(
       params.id,
-      user.sub,
+      toWorkflowAccess(user),
       params.userId,
       dto,
     );
@@ -234,7 +250,7 @@ export class WorkflowController {
    * принадлежат графу, а не участнику.
    *
    * @param params - path-параметры `id` и `userId` (uuid)
-   * @param user - пользователь из access-токена (должен быть владельцем)
+   * @param user - пользователь и организация из access-токена (должен быть владельцем)
    * @returns пустой ответ со статусом 204
    * @throws NotFoundException если workflow чужой или участник не найден
    */
@@ -244,14 +260,18 @@ export class WorkflowController {
     @Param(ZodValidationPipe.create(CollaboratorParamSchema)) params: CollaboratorParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<void> {
-    await this.workflowService.removeCollaboratorAsync(params.id, user.sub, params.userId);
+    await this.workflowService.removeCollaboratorAsync(
+      params.id,
+      toWorkflowAccess(user),
+      params.userId,
+    );
   }
 
   /**
    * `GET /workflow/:id` — один workflow по идентификатору.
    *
    * @param params - path-параметр `id` (uuid)
-   * @param user - владелец из access-токена
+   * @param user - пользователь и организация из access-токена
    * @returns найденный workflow
    * @throws NotFoundException если workflow не найден
    */
@@ -260,7 +280,10 @@ export class WorkflowController {
     @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<Workflow> {
-    const workflow = await this.workflowService.findOneAsync(params.id, user.sub);
+    const workflow = await this.workflowService.findOneAsync(
+      params.id,
+      toWorkflowAccess(user),
+    );
 
     if (!workflow) {
       throw new NotFoundException(`Workflow ${params.id} не найден`);
@@ -274,7 +297,7 @@ export class WorkflowController {
    *
    * @param params - path-параметр `id` (uuid)
    * @param dto - тело запроса, валидированное по UpdateWorkflowSchema
-   * @param user - владелец из access-токена
+   * @param user - пользователь и организация из access-токена
    * @returns обновлённый workflow
    * @throws NotFoundException если workflow не найден
    */
@@ -284,7 +307,11 @@ export class WorkflowController {
     @Body(ZodValidationPipe.create(UpdateWorkflowSchema)) dto: UpdateWorkflowDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<Workflow> {
-    const updated = await this.workflowService.updateAsync(params.id, dto, user.sub);
+    const updated = await this.workflowService.updateAsync(
+      params.id,
+      dto,
+      toWorkflowAccess(user),
+    );
 
     if (!updated) {
       throw new NotFoundException(`Workflow ${params.id} не найден`);
@@ -299,7 +326,7 @@ export class WorkflowController {
    * Связанные запуски удаляются каскадом на уровне БД.
    *
    * @param params - path-параметр `id` (uuid)
-   * @param user - владелец из access-токена
+   * @param user - пользователь и организация из access-токена
    * @returns пустой ответ со статусом 204
    * @throws NotFoundException если workflow не найден
    */
@@ -309,7 +336,10 @@ export class WorkflowController {
     @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<void> {
-    const removed = await this.workflowService.removeAsync(params.id, user.sub);
+    const removed = await this.workflowService.removeAsync(
+      params.id,
+      toWorkflowAccess(user),
+    );
 
     if (!removed) {
       throw new NotFoundException(`Workflow ${params.id} не найден`);
@@ -323,7 +353,7 @@ export class WorkflowController {
    * Токен возвращается владельцу один раз и в логи не пишется (RULES 5.9).
    *
    * @param params - path-параметр `id` (uuid)
-   * @param user - владелец из access-токена
+   * @param user - владелец и организация из access-токена
    * @returns токен и относительная ссылка
    * @throws NotFoundException если workflow не найден или чужой
    */
@@ -333,14 +363,17 @@ export class WorkflowController {
     @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<ShareTokenDto> {
-    return this.workflowService.createShareTokenAsync(params.id, user.sub);
+    return this.workflowService.createShareTokenAsync(
+      params.id,
+      toWorkflowAccess(user),
+    );
   }
 
   /**
    * `DELETE /workflow/:id/share` — отзывает share-ссылку (`share_token = NULL`).
    *
    * @param params - path-параметр `id` (uuid)
-   * @param user - владелец из access-токена
+   * @param user - владелец и организация из access-токена
    * @returns пустой ответ со статусом 204
    * @throws NotFoundException если workflow не найден или чужой
    */
@@ -350,6 +383,9 @@ export class WorkflowController {
     @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<void> {
-    await this.workflowService.revokeShareTokenAsync(params.id, user.sub);
+    await this.workflowService.revokeShareTokenAsync(
+      params.id,
+      toWorkflowAccess(user),
+    );
   }
 }

@@ -35,7 +35,11 @@ import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
 import { WebSearchRegistryService } from '../web-search/web-search.registry.js';
-import { UnsupportedNodeTypeException, type SubWorkflowRecord } from './node-executors.js';
+import {
+  UnsupportedNodeTypeException,
+  type SubWorkflowAccess,
+  type SubWorkflowRecord,
+} from './node-executors.js';
 import { RetryableNodeException, VectorDisabledException } from './errors.js';
 
 /** Стабильный uuid запуска. */
@@ -43,6 +47,9 @@ const RUN_ID = '22222222-2222-4222-8222-222222222222';
 
 /** Владелец запуска (R6.7): его отдаёт join-запрос в двойнике БД. */
 const RUN_OWNER_ID = '44444444-4444-4444-8444-444444444444';
+
+/** Организация владельца запуска (v1.0.0 S2): второй столбец того же join'а. */
+const RUN_OWNER_ORG_ID = '55555555-5555-4555-8555-555555555555';
 
 /** uuid подграфа в тестах R6.7. */
 const SUB_WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
@@ -309,15 +316,17 @@ function createFakeDb(runId: string) {
               : [];
           },
         }),
-        // R6.7 (KI-200): `ExecutionEngineService` читает владельца корневого
-        // workflow join-запросом (`workflow_runs` → `workflows`). Двойник
-        // отвечает владельцем, если запуск существует.
+        // R6.7 (KI-200) / v1.0.0 S2: `ExecutionEngineService` читает владельца и
+        // организацию корневого workflow join-запросом (`workflow_runs` →
+        // `workflows`). Двойник отвечает парой, если запуск существует.
         innerJoin: (_joined: unknown, _on: unknown) => ({
           where: (condition: unknown) => ({
             limit: async (): Promise<unknown[]> => {
               const id = wherePairs(condition).get('id');
 
-              return id === run.id ? [{ userId: RUN_OWNER_ID }] : [];
+              return id === run.id
+                ? [{ userId: RUN_OWNER_ID, organizationId: RUN_OWNER_ORG_ID }]
+                : [];
             },
           }),
         }),
@@ -484,7 +493,7 @@ describe('ExecutionEngineService', () => {
         ]),
     );
     // R6.7: подграфы приходят из WorkflowService — в юнит-тесте он замокан.
-    findWorkflow = vi.fn((_id: string, _userId?: string) =>
+    findWorkflow = vi.fn((_id: string, _access?: SubWorkflowAccess) =>
       Promise.resolve(null as SubWorkflowRecord | null),
     );
     // v0.10 S6: узел document_gen. Буфер маленький — лимит 10 МБ не срабатывает.
@@ -2631,8 +2640,12 @@ describe('ExecutionEngineService', () => {
         RUN_ID,
       );
 
-      // Подграф загружен у владельца запуска: фильтр по rootUserId.
-      expect(findWorkflow).toHaveBeenCalledWith(SUB_WORKFLOW_ID, RUN_OWNER_ID);
+      // Подграф загружен у владельца запуска и в его организации: фильтр по
+      // rootUserId + rootOrgId (v1.0.0 S2).
+      expect(findWorkflow).toHaveBeenCalledWith(SUB_WORKFLOW_ID, {
+        userId: RUN_OWNER_ID,
+        orgId: RUN_OWNER_ORG_ID,
+      });
     });
 
     it('несколько терминальных узлов подграфа сливаются в плоский result', async () => {
@@ -2770,6 +2783,37 @@ describe('ExecutionEngineService', () => {
       expect(rowOf('sub-1')?.status).toBe('failed');
       expect(rowOf('sub-1')?.error).toContain('не найден');
       // Узлов подграфа в node_runs нет: граф даже не загрузился.
+      expect(fake.rows).toHaveLength(1);
+    });
+
+    it('без известной организации запуска подграф не загружается (S2)', async () => {
+      // Сбой чтения пары «владелец + организация» даёт null: узел обязан упасть
+      // 404, а не загрузить подграф без фильтра по арендатору.
+      vi.spyOn(
+        service as unknown as {
+          findRootAccessAsync: (
+            runId: string,
+          ) => Promise<{ userId: string; orgId: string } | null>;
+        },
+        'findRootAccessAsync',
+      ).mockResolvedValue(null);
+
+      const graph: GraphDto = {
+        nodes: [
+          node('sub-1', 'sub_workflow', {
+            kind: 'sub_workflow',
+            workflowId: SUB_WORKFLOW_ID,
+          }),
+        ],
+        edges: [],
+      };
+
+      await expect(service.executeAsync(RUN_ID, graph)).rejects.toThrow(
+        /Workflow .* не найден/,
+      );
+
+      expect(findWorkflow).not.toHaveBeenCalled();
+      expect(rowOf('sub-1')?.status).toBe('failed');
       expect(fake.rows).toHaveLength(1);
     });
 

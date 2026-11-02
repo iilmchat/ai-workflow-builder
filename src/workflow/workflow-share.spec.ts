@@ -2,19 +2,39 @@ import { NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import request from 'supertest';
 import type { INestApplication } from '@nestjs/common';
+import { DEMO_ORG_ID, DEMO_USER_ID } from '../auth/auth.constants.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import type { SharedWorkflow, ShareTokenDto } from './dto/index.js';
 import { WorkflowController } from './workflow.controller.js';
 import { WorkflowService } from './workflow.service.js';
 import { WorkflowShareController } from './workflow-share.controller.js';
+import type { WorkflowAccess } from './workflow-access.js';
 
 /** Стабильные идентификаторы тестовых данных. */
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
 const SHARE_TOKEN = '55555555-5555-4555-8555-555555555555';
 const USER_ID = '33333333-3333-4333-8333-333333333333';
+const ORG_ID = '66666666-6666-4666-8666-666666666666';
 const CREATED_AT = new Date('2024-01-01T00:00:00.000Z');
+
+/** Контекст доступа владельца share-ссылки: пользователь + организация (S2). */
+const ACCESS: WorkflowAccess = { userId: USER_ID, orgId: ORG_ID };
+
+/** Диалект нужен только для рендера условий в SQL (запросы в БД не уходят). */
+const dialect = new PgDialect();
+
+/**
+ * Рендерит условие Drizzle в SQL и параметры.
+ *
+ * @param condition - SQL-условие
+ * @returns текст SQL и значения параметров
+ */
+function render(condition: Parameters<PgDialect['sqlToQuery']>[0]) {
+  return dialect.sqlToQuery(condition);
+}
 
 /** Публичный граф, который отдаёт сервис. */
 const sharedWorkflow: SharedWorkflow = {
@@ -25,23 +45,25 @@ const sharedWorkflow: SharedWorkflow = {
   createdAt: CREATED_AT.toISOString(),
 };
 
-describe('WorkflowService — share (R6.2.1)', () => {
+describe('WorkflowService — share (R6.2.1, v1.0 S2)', () => {
   let service: WorkflowService;
   let updateSet: ReturnType<typeof vi.fn>;
   let updateReturning: ReturnType<typeof vi.fn>;
+  let updateWhere: ReturnType<typeof vi.fn>;
   let selectLimit: ReturnType<typeof vi.fn>;
+  let selectWhere: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     updateReturning = vi.fn(() => Promise.resolve([{ shareToken: SHARE_TOKEN, id: WORKFLOW_ID }]));
-    updateSet = vi.fn(() => ({
-      where: vi.fn(() => ({ returning: updateReturning })),
-    }));
+    updateWhere = vi.fn(() => ({ returning: updateReturning }));
+    updateSet = vi.fn(() => ({ where: updateWhere }));
     selectLimit = vi.fn(() => Promise.resolve([]));
+    selectWhere = vi.fn(() => ({ limit: selectLimit }));
 
     const db = {
       update: vi.fn(() => ({ set: updateSet })),
       select: vi.fn(() => ({
-        from: vi.fn(() => ({ where: vi.fn(() => ({ limit: selectLimit })) })),
+        from: vi.fn(() => ({ where: selectWhere })),
       })),
     };
 
@@ -60,7 +82,7 @@ describe('WorkflowService — share (R6.2.1)', () => {
   });
 
   it('createShareTokenAsync выдаёт токен владельцу и путь ссылки', async () => {
-    const result: ShareTokenDto = await service.createShareTokenAsync(WORKFLOW_ID, USER_ID);
+    const result: ShareTokenDto = await service.createShareTokenAsync(WORKFLOW_ID, ACCESS);
 
     expect(result.shareToken).toBe(SHARE_TOKEN);
     expect(result.shareUrl).toBe(`/workflow/share/${SHARE_TOKEN}`);
@@ -70,16 +92,27 @@ describe('WorkflowService — share (R6.2.1)', () => {
     );
   });
 
+  it('createShareTokenAsync: предикат ограничен владельцем и организацией (S2)', async () => {
+    await service.createShareTokenAsync(WORKFLOW_ID, ACCESS);
+
+    const query = render(updateWhere.mock.calls[0][0] as Parameters<PgDialect['sqlToQuery']>[0]);
+
+    expect(query.sql).toContain('"workflows"."id" =');
+    expect(query.sql).toContain('"workflows"."user_id" =');
+    expect(query.sql).toContain('"workflows"."organization_id" =');
+    expect(query.params).toEqual([WORKFLOW_ID, USER_ID, ORG_ID]);
+  });
+
   it('createShareTokenAsync: чужой или несуществующий workflow → NotFoundException', async () => {
     updateReturning.mockResolvedValue([]);
 
-    await expect(service.createShareTokenAsync(WORKFLOW_ID, USER_ID)).rejects.toThrow(
+    await expect(service.createShareTokenAsync(WORKFLOW_ID, ACCESS)).rejects.toThrow(
       NotFoundException,
     );
   });
 
   it('revokeShareTokenAsync обнуляет share_token', async () => {
-    await expect(service.revokeShareTokenAsync(WORKFLOW_ID, USER_ID)).resolves.toBeUndefined();
+    await expect(service.revokeShareTokenAsync(WORKFLOW_ID, ACCESS)).resolves.toBeUndefined();
 
     expect(updateSet).toHaveBeenCalledWith(
       expect.objectContaining({ shareToken: null }),
@@ -89,7 +122,7 @@ describe('WorkflowService — share (R6.2.1)', () => {
   it('revokeShareTokenAsync: чужой или несуществующий workflow → NotFoundException', async () => {
     updateReturning.mockResolvedValue([]);
 
-    await expect(service.revokeShareTokenAsync(WORKFLOW_ID, USER_ID)).rejects.toThrow(
+    await expect(service.revokeShareTokenAsync(WORKFLOW_ID, ACCESS)).rejects.toThrow(
       NotFoundException,
     );
   });
@@ -112,6 +145,28 @@ describe('WorkflowService — share (R6.2.1)', () => {
     expect(result).not.toHaveProperty('userId');
     expect(result).not.toHaveProperty('shareToken');
     expect(result).not.toHaveProperty('updatedAt');
+  });
+
+  it('findSharedAsync не фильтрует по организации: доступ даёт сам токен (S2)', async () => {
+    selectLimit.mockResolvedValue([
+      {
+        id: WORKFLOW_ID,
+        name: 'Shared graph',
+        nodes: sharedWorkflow.nodes,
+        edges: sharedWorkflow.edges,
+        createdAt: CREATED_AT,
+      },
+    ]);
+
+    await service.findSharedAsync(SHARE_TOKEN);
+
+    const query = render(selectWhere.mock.calls[0][0] as Parameters<PgDialect['sqlToQuery']>[0]);
+
+    // Публичная share-ссылка — capability-доступ: организация не проверяется,
+    // иначе ссылка не работала бы для внешнего получателя (v1.0 S2).
+    expect(query.sql).toContain('"workflows"."share_token" =');
+    expect(query.sql).not.toContain('organization_id');
+    expect(query.params).toEqual([SHARE_TOKEN]);
   });
 
   it('findSharedAsync: неизвестный или отозванный токен → NotFoundException', async () => {
@@ -175,10 +230,10 @@ describe('Share-эндпоинты (R6.2.1)', () => {
       shareToken: SHARE_TOKEN,
       shareUrl: `/workflow/share/${SHARE_TOKEN}`,
     });
-    expect(service.createShareTokenAsync).toHaveBeenCalledWith(
-      WORKFLOW_ID,
-      '00000000-0000-0000-0000-000000000001',
-    );
+    expect(service.createShareTokenAsync).toHaveBeenCalledWith(WORKFLOW_ID, {
+      userId: DEMO_USER_ID,
+      orgId: DEMO_ORG_ID,
+    });
   });
 
   it('POST /workflow/:id/share — 401 без токена при AUTH_DISABLED=false', async () => {

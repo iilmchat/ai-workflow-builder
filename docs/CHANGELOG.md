@@ -19,6 +19,20 @@
 
 ### Added
 
+- **Изоляция workflow по организациям (v1.0.0 S2, DESIGN § 3.1)** ([отчёт](development/reports/v1.0.0/S2-isolation.md)):
+  все выборки и записи workflow/runs/document-templates/sub_workflow ограничены
+  `organization_id` из access-токена. Введён `WorkflowAccess { userId, orgId }`
+  и `toWorkflowAccess(user)` (контроллеры собирают контекст только из токена);
+  предикаты `workflowAccessFilter`/`workflowAccessListFilter`/
+  `workflowOwnerFilter`/`accessibleWorkflowIdsSubquery` дополнены
+  org-условием. Org-scoped: `WorkflowService` (13 методов + участники),
+  `RunsService`/`RunsController`/`RunsHistoryController`/`RunsStreamService`,
+  `DocumentTemplatesService`/Controller и lookup `sub_workflow` (контекст
+  движка получает `rootUserId` + `rootOrgId`). Публичная share-ссылка
+  (`GET /workflow/share/:token`) намеренно остаётся capability без org-фильтра.
+  Фильтр «владелец **или** участник» сохранён — S2 добавляет к нему арендатора,
+  а не заменяет его. Кросс-организационный инвайт участника → 404, список
+  участников — только своя организация. Ограничения — KI-559..564.
 - **Organizations DB & Auth — фундамент мультитенантности (v1.0.0 S1, DESIGN
   § 3.1)** ([отчёт](development/reports/v1.0.0/S1-orgs-db.md)): таблица
   `organizations` (`id` uuid `defaultRandom`, `name` text NOT NULL,
@@ -80,6 +94,14 @@
 
 ### Changed
 
+- **Кросс-организационные объекты → 404 (v1.0.0 S2, DESIGN § 3.1):**
+  `GET /workflow`, `GET/PATCH/DELETE /workflow/:id`, export/share/collaborators,
+  `GET /workflow/:id/runs`, `POST /runs`, `GET /runs/:id*`,
+  `/workflow/:id/document-templates*` и `sub_workflow`-ссылки для workflow
+  другой организации отвечают 404 — так же, как для несуществующего (KI-202,
+  факт существования не раскрывается). Доступ к графу = совпадение организации
+  **и** (владелец | участник); `orgId` берётся только из подписанного токена,
+  через body/query его не подменить.
 - **JWT-контракт: `orgId` обязателен (v1.0.0 S1, DESIGN § 3.1/§ 4):**
   `JwtPayload = { sub, email, orgId }`; `AuthService.loginAsync`/
   `rotateRefreshTokenAsync` берут `orgId` из `users.organization_id`,
@@ -93,6 +115,14 @@
 
 ### Security
 
+- **Изоляция арендаторов на уровне SQL (v1.0.0 S2, DESIGN § 3.1):**
+  `workflows.organization_id` добавлен в каждый предикат доступа к workflow и в
+  подзапрос «доступные workflow» для запусков/истории/шаблонов;
+  `sub_workflow` загружает подграф только в организации корневого запуска.
+  Кросс-организационная строка `workflow_collaborators` (legacy) больше не даёт
+  доступа, а её email не показывается в списке участников — чужой PII не
+  утекает. Публичная share-ссылка остаётся capability-моделью (доступ по
+  токену, без org-фильтра) — это осознанное исключение по постановке S2.
 - **Старые access-JWT без `orgId` отклоняются (v1.0.0 S1, DESIGN § 4):**
   `JwtAuthGuard` после проверки подписи требует непустой `orgId` и отвечает 401
   «Токен устарел, войдите заново…». Действующая refresh-cookie восстанавливает
@@ -131,6 +161,14 @@
 
 ### Documented
 
+- **Ограничения изоляции S2 (v1.0.0):** удаление организации может упасть на
+  FK `workflow_collaborators.invited_by` (KI-559); legacy кросс-организационные
+  участники не используются и не чистятся (KI-560); необязательный
+  `WorkflowAccess` оставляет внутренние пути без фильтра (KI-561); SQL-shape
+  тесты зависят от внутренностей Drizzle (KI-562); совместная работа между
+  организациями недоступна до S5 — все пользователи в личных организациях
+  (KI-563); нет DB-инварианта «организация workflow = организация владельца»
+  (KI-564).
 - **Ограничения keyset-пагинации (v0.16 S1):** `RunSummary.cursor` дублирует
   `nextCursor` (KI-549); `offset` удалён без deprecation-окна — старый клиент
   молча получает первую страницу (KI-550); счётчик «Показано N из M» может

@@ -16,21 +16,30 @@ import type { NodeRunSnapshot } from './dto/index.js';
 import { encodeRunHistoryCursor } from './dto/index.js';
 import { RunsService } from './runs.service.js';
 import { RUNS_INSTANCE_ID } from './runs.worker-options.js';
-import { workflowAccessFilter } from '../workflow/workflow-access.js';
+import {
+  accessibleWorkflowIdsSubquery,
+  workflowAccessFilter,
+  type WorkflowAccess,
+} from '../workflow/workflow-access.js';
 
 /**
- * Оборачивает `workflowAccessFilter` spy-моком с pass-through поведением.
+ * Оборачивает функции доступа spy-моками с pass-through поведением.
  *
- * Нужно, чтобы тест `listRunsAsync` пиннил **роль** доступа (`editor`, R7.6):
- * мок Drizzle SQL не исполняет, поэтому без проверки аргумента регрессия
- * `editor` → `viewer` осталась бы зелёной. Реализация фильтра не подменяется —
- * существующие тесты работают как раньше.
+ * Нужно, чтобы тесты `listRunsAsync`/`createRunAsync`/`getRunRowAsync`
+ * пиннили **аргументы** предикатов доступа: мок Drizzle SQL не исполняет,
+ * поэтому без проверки аргументов регрессия «роль `editor` → `viewer`» или
+ * «организация потерялась по пути» осталась бы зелёной. Реализация не
+ * подменяется — существующие тесты работают как раньше.
  */
 vi.mock('../workflow/workflow-access.js', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../workflow/workflow-access.js')>();
 
-  return { ...actual, workflowAccessFilter: vi.fn(actual.workflowAccessFilter) };
+  return {
+    ...actual,
+    workflowAccessFilter: vi.fn(actual.workflowAccessFilter),
+    accessibleWorkflowIdsSubquery: vi.fn(actual.accessibleWorkflowIdsSubquery),
+  };
 });
 
 /** Стабильные идентификаторы тестовых данных. */
@@ -39,6 +48,12 @@ const RUN_ID = '22222222-2222-4222-8222-222222222222';
 const RUN_ID_2 = '33333333-3333-4333-8333-333333333333';
 /** Пользователь, от имени которого проверяется доступ к истории. */
 const USER_ID = '44444444-4444-4444-8444-444444444444';
+/** Организация-арендатор пользователя (v1.0.0 S2). */
+const ORG_ID = '55555555-5555-4555-8555-555555555555';
+/** Организация, к которой тестовый пользователь не принадлежит (S2). */
+const OTHER_ORG_ID = '66666666-6666-4666-8666-666666666666';
+/** Контекст доступа: пользователь + его организация (v1.0.0 S2). */
+const ACCESS: WorkflowAccess = { userId: USER_ID, orgId: ORG_ID };
 const STARTED_AT = new Date('2024-01-01T00:00:00.000Z');
 /** KI-015: дата создания намеренно отличается от даты старта. */
 const CREATED_AT = new Date('2023-12-31T23:00:00.000Z');
@@ -47,7 +62,7 @@ const baseWorkflow: Workflow = {
   id: WORKFLOW_ID,
   userId: 'user-1',
   // v1.0 S1: организация-арендатор обязательна в схеме.
-  organizationId: '55555555-5555-4555-8555-555555555555',
+  organizationId: ORG_ID,
   name: 'My workflow',
   description: null,
   nodes: [{ id: 'n1', type: 'llm', data: {} }],
@@ -125,6 +140,48 @@ function chain(resolveWith: unknown): Record<string, ReturnType<typeof vi.fn>> {
   link.returning = vi.fn(() => resolveWith);
 
   return proxy;
+}
+
+/**
+ * Ищет bind-параметр `expected` во вложенных чанках SQL-условия Drizzle.
+ *
+ * Мок Drizzle не исполняет и не рендерит SQL в текст, поэтому проверяются
+ * внутренние чанки `SQL`: `eq(column, value)` кладёт значение в
+ * `Param.value`. Так тест доказывает, что `organization_id = access.orgId`
+ * действительно попал в WHERE, а не остался только аргументом фильтра.
+ *
+ * @param sql - SQL-условие (или любой вложенный чанк)
+ * @param expected - значение, которое обязано быть в SQL
+ * @param depth - текущая глубина рекурсии (защита от циклов)
+ * @returns `true`, если значение найдено среди параметров условия
+ */
+function sqlContainsValue(sql: unknown, expected: unknown, depth = 0): boolean {
+  if (depth > 20 || sql === null || typeof sql !== 'object') {
+    return false;
+  }
+
+  const node = sql as { value?: unknown; queryChunks?: unknown[] };
+
+  if ('value' in node && node.value === expected) {
+    return true;
+  }
+
+  return (
+    Array.isArray(node.queryChunks) &&
+    node.queryChunks.some((chunk) => sqlContainsValue(chunk, expected, depth + 1))
+  );
+}
+
+/**
+ * Собирает SQL-условия, переданные в `where` тестовой цепочки Drizzle.
+ *
+ * @param target - цепочка-заглушка Drizzle
+ * @returns аргументы всех вызовов `where`
+ */
+function whereConditions(
+  target: Record<string, ReturnType<typeof vi.fn>>,
+): unknown[] {
+  return target.where.mock.calls.map((call) => call[0] as unknown);
 }
 
 describe('RunsService', () => {
@@ -247,11 +304,40 @@ describe('RunsService', () => {
 
       const result = await service.createRunAsync(
         { workflowId: WORKFLOW_ID },
-        '33333333-3333-4333-8333-333333333333',
+        ACCESS,
       );
 
       expect(result.workflowId).toBe(WORKFLOW_ID);
       expect(queue.add).toHaveBeenCalled();
+    });
+
+    it('v1.0.0 S2: проверка доступа получает организацию из access', async () => {
+      selectChain.limit.mockImplementation(() => [baseWorkflow]);
+
+      await service.createRunAsync({ workflowId: WORKFLOW_ID }, ACCESS);
+
+      // Роль editor — R7.6; access обязан нести orgId, иначе фильтр перестал
+      // бы отсекать workflow другой организации.
+      expect(vi.mocked(workflowAccessFilter)).toHaveBeenCalledWith(
+        expect.anything(),
+        WORKFLOW_ID,
+        ACCESS,
+        'editor',
+      );
+    });
+
+    it('v1.0.0 S2: SQL проверки доступа содержит organization_id арендатора', async () => {
+      selectChain.limit.mockImplementation(() => [baseWorkflow]);
+
+      await service.createRunAsync({ workflowId: WORKFLOW_ID }, ACCESS);
+
+      // Помимо аргумента фильтра проверяем сам WHERE: организация обязана
+      // попасть в SQL-параметр (иначе «изоляция» была бы только в подписи).
+      const conditions = whereConditions(selectChain);
+
+      expect(
+        conditions.some((condition) => sqlContainsValue(condition, ORG_ID)),
+      ).toBe(true);
     });
 
     it('viewer не запускает workflow: фильтр editor не находит строку (R7.6)', async () => {
@@ -260,14 +346,33 @@ describe('RunsService', () => {
       selectChain.limit.mockImplementation(() => []);
 
       await expect(
-        service.createRunAsync(
-          { workflowId: WORKFLOW_ID },
-          '33333333-3333-4333-8333-333333333333',
-        ),
+        service.createRunAsync({ workflowId: WORKFLOW_ID }, ACCESS),
       ).rejects.toThrow(NotFoundException);
 
       expect(db.insert).not.toHaveBeenCalled();
       expect(queue.add).not.toHaveBeenCalled();
+    });
+
+    it('v1.0.0 S2: workflow другой организации — 404 (фильтр вернул пусто)', async () => {
+      selectChain.limit.mockImplementation(() => []);
+
+      const foreignAccess: WorkflowAccess = {
+        userId: USER_ID,
+        orgId: OTHER_ORG_ID,
+      };
+
+      await expect(
+        service.createRunAsync({ workflowId: WORKFLOW_ID }, foreignAccess),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(db.insert).not.toHaveBeenCalled();
+      expect(queue.add).not.toHaveBeenCalled();
+      expect(vi.mocked(workflowAccessFilter)).toHaveBeenCalledWith(
+        expect.anything(),
+        WORKFLOW_ID,
+        foreignAccess,
+        'editor',
+      );
     });
   });
 
@@ -334,11 +439,48 @@ describe('RunsService', () => {
     it('чужой запуск отдаёт 404 и не читает узлы (KI-202)', async () => {
       selectChain.limit.mockImplementation(() => []);
 
-      await expect(
-        service.getRunAsync(RUN_ID, '44444444-4444-4444-8444-444444444444'),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.getRunAsync(RUN_ID, ACCESS)).rejects.toThrow(
+        NotFoundException,
+      );
 
       expect(snapshotMapper.listAsync).not.toHaveBeenCalled();
+    });
+
+    it('v1.0.0 S2: доступ к запуску ищется среди workflow организации', async () => {
+      stubRun();
+
+      await service.getRunAsync(RUN_ID, ACCESS);
+
+      // Подзапрос «доступные workflow» получает orgId: запуск workflow другой
+      // организации в него не попадёт → 404, а не данные чужого арендатора.
+      expect(vi.mocked(accessibleWorkflowIdsSubquery)).toHaveBeenCalledWith(
+        expect.anything(),
+        ACCESS,
+      );
+      // И organization_id действительно оказался в SQL-условии подзапроса.
+      const conditions = whereConditions(selectChain);
+
+      expect(
+        conditions.some((condition) => sqlContainsValue(condition, ORG_ID)),
+      ).toBe(true);
+    });
+
+    it('v1.0.0 S2: запуск другой организации — 404 (mock: пустая выборка)', async () => {
+      selectChain.limit.mockImplementation(() => []);
+
+      const foreignAccess: WorkflowAccess = {
+        userId: USER_ID,
+        orgId: OTHER_ORG_ID,
+      };
+
+      await expect(service.getRunAsync(RUN_ID, foreignAccess)).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expect(vi.mocked(accessibleWorkflowIdsSubquery)).toHaveBeenCalledWith(
+        expect.anything(),
+        foreignAccess,
+      );
     });
   });
 
@@ -356,16 +498,17 @@ describe('RunsService', () => {
       expect(result).toEqual([nodeSnapshot]);
     });
 
-    it('проверяет доступ и передаёт владельца в getRunRowAsync', async () => {
+    it('проверяет доступ и передаёт access в getRunRowAsync', async () => {
       selectChain.limit.mockImplementation(() => [baseRun]);
 
-      await service.listNodeRunsAsync(
-        RUN_ID,
-        '44444444-4444-4444-8444-444444444444',
-      );
+      await service.listNodeRunsAsync(RUN_ID, ACCESS);
 
       // Для чужого запуска фильтр вернул бы пустую строку — 404 (KI-202).
       expect(selectChain.where).toHaveBeenCalled();
+      expect(vi.mocked(accessibleWorkflowIdsSubquery)).toHaveBeenCalledWith(
+        expect.anything(),
+        ACCESS,
+      );
       expect(snapshotMapper.listAsync).toHaveBeenCalledWith(
         RUN_ID,
         baseRun.snapshot,
@@ -376,7 +519,7 @@ describe('RunsService', () => {
       selectChain.limit.mockImplementation(() => []);
 
       await expect(
-        service.listNodeRunsAsync(RUN_ID, '44444444-4444-4444-8444-444444444444'),
+        service.listNodeRunsAsync(RUN_ID, ACCESS),
       ).rejects.toThrow(NotFoundException);
 
       // Доступ проверен до чтения узлов: маппер не вызывался.
@@ -449,7 +592,7 @@ describe('RunsService', () => {
         ],
       );
 
-      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 20);
+      const result = await service.listRunsAsync(WORKFLOW_ID, ACCESS, 20);
 
       expect(result.total).toBe(2);
       expect(result.nextCursor).toBeNull();
@@ -491,12 +634,20 @@ describe('RunsService', () => {
       // (viewer/чужой → пустая выборка). SQL в моке не исполняется, поэтому
       // роль пиннится по аргументу вызова: регрессия `editor` → `viewer` иначе
       // осталась бы зелёной, а проверка прав жила бы только в gitignored smoke.
+      // v1.0.0 S2: access несёт orgId — фильтр ограничивает выборку арендатором.
       expect(vi.mocked(workflowAccessFilter)).toHaveBeenCalledWith(
         expect.anything(),
         WORKFLOW_ID,
-        USER_ID,
+        ACCESS,
         'editor',
       );
+
+      // ...и organization_id реально попал в SQL проверки доступа.
+      expect(
+        whereConditions(chains[0]).some((condition) =>
+          sqlContainsValue(condition, ORG_ID),
+        ),
+      ).toBe(true);
       // 2. total — отдельный count(*) по workflow_runs (chains[1] — EXISTS-
       //    подзапрос участника внутри фильтра доступа).
       expect(chains[2].from).toHaveBeenCalledWith(workflowRuns);
@@ -536,7 +687,7 @@ describe('RunsService', () => {
         [],
       );
 
-      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 2);
+      const result = await service.listRunsAsync(WORKFLOW_ID, ACCESS, 2);
 
       expect(result.runs).toHaveLength(2);
       expect(result.nextCursor).toBeNull();
@@ -580,7 +731,7 @@ describe('RunsService', () => {
         [],
       );
 
-      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 2);
+      const result = await service.listRunsAsync(WORKFLOW_ID, ACCESS, 2);
 
       expect(result.runs).toHaveLength(2);
       // Курсор сохраняет µs-точность (иначе tie-break по id мог бы пропускать
@@ -605,11 +756,35 @@ describe('RunsService', () => {
       stubSelects([]);
 
       await expect(
-        service.listRunsAsync(WORKFLOW_ID, USER_ID, 20),
+        service.listRunsAsync(WORKFLOW_ID, ACCESS, 20),
       ).rejects.toThrow(NotFoundException);
 
       // Только сборка условия доступа: главный SELECT + EXISTS-подзапрос.
       // Историю не читаем: count/страница/node_runs не запрашивались.
+      expect(db.select).toHaveBeenCalledTimes(2);
+      expect(snapshotMapper.listAsync).not.toHaveBeenCalled();
+    });
+
+    it('v1.0.0 S2: workflow другой организации — 404 и история не читается', async () => {
+      // Фильтр организации вернул пусто — workflow чужого арендатора невидим.
+      stubSelects([]);
+      const foreignAccess: WorkflowAccess = {
+        userId: USER_ID,
+        orgId: OTHER_ORG_ID,
+      };
+
+      await expect(
+        service.listRunsAsync(WORKFLOW_ID, foreignAccess, 20),
+      ).rejects.toThrow(NotFoundException);
+
+      // Организация доехала до фильтра доступа: регрессия «access без orgId»
+      // снова открыла бы чужую историю.
+      expect(vi.mocked(workflowAccessFilter)).toHaveBeenCalledWith(
+        expect.anything(),
+        WORKFLOW_ID,
+        foreignAccess,
+        'editor',
+      );
       expect(db.select).toHaveBeenCalledTimes(2);
       expect(snapshotMapper.listAsync).not.toHaveBeenCalled();
     });
@@ -619,7 +794,7 @@ describe('RunsService', () => {
 
       const result = await service.listRunsAsync(
         WORKFLOW_ID,
-        USER_ID,
+        ACCESS,
         20,
         { createdAt: STARTED_AT.toISOString(), id: RUN_ID_2 },
       );
@@ -636,7 +811,7 @@ describe('RunsService', () => {
       stubSelects([{ id: WORKFLOW_ID }], [{ total: 2 }], []);
 
       await expect(
-        service.listRunsAsync(WORKFLOW_ID, USER_ID, 20, {
+        service.listRunsAsync(WORKFLOW_ID, ACCESS, 20, {
           createdAt: '2026-13-40T00:00:00.000000Z',
           id: RUN_ID,
         }),
@@ -663,7 +838,7 @@ describe('RunsService', () => {
         [],
       );
 
-      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 20);
+      const result = await service.listRunsAsync(WORKFLOW_ID, ACCESS, 20);
 
       expect(result.runs[0]).toMatchObject({
         costUsd: 0,
@@ -690,7 +865,7 @@ describe('RunsService', () => {
 
       // Контроллер валидирует значения Zod'ом, но сервис — вторая граница:
       // огромный limit вытянул бы всю историю.
-      await service.listRunsAsync(WORKFLOW_ID, USER_ID, 10_000);
+      await service.listRunsAsync(WORKFLOW_ID, ACCESS, 10_000);
 
       expect(chains[3].limit).toHaveBeenCalledWith(101);
     });
@@ -713,7 +888,7 @@ describe('RunsService', () => {
         [],
       );
 
-      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 20);
+      const result = await service.listRunsAsync(WORKFLOW_ID, ACCESS, 20);
 
       expect(result.runs[0].durationMs).toBe(0);
     });

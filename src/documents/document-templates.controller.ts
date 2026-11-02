@@ -19,6 +19,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.js';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
+import { toWorkflowAccess } from '../workflow/workflow-access.js';
 import { DOCUMENT_TEMPLATE_MAX_BYTES } from './document-template.constants.js';
 import { DocumentTemplatesService } from './document-templates.service.js';
 import { DOCX_MIME_TYPE } from './document.service.js';
@@ -52,7 +53,9 @@ type TemplateParamDto = z.infer<typeof TemplateParamSchema>;
  * Маршруты — под `/workflow/:id/document-templates`, поэтому права
  * проверяются тем же `workflowAccessFilter`, что и остальной workflow API
  * (в сервисе): `viewer` — чтение, `editor` — загрузка/удаление. Чужой
- * workflow даёт 404, `viewer` на изменяющей ручке — 403.
+ * workflow даёт 404, `viewer` на изменяющей ручке — 403. С v1.0.0 S2 в сервис
+ * уходит `{userId, orgId}` (`toWorkflowAccess`), поэтому workflow другой
+ * организации тоже 404 — доступ ограничен арендатором.
  *
  * **Multer.** `FileInterceptor` из `@nestjs/platform-express` использует memory
  * storage, поэтому `file.buffer` доступен без временных файлов (DESIGN § 3.1.5).
@@ -75,16 +78,17 @@ export class DocumentTemplatesController {
    * `GET /workflow/:id/document-templates` — список шаблонов workflow.
    *
    * @param params - path-параметр `id` (uuid workflow)
-   * @param user - пользователь из access-токена
+   * @param user - пользователь и его организация из access-токена (S2)
    * @returns шаблоны без содержимого, сначала новые
-   * @throws NotFoundException если workflow не существует или недоступен
+   * @throws NotFoundException если workflow не существует, недоступен или
+   *   принадлежит другой организации
    */
   @Get()
   async listAsync(
     @Param(ZodValidationPipe.create(WorkflowParamSchema)) params: WorkflowParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<DocumentTemplateSummary[]> {
-    return this.templates.listAsync(params.id, user.sub);
+    return this.templates.listAsync(params.id, toWorkflowAccess(user));
   }
 
   /**
@@ -96,7 +100,7 @@ export class DocumentTemplatesController {
    * @param params - path-параметр `id` (uuid workflow)
    * @param file - multipart-поле `file` (memory storage)
    * @param body - поле `name` (необязательно), валидированное Zod
-   * @param user - пользователь из access-токена
+   * @param user - пользователь и его организация из access-токена (S2)
    * @returns созданный шаблон со статусом 201
    * @throws BadRequestException если файла нет или шаблон невалиден
    * @throws PayloadTooLargeException если файл больше лимита (413)
@@ -120,14 +124,20 @@ export class DocumentTemplatesController {
       throw new BadRequestException('Файл шаблона обязателен (поле file)');
     }
 
-    return this.templates.createAsync(params.id, user.sub, file, body);
+    return this.templates.createAsync(
+      params.id,
+      toWorkflowAccess(user),
+      file,
+      body,
+    );
   }
 
   /**
    * `GET /workflow/:id/document-templates/:templateId/file` — скачивание.
    *
    * @param params - path-параметры `id` и `templateId` (uuid)
-   * @param user - пользователь из access-токена (права viewer)
+   * @param user - пользователь и его организация из access-токена (права
+   *   viewer; S2: шаблоны другой организации → 404)
    * @returns поток DOCX с `Content-Type` и именем файла
    * @throws NotFoundException если workflow/шаблон не найдены
    */
@@ -139,7 +149,7 @@ export class DocumentTemplatesController {
     const file = await this.templates.getFileAsync(
       params.templateId,
       params.id,
-      user.sub,
+      toWorkflowAccess(user),
     );
 
     return new StreamableFile(file.content, {
@@ -155,7 +165,8 @@ export class DocumentTemplatesController {
    * `DELETE /workflow/:id/document-templates/:templateId` — удаление шаблона.
    *
    * @param params - path-параметры `id` и `templateId` (uuid)
-   * @param user - пользователь из access-токена (права editor)
+   * @param user - пользователь и его организация из access-токена (права
+   *   editor; S2: шаблоны другой организации → 404)
    * @returns пустой ответ со статусом 204
    * @throws NotFoundException если workflow/шаблон не найдены
    * @throws ForbiddenException если доступ только на чтение (`viewer`)
@@ -166,6 +177,10 @@ export class DocumentTemplatesController {
     @Param(ZodValidationPipe.create(TemplateParamSchema)) params: TemplateParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<void> {
-    await this.templates.deleteAsync(params.templateId, params.id, user.sub);
+    await this.templates.deleteAsync(
+      params.templateId,
+      params.id,
+      toWorkflowAccess(user),
+    );
   }
 }

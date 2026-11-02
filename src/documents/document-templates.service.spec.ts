@@ -7,8 +7,12 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import PizZip from 'pizzip';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DRIZZLE, type Database } from '../db/db.module.js';
+import {
+  workflowAccessFilter,
+  type WorkflowAccess,
+} from '../workflow/workflow-access.js';
 import {
   DocumentTemplateInvalidException,
   DocumentTemplateNotFoundException,
@@ -17,6 +21,20 @@ import { DocumentTemplateService } from './document-template.service.js';
 import { DocumentTemplatesService } from './document-templates.service.js';
 import { DOCX_MIME_TYPE } from './document.service.js';
 import type { DocumentTemplateSummary } from './dto/document-template.dto.js';
+
+/**
+ * Оборачивает `workflowAccessFilter` spy-моком с pass-through поведением.
+ *
+ * Мок Drizzle SQL не исполняет, поэтому без проверки аргументов регрессия
+ * «организация потерялась по пути» осталась бы зелёной. Реализация фильтра не
+ * подменяется: существующие тесты работают как раньше.
+ */
+vi.mock('../workflow/workflow-access.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../workflow/workflow-access.js')>();
+
+  return { ...actual, workflowAccessFilter: vi.fn(actual.workflowAccessFilter) };
+});
 
 /**
  * CRUD-сервис DOCX-шаблонов (v0.11 S3, DESIGN § 3.1.5).
@@ -31,6 +49,12 @@ import type { DocumentTemplateSummary } from './dto/document-template.dto.js';
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
 const TEMPLATE_ID = '22222222-2222-4222-8222-222222222222';
 const USER_ID = '33333333-3333-4333-8333-333333333333';
+/** Организация-арендатор пользователя (v1.0.0 S2). */
+const ORG_ID = '44444444-4444-4444-8444-444444444444';
+/** Организация, к которой тестовый пользователь не принадлежит (S2). */
+const OTHER_ORG_ID = '55555555-5555-4555-8555-555555555555';
+/** Контекст доступа: пользователь + его организация (v1.0.0 S2). */
+const ACCESS: WorkflowAccess = { userId: USER_ID, orgId: ORG_ID };
 const CREATED_AT = new Date('2026-10-19T10:00:00.000Z');
 
 /**
@@ -116,16 +140,20 @@ function upload(
  *
  * Каждый `await` на цепочке отдаёт следующий массив строк; `.returning()`
  * разрешается сразу массивом. Значения INSERT перехватываются для проверки
- * `sha256`/`bytes`/`placeholders`.
+ * `sha256`/`bytes`/`placeholders`, SQL-условия `where` — для проверки изоляции
+ * арендатора (v1.0.0 S2).
  *
- * @returns клиент, функция пополнения очереди и последние значения INSERT
+ * @returns клиент, функция пополнения очереди, последние значения INSERT и
+ *   собранные SQL-условия
  */
 function createDbMock(): {
   db: Database;
   enqueue: (...results: unknown[][]) => void;
   insertedValues: () => unknown;
+  whereConditions: () => unknown[];
 } {
   const queue: unknown[][] = [];
+  const whereArgs: unknown[] = [];
   let captured: unknown;
 
   /**
@@ -151,9 +179,15 @@ function createDbMock(): {
       },
     });
 
-    for (const method of ['from', 'where', 'orderBy', 'limit', 'offset']) {
+    for (const method of ['from', 'orderBy', 'limit', 'offset']) {
       link[method] = () => proxy;
     }
+
+    link.where = (condition: unknown) => {
+      whereArgs.push(condition);
+
+      return proxy;
+    };
 
     link.values = (values: unknown) => {
       captured = values;
@@ -178,7 +212,38 @@ function createDbMock(): {
       queue.push(...results);
     },
     insertedValues: () => captured,
+    whereConditions: () => whereArgs,
   };
+}
+
+/**
+ * Ищет bind-параметр `expected` во вложенных чанках SQL-условия Drizzle.
+ *
+ * Мок Drizzle не исполняет и не рендерит SQL в текст, поэтому проверяются
+ * внутренние чанки `SQL`: `eq(column, value)` кладёт значение в
+ * `Param.value`. Так тест доказывает, что `organization_id = access.orgId`
+ * действительно попал в WHERE, а не остался только аргументом фильтра.
+ *
+ * @param sql - SQL-условие (или любой вложенный чанк)
+ * @param expected - значение, которое обязано быть в SQL
+ * @param depth - текущая глубина рекурсии (защита от циклов)
+ * @returns `true`, если значение найдено среди параметров условия
+ */
+function sqlContainsValue(sql: unknown, expected: unknown, depth = 0): boolean {
+  if (depth > 20 || sql === null || typeof sql !== 'object') {
+    return false;
+  }
+
+  const node = sql as { value?: unknown; queryChunks?: unknown[] };
+
+  if ('value' in node && node.value === expected) {
+    return true;
+  }
+
+  return (
+    Array.isArray(node.queryChunks) &&
+    node.queryChunks.some((chunk) => sqlContainsValue(chunk, expected, depth + 1))
+  );
 }
 
 /**
@@ -193,8 +258,9 @@ async function createHarness(
   service: DocumentTemplatesService;
   enqueue: (...results: unknown[][]) => void;
   insertedValues: () => unknown;
+  whereConditions: () => unknown[];
 }> {
-  const { db, enqueue, insertedValues } = createDbMock();
+  const { db, enqueue, insertedValues, whereConditions } = createDbMock();
 
   const moduleRef = await Test.createTestingModule({
     providers: [
@@ -208,7 +274,12 @@ async function createHarness(
     ],
   }).compile();
 
-  return { service: moduleRef.get(DocumentTemplatesService), enqueue, insertedValues };
+  return {
+    service: moduleRef.get(DocumentTemplatesService),
+    enqueue,
+    insertedValues,
+    whereConditions,
+  };
 }
 
 describe('DocumentTemplatesService: загрузка шаблона (S3)', () => {
@@ -218,7 +289,7 @@ describe('DocumentTemplatesService: загрузка шаблона (S3)', () =>
     enqueue([{ id: WORKFLOW_ID }], [{ id: WORKFLOW_ID }], [], [createdRow]);
     const file = upload();
 
-    const summary = await service.createAsync(WORKFLOW_ID, USER_ID, file, {});
+    const summary = await service.createAsync(WORKFLOW_ID, ACCESS, file, {});
 
     expect(summary).toEqual(createdSummary);
     expect(insertedValues()).toMatchObject({
@@ -237,7 +308,7 @@ describe('DocumentTemplatesService: загрузка шаблона (S3)', () =>
     const { service, enqueue, insertedValues } = await createHarness();
     enqueue([{ id: WORKFLOW_ID }], [{ id: WORKFLOW_ID }], [], [createdRow]);
 
-    await service.createAsync(WORKFLOW_ID, USER_ID, upload(), {
+    await service.createAsync(WORKFLOW_ID, ACCESS, upload(), {
       name: 'Договор 2026',
     });
 
@@ -249,7 +320,7 @@ describe('DocumentTemplatesService: загрузка шаблона (S3)', () =>
     enqueue([]);
 
     await expect(
-      service.createAsync(WORKFLOW_ID, USER_ID, upload(), {}),
+      service.createAsync(WORKFLOW_ID, ACCESS, upload(), {}),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(insertedValues()).toBeUndefined();
   });
@@ -259,7 +330,7 @@ describe('DocumentTemplatesService: загрузка шаблона (S3)', () =>
     enqueue([{ id: WORKFLOW_ID }], []);
 
     await expect(
-      service.createAsync(WORKFLOW_ID, USER_ID, upload(), {}),
+      service.createAsync(WORKFLOW_ID, ACCESS, upload(), {}),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
@@ -270,7 +341,7 @@ describe('DocumentTemplatesService: загрузка шаблона (S3)', () =>
     enqueue([{ id: WORKFLOW_ID }], [{ id: WORKFLOW_ID }]);
 
     await expect(
-      service.createAsync(WORKFLOW_ID, USER_ID, upload(Buffer.alloc(2_048, 0x41)), {}),
+      service.createAsync(WORKFLOW_ID, ACCESS, upload(Buffer.alloc(2_048, 0x41)), {}),
     ).rejects.toBeInstanceOf(PayloadTooLargeException);
   });
 
@@ -281,7 +352,7 @@ describe('DocumentTemplatesService: загрузка шаблона (S3)', () =>
     await expect(
       service.createAsync(
         WORKFLOW_ID,
-        USER_ID,
+        ACCESS,
         upload(Buffer.from('это не zip'), 'contract.docx'),
         {},
       ),
@@ -297,7 +368,7 @@ describe('DocumentTemplatesService: загрузка шаблона (S3)', () =>
     await expect(
       service.createAsync(
         WORKFLOW_ID,
-        USER_ID,
+        ACCESS,
         upload(makeDocx(), 'contract.docm'),
         {},
       ),
@@ -311,7 +382,7 @@ describe('DocumentTemplatesService: загрузка шаблона (S3)', () =>
     await expect(
       service.createAsync(
         WORKFLOW_ID,
-        USER_ID,
+        ACCESS,
         upload(makeDocx(), 'contract.docx', 'text/plain'),
         {},
       ),
@@ -324,7 +395,7 @@ describe('DocumentTemplatesService: загрузка шаблона (S3)', () =>
     const longName = `${'я'.repeat(130)}.docx`;
 
     await expect(
-      service.createAsync(WORKFLOW_ID, USER_ID, upload(makeDocx(), longName), {}),
+      service.createAsync(WORKFLOW_ID, ACCESS, upload(makeDocx(), longName), {}),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -337,7 +408,7 @@ describe('DocumentTemplatesService: загрузка шаблона (S3)', () =>
     ).join('');
 
     await expect(
-      service.createAsync(WORKFLOW_ID, USER_ID, upload(makeDocx(placeholders)), {}),
+      service.createAsync(WORKFLOW_ID, ACCESS, upload(makeDocx(placeholders)), {}),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -352,8 +423,59 @@ describe('DocumentTemplatesService: загрузка шаблона (S3)', () =>
     );
 
     await expect(
-      service.createAsync(WORKFLOW_ID, USER_ID, upload(), {}),
+      service.createAsync(WORKFLOW_ID, ACCESS, upload(), {}),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('v1.0.0 S2: проверка прав получает orgId и включает его в SQL', async () => {
+    const { service, enqueue, whereConditions, insertedValues } =
+      await createHarness();
+    enqueue([{ id: WORKFLOW_ID }], [{ id: WORKFLOW_ID }], [], [createdRow]);
+
+    await service.createAsync(WORKFLOW_ID, ACCESS, upload(), {});
+
+    // viewer- и editor-проверки обязаны получить access целиком, а не userId.
+    expect(vi.mocked(workflowAccessFilter)).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKFLOW_ID,
+      ACCESS,
+      'viewer',
+    );
+    expect(vi.mocked(workflowAccessFilter)).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKFLOW_ID,
+      ACCESS,
+      'editor',
+    );
+    // И organization_id = access.orgId действительно попал в SQL-условие.
+    expect(
+      whereConditions().some((condition) =>
+        sqlContainsValue(condition, ORG_ID),
+      ),
+    ).toBe(true);
+    // Автор шаблона — пользователь из access, а не сырой userId аргумента.
+    expect(insertedValues()).toMatchObject({ createdBy: USER_ID });
+  });
+
+  it('v1.0.0 S2: workflow другой организации — 404, шаблон не сохраняется', async () => {
+    const { service, enqueue, insertedValues } = await createHarness();
+    const foreignAccess: WorkflowAccess = {
+      userId: USER_ID,
+      orgId: OTHER_ORG_ID,
+    };
+    enqueue([]);
+
+    await expect(
+      service.createAsync(WORKFLOW_ID, foreignAccess, upload(), {}),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(insertedValues()).toBeUndefined();
+    expect(vi.mocked(workflowAccessFilter)).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKFLOW_ID,
+      foreignAccess,
+      'viewer',
+    );
   });
 });
 
@@ -362,7 +484,7 @@ describe('DocumentTemplatesService: список, файл, удаление (S3
     const { service, enqueue } = await createHarness();
     enqueue([{ id: WORKFLOW_ID }], [createdRow]);
 
-    const summaries = await service.listAsync(WORKFLOW_ID, USER_ID);
+    const summaries = await service.listAsync(WORKFLOW_ID, ACCESS);
 
     expect(summaries).toEqual([createdSummary]);
     expect(summaries[0]).not.toHaveProperty('content');
@@ -372,8 +494,69 @@ describe('DocumentTemplatesService: список, файл, удаление (S3
     const { service, enqueue } = await createHarness();
     enqueue([]);
 
-    await expect(service.listAsync(WORKFLOW_ID, USER_ID)).rejects.toBeInstanceOf(
+    await expect(service.listAsync(WORKFLOW_ID, ACCESS)).rejects.toBeInstanceOf(
       NotFoundException,
+    );
+  });
+
+  it('v1.0.0 S2: listAsync фильтрует по организации (SQL содержит organization_id)', async () => {
+    const { service, enqueue, whereConditions } = await createHarness();
+    enqueue([{ id: WORKFLOW_ID }], [createdRow]);
+
+    await service.listAsync(WORKFLOW_ID, ACCESS);
+
+    expect(vi.mocked(workflowAccessFilter)).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKFLOW_ID,
+      ACCESS,
+      'viewer',
+    );
+    expect(
+      whereConditions().some((condition) =>
+        sqlContainsValue(condition, ORG_ID),
+      ),
+    ).toBe(true);
+  });
+
+  it('v1.0.0 S2: listAsync workflow другой организации — 404', async () => {
+    const { service, enqueue, whereConditions } = await createHarness();
+    const foreignAccess: WorkflowAccess = {
+      userId: USER_ID,
+      orgId: OTHER_ORG_ID,
+    };
+    enqueue([]);
+
+    await expect(
+      service.listAsync(WORKFLOW_ID, foreignAccess),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    // В SQL ушла именно организация из access, а не родная организация
+    // пользователя: подмена orgId не должна давать доступ.
+    expect(
+      whereConditions().some((condition) =>
+        sqlContainsValue(condition, OTHER_ORG_ID),
+      ),
+    ).toBe(true);
+  });
+
+  it('v1.0.0 S2: getFileAsync другого организации — 404, файл не читается', async () => {
+    const { service, enqueue } = await createHarness();
+    const foreignAccess: WorkflowAccess = {
+      userId: USER_ID,
+      orgId: OTHER_ORG_ID,
+    };
+    // Права viewer не подтверждены — второго SELECT (файла) быть не должно.
+    enqueue([]);
+
+    await expect(
+      service.getFileAsync(TEMPLATE_ID, WORKFLOW_ID, foreignAccess),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(vi.mocked(workflowAccessFilter)).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKFLOW_ID,
+      foreignAccess,
+      'viewer',
     );
   });
 
@@ -383,7 +566,7 @@ describe('DocumentTemplatesService: список, файл, удаление (S3
       { name: 'contract.docx', content: createdRow.content, bytes: createdRow.bytes },
     ]);
 
-    const file = await service.getFileAsync(TEMPLATE_ID, WORKFLOW_ID, USER_ID);
+    const file = await service.getFileAsync(TEMPLATE_ID, WORKFLOW_ID, ACCESS);
 
     expect(file.name).toBe('contract.docx');
     expect(file.content.equals(createdRow.content)).toBe(true);
@@ -395,7 +578,7 @@ describe('DocumentTemplatesService: список, файл, удаление (S3
     enqueue([{ id: WORKFLOW_ID }], []);
 
     await expect(
-      service.getFileAsync(TEMPLATE_ID, WORKFLOW_ID, USER_ID),
+      service.getFileAsync(TEMPLATE_ID, WORKFLOW_ID, ACCESS),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -404,7 +587,7 @@ describe('DocumentTemplatesService: список, файл, удаление (S3
     enqueue([{ id: WORKFLOW_ID }], [{ id: WORKFLOW_ID }], [{ id: TEMPLATE_ID }]);
 
     await expect(
-      service.deleteAsync(TEMPLATE_ID, WORKFLOW_ID, USER_ID),
+      service.deleteAsync(TEMPLATE_ID, WORKFLOW_ID, ACCESS),
     ).resolves.toBeUndefined();
   });
 
@@ -413,7 +596,7 @@ describe('DocumentTemplatesService: список, файл, удаление (S3
     enqueue([{ id: WORKFLOW_ID }], [{ id: WORKFLOW_ID }], []);
 
     await expect(
-      service.deleteAsync(TEMPLATE_ID, WORKFLOW_ID, USER_ID),
+      service.deleteAsync(TEMPLATE_ID, WORKFLOW_ID, ACCESS),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -422,8 +605,28 @@ describe('DocumentTemplatesService: список, файл, удаление (S3
     enqueue([{ id: WORKFLOW_ID }], []);
 
     await expect(
-      service.deleteAsync(TEMPLATE_ID, WORKFLOW_ID, USER_ID),
+      service.deleteAsync(TEMPLATE_ID, WORKFLOW_ID, ACCESS),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('v1.0.0 S2: deleteAsync другого организации — 404, шаблон не удаляется', async () => {
+    const { service, enqueue } = await createHarness();
+    const foreignAccess: WorkflowAccess = {
+      userId: USER_ID,
+      orgId: OTHER_ORG_ID,
+    };
+    enqueue([]);
+
+    await expect(
+      service.deleteAsync(TEMPLATE_ID, WORKFLOW_ID, foreignAccess),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(vi.mocked(workflowAccessFilter)).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKFLOW_ID,
+      foreignAccess,
+      'viewer',
+    );
   });
 });
 

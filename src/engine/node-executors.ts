@@ -2974,14 +2974,39 @@ export interface SubWorkflowRecord {
 }
 
 /**
+ * Контекст доступа к подграфу узла `sub_workflow` (v1.0.0 S2).
+ *
+ * Владелец корневого запуска и его организация-арендатор: подграф обязан
+ * принадлежать **той же** организации, что и родительский workflow, иначе
+ * ссылка на uuid чужого графа раскрыла бы межтенантные данные. Структурно
+ * совпадает с `WorkflowAccess` из `src/workflow/workflow-access.ts`, но
+ * объявлен отдельно: executor остаётся свободным от Nest-DI и БД. Совместимость
+ * с `WorkflowService.findOneAsync` обеспечивает структурная типизация.
+ */
+export interface SubWorkflowAccess {
+  /** uuid пользователя — владельца корневого запуска. */
+  readonly userId: string;
+  /** uuid организации-арендатора, в которой создан корневой workflow. */
+  readonly orgId: string;
+}
+
+/**
  * Источник workflow для узла `sub_workflow`.
  *
  * Объявлен как интерфейс, а не как `WorkflowService`: executor остаётся
  * свободным от Nest-DI и БД (его тестируют без `TestingModule`), а
  * `ExecutionEngineService` передаёт в контекст настоящий сервис.
+ *
+ * `access` необязателен на уровне интерфейса, потому что его реализует
+ * `WorkflowService.findOneAsync` (внутренние вызовы по одному id). Сам узел
+ * всегда передаёт контекст доступа — выборка без фильтра по владельцу и
+ * организации здесь невозможна.
  */
 export interface SubWorkflowLookup {
-  findOneAsync(id: string, userId?: string): Promise<SubWorkflowRecord | null>;
+  findOneAsync(
+    id: string,
+    access?: SubWorkflowAccess,
+  ): Promise<SubWorkflowRecord | null>;
 }
 
 /**
@@ -3003,6 +3028,14 @@ export interface SubWorkflowContext {
    * владельцу» раскрыла бы чужой workflow.
    */
   readonly rootUserId: string | null;
+  /**
+   * Организация-арендатор, в которой создан корневой workflow (v1.0.0 S2).
+   *
+   * `null` — организацию определить не удалось; в этом случае любой подграф
+   * считается недоступным (404), как и при неизвестном владельце: изоляция
+   * арендаторов не должна зависеть от того, удалось ли прочитать join-строку.
+   */
+  readonly rootOrgId: string | null;
   /** Workflow, уже посещённые в текущей ветке (защита от рекурсии). */
   readonly visitedWorkflows: ReadonlySet<string>;
   /** Текущая глубина вложенности (0 — корневой граф). */
@@ -3055,18 +3088,19 @@ export class SubWorkflowDepthException extends Error {
  * 1. `data` проходит Zod-схему (`parseNodeData`);
  * 2. `workflowId` уже встречался в этой ветке → {@link SubWorkflowRecursionException};
  * 3. глубина достигла {@link SUB_WORKFLOW_MAX_DEPTH} → {@link SubWorkflowDepthException};
- * 4. владелец корневого запуска неизвестен или подграф ему не принадлежит →
- *    `NotFoundException` (404): чужой workflow неотличим от несуществующего,
- *    существование не раскрывается (как в `WorkflowService.findOneAsync`).
+ * 4. владелец или организация корневого запуска неизвестны, либо подграф не
+ *    принадлежит этой паре → `NotFoundException` (404): чужой workflow неотличим
+ *    от несуществующего, существование не раскрывается (как в
+ *    `WorkflowService.findOneAsync`).
  *
  * @param data - сырые `data` узла из jsonb-графа
- * @param context - контекст ветки: доступ к workflow, владелец, стек и глубина
+ * @param context - контекст ветки: доступ к workflow, владелец и организация, стек и глубина
  * @returns подграф и его метаданные
  * @throws NodeDataValidationException если `data` не соответствуют схеме
  *   (в том числе пустой/не-uuid `workflowId`)
  * @throws SubWorkflowRecursionException при циклической ссылке
  * @throws SubWorkflowDepthException при превышении глубины вложенности
- * @throws NotFoundException если workflow не найден или принадлежит другому владельцу
+ * @throws NotFoundException если workflow не найден, чужой или из другой организации
  */
 export async function executeSubWorkflowNode(
   data: unknown,
@@ -3082,16 +3116,17 @@ export async function executeSubWorkflowNode(
     throw new SubWorkflowDepthException(context.depth);
   }
 
-  // Владельца нет — считаем подграф недоступным: `findOneAsync` без фильтра по
-  // владельцу вернул бы чужой workflow (RULES 5.1 — доступ только свои).
-  if (context.rootUserId === null) {
+  // Владельца или организацию определить не удалось — считаем подграф
+  // недоступным: `findOneAsync` без фильтра вернул бы чужой workflow или
+  // workflow другой организации (RULES 5.1 — доступ только свои).
+  if (context.rootUserId === null || context.rootOrgId === null) {
     throw new NotFoundException(`Workflow ${parsed.workflowId} не найден`);
   }
 
-  const workflow = await context.lookup.findOneAsync(
-    parsed.workflowId,
-    context.rootUserId,
-  );
+  const workflow = await context.lookup.findOneAsync(parsed.workflowId, {
+    userId: context.rootUserId,
+    orgId: context.rootOrgId,
+  });
 
   // Чужой workflow неотличим от несуществующего: 404, а не 403 (DESIGN § 5,
   // тот же приём, что в `WorkflowService.exportAsync`).

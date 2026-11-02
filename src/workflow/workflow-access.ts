@@ -21,6 +21,39 @@ export type WorkflowAccessRole = 'viewer' | 'editor';
 export type WorkflowAccessRoleWithOwner = 'owner' | WorkflowAccessRole;
 
 /**
+ * Контекст доступа к workflow: пользователь и его организация-арендатор
+ * (v1.0.0 S2, DESIGN V100 § 3.1).
+ *
+ * Введён вместо пары строк `(userId, orgId)` в сигнатурах сервисов: забыть
+ * `orgId` при вызове структурно невозможно, а все предикаты доступа получают
+ * один объект. `orgId` обязателен — изоляция арендаторов (S2) применяется во
+ * **всех** выборках workflow, кроме публичной share-ссылки (доступ по токену).
+ */
+export interface WorkflowAccess {
+  /** uuid пользователя из access-токена (`JwtPayload.sub`). */
+  readonly userId: string;
+  /** uuid организации-арендатора из access-токена (`JwtPayload.orgId`). */
+  readonly orgId: string;
+}
+
+/**
+ * Собирает {@link WorkflowAccess} из payload access-токена.
+ *
+ * Принимает структурный минимум (`sub` + `orgId`), поэтому не тянет
+ * `JwtPayload` в модуль доступа к БД.
+ *
+ * @param user - payload access-токена (`@CurrentUser()`)
+ * @returns контекст доступа для сервисов workflow/runs/documents
+ */
+export function toWorkflowAccess(user: {
+  readonly sub: string;
+  readonly orgId: string;
+}): WorkflowAccess {
+  return { userId: user.sub, orgId: user.orgId };
+}
+
+
+/**
  * Коррелированное `EXISTS` по участнику workflow (R7.6).
  *
  * Подзапрос ссылается на внешнюю таблицу `workflows` (`workflows.id`), поэтому
@@ -57,58 +90,65 @@ export function collaboratorExistsCondition(
 
 /**
  * Собирает WHERE для доступа к workflow по id: владелец **или** участник с
- * достаточной ролью (R7.6).
+ * достаточной ролью (R7.6) **и** workflow принадлежит организации арендатора
+ * (v1.0.0 S2, DESIGN V100 § 3.1).
  *
  * Заменяет прежний `eq(workflows.userId, userId)`: editor и viewer получают
  * доступ к чужому workflow, но с разными правами. Чужой и несуществующий
  * workflow по-прежнему неотличимы — оба дают пустую выборку (404, KI-202).
  *
+ * S2: `workflows.organization_id = access.orgId` — обязательное условие
+ * изоляции. Даже участник, чья строка `workflow_collaborators` осталась от
+ * версии до мультитенантности, не получит доступ к workflow другой организации.
+ *
  * @param db - соединение Drizzle
  * @param workflowId - uuid workflow
- * @param userId - uuid пользователя из access-токена
+ * @param access - пользователь и его организация из access-токена
  * @param minimumRole - минимальная роль участника (по умолчанию `viewer`)
  * @returns условие для Drizzle
  */
 export function workflowAccessFilter(
   db: Database,
   workflowId: string,
-  userId: string,
+  access: WorkflowAccess,
   minimumRole: WorkflowAccessRole = 'viewer',
 ): SQL {
   // `and` возвращает `SQL | undefined` только из-за сигнатуры с optional-
   // аргументами; здесь оба аргумента заданы, поэтому fallback недостижим.
   return (
-    and(eq(workflows.id, workflowId), workflowAccessListFilter(db, userId, minimumRole)) ??
+    and(eq(workflows.id, workflowId), workflowAccessListFilter(db, access, minimumRole)) ??
     eq(workflows.id, workflowId)
   );
 }
 
 /**
  * WHERE «workflow, доступные пользователю» без привязки к конкретному id
- * (KI-398).
+ * (KI-398; изоляция арендатора — v1.0.0 S2).
  *
  * Списочный вариант {@link workflowAccessFilter}: тот же предикат
- * «владелец **или** участник», но без `workflows.id = $1`. Нужен
- * `GET /workflow`, который раньше отдавал только собственные графы, из-за чего
- * collaborative-workflow были видны лишь по прямой ссылке.
+ * «владелец **или** участник», но без `workflows.id = $1`, плюс обязательное
+ * `organization_id = access.orgId`. Нужен `GET /workflow`: пользователь видит
+ * только графы своей организации, к которым у него есть доступ.
  *
  * @param db - соединение Drizzle
- * @param userId - uuid пользователя из access-токена
+ * @param access - пользователь и его организация из access-токена
  * @param minimumRole - минимальная роль участника (по умолчанию `viewer`)
  * @returns условие для Drizzle
  */
 export function workflowAccessListFilter(
   db: Database,
-  userId: string,
+  access: WorkflowAccess,
   minimumRole: WorkflowAccessRole = 'viewer',
 ): SQL {
-  const owner = eq(workflows.userId, userId);
-  const collaborator = collaboratorExistsCondition(db, userId, minimumRole);
+  const tenant = eq(workflows.organizationId, access.orgId);
+  const owner = eq(workflows.userId, access.userId);
+  const collaborator = collaboratorExistsCondition(db, access.userId, minimumRole);
 
-  // `or` возвращает `SQL | undefined` только из-за optional-сигнатуры; оба
-  // аргумента заданы, поэтому fallback недостижим.
-  return or(owner, collaborator) ?? owner;
+  // `or`/`and` возвращают `SQL | undefined` только из-за optional-сигнатуры;
+  // здесь все аргументы заданы, поэтому fallback недостижим.
+  return and(tenant, or(owner, collaborator) ?? owner) ?? tenant;
 }
+
 
 /**
  * Проекция роли пользователя для элемента списка workflow (KI-398).
@@ -142,38 +182,55 @@ export function workflowAccessRoleExpression(
 }
 
 /**
- * WHERE только для владельца workflow (R7.6).
+ * WHERE только для владельца workflow (R7.6) **и** его организации
+ * (v1.0.0 S2).
  *
  * Удаление workflow, share-ссылка и управление участниками остаются
  * исключительно у владельца: участник с ролью `editor` эти операции не
- * получает (DESIGN v0.9 § 3.6).
+ * получает (DESIGN v0.9 § 3.6). `organization_id = access.orgId` — страховка
+ * изоляции арендаторов: чужой организации операция не видна.
  *
  * @param workflowId - uuid workflow
- * @param userId - uuid пользователя из access-токена
+ * @param access - пользователь и его организация из access-токена
  * @returns условие для Drizzle
  */
-export function workflowOwnerFilter(workflowId: string, userId: string): SQL {
-  return and(eq(workflows.id, workflowId), eq(workflows.userId, userId)) ?? eq(workflows.id, workflowId);
+export function workflowOwnerFilter(
+  workflowId: string,
+  access: WorkflowAccess,
+): SQL {
+  return (
+    and(
+      eq(workflows.id, workflowId),
+      eq(workflows.userId, access.userId),
+      eq(workflows.organizationId, access.orgId),
+    ) ?? eq(workflows.id, workflowId)
+  );
 }
 
 /**
  * Подзапрос «workflow, доступные пользователю» — владельцем или участником
- * (R7.6).
+ * (R7.6), только в рамках его организации (v1.0.0 S2).
  *
  * Нужен там, где фильтр строится не по `workflows.id`, а по связанной таблице
  * (`workflow_runs.workflow_id`): запуск виден и участнику, который его
- * запустил, иначе SSE-поток editor'а отвечал бы 404.
+ * запустил, иначе SSE-поток editor'а отвечал бы 404. Условие по
+ * `organization_id` не даёт получить запуск workflow другой организации даже
+ * при знании его uuid.
  *
  * @param db - соединение Drizzle
- * @param userId - uuid пользователя из access-токена
+ * @param access - пользователь и его организация из access-токена
  * @returns подзапрос `SELECT id FROM workflows WHERE ...` для `inArray`
  */
-export function accessibleWorkflowIdsSubquery(db: Database, userId: string): SQLWrapper {
-  const owner = eq(workflows.userId, userId);
-  const collaborator = collaboratorExistsCondition(db, userId, 'viewer');
+export function accessibleWorkflowIdsSubquery(
+  db: Database,
+  access: WorkflowAccess,
+): SQLWrapper {
+  const tenant = eq(workflows.organizationId, access.orgId);
+  const owner = eq(workflows.userId, access.userId);
+  const collaborator = collaboratorExistsCondition(db, access.userId, 'viewer');
 
   return db
     .select({ id: workflows.id })
     .from(workflows)
-    .where(or(owner, collaborator) ?? owner);
+    .where(and(tenant, or(owner, collaborator) ?? owner) ?? tenant);
 }

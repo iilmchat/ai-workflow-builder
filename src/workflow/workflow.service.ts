@@ -33,6 +33,7 @@ import {
   workflowAccessListFilter,
   workflowAccessRoleExpression,
   workflowOwnerFilter,
+  type WorkflowAccess,
   type WorkflowAccessRole,
   type WorkflowAccessRoleWithOwner,
 } from './workflow-access.js';
@@ -55,9 +56,17 @@ const EXPORT_FORMAT_VERSION = 1 as const;
 /**
  * Сервис CRUD-операций над workflow.
  *
- * Все методы поддерживают необязательный `userId`: пока auth не реализован,
- * параметр не передаётся и выборка идёт без ограничения по владельцу; после
- * подключения auth он станет обязательным фильтром принадлежности.
+ * Все методы принимают {@link WorkflowAccess} — пользователя и его организацию
+ * из access-токена. Изоляция арендаторов (v1.0.0 S2, DESIGN V100 § 3.1)
+ * применяется на уровне SQL: каждая выборка workflow ограничена
+ * `organization_id`, а доступ владельца/участника проверяется теми же
+ * предикатами из `workflow-access.ts`.
+ *
+ * Необязательный `access` сохранён только у `findAllAsync`/`findOneAsync`/
+ * `updateAsync`/`removeAsync` для внутренних вызовов и тестов: без него фильтра
+ * по пользователю нет (прежнее поведение). Публичный share-доступ
+ * ({@link findSharedAsync}) работает по токену и намеренно не ограничен
+ * организацией.
  */
 @Injectable()
 export class WorkflowService {
@@ -68,28 +77,23 @@ export class WorkflowService {
   /**
    * Создаёт новый workflow.
    *
-   * Владелец приходит из access-токена аргументом (KI-204: в DTO его больше
-   * нет), `nodes`/`edges` — уже с применёнными значениями по умолчанию `[]`.
+   * Владелец и организация-арендатор приходят из access-токена (KI-204: в DTO
+   * их нет), `nodes`/`edges` — уже с применёнными значениями по умолчанию `[]`.
    *
    * `organizationId` — арендатор из того же токена (v1.0 S1, DESIGN § 3.1):
-   * колонка NOT NULL, поэтому клиент не может создать граф без организации.
-   * Фильтрация выборок по `orgId` — следующий срез (S2), здесь только запись.
+   * колонка NOT NULL, поэтому клиент не может создать граф вне своей
+   * организации.
    *
    * @param dto - валидированные данные создания workflow
-   * @param userId - id владельца (uuid из токена)
-   * @param organizationId - id организации-арендатора (uuid из токена)
+   * @param access - пользователь и его организация из access-токена
    * @returns созданная запись workflow
    */
-  async createAsync(
-    dto: CreateWorkflowDto,
-    userId: string,
-    organizationId: string,
-  ): Promise<Workflow> {
+  async createAsync(dto: CreateWorkflowDto, access: WorkflowAccess): Promise<Workflow> {
     const [created] = await this.db
       .insert(workflows)
       .values({
-        userId,
-        organizationId,
+        userId: access.userId,
+        organizationId: access.orgId,
         name: dto.name,
         description: dto.description,
         nodes: dto.nodes,
@@ -119,19 +123,13 @@ export class WorkflowService {
    * Транзакция (RULES 4.22) не нужна: запись одна, связанных изменений нет.
    *
    * @param dto - валидированный артефакт (то, что отдаёт `GET /workflow/:id/export`)
-   * @param userId - владелец нового workflow (uuid из access-токена)
-   * @param organizationId - id организации-арендатора (uuid из access-токена)
+   * @param access - владелец нового workflow и его организация из access-токена
    * @returns созданный workflow
    */
-  async importAsync(
-    dto: ImportWorkflowDto,
-    userId: string,
-    organizationId: string,
-  ): Promise<Workflow> {
+  async importAsync(dto: ImportWorkflowDto, access: WorkflowAccess): Promise<Workflow> {
     const created = await this.createAsync(
       { name: dto.name, nodes: dto.nodes, edges: dto.edges },
-      userId,
-      organizationId,
+      access,
     );
 
     this.logger.debug(
@@ -143,42 +141,44 @@ export class WorkflowService {
 
   /**
    * Возвращает список доступных пользователю workflow с пагинацией (R7.6,
-   * KI-398).
+   * KI-398; изоляция арендатора — v1.0.0 S2).
    *
    * Доступные — это собственные графы **и** чужие, где пользователь участник
-   * (`viewer`/`editor`). Раньше выборка ограничивалась `user_id = userId`,
-   * поэтому collaborative-workflow открывались только по прямой ссылке.
+   * (`viewer`/`editor`), но только внутри организации пользователя: по
+   * `workflows.organization_id` фильтрует {@link workflowAccessListFilter}
+   * (DESIGN V100 § 3.1), поэтому графы другого арендатора в список не попадают
+   * даже при знании их uuid.
    *
    * `accessRole` вычисляется тем же запросом (коррелированный подзапрос по
    * `workflow_collaborators`), а не отдельным запросом на строку: иначе список
    * из 50 графов дал бы N+1. Роль нужна UI, чтобы скрыть Save/Run у viewer
    * (KI-397).
    *
-   * Без `userId` (внутренние вызовы и тесты) фильтра нет, а роль — `owner`:
+   * Без `access` (внутренние вызовы и тесты) фильтра нет, а роль — `owner`:
    * это прежнее поведение «вернуть все доступные графы», и без пользователя
    * понятия «участник» не существует.
    *
    * Сортировка — по `createdAt` по убыванию (сначала новые).
    *
-   * @param userId - необязательный идентификатор пользователя из access-токена
+   * @param access - необязательный контекст доступа: пользователь и организация
    * @param limit - максимум записей в ответе, по умолчанию 50
    * @param offset - сколько записей пропустить, по умолчанию 0
    * @returns массив workflow с ролью пользователя в каждом
    */
   async findAllAsync(
-    userId?: string,
+    access?: WorkflowAccess,
     limit: number = DEFAULT_LIMIT,
     offset: number = DEFAULT_OFFSET,
   ): Promise<WorkflowListItem[]> {
     const accessRole =
-      userId === undefined
+      access === undefined
         ? sql<WorkflowAccessRoleWithOwner>`'owner'`.as('access_role')
-        : workflowAccessRoleExpression(userId);
+        : workflowAccessRoleExpression(access.userId);
 
     return this.db
       .select({ ...getTableColumns(workflows), accessRole })
       .from(workflows)
-      .where(userId === undefined ? undefined : this.buildListAccessFilter(userId))
+      .where(access === undefined ? undefined : this.buildListAccessFilter(access))
       .orderBy(desc(workflows.createdAt))
       .limit(limit)
       .offset(offset);
@@ -188,15 +188,15 @@ export class WorkflowService {
    * Возвращает один workflow по идентификатору.
    *
    * @param id - uuid workflow
-   * @param userId - необязательный идентификатор владельца; если передан,
-   *   запись ищется с учётом принадлежности (заготовка под auth)
+   * @param access - необязательный контекст доступа; если передан, запись
+   *   ищется с учётом принадлежности организации и роли (владелец/участник)
    * @returns найденный workflow или `null`
    */
-  async findOneAsync(id: string, userId?: string): Promise<Workflow | null> {
+  async findOneAsync(id: string, access?: WorkflowAccess): Promise<Workflow | null> {
     const [found] = await this.db
       .select()
       .from(workflows)
-      .where(this.buildAccessFilter(id, userId))
+      .where(this.buildAccessFilter(id, access))
       .limit(1);
 
     return found ?? null;
@@ -207,20 +207,21 @@ export class WorkflowService {
    * (R6.6.1, DESIGN v0.8 § 9; доступ участников — R7.6).
    *
    * Выборка идёт явной проекцией (`name`, `nodes`, `edges`) с фильтром доступа
-   * (владелец или участник), а не `select()` целиком: так служебные поля (`id`,
-   * `userId`, `shareToken`, `createdAt`) не могут попасть в артефакт даже
-   * случайно — это структурная гарантия, а не договорённость (артефакт уходит
-   * наружу, и `shareToken` в нём был бы capability-утечкой, RULES 5.9).
+   * (владелец или участник) **и** организацией арендатора (v1.0.0 S2), а не
+   * `select()` целиком: так служебные поля (`id`, `userId`, `shareToken`,
+   * `createdAt`) не могут попасть в артефакт даже случайно — это структурная
+   * гарантия, а не договорённость (артефакт уходит наружу, и `shareToken` в нём
+   * был бы capability-утечкой, RULES 5.9).
    *
    * `exportedAt` — момент выгрузки в ISO-8601, информационное поле: импорт его
    * игнорирует.
    *
    * @param id - uuid workflow
-   * @param userId - пользователь из access-токена (владелец или участник)
+   * @param access - пользователь и его организация из access-токена
    * @returns артефакт `{ version, name, nodes, edges, exportedAt }`
    * @throws NotFoundException если workflow не существует или недоступен
    */
-  async exportAsync(id: string, userId: string): Promise<ExportWorkflowDto> {
+  async exportAsync(id: string, access: WorkflowAccess): Promise<ExportWorkflowDto> {
     const [found] = await this.db
       .select({
         name: workflows.name,
@@ -228,7 +229,7 @@ export class WorkflowService {
         edges: workflows.edges,
       })
       .from(workflows)
-      .where(this.buildAccessFilter(id, userId))
+      .where(this.buildAccessFilter(id, access))
       .limit(1);
 
     // Чужой workflow неотличим от несуществующего: 404, а не 403 (как share).
@@ -266,14 +267,15 @@ export class WorkflowService {
    *
    * @param id - uuid workflow
    * @param dto - валидированные поля для обновления (все необязательные)
-   * @param userId - необязательный идентификатор владельца (проверка принадлежности)
+   * @param access - необязательный контекст доступа (проверка принадлежности и
+   *   организации; для правки графа нужен владелец или участник editor)
    * @returns обновлённый workflow или `null`, если запись не найдена
    * @throws BadRequestException если не передано ни одного поля для обновления
    */
   async updateAsync(
     id: string,
     dto: UpdateWorkflowDto,
-    userId?: string,
+    access?: WorkflowAccess,
   ): Promise<Workflow | null> {
     if (Object.keys(dto).length === 0) {
       throw new BadRequestException('Не передано ни одного поля для обновления');
@@ -282,7 +284,7 @@ export class WorkflowService {
     let isGraphChanged = false;
 
     if (dto.nodes !== undefined || dto.edges !== undefined) {
-      const current = await this.findOneAsync(id, userId);
+      const current = await this.findOneAsync(id, access);
 
       isGraphChanged =
         current !== null &&
@@ -304,8 +306,9 @@ export class WorkflowService {
         updatedAt: new Date(),
       })
       // R7.6: править граф может владелец или участник с ролью editor;
-      // viewer получает пустую выборку → 404, как чужой workflow.
-      .where(this.buildAccessFilter(id, userId, 'editor'))
+      // viewer получает пустую выборку → 404, как чужой workflow. S2: плюс
+      // обязательное совпадение организации арендатора.
+      .where(this.buildAccessFilter(id, access, 'editor'))
       .returning();
 
     return updated ?? null;
@@ -318,14 +321,14 @@ export class WorkflowService {
    * (`ON DELETE CASCADE` в схеме).
    *
    * @param id - uuid workflow
-   * @param userId - необязательный идентификатор владельца (проверка принадлежности)
+   * @param access - необязательный контекст доступа (владелец + организация)
    * @returns `true`, если запись удалена; `false`, если ничего не найдено
    */
-  async removeAsync(id: string, userId?: string): Promise<boolean> {
+  async removeAsync(id: string, access?: WorkflowAccess): Promise<boolean> {
     const deleted = await this.db
       .delete(workflows)
       // R7.6: удаление остаётся только у владельца — editor его не получает.
-      .where(this.buildOwnerFilter(id, userId))
+      .where(this.buildOwnerFilter(id, access))
       .returning({ id: workflows.id });
 
     return deleted.length > 0;
@@ -336,51 +339,56 @@ export class WorkflowService {
    *
    * R7.6: доступ даёт владелец **или** участник с ролью не ниже
    * `minimumRole`. Для `viewer` подходит любая роль участника, для `editor` —
-   * только `editor` (DESIGN v0.9 § 3.6). Без `userId` фильтр остаётся по id:
-   * так работают внутренние вызовы движка и тесты.
+   * только `editor` (DESIGN v0.9 § 3.6). v1.0.0 S2: предикат дополнительно
+   * требует совпадения `workflows.organization_id` с организацией из
+   * access-токена, поэтому чужой арендатор неотличим от несуществующего графа.
+   * Без `access` фильтр остаётся по id: так работают внутренние вызовы движка и
+   * тесты.
    *
    * @param id - uuid workflow
-   * @param userId - необязательный идентификатор пользователя из токена
+   * @param access - необязательный контекст доступа из access-токена
    * @param minimumRole - минимальная роль участника (по умолчанию `viewer`)
    * @returns условие для Drizzle
    */
   private buildAccessFilter(
     id: string,
-    userId?: string,
+    access?: WorkflowAccess,
     minimumRole: WorkflowAccessRole = 'viewer',
   ): SQL {
-    return userId
-      ? workflowAccessFilter(this.db, id, userId, minimumRole)
+    return access
+      ? workflowAccessFilter(this.db, id, access, minimumRole)
       : eq(workflows.id, id);
   }
 
   /**
    * Собирает WHERE для списочной выборки: все workflow, доступные пользователю
-   * (KI-398).
+   * в его организации (KI-398, v1.0.0 S2).
    *
    * Это «безымянный» вариант {@link buildAccessFilter}: тот же предикат
-   * «владелец **или** участник», но без ограничения по `workflows.id` —
-   * для `GET /workflow`, где запрашивается не один граф, а весь список.
+   * «владелец **или** участник» плюс `organization_id = access.orgId`, но без
+   * ограничения по `workflows.id` — для `GET /workflow`, где запрашивается не
+   * один граф, а весь список.
    *
-   * @param userId - идентификатор пользователя из access-токена
+   * @param access - пользователь и его организация из access-токена
    * @returns условие для Drizzle
    */
-  private buildListAccessFilter(userId: string): SQL {
-    return workflowAccessListFilter(this.db, userId);
+  private buildListAccessFilter(access: WorkflowAccess): SQL {
+    return workflowAccessListFilter(this.db, access);
   }
 
   /**
-   * Собирает WHERE только для владельца workflow (R7.6).
+   * Собирает WHERE только для владельца workflow (R7.6) и его организации
+   * (v1.0.0 S2).
    *
    * Используется операциями, которые участнику недоступны даже с ролью
    * `editor`: удаление workflow, share-ссылка и управление участниками.
    *
    * @param id - uuid workflow
-   * @param userId - необязательный идентификатор пользователя из токена
+   * @param access - необязательный контекст доступа из access-токена
    * @returns условие для Drizzle
    */
-  private buildOwnerFilter(id: string, userId?: string): SQL {
-    return userId ? workflowOwnerFilter(id, userId) : eq(workflows.id, id);
+  private buildOwnerFilter(id: string, access?: WorkflowAccess): SQL {
+    return access ? workflowOwnerFilter(id, access) : eq(workflows.id, id);
   }
 
   /**
@@ -391,16 +399,16 @@ export class WorkflowService {
    * неотличим от несуществующего: 404, а не 403.
    *
    * @param id - uuid workflow
-   * @param userId - владелец из access-токена
+   * @param access - владелец и его организация из access-токена
    * @returns токен и относительный путь ссылки
    * @throws NotFoundException если workflow не найден или принадлежит другому
    */
-  async createShareTokenAsync(id: string, userId: string): Promise<ShareTokenDto> {
+  async createShareTokenAsync(id: string, access: WorkflowAccess): Promise<ShareTokenDto> {
     const [updated] = await this.db
       .update(workflows)
       .set({ shareToken: sql`gen_random_uuid()`, updatedAt: new Date() })
       // R7.6: share-ссылка — только владелец (editor её не выпускает).
-      .where(this.buildOwnerFilter(id, userId))
+      .where(this.buildOwnerFilter(id, access))
       .returning({ shareToken: workflows.shareToken });
 
     if (updated?.shareToken == null) {
@@ -417,16 +425,16 @@ export class WorkflowService {
    * Отзывает share-токен: `share_token = NULL` (R6.2.1).
    *
    * @param id - uuid workflow
-   * @param userId - владелец из access-токена
+   * @param access - владелец и его организация из access-токена
    * @returns промис без значения
    * @throws NotFoundException если workflow не найден или принадлежит другому
    */
-  async revokeShareTokenAsync(id: string, userId: string): Promise<void> {
+  async revokeShareTokenAsync(id: string, access: WorkflowAccess): Promise<void> {
     const revoked = await this.db
       .update(workflows)
       .set({ shareToken: null, updatedAt: new Date() })
       // R7.6: отзыв ссылки — только владелец.
-      .where(this.buildOwnerFilter(id, userId))
+      .where(this.buildOwnerFilter(id, access))
       .returning({ id: workflows.id });
 
     if (revoked.length === 0) {
@@ -494,13 +502,23 @@ export class WorkflowService {
    * владельца запрещён, но старые данные могли успеть создать дубль, и два
    * «owner» в списке были бы визуальным багом.
    *
+   * Изоляция арендаторов (v1.0.0 S2): участники выбираются только с
+   * `users.organization_id = access.orgId`. Строки `workflow_collaborators`,
+   * оставшиеся от версии до мультитенантности и указывающие на пользователя
+   * другой организации, в ответ не попадают — это скрывает чужой PII (email) и
+   * не раскрывает состав чужих организаций. Доступ такие строки всё равно не
+   * дают: предикаты доступа дополнительно требуют `workflows.organization_id`.
+   *
    * @param id - uuid workflow
-   * @param userId - пользователь из access-токена
+   * @param access - пользователь и его организация из access-токена
    * @returns владелец и участники, участники — по дате приглашения
    * @throws NotFoundException если workflow не существует или недоступен
    */
-  async getCollaboratorsAsync(id: string, userId: string): Promise<CollaboratorResponse[]> {
-    const workflow = await this.findOneAsync(id, userId);
+  async getCollaboratorsAsync(
+    id: string,
+    access: WorkflowAccess,
+  ): Promise<CollaboratorResponse[]> {
+    const workflow = await this.findOneAsync(id, access);
 
     if (!workflow) {
       throw new NotFoundException(`Workflow ${id} не найден`);
@@ -522,7 +540,14 @@ export class WorkflowService {
       })
       .from(workflowCollaborators)
       .innerJoin(users, eq(users.id, workflowCollaborators.userId))
-      .where(eq(workflowCollaborators.workflowId, id))
+      // S2: участники только из организации арендатора — кросс-организационные
+      // строки (legacy) скрыты и PII чужой организации не утекает.
+      .where(
+        and(
+          eq(workflowCollaborators.workflowId, id),
+          eq(users.organizationId, access.orgId),
+        ),
+      )
       .orderBy(workflowCollaborators.invitedAt);
 
     return [
@@ -548,27 +573,32 @@ export class WorkflowService {
   }
 
   /**
-   * Приглашает пользователя в workflow по uuid (R7.6).
+   * Приглашает пользователя в workflow по uuid (R7.6; изоляция организаций —
+   * v1.0.0 S2).
    *
-   * Приглашает только владелец. Целевой пользователь обязан существовать:
-   * инвайт по email вне scope v0.9, поэтому «не найден» — честный 404, а не
-   * молчаливое создание приглашения в никуда. Повторный инвайт того же
-   * пользователя — 409: роль меняется отдельным PATCH.
+   * Приглашает только владелец. Целевой пользователь обязан существовать **и
+   * принадлежать организации арендатора** (`users.organization_id =
+   * access.orgId`): инвайт по email вне scope v0.9, а приглашение пользователя
+   * другой организации создало бы кросс-тенантную строку. Оба случая («нет
+   * такого пользователя» и «пользователь в другой организации») дают один и
+   * тот же 404 — факт существования чужого пользователя не раскрывается
+   * (KI-202). Повторный инвайт того же пользователя — 409: роль меняется
+   * отдельным PATCH.
    *
    * @param id - uuid workflow
-   * @param requesterId - пользователь из access-токена (должен быть владельцем)
+   * @param access - пользователь и его организация из access-токена (должен быть владельцем)
    * @param dto - uuid приглашаемого и роль
    * @returns созданное участие
-   * @throws NotFoundException если workflow чужой/не существует или пользователь не найден
+   * @throws NotFoundException если workflow чужой/не существует или пользователь не найден в организации
    * @throws BadRequestException если приглашают владельца workflow
    * @throws ConflictException если пользователь уже участвует
    */
   async inviteCollaboratorAsync(
     id: string,
-    requesterId: string,
+    access: WorkflowAccess,
     dto: InviteCollaboratorDto,
   ): Promise<CollaboratorResponse> {
-    const owner = await this.findOwnerAsync(id, requesterId);
+    const owner = await this.findOwnerAsync(id, access);
 
     if (owner === null) {
       throw new NotFoundException(`Workflow ${id} не найден`);
@@ -581,7 +611,9 @@ export class WorkflowService {
     const [target] = await this.db
       .select({ id: users.id, email: users.email })
       .from(users)
-      .where(eq(users.id, dto.userId))
+      // S2: приглашать можно только «своих» — совпадение организации
+      // обязательно, иначе 404 (как для несуществующего пользователя).
+      .where(and(eq(users.id, dto.userId), eq(users.organizationId, access.orgId)))
       .limit(1);
 
     if (target === undefined) {
@@ -609,7 +641,7 @@ export class WorkflowService {
         workflowId: id,
         userId: dto.userId,
         role: dto.role,
-        invitedBy: requesterId,
+        invitedBy: access.userId,
       })
       .returning();
 
@@ -633,7 +665,7 @@ export class WorkflowService {
    * выглядеть как успешная смена роли.
    *
    * @param id - uuid workflow
-   * @param requesterId - пользователь из access-токена (должен быть владельцем)
+   * @param access - пользователь и его организация из access-токена (должен быть владельцем)
    * @param participantId - uuid участника из path
    * @param dto - новая роль
    * @returns обновлённое участие
@@ -641,11 +673,11 @@ export class WorkflowService {
    */
   async updateCollaboratorRoleAsync(
     id: string,
-    requesterId: string,
+    access: WorkflowAccess,
     participantId: string,
     dto: UpdateCollaboratorRoleDto,
   ): Promise<CollaboratorResponse> {
-    const owner = await this.findOwnerAsync(id, requesterId);
+    const owner = await this.findOwnerAsync(id, access);
 
     if (owner === null) {
       throw new NotFoundException(`Workflow ${id} не найден`);
@@ -682,17 +714,17 @@ export class WorkflowService {
    * к участнику.
    *
    * @param id - uuid workflow
-   * @param requesterId - пользователь из access-токена (должен быть владельцем)
+   * @param access - пользователь и его организация из access-токена (должен быть владельцем)
    * @param participantId - uuid участника из path
    * @returns промис без значения
    * @throws NotFoundException если workflow чужой/не существует или участник не найден
    */
   async removeCollaboratorAsync(
     id: string,
-    requesterId: string,
+    access: WorkflowAccess,
     participantId: string,
   ): Promise<void> {
-    const owner = await this.findOwnerAsync(id, requesterId);
+    const owner = await this.findOwnerAsync(id, access);
 
     if (owner === null) {
       throw new NotFoundException(`Workflow ${id} не найден`);
@@ -714,23 +746,26 @@ export class WorkflowService {
   }
 
   /**
-   * Ищет workflow, которым владеет пользователь (R7.6).
+   * Ищет workflow, которым владеет пользователь в его организации (R7.6,
+   * v1.0.0 S2).
    *
    * Возвращает именно владельца (`workflows.user_id`), а не факт доступа:
-   * приглашать, менять роли и удалять участников может только он.
+   * приглашать, менять роли и удалять участников может только он. Условие
+   * `workflows.organization_id = access.orgId` не даёт владельцу одной
+   * организации управлять графом другой даже при совпадении uuid.
    *
    * @param id - uuid workflow
-   * @param userId - пользователь из access-токена
+   * @param access - пользователь и его организация из access-токена
    * @returns `{ ownerId }` либо `null`, если workflow чужой/не существует
    */
   private async findOwnerAsync(
     id: string,
-    userId: string,
+    access: WorkflowAccess,
   ): Promise<{ ownerId: string } | null> {
     const [row] = await this.db
       .select({ ownerId: workflows.userId })
       .from(workflows)
-      .where(workflowOwnerFilter(id, userId))
+      .where(workflowOwnerFilter(id, access))
       .limit(1);
 
     return row ?? null;

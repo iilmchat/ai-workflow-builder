@@ -19,6 +19,7 @@ import {
   executeSubWorkflowNode,
   executeTextNode,
   prefixSubWorkflowGraph,
+  type SubWorkflowAccess,
   type SubWorkflowContext,
   type SubWorkflowRecord,
 } from './node-executors.js';
@@ -827,6 +828,8 @@ describe('node-executors', () => {
     const SUB_WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
     /** uuid владельца корневого запуска. */
     const ROOT_USER_ID = '33333333-3333-4333-8333-333333333333';
+    /** uuid организации-арендатора корневого запуска (v1.0.0 S2). */
+    const ROOT_ORG_ID = '44444444-4444-4444-8444-444444444444';
 
     /** Запись подграфа: два узла, связанные связью. */
     const SUB_WORKFLOW: SubWorkflowRecord = {
@@ -851,13 +854,16 @@ describe('node-executors', () => {
       found: SubWorkflowRecord | null = SUB_WORKFLOW,
       overrides: Partial<SubWorkflowContext> = {},
     ): { context: SubWorkflowContext; findOne: ReturnType<typeof vi.fn> } {
-      const findOne = vi.fn((_id: string, _userId?: string) => Promise.resolve(found));
+      const findOne = vi.fn((_id: string, _access?: SubWorkflowAccess) =>
+        Promise.resolve(found),
+      );
 
       return {
         findOne,
         context: {
           lookup: { findOneAsync: findOne },
           rootUserId: ROOT_USER_ID,
+          rootOrgId: ROOT_ORG_ID,
           visitedWorkflows: new Set<string>(),
           depth: 0,
           ...overrides,
@@ -878,9 +884,12 @@ describe('node-executors', () => {
       expect(target.version).toBe(3);
       expect(target.subGraph.nodes.map((node) => node.id)).toEqual(['text-1', 'llm-1']);
       expect(target.subGraph.edges.map((edge) => edge.id)).toEqual(['e1']);
-      // Владелец корневого запуска уходит в фильтр выборки: без него вернулся
-      // бы и чужой workflow.
-      expect(findOne).toHaveBeenCalledWith(SUB_WORKFLOW_ID, ROOT_USER_ID);
+      // Владелец и организация корневого запуска уходят в фильтр выборки: без
+      // них вернулся бы чужой workflow или workflow другой организации.
+      expect(findOne).toHaveBeenCalledWith(SUB_WORKFLOW_ID, {
+        userId: ROOT_USER_ID,
+        orgId: ROOT_ORG_ID,
+      });
     });
 
     it('чужой workflow неотличим от несуществующего: 404', async () => {
@@ -914,6 +923,21 @@ describe('node-executors', () => {
       ).catch((caught: unknown) => caught);
 
       expect(error).toBeInstanceOf(NotFoundException);
+      expect(findOne).not.toHaveBeenCalled();
+    });
+
+    it('без известной организации подграф не загружается (S2)', async () => {
+      const { context, findOne } = createSubContext(SUB_WORKFLOW, { rootOrgId: null });
+
+      const error: unknown = await executeSubWorkflowNode(
+        { kind: 'sub_workflow', workflowId: SUB_WORKFLOW_ID },
+        context,
+      ).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(NotFoundException);
+      expect((error as NotFoundException).getStatus()).toBe(404);
+      // Выборка без orgId не строится: workflow другой организации неотличим
+      // от несуществующего (S2 — изоляция арендаторов).
       expect(findOne).not.toHaveBeenCalled();
     });
 

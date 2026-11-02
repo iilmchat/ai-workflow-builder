@@ -1,6 +1,7 @@
 import type { MessageEvent } from '@nestjs/common';
 import { Injectable, Logger } from '@nestjs/common';
 import { Observable, type Subscriber } from 'rxjs';
+import type { WorkflowAccess } from '../workflow/workflow-access.js';
 import {
   RunStreamMessageSchema,
   type RunEventDto,
@@ -52,12 +53,16 @@ export class RunsStreamService {
    * сообщении, поэтому исключение успевает стать HTTP-ошибкой).
    *
    * @param runId - uuid запуска
-   * @param userId - владелец из access-токена (KI-202): чужой запуск → 404
+   * @param access - пользователь и его организация из access-токена (KI-202,
+   *   v1.0.0 S2): чужой запуск / запуск другой организации → 404
    * @returns промис без значения
-   * @throws NotFoundException если запуск не найден или чужой
+   * @throws NotFoundException если запуск не найден, чужой или другой организации
    */
-  async assertRunExistsAsync(runId: string, userId?: string): Promise<void> {
-    await this.runsService.getRunRowAsync(runId, userId);
+  async assertRunExistsAsync(
+    runId: string,
+    access?: WorkflowAccess,
+  ): Promise<void> {
+    await this.runsService.getRunRowAsync(runId, access);
   }
 
   /**
@@ -76,13 +81,14 @@ export class RunsStreamService {
    * @param runId - uuid запуска
    * @param signal - `AbortSignal` запроса: аборится при отключении клиента
    *   (`@SseSignal()`), закрывая подписку на Redis (RULES 4.19)
-   * @param userId - владелец из access-токена (KI-202), пробрасывается в снимок
+   * @param access - пользователь и его организация из access-токена (KI-202,
+   *   v1.0.0 S2), пробрасывается в снимок
    * @returns Observable SSE-сообщений (`data` — JSON `RunStreamMessage`)
    */
   streamAsync(
     runId: string,
     signal: AbortSignal,
-    userId?: string,
+    access?: WorkflowAccess,
   ): Observable<MessageEvent> {
     return new Observable<MessageEvent>((subscriber) => {
       const keepAlive = setInterval(() => {
@@ -95,7 +101,7 @@ export class RunsStreamService {
       // Не держим процесс живым из-за таймера (важно для тестов и shutdown).
       keepAlive.unref();
 
-      void this.consumeAsync(runId, signal, subscriber, userId).finally(() => {
+      void this.consumeAsync(runId, signal, subscriber, access).finally(() => {
         clearInterval(keepAlive);
       });
 
@@ -111,14 +117,15 @@ export class RunsStreamService {
    * @param runId - uuid запуска
    * @param signal - сигнал отключения клиента
    * @param subscriber - подписчик SSE-потока
-   * @param userId - владелец из access-токена (KI-202)
+   * @param access - пользователь и его организация из access-токена (KI-202,
+   *   v1.0.0 S2)
    * @returns промис без значения (завершается вместе с потоком)
    */
   private async consumeAsync(
     runId: string,
     signal: AbortSignal,
     subscriber: Subscriber<MessageEvent>,
-    userId?: string,
+    access?: WorkflowAccess,
   ): Promise<void> {
     const iterator = this.runEvents
       .subscribeAsync(runId, signal)
@@ -129,7 +136,7 @@ export class RunsStreamService {
 
     try {
       const snapshot = RunStreamMessageSchema.parse(
-        await this.buildSnapshotAsync(runId, userId),
+        await this.buildSnapshotAsync(runId, access),
       );
 
       if (!signal.aborted) {
@@ -169,17 +176,18 @@ export class RunsStreamService {
    * Собирает снимок состояния запуска: строка `workflow_runs` + все `node_runs`.
    *
    * @param runId - uuid запуска
-   * @param userId - владелец из access-токена (KI-202)
+   * @param access - пользователь и его организация из access-токена (KI-202,
+   *   v1.0.0 S2: снимок другой организации → 404)
    * @returns снимок состояния (первое сообщение потока)
-   * @throws NotFoundException если запуск не найден или чужой
+   * @throws NotFoundException если запуск не найден, чужой или другой организации
    */
   private async buildSnapshotAsync(
     runId: string,
-    userId?: string,
+    access?: WorkflowAccess,
   ): Promise<SnapshotMessage> {
     // KI-347: строка целиком, а не `RunResponse`: снимок отдаёт `error`, и
     // читать его повторным запросом к БД незачем (RULES 4.17).
-    const run = await this.runsService.getRunRowAsync(runId, userId);
+    const run = await this.runsService.getRunRowAsync(runId, access);
 
     return {
       type: 'snapshot',

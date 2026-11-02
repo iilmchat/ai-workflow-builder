@@ -6,6 +6,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 import { DEMO_ORG_ID, DEMO_USER_EMAIL, DEMO_USER_ID } from '../auth/auth.constants.js';
+import { toWorkflowAccess } from '../workflow/workflow-access.js';
 import { DOCUMENT_TEMPLATE_MAX_BYTES } from './document-template.constants.js';
 import { DocumentTemplatesController } from './document-templates.controller.js';
 import { DocumentTemplatesService } from './document-templates.service.js';
@@ -27,6 +28,14 @@ import type { DocumentTemplateSummary } from './dto/document-template.dto.js';
 
 /** Пользователь, которого подставляет guard при `AUTH_DISABLED=true`. */
 const USER = { sub: DEMO_USER_ID, email: DEMO_USER_EMAIL, orgId: DEMO_ORG_ID };
+
+/**
+ * Контекст доступа, который контроллер обязан собрать из токена (v1.0.0 S2).
+ *
+ * Ожидания — по точному объекту: если `orgId` потеряется в `toWorkflowAccess`,
+ * сервис перестанет фильтровать шаблоны по организации.
+ */
+const ACCESS = toWorkflowAccess(USER);
 
 /** Стабильные uuid тестовых данных. */
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
@@ -126,7 +135,7 @@ describe('DocumentTemplatesController: загрузка (S3)', () => {
     expect(response.body).toEqual(SUMMARY);
     expect(templates.createAsync).toHaveBeenCalledWith(
       WORKFLOW_ID,
-      USER.sub,
+      ACCESS,
       expect.objectContaining({
         originalname: 'contract.docx',
         mimetype: DOCX_MIME_TYPE,
@@ -150,6 +159,25 @@ describe('DocumentTemplatesController: загрузка (S3)', () => {
       .expect(400);
 
     expect(templates.createAsync).not.toHaveBeenCalled();
+  });
+
+  it('v1.0.0 S2: POST передаёт userId и orgId из токена', async () => {
+    await request(app.getHttpServer())
+      .post(BASE_PATH)
+      .attach('file', Buffer.from('bytes'), {
+        filename: 'contract.docx',
+        contentType: DOCX_MIME_TYPE,
+      })
+      .expect(201);
+
+    // Точный объект, а не только userId: без orgId сервис перестал бы
+    // ограничивать шаблоны организацией-арендатором.
+    expect(templates.createAsync).toHaveBeenCalledWith(
+      WORKFLOW_ID,
+      { userId: DEMO_USER_ID, orgId: DEMO_ORG_ID },
+      expect.anything(),
+      {},
+    );
   });
 
   it('POST с файлом больше лимита — 413 (MulterError LIMIT_FILE_SIZE)', async () => {
@@ -224,7 +252,7 @@ describe('DocumentTemplatesController: список, файл, удаление 
       .expect(200);
 
     expect(response.body).toEqual([SUMMARY]);
-    expect(templates.listAsync).toHaveBeenCalledWith(WORKFLOW_ID, USER.sub);
+    expect(templates.listAsync).toHaveBeenCalledWith(WORKFLOW_ID, ACCESS);
   });
 
   it('GET списка чужого workflow — 404', async () => {
@@ -242,7 +270,7 @@ describe('DocumentTemplatesController: список, файл, удаление 
     expect(templates.getFileAsync).toHaveBeenCalledWith(
       TEMPLATE_ID,
       WORKFLOW_ID,
-      USER.sub,
+      ACCESS,
     );
     expect(response.headers['content-disposition']).toContain('attachment');
     expect(response.headers['content-disposition']).toContain('contract.docx');
@@ -274,7 +302,7 @@ describe('DocumentTemplatesController: список, файл, удаление 
     expect(templates.deleteAsync).toHaveBeenCalledWith(
       TEMPLATE_ID,
       WORKFLOW_ID,
-      USER.sub,
+      ACCESS,
     );
   });
 
@@ -286,5 +314,22 @@ describe('DocumentTemplatesController: список, файл, удаление 
     await request(app.getHttpServer())
       .delete(`${BASE_PATH}/${TEMPLATE_ID}`)
       .expect(403);
+  });
+
+  it('v1.0.0 S2: DELETE шаблона другой организации — 404', async () => {
+    templates.deleteAsync.mockRejectedValue(
+      new NotFoundException('Workflow не найден'),
+    );
+
+    await request(app.getHttpServer())
+      .delete(`${BASE_PATH}/${TEMPLATE_ID}`)
+      .expect(404);
+
+    // access с orgId уходит в сервис: именно он отсекает чужой арендатор.
+    expect(templates.deleteAsync).toHaveBeenCalledWith(
+      TEMPLATE_ID,
+      WORKFLOW_ID,
+      ACCESS,
+    );
   });
 });

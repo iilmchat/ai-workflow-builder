@@ -1,14 +1,19 @@
+import { NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Param, SQL } from 'drizzle-orm';
 import type { Database } from '../db/db.module.js';
 import { DRIZZLE } from '../db/db.module.js';
 import { workflows, type Workflow } from '../db/schema.js';
 import { WorkflowService } from './workflow.service.js';
+import type { WorkflowAccess } from './workflow-access.js';
 
 /** Стабильный uuid для тестовых данных. */
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
 /** Организация-арендатор workflow (v1.0 S1). */
 const ORG_ID = '55555555-5555-4555-8555-555555555555';
+
+/** Контекст доступа: пользователь и его организация (v1.0 S2). */
+const ACCESS: WorkflowAccess = { userId: 'user-1', orgId: ORG_ID };
 
 const baseWorkflow: Workflow = {
   id: WORKFLOW_ID,
@@ -224,11 +229,11 @@ describe('WorkflowService', () => {
     it('вставляет запись через Drizzle и возвращает созданный workflow', async () => {
       const dto = { name: 'My workflow', nodes: [], edges: [] };
 
-      const result = await service.createAsync(dto, 'user-1', ORG_ID);
+      const result = await service.createAsync(dto, ACCESS);
 
       expect(db.insert).toHaveBeenCalledWith(workflows);
       expect(insertChain.values).toHaveBeenCalledWith({
-        userId: 'user-1',
+        userId: ACCESS.userId,
         organizationId: ORG_ID,
         name: 'My workflow',
         description: undefined,
@@ -250,8 +255,7 @@ describe('WorkflowService', () => {
           nodes,
           edges,
         },
-        'user-2',
-        ORG_ID,
+        { userId: 'user-2', orgId: ORG_ID },
       );
 
       expect(insertChain.values).toHaveBeenCalledWith(
@@ -276,7 +280,7 @@ describe('WorkflowService', () => {
         exportedAt: '2026-10-16T00:00:00.000Z',
       };
 
-      const result = await service.importAsync(dto, 'user-2', ORG_ID);
+      const result = await service.importAsync(dto, { userId: 'user-2', orgId: ORG_ID });
 
       // Импорт делегирует вставку createAsync — путь записи один.
       expect(insertChain.values).toHaveBeenCalledWith(
@@ -291,7 +295,7 @@ describe('WorkflowService', () => {
   });
 
   describe('findAllAsync', () => {
-    it('без userId не применяет фильтр по владельцу', async () => {
+    it('без access не применяет фильтр по владельцу', async () => {
       const row = { ...baseWorkflow, accessRole: 'owner' };
       const localChain = chain(() => [row]);
       db.select.mockImplementation(() => localChain);
@@ -304,8 +308,8 @@ describe('WorkflowService', () => {
       expect(result).toEqual([row]);
     });
 
-    it('с userId учитывает владельца и участников (KI-398)', async () => {
-      await service.findAllAsync('user-1');
+    it('с access учитывает владельца, участников и организацию (KI-398, S2)', async () => {
+      await service.findAllAsync(ACCESS);
 
       const sql = whereSQL(selectChain.where);
 
@@ -313,7 +317,9 @@ describe('WorkflowService', () => {
       // `eq(workflows.userId)` давал только свои (KI-398).
       expect(sql).toContain('"workflows"."user_id" = user-1');
       expect(sql).toContain('exists');
-      expect(whereParams(selectChain.where)).toEqual(['user-1']);
+      // v1.0 S2: список ограничен организацией из access-токена.
+      expect(sql).toContain(`"workflows"."organization_id" = ${ORG_ID}`);
+      expect(whereParams(selectChain.where)).toEqual([ORG_ID, 'user-1']);
     });
 
     it('возвращает свои и чужие workflow с accessRole (KI-398)', async () => {
@@ -326,7 +332,7 @@ describe('WorkflowService', () => {
       };
       db.select.mockImplementation(() => chain(() => [own, shared]));
 
-      const result = await service.findAllAsync('user-1');
+      const result = await service.findAllAsync(ACCESS);
 
       expect(result).toHaveLength(2);
       expect(result.map((item) => item.id)).toEqual([own.id, shared.id]);
@@ -336,7 +342,7 @@ describe('WorkflowService', () => {
     });
 
     it('проецирует accessRole тем же запросом, без второго SELECT (KI-398)', async () => {
-      await service.findAllAsync('user-1');
+      await service.findAllAsync(ACCESS);
 
       // Первый вызов db.select — основная выборка списка; в её проекции
       // обязано быть вычисляемое поле. N+1 исключён: отдельного запроса ролей
@@ -357,7 +363,7 @@ describe('WorkflowService', () => {
     });
 
     it('применяет limit и offset', async () => {
-      await service.findAllAsync('user-1', 5, 10);
+      await service.findAllAsync(ACCESS, 5, 10);
 
       expect(selectChain.limit).toHaveBeenCalledWith(5);
       expect(selectChain.offset).toHaveBeenCalledWith(10);
@@ -388,8 +394,8 @@ describe('WorkflowService', () => {
       expect(result).toBeNull();
     });
 
-    it('с userId учитывает владельца и участников (R7.6)', async () => {
-      await service.findOneAsync(WORKFLOW_ID, 'user-1');
+    it('с access учитывает владельца, участников (R7.6) и организацию (S2)', async () => {
+      await service.findOneAsync(WORKFLOW_ID, ACCESS);
 
       const sql = whereSQL(selectChain.where);
 
@@ -400,7 +406,47 @@ describe('WorkflowService', () => {
       // поэтому его состав проверяет workflow-access.spec.ts на реальном
       // Drizzle-билдере.
       expect(sql).toContain('exists');
-      expect(whereParams(selectChain.where)).toEqual([WORKFLOW_ID, 'user-1']);
+      // S2: чужой арендатор неотличим от несуществующего workflow.
+      expect(sql).toContain(`"workflows"."organization_id" = ${ORG_ID}`);
+      expect(whereParams(selectChain.where)).toEqual([WORKFLOW_ID, ORG_ID, 'user-1']);
+    });
+  });
+
+  describe('exportAsync', () => {
+    it('выбирает только name/nodes/edges и собирает артефакт версии 1', async () => {
+      const result = await service.exportAsync(WORKFLOW_ID, ACCESS);
+
+      // Явная проекция: служебные поля (id/userId/shareToken/createdAt) не
+      // выбираются, поэтому не могут попасть в артефакт (R6.6.1, RULES 5.9).
+      const selection = db.select.mock.calls[0]?.[0] as Record<string, unknown>;
+
+      expect(Object.keys(selection).sort()).toEqual(['edges', 'name', 'nodes']);
+      expect(result).toEqual({
+        version: 1,
+        name: baseWorkflow.name,
+        nodes: baseWorkflow.nodes,
+        edges: baseWorkflow.edges,
+        exportedAt: expect.any(String),
+      });
+    });
+
+    it('с access включает предикат доступа и организации (S2)', async () => {
+      await service.exportAsync(WORKFLOW_ID, ACCESS);
+
+      const sql = whereSQL(selectChain.where);
+
+      expect(sql).toContain(`"workflows"."id" = ${WORKFLOW_ID}`);
+      expect(sql).toContain('exists');
+      expect(sql).toContain(`"workflows"."organization_id" = ${ORG_ID}`);
+      expect(whereParams(selectChain.where)).toEqual([WORKFLOW_ID, ORG_ID, 'user-1']);
+    });
+
+    it('бросает NotFoundException, если workflow не найден или из другой организации', async () => {
+      selectChain.limit.mockImplementation(() => []);
+
+      await expect(service.exportAsync(WORKFLOW_ID, ACCESS)).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -429,14 +475,18 @@ describe('WorkflowService', () => {
       expect(setArg.updatedAt.getTime()).toBeLessThanOrEqual(Date.now());
     });
 
-    it('с userId учитывает принадлежность при обновлении', async () => {
-      await service.updateAsync(WORKFLOW_ID, { name: 'Updated' }, 'user-1');
+    it('с access учитывает принадлежность и организацию при обновлении', async () => {
+      await service.updateAsync(WORKFLOW_ID, { name: 'Updated' }, ACCESS);
 
-      expect(whereSQL(updateChain.where)).toContain('"workflows"."user_id" = user-1');
+      const sql = whereSQL(updateChain.where);
+
+      expect(sql).toContain('"workflows"."user_id" = user-1');
+      // S2: правка чужого арендатора не проходит даже при совпадении id.
+      expect(sql).toContain(`"workflows"."organization_id" = ${ORG_ID}`);
     });
 
-    it('PATCH с userId требует роль editor (R7.6)', async () => {
-      await service.updateAsync(WORKFLOW_ID, { name: 'Updated' }, 'user-1');
+    it('PATCH с access требует роль editor (R7.6)', async () => {
+      await service.updateAsync(WORKFLOW_ID, { name: 'Updated' }, ACCESS);
 
       const sql = whereSQL(updateChain.where);
 
@@ -544,15 +594,19 @@ describe('WorkflowService', () => {
       expect(result).toBe(true);
     });
 
-    it('с userId учитывает принадлежность при удалении', async () => {
-      await service.removeAsync(WORKFLOW_ID, 'user-1');
+    it('с access учитывает принадлежность и организацию при удалении', async () => {
+      await service.removeAsync(WORKFLOW_ID, ACCESS);
 
-      expect(whereSQL(deleteChain.where)).toContain('"workflows"."user_id" = user-1');
-      expect(whereParams(deleteChain.where)).toEqual([WORKFLOW_ID, 'user-1']);
+      const sql = whereSQL(deleteChain.where);
+
+      expect(sql).toContain('"workflows"."user_id" = user-1');
+      // S2: удалить граф чужой организации нельзя.
+      expect(sql).toContain(`"workflows"."organization_id" = ${ORG_ID}`);
+      expect(whereParams(deleteChain.where)).toEqual([WORKFLOW_ID, 'user-1', ORG_ID]);
     });
 
     it('DELETE остаётся только у владельца: участники не учитываются (R7.6)', async () => {
-      await service.removeAsync(WORKFLOW_ID, 'user-1');
+      await service.removeAsync(WORKFLOW_ID, ACCESS);
 
       // Даже editor не удаляет workflow, поэтому EXISTS-подзапроса здесь нет.
       expect(whereSQL(deleteChain.where)).not.toContain('workflow_collaborators');

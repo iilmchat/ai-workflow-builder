@@ -31,6 +31,7 @@ import {
 import {
   accessibleWorkflowIdsSubquery,
   workflowAccessFilter,
+  type WorkflowAccess,
 } from '../workflow/workflow-access.js';
 import { EXECUTE_RUN_JOB, WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 import { RUNS_INSTANCE_ID } from './runs.worker-options.js';
@@ -133,23 +134,29 @@ export class RunsService {
    * упала, запуск компенсируется статусом `failed`, а клиент получает 500.
    *
    * @param dto - валидированный DTO с идентификатором workflow
-   * @param userId - пользователь из access-токена (R6.1a): если передан, чужой
-   *   workflow не запускается (404, чтобы не раскрывать существование)
+   * @param access - пользователь и его организация из access-токена (R6.1a,
+   *   v1.0.0 S2): если передан, чужой workflow и workflow другой организации
+   *   не запускаются (404, чтобы не раскрывать существование)
    * @returns публичное представление созданного запуска
-   * @throws NotFoundException если workflow с таким id не найден, принадлежит другому пользователю
-   *   либо доступен только с ролью viewer (R7.6: запуск — право editor)
+   * @throws NotFoundException если workflow с таким id не найден, принадлежит
+   *   другому пользователю/организации либо доступен только с ролью viewer
+   *   (R7.6: запуск — право editor)
    * @throws InternalServerErrorException если не удалось поставить задание в очередь
    */
-  async createRunAsync(dto: CreateRunDto, userId?: string): Promise<RunResponse> {
+  async createRunAsync(
+    dto: CreateRunDto,
+    access?: WorkflowAccess,
+  ): Promise<RunResponse> {
     const [workflow] = await this.db
       .select()
       .from(workflows)
       .where(
-        userId
-          // R7.6: запускать может владелец или участник с ролью editor.
-          // Viewer получает пустую выборку → 404, как чужой workflow.
-          ? workflowAccessFilter(this.db, dto.workflowId, userId, 'editor')
-          : eq(workflows.id, dto.workflowId),
+        access === undefined
+          ? eq(workflows.id, dto.workflowId)
+          : // R7.6 + S2: запускать может владелец или участник с ролью editor
+            // строго в своей организации. Viewer/чужой workflow → пустая
+            // выборка → 404, как несуществующий.
+            workflowAccessFilter(this.db, dto.workflowId, access, 'editor'),
       )
       .limit(1);
 
@@ -197,8 +204,9 @@ export class RunsService {
   /**
    * Возвращает запуск workflow по идентификатору.
    *
-   * KI-202: если передан `userId`, чужой запуск неотличим от несуществующего —
-   * отдаём 404, а не 403, чтобы не раскрывать факт существования.
+   * KI-202: если передан `access`, чужой запуск неотличим от несуществующего —
+   * отдаём 404, а не 403, чтобы не раскрывать факт существования. С v1.0.0 S2
+   * то же правило действует для запусков workflow другой организации.
    *
    * v0.11 S12 (DESIGN § 3.4.2): узлов в ответе нет — история узлов вынесена в
    * {@link listNodeRunsAsync} (`GET /runs/:id/nodes`). Здесь отдаётся только
@@ -206,12 +214,14 @@ export class RunsService {
    * поллинга.
    *
    * @param id - uuid запуска
-   * @param userId - владелец из access-токена (необязательный)
+   * @param access - пользователь и его организация из access-токена
+   *   (необязательный: без него фильтр доступа не применяется)
    * @returns публичное представление запуска
-   * @throws NotFoundException если запуск не найден или принадлежит другому
+   * @throws NotFoundException если запуск не найден, принадлежит другому
+   *   пользователю или другой организации
    */
-  async getRunAsync(id: string, userId?: string): Promise<RunResponse> {
-    const run = await this.getRunRowAsync(id, userId);
+  async getRunAsync(id: string, access?: WorkflowAccess): Promise<RunResponse> {
+    const run = await this.getRunRowAsync(id, access);
 
     return this.toRunResponse(run);
   }
@@ -226,15 +236,17 @@ export class RunsService {
    * media-ссылки (KI-443/KI-464).
    *
    * @param runId - uuid запуска
-   * @param userId - владелец из access-токена: чужой запуск → 404
+   * @param access - пользователь и его организация из access-токена: чужой
+   *   запуск / запуск другой организации → 404
    * @returns снимки всех узлов запуска (порядок — по `nodeId`)
-   * @throws NotFoundException если запуск не найден или принадлежит другому
+   * @throws NotFoundException если запуск не найден, принадлежит другому
+   *   пользователю или другой организации
    */
   async listNodeRunsAsync(
     runId: string,
-    userId?: string,
+    access?: WorkflowAccess,
   ): Promise<NodeRunSnapshot[]> {
-    const run = await this.getRunRowAsync(runId, userId);
+    const run = await this.getRunRowAsync(runId, access);
 
     return this.snapshotMapper.listAsync(runId, run.snapshot);
   }
@@ -247,7 +259,9 @@ export class RunsService {
    * (R7.6, как у запуска): чужой/несуществующий workflow и workflow, где
    * пользователь только `viewer`, дают 404 — факт существования не
    * раскрывается (KI-202). Проверка идёт **до** чтения истории: при отказе
-   * запросов к `workflow_runs`/`node_runs` не выполняется.
+   * запросов к `workflow_runs`/`node_runs` не выполняется. S2: workflow другой
+   * организации отсекается тем же фильтром доступа — тоже 404, без утечки
+   * существования чужого арендатора.
    *
    * **Запросы.** Три (плюс агрегат) шага вместо join'а с `GROUP BY`:
    * 1) проверка доступа по `workflows`; 2) `count(*)` для `total`;
@@ -269,17 +283,19 @@ export class RunsService {
    * `node_runs`, у запуска без строк `node_runs` — `0`.
    *
    * @param workflowId - uuid workflow
-   * @param userId - пользователь из access-токена (владелец или `editor`)
+   * @param access - пользователь и его организация из access-токена
+   *   (владелец или `editor`); S2: workflow другой организации неотличим от
+   *   несуществующего — 404
    * @param limit - размер страницы (1..{@link MAX_RUN_HISTORY_LIMIT})
    * @param cursor - позиция последнего элемента предыдущей страницы; `undefined` — первая страница
    * @returns запуски страницы и общее число запусков workflow
-   * @throws NotFoundException если workflow не найден, чужой или доступен
-   *   только с ролью `viewer`
+   * @throws NotFoundException если workflow не найден, чужой, принадлежит
+   *   другой организации или доступен только с ролью `viewer`
    * @throws BadRequestException если декодированный курсор содержит невалидную дату
    */
   async listRunsAsync(
     workflowId: string,
-    userId: string,
+    access: WorkflowAccess,
     limit: number,
     cursor?: RunHistoryCursor,
   ): Promise<RunHistoryResponse> {
@@ -287,7 +303,9 @@ export class RunsService {
       .select({ id: workflows.id })
       .from(workflows)
       // R7.6: история — право editor (как запуск); viewer получает 404.
-      .where(workflowAccessFilter(this.db, workflowId, userId, 'editor'))
+      // S2: organization_id = access.orgId обязателен и здесь — история
+      // запусков чужой организации не читается даже по известному uuid.
+      .where(workflowAccessFilter(this.db, workflowId, access, 'editor'))
       .limit(1);
 
     if (!workflow) {
@@ -402,29 +420,36 @@ export class RunsService {
    * Публичная проекция запуска (`RunResponse`) ограничена публичными полями;
    * `snapshot`/`inputs`/`outputs` запуска наружу не отдаются.
    *
-   * KI-202: если передан `userId`, чужой запуск неотличим от несуществующего —
-   * отдаём 404, а не 403, чтобы не раскрывать факт существования.
+   * KI-202: если передан `access`, чужой запуск неотличим от несуществующего —
+   * отдаём 404, а не 403, чтобы не раскрывать факт существования. С v1.0.0 S2
+   * запуск ищется только среди workflow **своей организации** — uuid запуска
+   * другой организации даёт 404, а не данные чужого арендатора.
    *
    * @param id - uuid запуска
-   * @param userId - владелец из access-токена (необязательный)
+   * @param access - пользователь и его организация из access-токена
+   *   (необязательный: без него фильтр доступа не применяется)
    * @returns строка таблицы `workflow_runs`
-   * @throws NotFoundException если запуск не найден или принадлежит другому
+   * @throws NotFoundException если запуск не найден, принадлежит другому
+   *   пользователю или другой организации
    */
-  async getRunRowAsync(id: string, userId?: string): Promise<WorkflowRun> {
+  async getRunRowAsync(id: string, access?: WorkflowAccess): Promise<WorkflowRun> {
     const [run] = await this.db
       .select()
       .from(workflowRuns)
       .where(
-        userId === undefined
+        access === undefined
           ? eq(workflowRuns.id, id)
           : and(
               eq(workflowRuns.id, id),
               // Владелец запуска — владелец его workflow. R7.6: участник
               // workflow тоже видит запуски (иначе SSE-поток editor'а,
               // который сам же запустил граф, отвечал бы 404).
+              // S2: подзапрос `accessibleWorkflowIdsSubquery` уже ограничен
+              // organization_id арендатора, поэтому запуск чужой организации
+              // не проходит фильтр.
               inArray(
                 workflowRuns.workflowId,
-                accessibleWorkflowIdsSubquery(this.db, userId),
+                accessibleWorkflowIdsSubquery(this.db, access),
               ),
             ),
       )

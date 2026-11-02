@@ -1643,56 +1643,66 @@ export class ExecutionEngineService {
   /**
    * Создаёт контекст под-воркфлоу для запуска (R6.7, KI-200).
    *
-   * Владелец запуска читается из БД **только** если в графе есть узел
-   * `sub_workflow`: для обычных графов лишний запрос не нужен. Если владельца
-   * определить не удалось, контекст получает `rootUserId: null` — тогда любой
-   * подграф будет отвергнут как чужой (404), а сам запуск не упадёт из-за
-   * проблемы с правами на одном узле.
+   * Владелец и организация запуска читаются из БД **только** если в графе есть
+   * узел `sub_workflow`: для обычных графов лишний запрос не нужен. Если пару
+   * определить не удалось, контекст получает `rootUserId: null` и
+   * `rootOrgId: null` — тогда любой подграф будет отвергнут как чужой (404), а
+   * сам запуск не упадёт из-за проблемы с правами на одном узле.
    *
    * @param runId - uuid запуска
    * @param graph - граф запуска
-   * @returns контекст ветки: источник workflow, владелец, пустой стек, глубина 0
+   * @returns контекст ветки: источник workflow, владелец и организация, пустой стек, глубина 0
    */
   private async createSubWorkflowContextAsync(
     runId: string,
     graph: GraphDto,
   ): Promise<SubWorkflowContext> {
     const hasSubWorkflow = graph.nodes.some((node) => node.type === 'sub_workflow');
+    const access = hasSubWorkflow ? await this.findRootAccessAsync(runId) : null;
 
     return {
       lookup: this.workflowService,
-      rootUserId: hasSubWorkflow ? await this.findRootUserIdAsync(runId) : null,
+      rootUserId: access?.userId ?? null,
+      rootOrgId: access?.orgId ?? null,
       visitedWorkflows: new Set<string>(),
       depth: 0,
     };
   }
 
   /**
-   * Определяет владельца workflow, к которому относится запуск.
+   * Определяет владельца и организацию workflow, к которому относится запуск.
    *
-   * `workflow_runs` не хранит владельца, поэтому он берётся у корневого
-   * workflow одним join-запросом: подграф `sub_workflow` должен принадлежать
-   * тому же пользователю, что и родительский граф (DESIGN v0.8 § 5).
+   * `workflow_runs` не хранит ни владельца, ни организацию, поэтому они берутся
+   * у корневого workflow одним join-запросом: подграф `sub_workflow` должен
+   * принадлежать тому же пользователю **и** той же организации, что и
+   * родительский граф (DESIGN v1.0 § 3.1, изоляция арендаторов).
    *
    * Сбой чтения не роняет запуск: возвращается `null`, и узлы `sub_workflow`
    * падают каждый сам (404) — остальной граф выполняется (RULES 4.16/4.18).
    *
    * @param runId - uuid запуска
-   * @returns uuid владельца либо `null`, если строки нет или чтение не удалось
+   * @returns `{ userId, orgId }` либо `null`, если строки нет или чтение не удалось
    */
-  private async findRootUserIdAsync(runId: string): Promise<string | null> {
+  private async findRootAccessAsync(
+    runId: string,
+  ): Promise<{ userId: string; orgId: string } | null> {
     try {
       const [row] = await this.db
-        .select({ userId: workflows.userId })
+        .select({
+          userId: workflows.userId,
+          organizationId: workflows.organizationId,
+        })
         .from(workflowRuns)
         .innerJoin(workflows, eq(workflows.id, workflowRuns.workflowId))
         .where(eq(workflowRuns.id, runId))
         .limit(1);
 
-      return row?.userId ?? null;
+      return row === undefined
+        ? null
+        : { userId: row.userId, orgId: row.organizationId };
     } catch (error: unknown) {
       this.logger.error(
-        `Не удалось определить владельца запуска ${runId}: ${toMessage(error)}`,
+        `Не удалось определить владельца и организацию запуска ${runId}: ${toMessage(error)}`,
       );
 
       return null;

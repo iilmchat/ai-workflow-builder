@@ -19,6 +19,18 @@ const RUN_ID = '22222222-2222-4222-8222-222222222222';
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
 
 /**
+ * Контекст доступа пользователя (v1.0.0 S2): SSE-поток проверяет запуск только
+ * среди workflow его организации, поэтому orgId обязателен в каждом вызове.
+ */
+const ACCESS = {
+  userId: '44444444-4444-4444-8444-444444444444',
+  orgId: '55555555-5555-4555-8555-555555555555',
+};
+
+/** Организация, к которой тестовый пользователь не принадлежит (S2). */
+const OTHER_ORG_ID = '66666666-6666-4666-8666-666666666666';
+
+/**
  * Строка `workflow_runs` — снимок читает её целиком (KI-347).
  *
  * Остальные колонки нужны только для типизации `WorkflowRun`: снимок берёт из
@@ -323,7 +335,7 @@ describe('RunsStreamService', () => {
   it('отдаёт snapshot первым сообщением: запуск и строки node_runs', async () => {
     const { service } = await createService({ rows: [nodeRun()] });
     const messages = await collectAsync(
-      service.streamAsync(RUN_ID, new AbortController().signal),
+      service.streamAsync(RUN_ID, new AbortController().signal, ACCESS),
     );
 
     expect(messages).toHaveLength(1);
@@ -383,7 +395,7 @@ describe('RunsStreamService', () => {
       storage: { refreshStoredUrlAsync },
     });
     const messages = await collectAsync(
-      service.streamAsync(RUN_ID, new AbortController().signal),
+      service.streamAsync(RUN_ID, new AbortController().signal, ACCESS),
     );
     const snapshot = payloads(messages)[0] as {
       nodes: Array<{ storedUrl: string | null; storedExpiresAt: string | null }>;
@@ -410,7 +422,7 @@ describe('RunsStreamService', () => {
       storage: { refreshStoredUrlAsync },
     });
 
-    await collectAsync(service.streamAsync(RUN_ID, new AbortController().signal));
+    await collectAsync(service.streamAsync(RUN_ID, new AbortController().signal, ACCESS));
 
     expect(refreshStoredUrlAsync).not.toHaveBeenCalled();
   });
@@ -431,7 +443,7 @@ describe('RunsStreamService', () => {
       },
     });
     const messages = await collectAsync(
-      service.streamAsync(RUN_ID, new AbortController().signal),
+      service.streamAsync(RUN_ID, new AbortController().signal, ACCESS),
     );
     const snapshot = payloads(messages)[0] as {
       nodes: Array<{ storedUrl: string | null }>;
@@ -462,7 +474,7 @@ describe('RunsStreamService', () => {
       storage: { refreshStoredUrlByKeyAsync, refreshStoredUrlAsync },
     });
     const messages = await collectAsync(
-      service.streamAsync(RUN_ID, new AbortController().signal),
+      service.streamAsync(RUN_ID, new AbortController().signal, ACCESS),
     );
     const snapshot = payloads(messages)[0] as {
       nodes: Array<{ storedUrl: string | null; storedExpiresAt: string | null }>;
@@ -502,7 +514,7 @@ describe('RunsStreamService', () => {
       },
     });
     const messages = await collectAsync(
-      service.streamAsync(RUN_ID, new AbortController().signal),
+      service.streamAsync(RUN_ID, new AbortController().signal, ACCESS),
     );
     const snapshot = payloads(messages)[0] as {
       nodes: Array<{ outputs: Record<string, unknown> | null }>;
@@ -546,7 +558,7 @@ describe('RunsStreamService', () => {
       storage: { refreshStoredUrlByKeyAsync },
     });
     const messages = await collectAsync(
-      service.streamAsync(RUN_ID, new AbortController().signal),
+      service.streamAsync(RUN_ID, new AbortController().signal, ACCESS),
     );
     const snapshot = payloads(messages)[0] as {
       nodes: Array<{ storedUrl: string | null }>;
@@ -566,7 +578,7 @@ describe('RunsStreamService', () => {
       },
     });
     const messages = await collectAsync(
-      service.streamAsync(RUN_ID, new AbortController().signal),
+      service.streamAsync(RUN_ID, new AbortController().signal, ACCESS),
     );
     const snapshot = payloads(messages)[0] as {
       run: { status: string; error: string | null };
@@ -592,7 +604,7 @@ describe('RunsStreamService', () => {
       ],
     });
     const messages = await collectAsync(
-      service.streamAsync(RUN_ID, new AbortController().signal),
+      service.streamAsync(RUN_ID, new AbortController().signal, ACCESS),
     );
     const snapshot = payloads(messages)[0] as {
       nodes: Array<{ nodeId: string; costRub?: string | null }>;
@@ -634,7 +646,7 @@ describe('RunsStreamService', () => {
     });
 
     const messages = await collectWithTimeout(
-      service.streamAsync(RUN_ID, new AbortController().signal),
+      service.streamAsync(RUN_ID, new AbortController().signal, ACCESS),
     );
     const types = payloads(messages).map((message) => message.type);
 
@@ -651,7 +663,7 @@ describe('RunsStreamService', () => {
     });
 
     const messages = await collectWithTimeout(
-      service.streamAsync(RUN_ID, new AbortController().signal),
+      service.streamAsync(RUN_ID, new AbortController().signal, ACCESS),
     );
 
     expect(payloads(messages).map((message) => message.type)).toEqual([
@@ -672,7 +684,7 @@ describe('RunsStreamService', () => {
 
     // Поток обязан закрыться: раньше здесь висело соединение до отключения.
     const messages = await collectWithTimeout(
-      service.streamAsync(RUN_ID, new AbortController().signal),
+      service.streamAsync(RUN_ID, new AbortController().signal, ACCESS),
     );
 
     expect(payloads(messages).map((message) => message.type)).toEqual([
@@ -696,7 +708,7 @@ describe('RunsStreamService', () => {
     });
 
     const messages = await collectWithTimeout(
-      service.streamAsync(RUN_ID, new AbortController().signal),
+      service.streamAsync(RUN_ID, new AbortController().signal, ACCESS),
     );
     const types = payloads(messages).map((message) => message.type);
 
@@ -763,7 +775,7 @@ describe('RunsStreamService', () => {
     });
 
     const messages = await collectAsync(
-      service.streamAsync(RUN_ID, new AbortController().signal),
+      service.streamAsync(RUN_ID, new AbortController().signal, ACCESS),
     );
 
     expect(payloads(messages).map((message) => message.type)).toEqual([
@@ -796,7 +808,7 @@ describe('RunsStreamService', () => {
       resolveFirst = resolve;
     });
 
-    const subscription = service.streamAsync(RUN_ID, controller.signal).subscribe({
+    const subscription = service.streamAsync(RUN_ID, controller.signal, ACCESS).subscribe({
       next: (message) => {
         received.push(message);
         resolveFirst?.(message);
@@ -820,20 +832,51 @@ describe('RunsStreamService', () => {
 
     controller.abort();
 
-    const messages = await collectAsync(service.streamAsync(RUN_ID, controller.signal));
+    const messages = await collectAsync(service.streamAsync(RUN_ID, controller.signal, ACCESS));
 
     expect(messages).toEqual([]);
   });
 
   it('проверяет существование запуска и пробрасывает ошибку в поток', async () => {
-    const { service } = await createService({ run: null });
+    const { service, runs } = await createService({ run: null });
 
-    await expect(service.assertRunExistsAsync(RUN_ID)).rejects.toThrow(
+    await expect(service.assertRunExistsAsync(RUN_ID, ACCESS)).rejects.toThrow(
       NotFoundException,
     );
 
+    expect(runs.getRunRowAsync).toHaveBeenCalledWith(RUN_ID, ACCESS);
+
     await expect(
-      collectAsync(service.streamAsync(RUN_ID, new AbortController().signal)),
+      collectAsync(service.streamAsync(RUN_ID, new AbortController().signal, ACCESS)),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('v1.0.0 S2: снимок запрашивает запуск с организацией из access', async () => {
+    const { service, runs } = await createService({ rows: [] });
+
+    await collectAsync(
+      service.streamAsync(RUN_ID, new AbortController().signal, ACCESS),
+    );
+
+    // orgId доезжает до выборки запуска: чужой арендатор получит 404, а не
+    // снимок чужого workflow.
+    expect(runs.getRunRowAsync).toHaveBeenCalledWith(RUN_ID, ACCESS);
+  });
+
+  it('v1.0.0 S2: запуск другой организации — 404 при проверке и в потоке', async () => {
+    const { service, runs } = await createService({ run: null });
+    const foreignAccess = { userId: ACCESS.userId, orgId: OTHER_ORG_ID };
+
+    await expect(
+      service.assertRunExistsAsync(RUN_ID, foreignAccess),
+    ).rejects.toThrow(NotFoundException);
+
+    expect(runs.getRunRowAsync).toHaveBeenCalledWith(RUN_ID, foreignAccess);
+
+    await expect(
+      collectAsync(
+        service.streamAsync(RUN_ID, new AbortController().signal, foreignAccess),
+      ),
     ).rejects.toThrow(NotFoundException);
   });
 });

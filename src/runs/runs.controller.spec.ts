@@ -6,6 +6,7 @@ import { Test } from '@nestjs/testing';
 import { of } from 'rxjs';
 import request from 'supertest';
 import { DEMO_ORG_ID, DEMO_USER_EMAIL, DEMO_USER_ID } from '../auth/auth.constants.js';
+import { toWorkflowAccess } from '../workflow/workflow-access.js';
 import { CostBudgetService } from './cost-budget.service.js';
 import { RunsController, RunsHistoryController } from './runs.controller.js';
 import { RunsService, type RunResponse } from './runs.service.js';
@@ -15,6 +16,14 @@ import { decodeRunHistoryCursor, encodeRunHistoryCursor } from './dto/index.js';
 
 /** Владелец, которого guard подставляет при `AUTH_DISABLED=true`. */
 const USER = { sub: DEMO_USER_ID, email: DEMO_USER_EMAIL, orgId: DEMO_ORG_ID };
+
+/**
+ * Контекст доступа, который контроллер обязан собрать из токена (v1.0.0 S2).
+ *
+ * Ожидания — по точному объекту: если `orgId` потеряется в `toWorkflowAccess`,
+ * `RunsService` перестанет фильтровать workflow по организации.
+ */
+const ACCESS = toWorkflowAccess(USER);
 
 /** Стабильные идентификаторы тестовых данных. */
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
@@ -189,7 +198,7 @@ describe('RunsController', () => {
 
       expect(service.createRunAsync).toHaveBeenCalledWith(
         { workflowId: WORKFLOW_ID },
-        USER.sub,
+        ACCESS,
       );
       expect(response.body).toEqual(
         expect.objectContaining({ id: RUN_ID, workflowId: WORKFLOW_ID, status: 'pending' }),
@@ -211,7 +220,18 @@ describe('RunsController', () => {
       ).resolves.toEqual(runResponse);
       expect(service.createRunAsync).toHaveBeenCalledWith(
         { workflowId: WORKFLOW_ID },
-        USER.sub,
+        ACCESS,
+      );
+    });
+
+    it('v1.0.0 S2: передаёт userId и orgId из токена (изоляция арендаторов)', async () => {
+      await controller.create({ workflowId: WORKFLOW_ID }, USER);
+
+      // Точный объект, а не только userId: без orgId сервис перестал бы
+      // фильтровать workflow по организации.
+      expect(service.createRunAsync).toHaveBeenCalledWith(
+        { workflowId: WORKFLOW_ID },
+        { userId: DEMO_USER_ID, orgId: DEMO_ORG_ID },
       );
     });
   });
@@ -225,7 +245,7 @@ describe('RunsController', () => {
         // Данные авторизованные и меняются во время запуска — кэш запрещён.
         .expect('Cache-Control', 'no-store');
 
-      expect(service.listNodeRunsAsync).toHaveBeenCalledWith(RUN_ID, USER.sub);
+      expect(service.listNodeRunsAsync).toHaveBeenCalledWith(RUN_ID, ACCESS);
       expect(response.body).toEqual([nodeSnapshot]);
     });
 
@@ -263,7 +283,7 @@ describe('RunsController', () => {
     it('GET /runs/:id отвечает 200 и делегирует в сервис', async () => {
       const response = await request(app.getHttpServer()).get(`/runs/${RUN_ID}`).expect(200);
 
-      expect(service.getRunAsync).toHaveBeenCalledWith(RUN_ID, USER.sub);
+      expect(service.getRunAsync).toHaveBeenCalledWith(RUN_ID, ACCESS);
       expect(response.body.id).toBe(RUN_ID);
     });
 
@@ -276,7 +296,7 @@ describe('RunsController', () => {
     it('GET /runs/:id передаёт владельца из токена (KI-202)', async () => {
       await request(app.getHttpServer()).get(`/runs/${RUN_ID}`).expect(200);
 
-      expect(service.getRunAsync).toHaveBeenCalledWith(RUN_ID, USER.sub);
+      expect(service.getRunAsync).toHaveBeenCalledWith(RUN_ID, ACCESS);
     });
 
     it('GET /runs/:id отвечает 401 без токена при AUTH_DISABLED=false', async () => {
@@ -301,7 +321,7 @@ describe('RunsController', () => {
         .get(`/runs/${RUN_ID}/budget`)
         .expect(200);
 
-      expect(service.getRunRowAsync).toHaveBeenCalledWith(RUN_ID, USER.sub);
+      expect(service.getRunRowAsync).toHaveBeenCalledWith(RUN_ID, ACCESS);
       expect(costBudget.checkBudgetAsync).toHaveBeenCalledWith(RUN_ID);
       expect(response.body).toEqual({
         ok: true,
@@ -336,8 +356,8 @@ describe('RunsController', () => {
         .expect(200)
         .expect('Content-Type', /text\/event-stream/);
 
-      expect(stream.assertRunExistsAsync).toHaveBeenCalledWith(RUN_ID, USER.sub);
-      expect(stream.streamAsync).toHaveBeenCalledWith(RUN_ID, expect.anything(), USER.sub);
+      expect(stream.assertRunExistsAsync).toHaveBeenCalledWith(RUN_ID, ACCESS);
+      expect(stream.streamAsync).toHaveBeenCalledWith(RUN_ID, expect.anything(), ACCESS);
       expect(response.text).toContain('data: {"type":"snapshot"');
       expect(response.text).toContain('"type":"run_completed"');
     });
@@ -371,7 +391,7 @@ describe('RunsController', () => {
       // Пагинация по умолчанию: limit=20, курсора нет — первая страница.
       expect(service.listRunsAsync).toHaveBeenCalledWith(
         WORKFLOW_ID,
-        USER.sub,
+        ACCESS,
         20,
         undefined,
       );
@@ -403,7 +423,7 @@ describe('RunsController', () => {
 
       expect(service.listRunsAsync).toHaveBeenCalledWith(
         WORKFLOW_ID,
-        USER.sub,
+        ACCESS,
         5,
         decodeRunHistoryCursor(cursor),
       );

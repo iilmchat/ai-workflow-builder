@@ -14,6 +14,9 @@ const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
 /** Владелец из access-токена: контроллер берёт userId только отсюда (R6.1a). */
 const USER = { sub: 'user-1', email: 'user@example.com', orgId: DEMO_ORG_ID };
 
+/** Пара «пользователь + организация», которую контроллер отдаёт сервису (S2). */
+const ACCESS = { userId: USER.sub, orgId: USER.orgId };
+
 const workflow: Workflow = {
   id: WORKFLOW_ID,
   userId: 'user-1',
@@ -72,19 +75,19 @@ describe('WorkflowController', () => {
       const dto = { userId: 'attacker', name: 'My workflow', nodes: [], edges: [] };
 
       await expect(controller.create(dto, USER)).resolves.toEqual(workflow);
-      // KI-204: `userId` из тела игнорируется — владелец приходит из токена
-      // вторым аргументом сервиса, арендатор — третьим (v1.0 S1).
-      expect(service.createAsync).toHaveBeenCalledWith(dto, USER.sub, USER.orgId);
+      // KI-204: `userId` из тела игнорируется — владелец и организация приходят
+      // из токена единым объектом `WorkflowAccess` (v1.0 S2).
+      expect(service.createAsync).toHaveBeenCalledWith(dto, ACCESS);
     });
   });
 
   describe('findAll', () => {
-    it('передаёт userId из токена, limit и offset в сервис', async () => {
+    it('передаёт access из токена, limit и offset в сервис', async () => {
       const query = { userId: 'attacker', limit: 10, offset: 20 };
 
       await expect(controller.findAll(query, USER)).resolves.toEqual([workflow]);
       // KI-204: чужой `userId` из query не влияет — фильтр строится по токену.
-      expect(service.findAllAsync).toHaveBeenCalledWith(USER.sub, 10, 20);
+      expect(service.findAllAsync).toHaveBeenCalledWith(ACCESS, 10, 20);
     });
   });
 
@@ -93,15 +96,19 @@ describe('WorkflowController', () => {
       await expect(controller.findOne({ id: WORKFLOW_ID }, USER)).resolves.toEqual(
         workflow,
       );
-      expect(service.findOneAsync).toHaveBeenCalledWith(WORKFLOW_ID, USER.sub);
+      expect(service.findOneAsync).toHaveBeenCalledWith(WORKFLOW_ID, ACCESS);
     });
 
-    it('бросает NotFoundException, если сервис вернул null', async () => {
+    it('cross-org: сервис вернул null → 404 (изоляция организаций, S2)', async () => {
+      // Пользователь из другой организации получает пустую выборку: в предикате
+      // сервиса есть `organization_id = orgId`. Контроллер превращает null в 404,
+      // не раскрывая существование чужого workflow.
       service.findOneAsync.mockResolvedValue(null);
 
       await expect(controller.findOne({ id: WORKFLOW_ID }, USER)).rejects.toThrow(
         NotFoundException,
       );
+      expect(service.findOneAsync).toHaveBeenCalledWith(WORKFLOW_ID, ACCESS);
     });
   });
 
@@ -112,7 +119,7 @@ describe('WorkflowController', () => {
       await expect(controller.update({ id: WORKFLOW_ID }, dto, USER)).resolves.toEqual(
         workflow,
       );
-      expect(service.updateAsync).toHaveBeenCalledWith(WORKFLOW_ID, dto, USER.sub);
+      expect(service.updateAsync).toHaveBeenCalledWith(WORKFLOW_ID, dto, ACCESS);
     });
 
     it('бросает NotFoundException, если сервис вернул null', async () => {
@@ -127,7 +134,7 @@ describe('WorkflowController', () => {
   describe('remove', () => {
     it('завершается успешно, когда сервис удалил запись', async () => {
       await expect(controller.remove({ id: WORKFLOW_ID }, USER)).resolves.toBeUndefined();
-      expect(service.removeAsync).toHaveBeenCalledWith(WORKFLOW_ID, USER.sub);
+      expect(service.removeAsync).toHaveBeenCalledWith(WORKFLOW_ID, ACCESS);
     });
 
     it('бросает NotFoundException, если сервис вернул false', async () => {
@@ -218,7 +225,10 @@ describe('WorkflowController — export/import (R6.6.1)', () => {
     expect(response.body).not.toHaveProperty('shareToken');
     expect(response.body).not.toHaveProperty('createdAt');
     expect(response.body.version).toBe(1);
-    expect(service.exportAsync).toHaveBeenCalledWith(WORKFLOW_ID, DEMO_USER_ID);
+    expect(service.exportAsync).toHaveBeenCalledWith(WORKFLOW_ID, {
+      userId: DEMO_USER_ID,
+      orgId: DEMO_ORG_ID,
+    });
   });
 
   it('GET /workflow/:id/export — 404, если workflow чужой или не существует', async () => {
@@ -240,11 +250,10 @@ describe('WorkflowController — export/import (R6.6.1)', () => {
 
     expect(response.body).toEqual({ ...workflow, createdAt: expect.any(String), updatedAt: expect.any(String) });
     // Лишние ключи отброшены Zod'ом: подменить владельца или id через body нельзя.
-    expect(service.importAsync).toHaveBeenCalledWith(
-      artifact,
-      DEMO_USER_ID,
-      DEMO_ORG_ID,
-    );
+    expect(service.importAsync).toHaveBeenCalledWith(artifact, {
+      userId: DEMO_USER_ID,
+      orgId: DEMO_ORG_ID,
+    });
   });
 
   it('POST /workflow/import — 400 без обязательного version', async () => {

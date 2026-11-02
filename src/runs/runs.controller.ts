@@ -19,6 +19,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.js';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
+import { toWorkflowAccess } from '../workflow/workflow-access.js';
 import { CostBudgetService } from './cost-budget.service.js';
 import {
   CreateRunSchema,
@@ -63,7 +64,9 @@ type WorkflowIdParamDto = z.infer<typeof WorkflowIdParamSchema>;
  * ZodValidationPipe, ошибки отдаёт глобальный HttpExceptionFilter, поэтому
  * try/catch в контроллере нет (RULES 1.6, 4.7).
  *
- * R6.1a: контроллер закрыт JwtAuthGuard; владелец берётся из токена.
+ * R6.1a: контроллер закрыт JwtAuthGuard; пользователь берётся из токена.
+ * v1.0.0 S2: в сервисы уходит `{userId, orgId}` (`toWorkflowAccess`) — доступ
+ * ограничен не только пользователем, но и организацией-арендатором.
  */
 @UseGuards(JwtAuthGuard)
 @Controller('runs')
@@ -78,9 +81,9 @@ export class RunsController {
    * `POST /runs` — создаёт запуск workflow и ставит задание в очередь.
    *
    * @param dto - тело запроса, валидированное по CreateRunSchema
-   * @param user - владелец из access-токена
+   * @param user - пользователь и его организация из access-токена (S2)
    * @returns публичное представление запуска со статусом 201
-   * @throws NotFoundException если workflow не найден (или чужой)
+   * @throws NotFoundException если workflow не найден (или чужой/другой организации)
    * @throws InternalServerErrorException если очередь недоступна
    */
   @Post()
@@ -89,7 +92,9 @@ export class RunsController {
     @Body(ZodValidationPipe.create(CreateRunSchema)) dto: CreateRunDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<RunResponse> {
-    return this.runsService.createRunAsync(dto, user.sub);
+    // v1.0.0 S2: orgId из токена обязателен — сервис фильтрует workflow ещё
+    // и по организации арендатора, поэтому собираем access общим хелпером.
+    return this.runsService.createRunAsync(dto, toWorkflowAccess(user));
   }
 
   /**
@@ -109,9 +114,9 @@ export class RunsController {
    * запуска, кэшировать их нельзя.
    *
    * @param params - path-параметр `id` (uuid)
-   * @param user - владелец из access-токена
+   * @param user - пользователь и его организация из access-токена (S2)
    * @returns узлы запуска (пустой массив — у запуска ещё нет строк в `node_runs`)
-   * @throws NotFoundException если запуск не найден или чужой (KI-202)
+   * @throws NotFoundException если запуск не найден, чужой или другой организации (KI-202)
    */
   @Get(':id/nodes')
   @Header('Cache-Control', 'no-store')
@@ -119,7 +124,7 @@ export class RunsController {
     @Param(ZodValidationPipe.create(RunIdParamSchema)) params: RunIdParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<NodeRunSnapshot[]> {
-    return this.runsService.listNodeRunsAsync(params.id, user.sub);
+    return this.runsService.listNodeRunsAsync(params.id, toWorkflowAccess(user));
   }
 
   /**
@@ -134,8 +139,9 @@ export class RunsController {
     @Param(ZodValidationPipe.create(RunIdParamSchema)) params: RunIdParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<RunResponse> {
-    // KI-202: владелец обязателен — чужой запуск отдаёт 404.
-    return this.runsService.getRunAsync(params.id, user.sub);
+    // KI-202: access обязателен — чужой запуск (в т.ч. другой организации)
+    // отдаёт 404.
+    return this.runsService.getRunAsync(params.id, toWorkflowAccess(user));
   }
 
   /**
@@ -151,9 +157,9 @@ export class RunsController {
    * каждый поллинг.
    *
    * @param params - path-параметр `id` (uuid)
-   * @param user - владелец из access-токена
+   * @param user - пользователь и его организация из access-токена (S2)
    * @returns лимиты запуска и потраченное (нормализовано в USD)
-   * @throws NotFoundException если запуск не найден или чужой
+   * @throws NotFoundException если запуск не найден, чужой или другой организации
    */
   @Get(':id/budget')
   async getBudget(
@@ -161,9 +167,10 @@ export class RunsController {
     @CurrentUser() user: JwtPayload,
   ): Promise<RunBudgetResponse> {
     // KI-450: для проверки существования достаточно строки запуска.
-    // `getRunAsync` теперь читает ещё и `node_runs` с переподписью ссылок —
+    // `getRunAsync` теперь читает ещё и `node_runs` с переподпиской ссылок —
     // для поллинга бюджета (после каждого узла) это лишняя работа.
-    await this.runsService.getRunRowAsync(params.id, user.sub);
+    // S2: access с orgId — запуск другой организации тоже 404.
+    await this.runsService.getRunRowAsync(params.id, toWorkflowAccess(user));
 
     const check = await this.costBudget.checkBudgetAsync(params.id);
 
@@ -202,9 +209,12 @@ export class RunsController {
     @CurrentUser() user: JwtPayload,
   ): Promise<Observable<MessageEvent>> {
     // KI-202: проверка владельца до открытия потока (иначе чужой run утекал бы).
-    await this.runsStreamService.assertRunExistsAsync(params.id, user.sub);
+    // v1.0.0 S2: access содержит orgId — запуск другой организации тоже 404.
+    const access = toWorkflowAccess(user);
 
-    return this.runsStreamService.streamAsync(params.id, signal, user.sub);
+    await this.runsStreamService.assertRunExistsAsync(params.id, access);
+
+    return this.runsStreamService.streamAsync(params.id, signal, access);
   }
 }
 
@@ -234,9 +244,10 @@ export class RunsHistoryController {
    *
    * @param params - path-параметр `id` (uuid workflow)
    * @param query - `limit` (1..100, по умолчанию 20) и `cursor` (из ответа истории)
-   * @param user - пользователь из access-токена
+   * @param user - пользователь и его организация из access-токена (S2)
    * @returns запуски страницы и общее число запусков
-   * @throws NotFoundException если workflow не найден, чужой или только `viewer`
+   * @throws NotFoundException если workflow не найден, чужой, другой организации
+   *   или только `viewer`
    */
   @Get()
   @Header('Cache-Control', 'no-store')
@@ -254,7 +265,7 @@ export class RunsHistoryController {
 
     return this.runsService.listRunsAsync(
       params.id,
-      user.sub,
+      toWorkflowAccess(user),
       query.limit,
       cursor,
     );
