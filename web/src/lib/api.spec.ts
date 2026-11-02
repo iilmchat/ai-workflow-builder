@@ -260,13 +260,14 @@ describe('document-templates API (v0.11 S5)', () => {
   });
 });
 
-describe('fetchWorkflowRunsAsync (v0.14 S1 API ↔ S2 UI)', () => {
+describe('fetchWorkflowRunsAsync (v0.14 S1; keyset — v0.16 S1, KI-542)', () => {
   /** uuid workflow в тестах истории. */
   const WORKFLOW_ID = '88888888-8888-4888-8888-888888888888';
 
   /** Один элемент истории, который должен пережить Zod-разбор. */
   const RUN_SUMMARY = {
     id: '99999999-9999-4999-8999-999999999999',
+    cursor: 'eyJjIjoiMjAyNi0xMS0wMlQwOTowMDowMC4wMDBaIiwiaSI6Ijk5OTk5OTk5LTk5OTktNDk5OS04OTk5LTk5OTk5OTk5OTk5OSJ9',
     status: 'completed',
     createdAt: '2026-11-02T09:00:00.000Z',
     startedAt: '2026-11-02T09:00:01.000Z',
@@ -276,27 +277,29 @@ describe('fetchWorkflowRunsAsync (v0.14 S1 API ↔ S2 UI)', () => {
     costRub: 0,
   };
 
-  it('GET /workflow/:id/runs с дефолтными limit=20/offset=0 и Zod-разбором', async () => {
+  it('GET /workflow/:id/runs: первая страница без курсора и Zod-разбор', async () => {
     const fetchMock = stubFetch(() =>
-      jsonResponse({ runs: [RUN_SUMMARY], total: 1 }),
+      jsonResponse({ runs: [RUN_SUMMARY], nextCursor: null, total: 1 }),
     );
 
     const result = await fetchWorkflowRunsAsync(WORKFLOW_ID);
 
     const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe(`/workflow/${WORKFLOW_ID}/runs?limit=20&offset=0`);
-    expect(result).toEqual({ runs: [RUN_SUMMARY], total: 1 });
+    expect(url).toBe(`/workflow/${WORKFLOW_ID}/runs?limit=20`);
+    expect(result).toEqual({ runs: [RUN_SUMMARY], nextCursor: null, total: 1 });
   });
 
-  it('передаёт явные limit/offset и падает, если ответ не по контракту', async () => {
+  it('передаёт явные limit/cursor и падает, если ответ не по контракту', async () => {
     const fetchMock = stubFetch(() =>
       jsonResponse({ runs: [{ id: 42 }], total: 1 }),
     );
 
-    await expect(fetchWorkflowRunsAsync(WORKFLOW_ID, 5, 10)).rejects.toThrow();
+    await expect(
+      fetchWorkflowRunsAsync(WORKFLOW_ID, 5, 'cursor-next'),
+    ).rejects.toThrow();
 
     const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe(`/workflow/${WORKFLOW_ID}/runs?limit=5&offset=10`);
+    expect(url).toBe(`/workflow/${WORKFLOW_ID}/runs?limit=5&cursor=cursor-next`);
   });
 });
 

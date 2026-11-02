@@ -840,6 +840,34 @@ describe('useWorkflowStore — восстановление запуска по�
     expect(fetchRunBudgetAsync).toHaveBeenCalledWith(RUN_ID);
   });
 
+  it('preserveRunIdInUrl сохраняет ?runId= у терминального запуска (KI-541)', async () => {
+    vi.mocked(fetchRunAsync).mockResolvedValue(apiRun({ status: 'completed' }));
+    vi.mocked(fetchRunNodesAsync).mockResolvedValue([]);
+
+    // Адрес уже содержит `?runId=` (клик в истории → setRunIdInUrl).
+    await state().restoreRunAsync(RUN_ID, { preserveRunIdInUrl: true });
+
+    // `clearRunIdFromUrl` не вызывался: F5 снова восстановит панель.
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(state().runStatus).toBe('completed');
+  });
+
+  it('preserveRunIdInUrl пишет ?runId=, если его нет в адресе (KI-541)', async () => {
+    vi.stubGlobal('window', {
+      location: { href: 'http://127.0.0.1:5173/?workflowId=w1' },
+      history: { replaceState },
+    });
+    vi.mocked(fetchRunAsync).mockResolvedValue(apiRun({ status: 'failed' }));
+    vi.mocked(fetchRunNodesAsync).mockResolvedValue([]);
+
+    await state().restoreRunAsync(RUN_ID, { preserveRunIdInUrl: true });
+
+    expect(replaceState).toHaveBeenCalledTimes(1);
+    expect(String(replaceState.mock.calls[0]?.[2])).toContain(
+      `runId=${RUN_ID}`,
+    );
+  });
+
   it('404 сбрасывает состояние запуска, убирает ?runId= и показывает toast', async () => {
     vi.mocked(fetchRunAsync).mockRejectedValue(
       new ApiError('Запуск не найден', 404),

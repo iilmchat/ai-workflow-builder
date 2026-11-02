@@ -732,6 +732,58 @@ describe('McpClientService — подключение и каталог (v0.11 S
     expect(warnings[0]).toContain("MCP-сервер 'local'");
   });
 
+  it('stdio: WARN о ненайденных именах allowlist — один раз, без значений (v0.16 S1, KI-534)', async () => {
+    const warn = vi
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+    const root = await mkdtemp(join(tmpdir(), 'wb-mcp-allowlist-'));
+
+    try {
+      const { service } = await createHarness({
+        MCP_ENABLE_STDIO: true,
+        MCP_STDIO_ENV_ALLOWLIST: 'MCP_SMOKE_PRESENT, MCP_SMOKE_TYPO',
+        MCP_STDIO_CWD: root,
+        // Значение задано только у первого имени: второе — опечатка.
+        MCP_SMOKE_PRESENT: 'value-present',
+        MCP_SERVERS: JSON.stringify({
+          local: {
+            transport: 'stdio',
+            command: 'node',
+            args: ['server.js'],
+            env: { MCP_SMOKE_PRESENT: 'from-config' },
+          },
+        }),
+      });
+
+      await service.listToolsAsync('local');
+
+      const allowlistWarnings = warn.mock.calls
+        .map(([message]) => String(message))
+        .filter((message) => message.includes('MCP_STDIO_ENV_ALLOWLIST'));
+
+      expect(allowlistWarnings).toHaveLength(1);
+      expect(allowlistWarnings[0]).toContain("MCP-сервер 'local'");
+      expect(allowlistWarnings[0]).toContain('MCP_SMOKE_TYPO');
+      // Найденное имя в WARN не попадает — это не проблема.
+      expect(allowlistWarnings[0]).not.toContain('MCP_SMOKE_PRESENT');
+      // Значения переменных не логируются (RULES 5.1).
+      expect(allowlistWarnings[0]).not.toContain('value-present');
+      expect(allowlistWarnings[0]).not.toContain('from-config');
+
+      // Переподключение не дублирует WARN.
+      sdk.FakeStdioTransport.instances[0]?.onclose?.();
+      await service.listToolsAsync('local');
+
+      expect(
+        warn.mock.calls
+          .map(([message]) => String(message))
+          .filter((message) => message.includes('MCP_STDIO_ENV_ALLOWLIST')),
+      ).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('isPidAlive: EPERM считается живым, ESRCH — мёртвым (v0.13 S1, KI-532)', async () => {
     const config = {
       MCP_ENABLE_STDIO: true,

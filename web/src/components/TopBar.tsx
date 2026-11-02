@@ -42,11 +42,11 @@ const ACTIVE_RUN_STATUSES: ReadonlySet<RunStatus> = new Set(['pending', 'running
 
 /** Подпись и цвет бейджа статуса запуска. */
 const RUN_STATUS_STYLE: Record<RunStatus, { labelKey: string; className: string }> = {
-  pending: { labelKey: 'run.status.pending', className: 'bg-muted text-muted-foreground' },
-  running: { labelKey: 'run.status.running', className: 'bg-blue-100 text-blue-700' },
-  completed: { labelKey: 'run.status.completed', className: 'bg-green-100 text-green-700' },
-  failed: { labelKey: 'run.status.failed', className: 'bg-red-100 text-red-700' },
-  cancelled: { labelKey: 'run.status.cancelled', className: 'bg-muted text-muted-foreground' },
+  pending: { labelKey: 'status.pending', className: 'bg-muted text-muted-foreground' },
+  running: { labelKey: 'status.running', className: 'bg-blue-100 text-blue-700' },
+  completed: { labelKey: 'status.completed', className: 'bg-green-100 text-green-700' },
+  failed: { labelKey: 'status.failed', className: 'bg-red-100 text-red-700' },
+  cancelled: { labelKey: 'status.cancelled', className: 'bg-muted text-muted-foreground' },
 };
 
 /**
@@ -71,7 +71,7 @@ function runStatusText(
   // Промежуточный провал (KI-070) статус не меняет: он остаётся 'running',
   // поэтому подпись продолжает показывать номер попытки.
   if (status === 'running' && attempts !== null && attemptNumber > 0) {
-    return i18n.t('run.status.attempt', {
+    return i18n.t('status.attempt', {
       base,
       current: attemptNumber,
       total: attempts,

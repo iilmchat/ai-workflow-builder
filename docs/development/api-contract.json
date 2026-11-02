@@ -10,11 +10,13 @@
     "McpToolSummary": ["description", "destructiveHint", "idempotentHint", "name", "readOnlyHint", "title"],
     "NodeRunSnapshot": ["cacheCreationTokens", "cacheReadTokens", "cacheSavingsUsd", "costRub", "costUsd", "durationMs", "error", "finishedAt", "inputs", "logs", "nodeId", "nodeType", "outputs", "startedAt", "status", "storedExpiresAt", "storedUrl", "tokensIn", "tokensOut"],
     "RunBudgetResponse": ["accumulated", "estimated", "maxRub", "maxUsd", "mode", "ok", "remaining"],
-    "RunHistoryResponse": ["runs", "total"],
+    "RunHistoryResponse": ["nextCursor", "runs", "total"],
     "RunResponse": ["createdAt", "error", "id", "status", "workflowId"],
-    "RunSummary": ["costRub", "costUsd", "createdAt", "durationMs", "finishedAt", "id", "startedAt", "status"],
+    "RunSummary": ["costRub", "costUsd", "createdAt", "cursor", "durationMs", "finishedAt", "id", "startedAt", "status"],
     "ShareTokenDto": ["shareToken", "shareUrl"],
-    "SharedWorkflow": ["createdAt", "edges", "id", "name", "nodes"]
+    "SharedWorkflow": ["createdAt", "edges", "id", "name", "nodes"],
+    "WebSearchProviderInfo": ["configured", "name"],
+    "WebSearchProvidersResponse": ["defaultProvider", "providers"]
   },
   "enums": {
     "CollaboratorResponse.role": ["editor", "owner", "viewer"],
@@ -22,6 +24,8 @@
     "McpServerSummary.transport": ["http", "sse", "stdio"],
     "RunBudgetResponse.mode": ["hard", "soft"],
     "RunResponse.status": ["cancelled", "completed", "failed", "pending", "running"],
-    "RunSummary.status": ["cancelled", "completed", "failed", "pending", "running"]
+    "RunSummary.status": ["cancelled", "completed", "failed", "pending", "running"],
+    "WebSearchProviderInfo.name": ["bing", "brave", "tavily"],
+    "WebSearchProvidersResponse.defaultProvider": ["bing", "brave", "tavily"]
   }
 }

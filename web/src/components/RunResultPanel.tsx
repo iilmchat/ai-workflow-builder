@@ -12,17 +12,17 @@ const PANEL_HEIGHT = { collapsed: 'h-12', expanded: 'h-72' } as const;
 /**
  * i18n-ключи подписей статусов узла и запуска для заголовка панели.
  *
- * Ключи статусов запуска исторические (`run.status.node.*`): панель использует
- * эту же карту и для узла, поэтому `skipped` (статус только узла, KI-288)
- * берёт свой ключ `node.status.skipped`.
+ * v0.16 S1 (KI-545): единый неймспейс `status.*` — те же подписи, что в TopBar
+ * и истории. `skipped` — статус только узла (KI-288), но текст тоже из
+ * `status.skipped`.
  */
 const STATUS_LABEL_KEYS: Record<NodeRunStatus, string> = {
-  pending: 'run.status.node.pending',
-  running: 'run.status.node.running',
-  completed: 'run.status.node.completed',
-  failed: 'run.status.node.failed',
-  cancelled: 'run.status.node.cancelled',
-  skipped: 'node.status.skipped',
+  pending: 'status.pending',
+  running: 'status.running',
+  completed: 'status.completed',
+  failed: 'status.failed',
+  cancelled: 'status.cancelled',
+  skipped: 'status.skipped',
 };
 
 /**

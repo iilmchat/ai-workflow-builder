@@ -43,6 +43,9 @@ import {
   McpTransportSchema,
   RunHistoryResponseSchema,
   RunSummarySchema,
+  WebSearchProviderInfoSchema,
+  WebSearchProviderNameSchema,
+  WebSearchProvidersResponseSchema,
 } from './api';
 import { CollaboratorSchema } from './collaborators-api';
 import { ExportWorkflowSchema } from './export-import-api';
@@ -98,6 +101,9 @@ const MIRROR_SCHEMAS: Record<string, MirrorSchema> = {
   RunSummary: RunSummarySchema,
   ShareTokenDto: ShareTokenSchema,
   SharedWorkflow: SharedWorkflowSchema,
+  // v0.16 S1 (KI-548): конфигурация web-search для селекта провайдера.
+  WebSearchProvidersResponse: WebSearchProvidersResponseSchema,
+  WebSearchProviderInfo: WebSearchProviderInfoSchema,
 };
 
 /** Структура JSON-контракта. */
@@ -333,18 +339,55 @@ describe('REST-контракт: web-зеркала ↔ docs/development/api-con
     const actual = actualContract();
 
     // v0.14 S1: новая ручка `GET /workflow/:id/runs` отдаёт конверт пагинации
-    // и лёгкую сводку запуска. Гейт не даст составу полей разойтись до того,
-    // как S2 начнёт строить на них модалку истории.
-    expect(contract.responses.RunHistoryResponse).toEqual(['runs', 'total']);
+    // и лёгкую сводку запуска. v0.16 S1: `runs`, `nextCursor`, `total` (KI-542).
+    expect(contract.responses.RunHistoryResponse).toEqual([
+      'nextCursor',
+      'runs',
+      'total',
+    ]);
     expect(actual.RunHistoryResponse).toEqual(
       contract.responses.RunHistoryResponse,
     );
     expect(actual.RunSummary).toEqual(contract.responses.RunSummary);
 
+    // v0.16 S1 (KI-542): у элемента есть курсор keyset-пагинации; offset из
+    // контракта удалён. Гейт не даст забыть поле на одной из сторон.
+    expect(contract.responses.RunSummary).toContain('cursor');
+    expect(actual.RunSummary).toContain('cursor');
+
     // `status` сводки — тот же домен, что у SSE и `RunResponse` (KI-336):
     // история не вводит второй набор значений статусов.
     expect([...RunStatusSchema.options].sort()).toEqual(
       contract.enums?.['RunSummary.status'],
+    );
+  });
+
+  it('web-search контракт зеркалит поля и домен провайдера (v0.16 S1, KI-548)', () => {
+    const contract = readContract();
+    const actual = actualContract();
+
+    expect(actual.WebSearchProvidersResponse).toEqual(
+      contract.responses.WebSearchProvidersResponse,
+    );
+    expect(actual.WebSearchProviderInfo).toEqual(
+      contract.responses.WebSearchProviderInfo,
+    );
+
+    // Ключи/токены не должны появиться в ответе даже как поля.
+    for (const fields of [
+      actual.WebSearchProvidersResponse,
+      actual.WebSearchProviderInfo,
+    ]) {
+      expect(fields).not.toContain('apiKey');
+      expect(fields).not.toContain('token');
+    }
+
+    // Один домен у имени провайдера и у дефолта (KI-548).
+    expect([...WebSearchProviderNameSchema.options].sort()).toEqual(
+      contract.enums?.['WebSearchProviderInfo.name'],
+    );
+    expect([...WebSearchProviderNameSchema.options].sort()).toEqual(
+      contract.enums?.['WebSearchProvidersResponse.defaultProvider'],
     );
   });
 });

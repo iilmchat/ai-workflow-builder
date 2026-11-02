@@ -13,6 +13,7 @@ import {
 import { EXECUTE_RUN_JOB, WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 import { NodeRunSnapshotMapper } from './node-run-snapshot.mapper.js';
 import type { NodeRunSnapshot } from './dto/index.js';
+import { encodeRunHistoryCursor } from './dto/index.js';
 import { RunsService } from './runs.service.js';
 import { RUNS_INSTANCE_ID } from './runs.worker-options.js';
 import { workflowAccessFilter } from '../workflow/workflow-access.js';
@@ -446,12 +447,17 @@ describe('RunsService', () => {
         ],
       );
 
-      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 20, 0);
+      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 20);
 
       expect(result.total).toBe(2);
+      expect(result.nextCursor).toBeNull();
       expect(result.runs).toEqual([
         {
           id: RUN_ID,
+          cursor: encodeRunHistoryCursor({
+            createdAt: CREATED_AT.toISOString(),
+            id: RUN_ID,
+          }),
           status: 'completed',
           createdAt: CREATED_AT,
           startedAt: STARTED_AT,
@@ -462,6 +468,10 @@ describe('RunsService', () => {
         },
         {
           id: RUN_ID_2,
+          cursor: encodeRunHistoryCursor({
+            createdAt: STARTED_AT.toISOString(),
+            id: RUN_ID_2,
+          }),
           status: 'running',
           createdAt: STARTED_AT,
           startedAt: STARTED_AT,
@@ -488,15 +498,104 @@ describe('RunsService', () => {
       // 2. total — отдельный count(*) по workflow_runs (chains[1] — EXISTS-
       //    подзапрос участника внутри фильтра доступа).
       expect(chains[2].from).toHaveBeenCalledWith(workflowRuns);
-      // 3. Страница с пагинацией и стабильной сортировкой.
+      // 3. Страница с keyset-фильтром и стабильной сортировкой.
       expect(chains[3].from).toHaveBeenCalledWith(workflowRuns);
       expect(chains[3].orderBy).toHaveBeenCalled();
-      expect(chains[3].limit).toHaveBeenCalledWith(20);
-      expect(chains[3].offset).toHaveBeenCalledWith(0);
+      // +1 строка — сервер определяет «есть ли ещё» без опоры на total.
+      expect(chains[3].limit).toHaveBeenCalledWith(21);
+      // v0.16 S1 (KI-542): offset больше не используется — только курсор.
+      expect(chains[3].offset).not.toHaveBeenCalled();
       // 4. Суммы — по node_runs и только для id страницы.
       expect(chains[4].from).toHaveBeenCalledWith(nodeRuns);
       expect(chains[4].where).toHaveBeenCalled();
       expect(chains[4].groupBy).toHaveBeenCalled();
+    });
+
+    it('ровно limit строк — nextCursor=null (страница последняя)', async () => {
+      stubSelects(
+        [{ id: WORKFLOW_ID }],
+        [{ total: 2 }],
+        [
+          {
+            id: RUN_ID,
+            status: 'completed',
+            createdAt: CREATED_AT,
+            startedAt: STARTED_AT,
+            finishedAt: STARTED_AT,
+          },
+          {
+            id: RUN_ID_2,
+            status: 'completed',
+            createdAt: STARTED_AT,
+            startedAt: STARTED_AT,
+            finishedAt: STARTED_AT,
+          },
+        ],
+        [],
+      );
+
+      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 2);
+
+      expect(result.runs).toHaveLength(2);
+      expect(result.nextCursor).toBeNull();
+      // Запрос всё равно берёт limit + 1, чтобы отличить «ровно limit» от
+      // «есть ещё»: сервер получает 2 строки вместо 3 и видит, что больше нет.
+      expect(chains[3].limit).toHaveBeenCalledWith(3);
+    });
+
+    it('возвращает nextCursor, когда строк больше limit (выборка limit + 1)', async () => {
+      stubSelects(
+        [{ id: WORKFLOW_ID }],
+        [{ total: 3 }],
+        [
+          {
+            id: RUN_ID,
+            status: 'completed',
+            createdAt: CREATED_AT,
+            // Микросекунды PostgreSQL: JS Date их теряет, курсор — нет.
+            cursorCreatedAt: '2023-12-31T23:00:00.000123Z',
+            startedAt: STARTED_AT,
+            finishedAt: STARTED_AT,
+          },
+          {
+            id: RUN_ID_2,
+            status: 'completed',
+            createdAt: STARTED_AT,
+            cursorCreatedAt: '2024-01-01T00:00:00.000456Z',
+            startedAt: STARTED_AT,
+            finishedAt: STARTED_AT,
+          },
+          {
+            // «Лишняя» строка: доказывает, что есть следующая страница.
+            id: '44444444-4444-4444-8444-444444444444',
+            status: 'completed',
+            createdAt: new Date('2023-12-31T22:00:00.000Z'),
+            cursorCreatedAt: '2023-12-31T22:00:00.000789Z',
+            startedAt: STARTED_AT,
+            finishedAt: STARTED_AT,
+          },
+        ],
+        [],
+      );
+
+      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 2);
+
+      expect(result.runs).toHaveLength(2);
+      // Курсор сохраняет µs-точность (иначе tie-break по id мог бы пропускать
+      // запуски одной миллисекунды — замечание verifier'а).
+      expect(result.runs[1]?.cursor).toBe(
+        encodeRunHistoryCursor({
+          createdAt: '2024-01-01T00:00:00.000456Z',
+          id: RUN_ID_2,
+        }),
+      );
+      expect(result.nextCursor).toBe(
+        encodeRunHistoryCursor({
+          createdAt: '2024-01-01T00:00:00.000456Z',
+          id: RUN_ID_2,
+        }),
+      );
+      expect(chains[3].limit).toHaveBeenCalledWith(3);
     });
 
     it('чужой или недоступный workflow отдаёт 404 и не читает историю', async () => {
@@ -504,7 +603,7 @@ describe('RunsService', () => {
       stubSelects([]);
 
       await expect(
-        service.listRunsAsync(WORKFLOW_ID, USER_ID, 20, 0),
+        service.listRunsAsync(WORKFLOW_ID, USER_ID, 20),
       ).rejects.toThrow(NotFoundException);
 
       // Только сборка условия доступа: главный SELECT + EXISTS-подзапрос.
@@ -516,13 +615,34 @@ describe('RunsService', () => {
     it('пустая страница отдаёт total и не запрашивает суммы node_runs', async () => {
       stubSelects([{ id: WORKFLOW_ID }], [{ total: 7 }], []);
 
-      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 20, 40);
+      const result = await service.listRunsAsync(
+        WORKFLOW_ID,
+        USER_ID,
+        20,
+        { createdAt: STARTED_AT.toISOString(), id: RUN_ID_2 },
+      );
 
-      expect(result).toEqual({ runs: [], total: 7 });
+      expect(result).toEqual({ runs: [], nextCursor: null, total: 7 });
       // Четыре вызова builder'а: доступ, EXISTS-подзапрос, count, страница.
       // Агрегат `node_runs` на пустой странице не нужен.
       expect(db.select).toHaveBeenCalledTimes(4);
-      expect(chains[3].offset).toHaveBeenCalledWith(40);
+      expect(chains[3].where).toHaveBeenCalled();
+      expect(chains[3].offset).not.toHaveBeenCalled();
+    });
+
+    it('невалидная дата курсора — 400, а не молчаливый пустой результат (KI-542)', async () => {
+      stubSelects([{ id: WORKFLOW_ID }], [{ total: 2 }], []);
+
+      await expect(
+        service.listRunsAsync(WORKFLOW_ID, USER_ID, 20, {
+          createdAt: '2026-13-40T00:00:00.000000Z',
+          id: RUN_ID,
+        }),
+      ).rejects.toThrow('некорректный cursor истории запусков');
+
+      // Страница не читалась: курсор проверен до count/запроса строк.
+      // Два вызова — главный SELECT доступа и EXISTS-подзапрос участника.
+      expect(db.select).toHaveBeenCalledTimes(2);
     });
 
     it('без строк node_runs стоимости равны нулю (а не null)', async () => {
@@ -541,7 +661,7 @@ describe('RunsService', () => {
         [],
       );
 
-      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 20, 0);
+      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 20);
 
       expect(result.runs[0]).toMatchObject({
         costUsd: 0,
@@ -550,7 +670,7 @@ describe('RunsService', () => {
       });
     });
 
-    it('защищает запрос: limit ограничен сверху, offset — снизу', async () => {
+    it('защищает запрос: limit ограничен сверху (KI-542)', async () => {
       stubSelects(
         [{ id: WORKFLOW_ID }],
         [{ total: 1 }],
@@ -567,11 +687,10 @@ describe('RunsService', () => {
       );
 
       // Контроллер валидирует значения Zod'ом, но сервис — вторая граница:
-      // огромный limit вытянул бы всю историю, отрицательный offset уронил SQL.
-      await service.listRunsAsync(WORKFLOW_ID, USER_ID, 10_000, -5);
+      // огромный limit вытянул бы всю историю.
+      await service.listRunsAsync(WORKFLOW_ID, USER_ID, 10_000);
 
-      expect(chains[3].limit).toHaveBeenCalledWith(100);
-      expect(chains[3].offset).toHaveBeenCalledWith(0);
+      expect(chains[3].limit).toHaveBeenCalledWith(101);
     });
 
     it('длительность не отрицательна при рассинхроне часов (v0.14 S1)', async () => {
@@ -592,7 +711,7 @@ describe('RunsService', () => {
         [],
       );
 
-      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 20, 0);
+      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 20);
 
       expect(result.runs[0].durationMs).toBe(0);
     });

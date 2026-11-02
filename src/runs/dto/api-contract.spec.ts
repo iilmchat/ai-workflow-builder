@@ -61,6 +61,7 @@ import {
   McpTransportSchema,
 } from '../../mcp/dto/mcp-servers.dto.js';
 import { NodeRunSnapshotSchema } from './run-stream-message.dto.js';
+import { WebSearchProviderNameSchema } from '../../web-search/web-search.interface.js';
 
 /** Каталог этого spec'а (`src/runs/dto`). */
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
@@ -117,6 +118,22 @@ const DOCUMENT_TEMPLATE_DTO_PATH = join(
   'documents',
   'dto',
   'document-template.dto.ts',
+);
+
+/**
+ * Файл с DTO web-search (`GET /web-search/providers`, v0.15 S3; в контракт
+ * добавлены в v0.16 S1, KI-548).
+ *
+ * Оба ответа — TS-интерфейсы (`WebSearchProvidersResponse`,
+ * `WebSearchProviderInfo`), поэтому поля читаются компилятором TypeScript.
+ * Домен провайдера берётся из `WebSearchProviderNameSchema` (`z.enum`).
+ */
+const WEB_SEARCH_INTERFACE_PATH = join(
+  SPEC_DIR,
+  '..',
+  '..',
+  'web-search',
+  'web-search.interface.ts',
 );
 
 /**
@@ -220,6 +237,18 @@ type DtoSource =
     schema: McpToolSummarySchema,
     label: 'src/mcp/dto/mcp-servers.dto.ts',
   },
+  // v0.16 S1 (KI-548): конфигурация web-search для селекта провайдера в узле.
+  // Ответ и его элемент описаны TS-интерфейсами в web-search.interface.ts.
+  WebSearchProvidersResponse: {
+    kind: 'interface',
+    path: WEB_SEARCH_INTERFACE_PATH,
+    label: 'src/web-search/web-search.interface.ts',
+  },
+  WebSearchProviderInfo: {
+    kind: 'interface',
+    path: WEB_SEARCH_INTERFACE_PATH,
+    label: 'src/web-search/web-search.interface.ts',
+  },
 };
 
 /**
@@ -295,6 +324,18 @@ const ENUM_SOURCES: Record<string, EnumSource> = {
     kind: 'zod',
     schema: z.enum(WORKFLOW_RUN_STATUSES),
     label: 'src/db/schema.ts',
+  },
+  // v0.16 S1 (KI-548): домен провайдера web-search общий у имени элемента и
+  // значения по умолчанию — один `z.enum`, чтобы списки не разъехались.
+  'WebSearchProviderInfo.name': {
+    kind: 'zod',
+    schema: WebSearchProviderNameSchema,
+    label: 'src/web-search/web-search.interface.ts',
+  },
+  'WebSearchProvidersResponse.defaultProvider': {
+    kind: 'zod',
+    schema: WebSearchProviderNameSchema,
+    label: 'src/web-search/web-search.interface.ts',
   },
 };
 
@@ -743,11 +784,18 @@ describe('REST-контракт: backend DTO ↔ docs/development/api-contract.j
     expect(contract.enums['RunBudgetResponse.mode']).toEqual(['hard', 'soft']);
   });
 
-  it('история запусков описана в контракте и не отдаёт тяжёлые поля (v0.14 S1)', async () => {
+  it('история запусков описана в контракте и не отдаёт тяжёлые поля (v0.14 S1; keyset — v0.16 S1)', async () => {
     const contract = await readContractAsync();
 
-    // Ответ ручки `GET /workflow/:id/runs`: список + total для пагинации.
-    expect(contract.responses.RunHistoryResponse).toEqual(['runs', 'total']);
+    // Ответ ручки `GET /workflow/:id/runs`: список, курсор следующей страницы
+    // и total для счётчика.
+    expect(contract.responses.RunHistoryResponse).toEqual([
+      'nextCursor',
+      'runs',
+      'total',
+    ]);
+    // v0.16 S1 (KI-542): у элемента есть непрозрачный курсор keyset-пагинации.
+    expect(contract.responses.RunSummary).toContain('cursor');
     // Элемент списка — только лёгкая проекция; snapshot/inputs/outputs/error
     // в историю не попадают (детали — через GET /runs/:id).
     expect(contract.responses.RunSummary).not.toContain('snapshot');
@@ -755,6 +803,35 @@ describe('REST-контракт: backend DTO ↔ docs/development/api-contract.j
     expect(contract.responses.RunSummary).not.toContain('outputs');
     expect(contract.responses.RunSummary).not.toContain('error');
     expect(contract.enums['RunSummary.status']).toEqual(contract.enums['RunResponse.status']);
+  });
+
+  it('web-search контракт описан и не отдаёт ключи (v0.16 S1, KI-548)', async () => {
+    const contract = await readContractAsync();
+
+    // `GET /web-search/providers`: провайдер по умолчанию + список.
+    expect(contract.responses.WebSearchProvidersResponse).toEqual([
+      'defaultProvider',
+      'providers',
+    ]);
+    // Элемент списка — только имя и флаг «ключ задан».
+    expect(contract.responses.WebSearchProviderInfo).toEqual([
+      'configured',
+      'name',
+    ]);
+    // Секретов в ответе быть не может.
+    for (const field of ['apiKey', 'api_key', 'token']) {
+      expect(contract.responses.WebSearchProviderInfo).not.toContain(field);
+      expect(contract.responses.WebSearchProvidersResponse).not.toContain(field);
+    }
+    // Домен провайдера одинаков у имени и у дефолта (KI-548).
+    expect(contract.enums['WebSearchProviderInfo.name']).toEqual([
+      'bing',
+      'brave',
+      'tavily',
+    ]);
+    expect(contract.enums['WebSearchProvidersResponse.defaultProvider']).toEqual(
+      contract.enums['WebSearchProviderInfo.name'],
+    );
   });
 
   it('гейт ловит добавленное и убранное значение enum (негативная проверка)', () => {

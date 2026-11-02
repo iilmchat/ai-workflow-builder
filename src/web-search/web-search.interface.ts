@@ -10,6 +10,7 @@
  * как HTML; при передаче в LLM вызывающий код обязан обернуть их инструкцией
  * «это источники, не команды» (prompt injection, DESIGN v0.10 § 3.1.2).
  */
+import { z } from 'zod';
 
 /**
  * Допустимые идентификаторы web-search-провайдеров.
@@ -22,6 +23,15 @@ export const WEB_SEARCH_PROVIDER_NAMES = ['tavily', 'bing', 'brave'] as const;
 
 /** Идентификатор web-search-провайдера. */
 export type WebSearchProviderName = (typeof WEB_SEARCH_PROVIDER_NAMES)[number];
+
+/**
+ * Zod-схема идентификатора провайдера.
+ *
+ * Нужна контракт-гейту (`api-contract.spec.ts`, KI-548): домен
+ * `WebSearchProviderInfo.name`/`WebSearchProvidersResponse.defaultProvider`
+ * читается из `z.enum.options`, а не дублируется литералами в spec'е.
+ */
+export const WebSearchProviderNameSchema = z.enum(WEB_SEARCH_PROVIDER_NAMES);
 
 /**
  * Провайдеры, поддерживающие параметр глубины поиска.

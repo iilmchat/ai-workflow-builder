@@ -272,6 +272,16 @@ export class McpClientService implements OnApplicationShutdown {
    */
   private readonly warnedNonDocker = new Set<string>();
 
+  /**
+   * Серверы, по которым уже предупредили о ненайденных именах allowlist
+   * (v0.16 S1, KI-534).
+   *
+   * Переподключение не должно повторять ту же строку: набор имён allowlist —
+   * операторская конфигурация, она не меняется без перезапуска приложения.
+   * Значения переменных в WARN не попадают (RULES 5.1).
+   */
+  private readonly warnedMissingAllowlist = new Set<string>();
+
   /** Остановлен ли сервис (после `onApplicationShutdown`). */
   private shuttingDown = false;
 
@@ -911,7 +921,7 @@ export class McpClientService implements OnApplicationShutdown {
     this.warnIfNotDocker(state.name, config);
 
     const cwd = await this.prepareStdioCwdAsync(state.name);
-    const env = this.buildStdioEnv(config);
+    const env = this.buildStdioEnv(state.name, config);
 
     const params: StdioServerParameters = {
       command: config.command,
@@ -978,13 +988,21 @@ export class McpClientService implements OnApplicationShutdown {
    * иначе allowlist перестал бы быть границей. Значения не логируются
    * (RULES 5.1).
    *
+   * **Диагностика allowlist (v0.16 S1, KI-534).** Если имя из allowlist не
+   * найдено ни в `env` сервера, ни в окружении backend'а, пишется WARN с
+   * перечнем имён (без значений): опечатка в имени иначе приводила бы к
+   * молчаливо пустому env дочернего процесса. WARN — один раз на сервер.
+   *
+   * @param serverName - имя сервера из `MCP_SERVERS` (для лога)
    * @param config - `stdio`-конфигурация
    * @returns объект env только с разрешёнными именами
    */
   private buildStdioEnv(
+    serverName: string,
     config: McpStdioServerConfig,
   ): Record<string, string> {
     const env: Record<string, string> = {};
+    const missing: string[] = [];
 
     for (const name of this.stdioEnvAllowlist) {
       const explicit = config.env?.[name];
@@ -994,7 +1012,19 @@ export class McpClientService implements OnApplicationShutdown {
 
       if (value !== undefined) {
         env[name] = value;
+      } else {
+        missing.push(name);
       }
+    }
+
+    if (missing.length > 0 && !this.warnedMissingAllowlist.has(serverName)) {
+      this.warnedMissingAllowlist.add(serverName);
+      // Только имена: значения переменных даже не читаются в этой ветке.
+      this.logger.warn(
+        `MCP-сервер '${serverName}': имена из MCP_STDIO_ENV_ALLOWLIST не ` +
+          `найдены ни в env сервера, ни в окружении: ${missing.join(', ')} — ` +
+          'переменные не будут переданы stdio-процессу (KI-534)',
+      );
     }
 
     return env;

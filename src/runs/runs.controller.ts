@@ -23,6 +23,7 @@ import { CostBudgetService } from './cost-budget.service.js';
 import {
   CreateRunSchema,
   RunHistoryQuerySchema,
+  decodeRunHistoryCursor,
   type CreateRunDto,
   type NodeRunSnapshot,
   type RunHistoryQueryDto,
@@ -223,14 +224,16 @@ export class RunsHistoryController {
   constructor(private readonly runsService: RunsService) {}
 
   /**
-   * `GET /workflow/:id/runs?limit=20&offset=0` — история запусков workflow.
+   * `GET /workflow/:id/runs?limit=20&cursor=…` — история запусков workflow.
    *
-   * Тот же формат, что у `GET /workflow` (`limit`/`offset` через Zod), плюс
-   * `total` для нумерации страниц. `Cache-Control: no-store` — данные
-   * авторизованные и меняются по мере выполнения запусков.
+   * С v0.16 S1 (KI-542) пагинация — keyset по курсору последнего элемента
+   * (`RunSummary.cursor`), а не `offset`: offset-окно сдвигалось при появлении
+   * новых запусков. `total` остаётся для счётчика «загружено N из M».
+   * `Cache-Control: no-store` — данные авторизованные и меняются по мере
+   * выполнения запусков.
    *
    * @param params - path-параметр `id` (uuid workflow)
-   * @param query - `limit` (1..100, по умолчанию 20) и `offset` (по умолчанию 0)
+   * @param query - `limit` (1..100, по умолчанию 20) и `cursor` (из ответа истории)
    * @param user - пользователь из access-токена
    * @returns запуски страницы и общее число запусков
    * @throws NotFoundException если workflow не найден, чужой или только `viewer`
@@ -242,6 +245,18 @@ export class RunsHistoryController {
     @Query(ZodValidationPipe.create(RunHistoryQuerySchema)) query: RunHistoryQueryDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<RunHistoryResponse> {
-    return this.runsService.listRunsAsync(params.id, user.sub, query.limit, query.offset);
+    // Zod-схема уже проверила декодируемость курсора; декодер — чистый и
+    // синхронный (RULES 1.4: это не I/O).
+    const cursor =
+      query.cursor === undefined
+        ? undefined
+        : decodeRunHistoryCursor(query.cursor);
+
+    return this.runsService.listRunsAsync(
+      params.id,
+      user.sub,
+      query.limit,
+      cursor,
+    );
   }
 }

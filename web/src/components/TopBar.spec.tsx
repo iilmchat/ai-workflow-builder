@@ -20,7 +20,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
   return {
     ...actual,
     fetchWorkflowRunsAsync: vi.fn(() =>
-      Promise.resolve({ runs: [], total: 0 }),
+      Promise.resolve({ runs: [], nextCursor: null, total: 0 }),
     ),
   };
 });
@@ -154,12 +154,11 @@ describe('TopBar — история запусков (v0.14 S2)', () => {
     expect(
       await screen.findByRole('dialog', { name: ru['history.title'] }),
     ).toBeInTheDocument();
-    // Модалка сразу грузит первую страницу истории.
+    // Модалка сразу грузит первую страницу истории (v0.16 S1: без курсора).
     await waitFor(() =>
       expect(vi.mocked(fetchWorkflowRunsAsync)).toHaveBeenCalledWith(
         WORKFLOW_ID,
         20,
-        0,
       ),
     );
   });
@@ -173,5 +172,38 @@ describe('TopBar — история запусков (v0.14 S2)', () => {
     const { container } = renderTopBar();
 
     expect(container.querySelector('[data-topbar-history]')).toBeNull();
+  });
+});
+
+describe('TopBar — единый статус с номером попытки (v0.16 S1, KI-545)', () => {
+  afterEach(() => {
+    useWorkflowStore.setState({
+      runStatus: null,
+      attemptNumber: 0,
+      attempts: null,
+      runHasMoreAttempts: false,
+    });
+  });
+
+  it('running с попыткой показывает «Выполняется (попытка 2/3)»', () => {
+    useWorkflowStore.setState({
+      runStatus: 'running',
+      attemptNumber: 2,
+      attempts: 3,
+      runHasMoreAttempts: true,
+    });
+
+    const { container } = renderTopBar();
+    const button = container.querySelector('[data-topbar-run]');
+    const badge = container.querySelector('[data-run-badge]');
+
+    // Один неймспейс `status.*`: текст складывается из `status.running` и
+    // `status.attempt`; суффикс попытки не потерялся при унификации (KI-545).
+    expect(button?.textContent ?? '').toContain(
+      'Выполняется (попытка 2/3)',
+    );
+    expect(badge?.textContent ?? '').toContain(
+      'Выполняется (попытка 2/3)',
+    );
   });
 });

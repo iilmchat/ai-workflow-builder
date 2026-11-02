@@ -551,6 +551,18 @@ let lastFieldEditAt = 0;
  */
 export type AccessRole = 'owner' | 'editor' | 'viewer';
 
+/**
+ * Опции восстановления состояния запуска.
+ *
+ * `preserveRunIdInUrl` — оставить `?runId=` после восстановления **финального**
+ * запуска (v0.16 S1, KI-541). Нужно при открытии запуска из истории: без этого
+ * `restoreRunAsync` удалял параметр, и F5 терял панель результата.
+ */
+export interface RestoreRunOptions {
+  /** Не удалять `?runId=` для терминального запуска. */
+  preserveRunIdInUrl?: boolean;
+}
+
 /** Состояние редактора графа. */
 export interface WorkflowState extends HistorySlice {
   nodes: AppNode[];
@@ -841,15 +853,21 @@ export interface WorkflowState extends HistorySlice {
    * запрашиваются `GET /runs/:id` (статус и `error`) и `GET /runs/:id/nodes`
    * (выходы, метрики, логи), после чего заполняются карты узлов. Для
    * завершённого запуска SSE не открывается (событий больше не будет), а
-   * `?runId=` убирается из адреса; для `pending`/`running` подписка на поток
-   * восстанавливается — её снимок свежее REST и заменит карты целиком.
+   * `?runId=` убирается из адреса, если не передан `preserveRunIdInUrl`
+   * (v0.16 S1, KI-541: запуск, открытый из истории, должен пережить F5); для
+   * `pending`/`running` подписка на поток восстанавливается — её снимок свежее
+   * REST и заменит карты целиком.
    *
    * 404 (запуск удалён или чужой) сбрасывает состояние запуска и `?runId=`;
    * прочие ошибки не ломают загрузку графа — только уведомление.
    *
    * @param runId - uuid запуска из адресной строки
+   * @param options - `preserveRunIdInUrl` для восстановления из истории
    */
-  restoreRunAsync: (runId: string) => Promise<void>;
+  restoreRunAsync: (
+    runId: string,
+    options?: RestoreRunOptions,
+  ) => Promise<void>;
   /**
    * Применяет событие прогресса запуска.
    *
@@ -2561,7 +2579,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         // факт запуска не подтверждён.
         closeStreamIfAny();
         set({ runId: runIdFromUrl, runStatus: 'pending' });
-        await get().restoreRunAsync(runIdFromUrl);
+        // v0.16 S1 (KI-541): загруженный по `?runId=` запуск (в т.ч. открытый
+        // из истории) должен пережить повторный F5 — параметр не удаляем.
+        await get().restoreRunAsync(runIdFromUrl, {
+          preserveRunIdInUrl: true,
+        });
       }
     } catch (error) {
       const message = messageOf(error);
@@ -2629,7 +2651,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }
   },
 
-  restoreRunAsync: async (runId) => {
+  restoreRunAsync: async (runId, options) => {
     // Повторный mount (StrictMode) не должен оставить двух подписчиков:
     // сначала закрываем прежний поток, только потом открываем новый.
     closeStreamIfAny();
@@ -2652,8 +2674,17 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
       if (isFinalStatus(run.status)) {
         // KI-060/KI-271: финальный запуск — событий больше не будет. SSE не
-        // открываем, `?runId=` убираем: подписываться не на что.
-        clearRunIdFromUrl();
+        // открываем. `?runId=` убираем, если восстановление не пришло из
+        // истории (v0.16 S1, KI-541): для запуска, открытого кликом в истории,
+        // параметр сохраняется, и F5 снова покажет панель результата.
+        if (options?.preserveRunIdInUrl === true) {
+          // Не плодим replaceState, если параметр уже на месте (F5-путь).
+          if (getRunIdFromUrl() !== run.id) {
+            setRunIdInUrl(run.id);
+          }
+        } else {
+          clearRunIdFromUrl();
+        }
 
         return;
       }

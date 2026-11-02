@@ -11,6 +11,7 @@ import { RunsController, RunsHistoryController } from './runs.controller.js';
 import { RunsService, type RunResponse } from './runs.service.js';
 import { RunsStreamService } from './runs-stream.service.js';
 import type { NodeRunSnapshot, RunHistoryResponse } from './dto/index.js';
+import { decodeRunHistoryCursor, encodeRunHistoryCursor } from './dto/index.js';
 
 /** Владелец, которого guard подставляет при `AUTH_DISABLED=true`. */
 const USER = { sub: DEMO_USER_ID, email: DEMO_USER_EMAIL };
@@ -46,11 +47,15 @@ const nodeSnapshot: NodeRunSnapshot = {
   finishedAt: '2024-01-01T00:00:01.005Z',
 };
 
-/** Ответ `GET /workflow/:id/runs` (v0.14 S1). */
+/** Ответ `GET /workflow/:id/runs` (v0.14 S1; keyset — v0.16 S1, KI-542). */
 const historyResponse: RunHistoryResponse = {
   runs: [
     {
       id: RUN_ID,
+      cursor: encodeRunHistoryCursor({
+        createdAt: '2024-01-01T00:00:00.000000Z',
+        id: RUN_ID,
+      }),
       status: 'completed',
       createdAt: new Date('2024-01-01T00:00:00.000Z'),
       startedAt: new Date('2024-01-01T00:00:01.000Z'),
@@ -60,6 +65,7 @@ const historyResponse: RunHistoryResponse = {
       costRub: 0,
     },
   ],
+  nextCursor: null,
   total: 1,
 };
 
@@ -362,9 +368,16 @@ describe('RunsController', () => {
         // Данные авторизованные и меняются по мере выполнения — кэш запрещён.
         .expect('Cache-Control', 'no-store');
 
-      // Пагинация по умолчанию: limit=20, offset=0 — значения из Zod-дефолтов.
-      expect(service.listRunsAsync).toHaveBeenCalledWith(WORKFLOW_ID, USER.sub, 20, 0);
+      // Пагинация по умолчанию: limit=20, курсора нет — первая страница.
+      expect(service.listRunsAsync).toHaveBeenCalledWith(
+        WORKFLOW_ID,
+        USER.sub,
+        20,
+        undefined,
+      );
       expect(response.body.total).toBe(1);
+      // v0.16 S1 (KI-542): сервер сам сообщает, есть ли следующая страница.
+      expect(response.body.nextCursor).toBeNull();
       expect(response.body.runs[0]).toMatchObject({
         id: RUN_ID,
         status: 'completed',
@@ -374,14 +387,26 @@ describe('RunsController', () => {
         // Date сериализуется в ISO-строку — это и увидит UI.
         createdAt: '2024-01-01T00:00:00.000Z',
       });
+      // Курсор — непрозрачная строка, которую UI передаёт обратно (KI-542).
+      expect(typeof response.body.runs[0].cursor).toBe('string');
     });
 
-    it('передаёт limit/offset из query в сервис', async () => {
+    it('передаёт limit/cursor из query в сервис (keyset, KI-542)', async () => {
+      const cursor = encodeRunHistoryCursor({
+        createdAt: '2024-01-01T00:00:05.000000Z',
+        id: RUN_ID,
+      });
+
       await request(app.getHttpServer())
-        .get(`/workflow/${WORKFLOW_ID}/runs?limit=5&offset=10`)
+        .get(`/workflow/${WORKFLOW_ID}/runs?limit=5&cursor=${cursor}`)
         .expect(200);
 
-      expect(service.listRunsAsync).toHaveBeenCalledWith(WORKFLOW_ID, USER.sub, 5, 10);
+      expect(service.listRunsAsync).toHaveBeenCalledWith(
+        WORKFLOW_ID,
+        USER.sub,
+        5,
+        decodeRunHistoryCursor(cursor),
+      );
     });
 
     it('чужой/несуществующий workflow отдаёт 404', async () => {
@@ -402,18 +427,25 @@ describe('RunsController', () => {
       expect(service.listRunsAsync).not.toHaveBeenCalled();
     });
 
-    it('невалидные limit/offset отдают 400 и не вызывают сервис', async () => {
+    it('невалидные limit/cursor отдают 400 и не вызывают сервис', async () => {
       await request(app.getHttpServer())
         .get(`/workflow/${WORKFLOW_ID}/runs?limit=0`)
         .expect(400);
       await request(app.getHttpServer())
         .get(`/workflow/${WORKFLOW_ID}/runs?limit=101`)
         .expect(400);
+      // v0.16 S1 (KI-542): мусорный курсор — 400 от Zod-схемы, а не 500.
       await request(app.getHttpServer())
-        .get(`/workflow/${WORKFLOW_ID}/runs?offset=-1`)
+        .get(`/workflow/${WORKFLOW_ID}/runs?cursor=not-a-cursor`)
         .expect(400);
+      // offset удалён из контракта: старый параметр теперь просто игнорируется
+      // (валидация Zod его не пропускает только при whitelist — здесь проверяем
+      // что ручка не падает и отдаёт первую страницу).
+      await request(app.getHttpServer())
+        .get(`/workflow/${WORKFLOW_ID}/runs?offset=10`)
+        .expect(200);
 
-      expect(service.listRunsAsync).not.toHaveBeenCalled();
+      expect(service.listRunsAsync).toHaveBeenCalledTimes(1);
     });
 
     it('GET /workflow/:id/runs отвечает 401 без токена при AUTH_DISABLED=false', async () => {

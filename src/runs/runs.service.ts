@@ -5,9 +5,10 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import type { Queue } from 'bullmq';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   nodeRuns,
@@ -18,11 +19,15 @@ import {
 } from '../db/schema.js';
 import type {
   NodeRunSnapshot,
+  RunHistoryCursor,
   RunHistoryResponse,
   RunSummary,
 } from './dto/index.js';
 import type { CreateRunDto, ExecuteRunJobDto } from './dto/index.js';
-import { MAX_RUN_HISTORY_LIMIT } from './dto/index.js';
+import {
+  encodeRunHistoryCursor,
+  MAX_RUN_HISTORY_LIMIT,
+} from './dto/index.js';
 import {
   accessibleWorkflowIdsSubquery,
   workflowAccessFilter,
@@ -67,8 +72,18 @@ interface RunHistoryRow {
   id: string;
   /** Статус запуска. */
   status: RunStatus;
-  /** Дата постановки запуска в очередь. */
+  /** Дата постановки запуска в очередь (JS Date, точность — мс). */
   createdAt: Date;
+  /**
+   * `created_at` с точностью микросекунд (ISO-8601 UTC).
+   *
+   * `Date` хранит только миллисекунды, а `timestamptz` — микросекунды. Для
+   * keyset-курсора нужна исходная точность: иначе фильтр `created_at =
+   * cursor.createdAt` не совпадёт со строкой, и tie-break по `id` не сработает
+   * В SQL-выборке поле есть всегда; необязательность — для тестовых моков,
+   * где дата задана только `Date` (тогда fallback на ms-ISO).
+   */
+  cursorCreatedAt?: string;
   /** Фактический старт выполнения (выставляет движок). */
   startedAt: Date | null;
   /** Время завершения; `null` — запуск ещё идёт. */
@@ -236,10 +251,18 @@ export class RunsService {
    *
    * **Запросы.** Три (плюс агрегат) шага вместо join'а с `GROUP BY`:
    * 1) проверка доступа по `workflows`; 2) `count(*)` для `total`;
-   * 3) страница `workflow_runs` (`createdAt DESC`, вторичный ключ — `id` для
-   * стабильного порядка при совпадении дат); 4) суммы `node_runs` только по
-   * запускам страницы (`IN (...) GROUP BY run_id`). Так агрегат не считается
-   * для всей истории, а `total` не теряется на пустой странице.
+   * 3) страница `workflow_runs` (`createdAt DESC, id DESC`, keyset-фильтр по
+   * курсору — v0.16 S1/KI-542); 4) суммы `node_runs` только по запускам
+   * страницы (`IN (...) GROUP BY run_id`). Так агрегат не считается для всей
+   * истории, а `total` не теряется на пустой странице.
+   *
+   * **Keyset-пагинация (KI-542).** Вместо `OFFSET` страница продолжается с
+   * позиции последнего элемента: `(created_at, id) < (cursor.createdAt,
+   * cursor.id)`. Поэтому появление новых запусков между запросами не сдвигает
+   * окно — дублей и пропусков нет. Признак «есть ещё» определяется выборкой
+   * `limit + 1`: `nextCursor` равен `null`, когда следующая страница пуста, а
+   * не когда `runs.length < total` (total может опережать список). `total`
+   * остаётся для счётчика UI.
    *
    * **Длительность/стоимость.** `durationMs` = `finishedAt − startedAt` (в
    * `workflow_runs` нет своей `duration_ms`); `costUsd`/`costRub` — суммы
@@ -248,16 +271,17 @@ export class RunsService {
    * @param workflowId - uuid workflow
    * @param userId - пользователь из access-токена (владелец или `editor`)
    * @param limit - размер страницы (1..{@link MAX_RUN_HISTORY_LIMIT})
-   * @param offset - смещение от начала (0..)
+   * @param cursor - позиция последнего элемента предыдущей страницы; `undefined` — первая страница
    * @returns запуски страницы и общее число запусков workflow
    * @throws NotFoundException если workflow не найден, чужой или доступен
    *   только с ролью `viewer`
+   * @throws BadRequestException если декодированный курсор содержит невалидную дату
    */
   async listRunsAsync(
     workflowId: string,
     userId: string,
     limit: number,
-    offset: number,
+    cursor?: RunHistoryCursor,
   ): Promise<RunHistoryResponse> {
     const [workflow] = await this.db
       .select({ id: workflows.id })
@@ -271,10 +295,35 @@ export class RunsService {
     }
 
     // Защита от некорректных значений, если метод вызовут в обход контроллера:
-    // SQL с отрицательным LIMIT/OFFSET всё равно упал бы, а огромный limit
-    // вытянул бы всю историю (RULES 1.17: граница валидируется и здесь).
+    // SQL с отрицательным LIMIT всё равно упал бы, а огромный limit вытянул бы
+    // всю историю (RULES 1.17: граница валидируется и здесь).
     const safeLimit = Math.min(Math.max(Math.trunc(limit), 1), MAX_RUN_HISTORY_LIMIT);
-    const safeOffset = Math.max(Math.trunc(offset), 0);
+
+    if (
+      cursor !== undefined &&
+      Number.isNaN(Date.parse(cursor.createdAt))
+    ) {
+      // Контроллер отсекает мусор Zod'ом, но сервис — вторая граница: с
+      // невалидной датой SQL-сравнение молча вернуло бы пустую страницу.
+      throw new BadRequestException('некорректный cursor истории запусков');
+    }
+
+    const pageFilter =
+      cursor === undefined
+        ? eq(workflowRuns.workflowId, workflowId)
+        : and(
+            eq(workflowRuns.workflowId, workflowId),
+            // Строго после последнего элемента: (created_at, id) меньше
+            // курсора при порядке `created_at DESC, id DESC`. Курсор несёт
+            // микросекунды, поэтому сравнение не теряет tie-break по id.
+            or(
+              sql`${workflowRuns.createdAt} < ${cursor.createdAt}::timestamptz`,
+              and(
+                sql`${workflowRuns.createdAt} = ${cursor.createdAt}::timestamptz`,
+                lt(workflowRuns.id, cursor.id),
+              ),
+            ),
+          );
 
     const [countRow] = await this.db
       .select({ total: sql<number>`count(*)::int` })
@@ -288,20 +337,37 @@ export class RunsService {
         id: workflowRuns.id,
         status: workflowRuns.status,
         createdAt: workflowRuns.createdAt,
+        // `to_char` с `US` сохраняет микросекунды PostgreSQL: `Date` их теряет,
+        // а для keyset-курсора нужна точная позиция (см. RunHistoryRow).
+        cursorCreatedAt: sql<string>`to_char(${workflowRuns.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
         startedAt: workflowRuns.startedAt,
         finishedAt: workflowRuns.finishedAt,
       })
       .from(workflowRuns)
-      .where(eq(workflowRuns.workflowId, workflowId))
+      .where(pageFilter)
       // Сначала новые; `id` — вторичный ключ, иначе при одинаковом `created_at`
       // (частая ситуация для запусков в одну миллисекунду) порядок страниц
-      // «плавал» бы и пагинация могла терять/дублировать строки.
+      // «плавал» бы и keyset-курсор терял/дублировал строки.
       .orderBy(desc(workflowRuns.createdAt), desc(workflowRuns.id))
-      .limit(safeLimit)
-      .offset(safeOffset);
+      // +1 строка — чтобы отличить «страница последняя» от «есть ещё», не
+      // полагаясь на `total` (он меняется, если между запросами появились
+      // новые запуски). Лишняя строка в ответ не попадает.
+      .limit(safeLimit + 1);
 
-    if (rows.length === 0) {
-      return { runs: [], total };
+    const hasMore = rows.length > safeLimit;
+    const pageRows = hasMore ? rows.slice(0, safeLimit) : rows;
+    const nextCursor =
+      hasMore && pageRows.length > 0
+        ? encodeRunHistoryCursor({
+            createdAt:
+              pageRows[pageRows.length - 1].cursorCreatedAt ??
+              pageRows[pageRows.length - 1].createdAt.toISOString(),
+            id: pageRows[pageRows.length - 1].id,
+          })
+        : null;
+
+    if (pageRows.length === 0) {
+      return { runs: [], nextCursor: null, total };
     }
 
     const costs = await this.db
@@ -314,7 +380,7 @@ export class RunsService {
       .where(
         inArray(
           nodeRuns.runId,
-          rows.map((row) => row.id),
+          pageRows.map((row) => row.id),
         ),
       )
       .groupBy(nodeRuns.runId);
@@ -322,7 +388,8 @@ export class RunsService {
     const costByRunId = new Map(costs.map((cost) => [cost.runId, cost]));
 
     return {
-      runs: rows.map((row) => toRunSummary(row, costByRunId.get(row.id))),
+      runs: pageRows.map((row) => toRunSummary(row, costByRunId.get(row.id))),
+      nextCursor,
       total,
     };
   }
@@ -425,6 +492,13 @@ export class RunsService {
 function toRunSummary(row: RunHistoryRow, cost?: RunCostRow): RunSummary {
   return {
     id: row.id,
+    // v0.16 S1 (KI-542): курсор этого элемента для следующей страницы.
+    // `cursorCreatedAt` — ISO-строка с микросекундами из SQL, не JS Date;
+    // fallback на ms — только для тестовых моков без поля.
+    cursor: encodeRunHistoryCursor({
+      createdAt: row.cursorCreatedAt ?? row.createdAt.toISOString(),
+      id: row.id,
+    }),
     status: row.status,
     createdAt: row.createdAt,
     startedAt: row.startedAt,

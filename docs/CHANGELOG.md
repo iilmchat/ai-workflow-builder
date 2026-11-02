@@ -62,8 +62,42 @@
   учитывают формат. Зависимости: `pdfkit` + `@types/pdfkit`; ассеты
   копируются в `dist` через `nest-cli.json`.
 
+### Fixed
 
+- **История запусков: keyset-пагинация (v0.16 S1, KI-542)** ([отчёт](development/reports/v0.16.0/S1-tech-debt.md)):
+  `GET /workflow/:id/runs` листается непрозрачным курсором
+  (`RunSummary.cursor`, `?cursor=`) вместо `offset`. Сервис фильтрует
+  `(created_at, id) < (cursor.createdAt, cursor.id)` при порядке
+  `created_at DESC, id DESC`, поэтому новые запуски между страницами больше не
+  сдвигают окно (нет дублей и пропусков). Курсор несёт микросекундную точность
+  `timestamptz` (ISO-строка из `to_char(... 'US')`), а не JS `Date` — иначе
+  tie-break по `id` мог бы пропускать запуски одной миллисекунды. В
+  `RunHistoryModal` кнопки
+  страниц заменены на «Загрузить ещё» с дописыванием и дедупликацией.
+  `offset` удалён из контракта (индекс KI-540 — отдельная задача).
+- **История: F5 после клика по запуску (v0.16 S1, KI-541):** клик в модалке
+  пишет `?runId=` через `history.replaceState` и вызывает
+  `restoreRunAsync(..., { preserveRunIdInUrl: true })`; терминальный запуск
+  больше не теряет параметр, и F5 восстанавливает панель результата.
+- **Единый неймспейс статусов (v0.16 S1, KI-545):** `run.status.*`,
+  `run.status.node.*`, `history.status.*` и `node.status.skipped` сведены в
+  `status.*`; TopBar, панель результата и история показывают одинаковые
+  подписи («Ожидает», «Выполняется», «Завершён», «Ошибка», «Отменён»).
+- **Web Search в контракт-гейте (v0.16 S1, KI-548):**
+  `WebSearchProvidersResponse`/`WebSearchProviderInfo` добавлены в
+  `docs/development/api-contract.json` и оба паритет-спека; домен провайдера
+  кодируется в `enums` (`z.enum`), проверено отсутствие ключей в ответе.
+- **MCP: WARN о ненайденных именах allowlist (v0.16 S1, KI-534):** при
+  подключении `stdio`-сервера `McpClientService` перечисляет в WARN имена из
+  `MCP_STDIO_ENV_ALLOWLIST`, которых нет ни в `env` сервера, ни в окружении
+  (без значений, один раз на сервер).
 
+### Documented
+
+- **Ограничения keyset-пагинации (v0.16 S1):** `RunSummary.cursor` дублирует
+  `nextCursor` (KI-549); `offset` удалён без deprecation-окна — старый клиент
+  молча получает первую страницу (KI-550); счётчик «Показано N из M» может
+  опережать список, если запуск появился при открытой модалке (KI-551).
 
 ## [0.14.0] — 2026-11-02
 
@@ -1975,5 +2009,6 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 

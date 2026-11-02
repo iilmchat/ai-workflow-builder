@@ -159,6 +159,8 @@ export type ApiRunBudget = z.infer<typeof ApiRunBudgetSchema>;
  */
 export const RunSummarySchema = z.object({
   id: z.string(),
+  // v0.16 S1 (KI-542): курсор следующей страницы (непрозрачная строка).
+  cursor: z.string(),
   status: RunStatusSchema,
   createdAt: z.string(),
   startedAt: z.string().nullable(),
@@ -172,15 +174,18 @@ export const RunSummarySchema = z.object({
 export type ApiRunSummary = z.infer<typeof RunSummarySchema>;
 
 /**
- * Ответ `GET /workflow/:id/runs` — страница истории запусков (v0.14 S1).
+ * Ответ `GET /workflow/:id/runs` — страница истории запусков (v0.14 S1;
+ * keyset — v0.16 S1, KI-542).
  *
- * `total` — общее число запусков workflow без учёта пагинации: по нему UI
- * считает число страниц, не запрашивая всю историю (DESIGN V014 § 3.1).
+ * `nextCursor` — курсор следующей страницы (`null` — страниц больше нет).
+ * Сервер вычисляет его по факту наличия строк, поэтому UI не опирается на
+ * `total` (тот может опережать список, если появились новые запуски).
  * Паритет состава полей проверяет `api-contract.spec.ts` через
  * `docs/development/api-contract.json`.
  */
 export const RunHistoryResponseSchema = z.object({
   runs: z.array(RunSummarySchema),
+  nextCursor: z.string().nullable(),
   total: z.number().int(),
 });
 
@@ -280,9 +285,18 @@ export const LlmModelInfoSchema = z.object({
 /** Модель в терминах API: id для вызова, label и модальности для интерфейса. */
 export type LlmModelInfo = z.infer<typeof LlmModelInfoSchema>;
 
-/** Провайдер веб-поиска и его состояние (v0.15 S3, `GET /web-search/providers`). */
+/**
+ * Провайдер веб-поиска и его состояние (v0.15 S3, `GET /web-search/providers`).
+ *
+ * `WebSearchProviderNameSchema` экспортируется отдельно: контракт-гейт
+ * (`api-contract.spec.ts`, KI-548) берёт из него enum-домен, а не дублирует
+ * список литералов.
+ */
+export const WebSearchProviderNameSchema = z.enum(WEB_SEARCH_PROVIDER_NAMES);
+
+/** Провайдер веб-поиска и его состояние. */
 export const WebSearchProviderInfoSchema = z.object({
-  name: z.enum(WEB_SEARCH_PROVIDER_NAMES),
+  name: WebSearchProviderNameSchema,
   configured: z.boolean(),
 });
 
@@ -297,7 +311,7 @@ export type WebSearchProviderInfo = z.infer<typeof WebSearchProviderInfoSchema>;
  * одного провайдера (DESIGN v0.14 § 3.3).
  */
 export const WebSearchProvidersResponseSchema = z.object({
-  defaultProvider: z.enum(WEB_SEARCH_PROVIDER_NAMES),
+  defaultProvider: WebSearchProviderNameSchema,
   providers: z.array(WebSearchProviderInfoSchema),
 });
 
@@ -745,7 +759,7 @@ export async function fetchRunNodesAsync(
 
 /**
  * Возвращает страницу истории запусков workflow (`GET /workflow/:id/runs`,
- * v0.14 S1, DESIGN V014 § 3.1).
+ * v0.14 S1; keyset-пагинация — v0.16 S1, KI-542).
  *
  * Запрос адресован workflow, а не запуску: ручка живёт под префиксом
  * `/workflow` и требует прав владельца/`editor` (чужой workflow и `viewer` →
@@ -753,14 +767,15 @@ export async function fetchRunNodesAsync(
  * у нового графа истории ещё нет, и UI открывает историю только при
  * `currentWorkflowId !== null`.
  *
- * `limit`/`offset` уходят query-параметрами и валидируются на backend Zod'ом
- * (1..100 и ≥0); дефолты совпадают с серверными (`20`/`0`). Ответ разбирается
- * `RunHistoryResponseSchema`: состав полей уже сверен с контрактом
- * (`api-contract.spec.ts`), здесь проверяется только форма данных.
+ * `limit`/`cursor` уходят query-параметрами и валидируются на backend Zod'ом
+ * (1..100; курсор — из предыдущего ответа). Первая страница — без курсора,
+ * следующая — `cursor` последнего элемента предыдущей (`runs.at(-1).cursor`).
+ * Ответ разбирается `RunHistoryResponseSchema`: состав полей уже сверен с
+ * контрактом (`api-contract.spec.ts`), здесь проверяется только форма данных.
  *
  * @param workflowId - uuid сохранённого workflow
  * @param limit - размер страницы (1..100, по умолчанию 20)
- * @param offset - смещение от начала истории (по умолчанию 0)
+ * @param cursor - курсор последнего элемента предыдущей страницы
  * @returns страница истории: `runs` (сначала новые) и общий `total`
  * @throws ApiError при сетевой ошибке, 401/404 (чужой workflow или `viewer`)
  *   или неожиданном формате ответа
@@ -768,11 +783,16 @@ export async function fetchRunNodesAsync(
 export async function fetchWorkflowRunsAsync(
   workflowId: string,
   limit = 20,
-  offset = 0,
+  cursor?: string,
 ): Promise<ApiRunHistoryResponse> {
-  const query = `?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`;
+  const params = new URLSearchParams({ limit: String(limit) });
+
+  if (cursor !== undefined) {
+    params.set('cursor', cursor);
+  }
+
   const data = await requestAsync<unknown>(
-    `/workflow/${encodeURIComponent(workflowId)}/runs${query}`,
+    `/workflow/${encodeURIComponent(workflowId)}/runs?${params.toString()}`,
   );
 
   return RunHistoryResponseSchema.parse(data);

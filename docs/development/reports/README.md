@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v0.16.0 | S1 | Tech Debt Sprint: keyset-пагинация истории (KI-542), F5 `?runId=` (KI-541), неймспейс `status.*` (KI-545), web-search контракт (KI-548), MCP allowlist WARN (KI-534) | 2026-11-02 | [S1-tech-debt.md](v0.16.0/S1-tech-debt.md) |
 | v0.15.0 | S1 (S3 по DESIGN) | Web Search Expansion: провайдеры Bing и Brave, `searchDepth`/`freshness`, `GET /web-search/providers`, UI-селекты | 2026-11-02 | [S1-web-search.md](v0.15.0/S1-web-search.md) |
 | v0.14.0 | S2 | Run History UI: `RunHistoryModal`, кнопка «История» в TopBar, `fetchWorkflowRunsAsync`, i18n | 2026-11-02 | [S2-history-ui.md](v0.14.0/S2-history-ui.md) |
 | v0.14.0 | S1 | Run History API: `GET /workflow/:id/runs`, `RunSummary`, паритет-контракт backend/web | 2026-11-02 | [S1-history-api.md](v0.14.0/S1-history-api.md) |
