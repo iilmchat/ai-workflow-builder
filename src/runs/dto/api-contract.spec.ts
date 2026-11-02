@@ -82,6 +82,14 @@ const CONTRACT_LABEL = 'docs/development/api-contract.json';
 /** Файл с `RunResponse` (`POST /runs`, `GET /runs/:id`). */
 const RUNS_SERVICE_PATH = join(SPEC_DIR, '..', 'runs.service.ts');
 
+/**
+ * Файл с `RunHistoryResponse`/`RunSummary` (`GET /workflow/:id/runs`, v0.14 S1).
+ *
+ * Оба DTO — TS-интерфейсы (Zod-схемой описаны только query-параметры, не
+ * ответ), поэтому backend-гейт читает их поля компилятором, как у `RunResponse`.
+ */
+const RUN_HISTORY_DTO_PATH = join(SPEC_DIR, 'run-history.dto.ts');
+
 /** Файл с `ShareTokenDto` и `SharedWorkflow` (`/workflow/:id/share`, `/workflow/share/:token`). */
 const SHARE_DTO_PATH = join(SPEC_DIR, '..', '..', 'workflow', 'dto', 'share-workflow.dto.ts');
 
@@ -146,6 +154,18 @@ type DtoSource =
     kind: 'interface',
     path: RUNS_SERVICE_PATH,
     label: 'src/runs/runs.service.ts',
+  },
+  // v0.14 S1 (DESIGN V014 § 3.1): история запусков workflow. `RunSummary` —
+  // элемент списка, `RunHistoryResponse` — ответ ручки целиком.
+  RunHistoryResponse: {
+    kind: 'interface',
+    path: RUN_HISTORY_DTO_PATH,
+    label: 'src/runs/dto/run-history.dto.ts',
+  },
+  RunSummary: {
+    kind: 'interface',
+    path: RUN_HISTORY_DTO_PATH,
+    label: 'src/runs/dto/run-history.dto.ts',
   },
   // R7.1 (KI-048): бюджет запуска — отдельный REST-ответ, зеркало в web —
   // `ApiRunBudgetSchema` (`web/src/lib/api.ts`).
@@ -266,6 +286,12 @@ const ENUM_SOURCES: Record<string, EnumSource> = {
     label: 'src/mcp/dto/mcp-servers.dto.ts',
   },
   'RunResponse.status': {
+    kind: 'zod',
+    schema: z.enum(WORKFLOW_RUN_STATUSES),
+    label: 'src/db/schema.ts',
+  },
+  // v0.14 S1: статус элемента истории — тот же домен, что у `RunResponse`.
+  'RunSummary.status': {
     kind: 'zod',
     schema: z.enum(WORKFLOW_RUN_STATUSES),
     label: 'src/db/schema.ts',
@@ -715,6 +741,20 @@ describe('REST-контракт: backend DTO ↔ docs/development/api-contract.j
       'running',
     ]);
     expect(contract.enums['RunBudgetResponse.mode']).toEqual(['hard', 'soft']);
+  });
+
+  it('история запусков описана в контракте и не отдаёт тяжёлые поля (v0.14 S1)', async () => {
+    const contract = await readContractAsync();
+
+    // Ответ ручки `GET /workflow/:id/runs`: список + total для пагинации.
+    expect(contract.responses.RunHistoryResponse).toEqual(['runs', 'total']);
+    // Элемент списка — только лёгкая проекция; snapshot/inputs/outputs/error
+    // в историю не попадают (детали — через GET /runs/:id).
+    expect(contract.responses.RunSummary).not.toContain('snapshot');
+    expect(contract.responses.RunSummary).not.toContain('inputs');
+    expect(contract.responses.RunSummary).not.toContain('outputs');
+    expect(contract.responses.RunSummary).not.toContain('error');
+    expect(contract.enums['RunSummary.status']).toEqual(contract.enums['RunResponse.status']);
   });
 
   it('гейт ловит добавленное и убранное значение enum (негативная проверка)', () => {

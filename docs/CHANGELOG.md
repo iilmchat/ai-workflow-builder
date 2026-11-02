@@ -19,6 +19,15 @@
 
 ### Added
 
+- **Run History API (v0.14 S1, DESIGN V014 § 3.1)** ([отчёт](development/reports/v0.14.0/S1-history-api.md)):
+  `GET /workflow/:id/runs?limit=20&offset=0` отдаёт историю запусков workflow
+  `{ runs: RunSummary[], total }` (сначала новые). `RunSummary`: `id`, `status`,
+  `createdAt`, `startedAt`, `finishedAt`, `durationMs` (`finished_at −
+  started_at`), `costUsd`/`costRub` (суммы `node_runs`). Пагинация
+  `limit`/`offset` валидируется Zod'ом; права — владелец или участник с ролью
+  `editor`, чужой workflow/`viewer` → 404 (KI-202). `RunHistoryResponse` и
+  `RunSummary` добавлены в `docs/development/api-contract.json` и паритет-спеки
+  backend/web.
 - **PDF-режим узла `document_gen` (v0.12 S1, DESIGN § 3.1, KI-463)** ([отчёт](development/reports/v0.12.0/S1-S2-pdf.md)):
   `PdfRenderer` (`src/documents/pdf-renderer.service.ts`) на `pdfkit` с
   встроенным Noto Sans (`src/documents/assets/NotoSans-Regular.ttf`, OFL) —

@@ -7,10 +7,10 @@ import { of } from 'rxjs';
 import request from 'supertest';
 import { DEMO_USER_EMAIL, DEMO_USER_ID } from '../auth/auth.constants.js';
 import { CostBudgetService } from './cost-budget.service.js';
-import { RunsController } from './runs.controller.js';
+import { RunsController, RunsHistoryController } from './runs.controller.js';
 import { RunsService, type RunResponse } from './runs.service.js';
 import { RunsStreamService } from './runs-stream.service.js';
-import type { NodeRunSnapshot } from './dto/index.js';
+import type { NodeRunSnapshot, RunHistoryResponse } from './dto/index.js';
 
 /** Владелец, которого guard подставляет при `AUTH_DISABLED=true`. */
 const USER = { sub: DEMO_USER_ID, email: DEMO_USER_EMAIL };
@@ -46,6 +46,23 @@ const nodeSnapshot: NodeRunSnapshot = {
   finishedAt: '2024-01-01T00:00:01.005Z',
 };
 
+/** Ответ `GET /workflow/:id/runs` (v0.14 S1). */
+const historyResponse: RunHistoryResponse = {
+  runs: [
+    {
+      id: RUN_ID,
+      status: 'completed',
+      createdAt: new Date('2024-01-01T00:00:00.000Z'),
+      startedAt: new Date('2024-01-01T00:00:01.000Z'),
+      finishedAt: new Date('2024-01-01T00:00:03.000Z'),
+      durationMs: 2000,
+      costUsd: 0.5,
+      costRub: 0,
+    },
+  ],
+  total: 1,
+};
+
 describe('RunsController', () => {
   let app: INestApplication;
   let controller: RunsController;
@@ -54,6 +71,7 @@ describe('RunsController', () => {
     getRunAsync: ReturnType<typeof vi.fn>;
     getRunRowAsync: ReturnType<typeof vi.fn>;
     listNodeRunsAsync: ReturnType<typeof vi.fn>;
+    listRunsAsync: ReturnType<typeof vi.fn>;
   };
   let stream: {
     assertRunExistsAsync: ReturnType<typeof vi.fn>;
@@ -87,6 +105,8 @@ describe('RunsController', () => {
       ),
       // v0.11 S12 (KI-077): история узлов запуска.
       listNodeRunsAsync: vi.fn(() => Promise.resolve([nodeSnapshot])),
+      // v0.14 S1 (DESIGN V014 § 3.1): история запусков workflow.
+      listRunsAsync: vi.fn(() => Promise.resolve(historyResponse)),
     };
     costBudget = {
       checkBudgetAsync: vi.fn(() =>
@@ -126,7 +146,7 @@ describe('RunsController', () => {
     };
 
     const moduleRef = await Test.createTestingModule({
-      controllers: [RunsController],
+      controllers: [RunsController, RunsHistoryController],
       providers: [
         { provide: RunsService, useValue: service },
         { provide: RunsStreamService, useValue: stream },
@@ -330,6 +350,89 @@ describe('RunsController', () => {
       await request(app.getHttpServer()).get('/runs/not-a-uuid/stream').expect(400);
 
       expect(stream.assertRunExistsAsync).not.toHaveBeenCalled();
+    });
+  });
+
+  // v0.14 S1 (DESIGN V014 § 3.1): GET /workflow/:id/runs — история запусков.
+  describe('listRuns (RunsHistoryController)', () => {
+    it('GET /workflow/:id/runs отвечает 200 и отдаёт runs/total', async () => {
+      const response = await request(app.getHttpServer())
+        .get(`/workflow/${WORKFLOW_ID}/runs`)
+        .expect(200)
+        // Данные авторизованные и меняются по мере выполнения — кэш запрещён.
+        .expect('Cache-Control', 'no-store');
+
+      // Пагинация по умолчанию: limit=20, offset=0 — значения из Zod-дефолтов.
+      expect(service.listRunsAsync).toHaveBeenCalledWith(WORKFLOW_ID, USER.sub, 20, 0);
+      expect(response.body.total).toBe(1);
+      expect(response.body.runs[0]).toMatchObject({
+        id: RUN_ID,
+        status: 'completed',
+        durationMs: 2000,
+        costUsd: 0.5,
+        costRub: 0,
+        // Date сериализуется в ISO-строку — это и увидит UI.
+        createdAt: '2024-01-01T00:00:00.000Z',
+      });
+    });
+
+    it('передаёт limit/offset из query в сервис', async () => {
+      await request(app.getHttpServer())
+        .get(`/workflow/${WORKFLOW_ID}/runs?limit=5&offset=10`)
+        .expect(200);
+
+      expect(service.listRunsAsync).toHaveBeenCalledWith(WORKFLOW_ID, USER.sub, 5, 10);
+    });
+
+    it('чужой/несуществующий workflow отдаёт 404', async () => {
+      service.listRunsAsync.mockRejectedValue(
+        new NotFoundException('Workflow не найден'),
+      );
+
+      await request(app.getHttpServer())
+        .get(`/workflow/${WORKFLOW_ID}/runs`)
+        .expect(404);
+    });
+
+    it('невалидный uuid workflow отдаёт 400 и не вызывает сервис', async () => {
+      await request(app.getHttpServer())
+        .get('/workflow/not-a-uuid/runs')
+        .expect(400);
+
+      expect(service.listRunsAsync).not.toHaveBeenCalled();
+    });
+
+    it('невалидные limit/offset отдают 400 и не вызывают сервис', async () => {
+      await request(app.getHttpServer())
+        .get(`/workflow/${WORKFLOW_ID}/runs?limit=0`)
+        .expect(400);
+      await request(app.getHttpServer())
+        .get(`/workflow/${WORKFLOW_ID}/runs?limit=101`)
+        .expect(400);
+      await request(app.getHttpServer())
+        .get(`/workflow/${WORKFLOW_ID}/runs?offset=-1`)
+        .expect(400);
+
+      expect(service.listRunsAsync).not.toHaveBeenCalled();
+    });
+
+    it('GET /workflow/:id/runs отвечает 401 без токена при AUTH_DISABLED=false', async () => {
+      authDisabled = false;
+
+      await request(app.getHttpServer())
+        .get(`/workflow/${WORKFLOW_ID}/runs`)
+        .expect(401);
+      expect(service.listRunsAsync).not.toHaveBeenCalled();
+    });
+
+    it('GET /workflow/:id/runs не перехватывается другими ручками workflow', async () => {
+      // Регрессия порядка маршрутов: ручка объявлена в runs-модуле на своём
+      // префиксе и не должна colliding'ить с `GET /runs/:id` и прочими.
+      await request(app.getHttpServer())
+        .get(`/workflow/${WORKFLOW_ID}/runs`)
+        .expect(200);
+
+      expect(service.getRunAsync).not.toHaveBeenCalled();
     });
   });
 });

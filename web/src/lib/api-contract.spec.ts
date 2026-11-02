@@ -41,11 +41,13 @@ import {
   McpServerSummarySchema,
   McpToolSummarySchema,
   McpTransportSchema,
+  RunHistoryResponseSchema,
+  RunSummarySchema,
 } from './api';
 import { CollaboratorSchema } from './collaborators-api';
 import { ExportWorkflowSchema } from './export-import-api';
 import { ShareTokenSchema, SharedWorkflowSchema } from './share-api';
-import { NodeRunSnapshotSchema } from '@/types/run-stream';
+import { NodeRunSnapshotSchema, RunStatusSchema } from '@/types/run-stream';
 
 /**
  * Путь к контракту для сообщений об ошибке (в виде ссылки на файл).
@@ -91,6 +93,9 @@ const MIRROR_SCHEMAS: Record<string, MirrorSchema> = {
   RunResponse: ApiRunSchema,
   // R7.1 (KI-048): бюджет запуска — новое зеркало REST-ответа.
   RunBudgetResponse: ApiRunBudgetSchema,
+  // v0.14 S1 (DESIGN V014 § 3.1): история запусков workflow.
+  RunHistoryResponse: RunHistoryResponseSchema,
+  RunSummary: RunSummarySchema,
   ShareTokenDto: ShareTokenSchema,
   SharedWorkflow: SharedWorkflowSchema,
 };
@@ -320,6 +325,26 @@ describe('REST-контракт: web-зеркала ↔ docs/development/api-con
     );
     expect([...McpTransportSchema.options].sort()).toEqual(
       contract.enums?.['McpServerSummary.transport'],
+    );
+  });
+
+  it('RunHistoryResponse/RunSummary зеркалят контракт и статусы (v0.14 S1)', () => {
+    const contract = readContract();
+    const actual = actualContract();
+
+    // v0.14 S1: новая ручка `GET /workflow/:id/runs` отдаёт конверт пагинации
+    // и лёгкую сводку запуска. Гейт не даст составу полей разойтись до того,
+    // как S2 начнёт строить на них модалку истории.
+    expect(contract.responses.RunHistoryResponse).toEqual(['runs', 'total']);
+    expect(actual.RunHistoryResponse).toEqual(
+      contract.responses.RunHistoryResponse,
+    );
+    expect(actual.RunSummary).toEqual(contract.responses.RunSummary);
+
+    // `status` сводки — тот же домен, что у SSE и `RunResponse` (KI-336):
+    // история не вводит второй набор значений статусов.
+    expect([...RunStatusSchema.options].sort()).toEqual(
+      contract.enums?.['RunSummary.status'],
     );
   });
 });

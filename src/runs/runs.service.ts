@@ -7,16 +7,22 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { Queue } from 'bullmq';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
+  nodeRuns,
   workflowRuns,
   workflows,
   type RunStatus,
   type WorkflowRun,
 } from '../db/schema.js';
-import type { NodeRunSnapshot } from './dto/index.js';
+import type {
+  NodeRunSnapshot,
+  RunHistoryResponse,
+  RunSummary,
+} from './dto/index.js';
 import type { CreateRunDto, ExecuteRunJobDto } from './dto/index.js';
+import { MAX_RUN_HISTORY_LIMIT } from './dto/index.js';
 import {
   accessibleWorkflowIdsSubquery,
   workflowAccessFilter,
@@ -48,6 +54,40 @@ export interface RunResponse {
   createdAt: Date;
   /** Текст ошибки запуска (`workflow_runs.error`); `null` — ошибки не было. */
   error: string | null;
+}
+
+/**
+ * Подмножество колонок `workflow_runs`, нужное истории запусков (v0.14 S1).
+ *
+ * `snapshot`, `inputs`, `outputs` и `error` в список не читаются: история —
+ * лёгкая ручка для пагинации, детали отдаёт `GET /runs/:id`.
+ */
+interface RunHistoryRow {
+  /** uuid запуска. */
+  id: string;
+  /** Статус запуска. */
+  status: RunStatus;
+  /** Дата постановки запуска в очередь. */
+  createdAt: Date;
+  /** Фактический старт выполнения (выставляет движок). */
+  startedAt: Date | null;
+  /** Время завершения; `null` — запуск ещё идёт. */
+  finishedAt: Date | null;
+}
+
+/**
+ * Суммы `node_runs` по одному запуску.
+ *
+ * Drizzle отдаёт `numeric` строкой (RULES 4.23), поэтому значения приводятся
+ * к числу только при сборке ответа.
+ */
+interface RunCostRow {
+  /** uuid запуска, к которому относятся суммы. */
+  runId: string;
+  /** `sum(node_runs.cost_usd)` строкой. */
+  costUsd: string | null;
+  /** `sum(node_runs.cost_rub)` строкой. */
+  costRub: string | null;
 }
 
 /**
@@ -185,6 +225,109 @@ export class RunsService {
   }
 
   /**
+   * Возвращает историю запусков workflow с пагинацией
+   * (`GET /workflow/:id/runs`, v0.14 S1, DESIGN V014 § 3.1).
+   *
+   * **Права.** Смотреть историю может владелец или участник с ролью `editor`
+   * (R7.6, как у запуска): чужой/несуществующий workflow и workflow, где
+   * пользователь только `viewer`, дают 404 — факт существования не
+   * раскрывается (KI-202). Проверка идёт **до** чтения истории: при отказе
+   * запросов к `workflow_runs`/`node_runs` не выполняется.
+   *
+   * **Запросы.** Три (плюс агрегат) шага вместо join'а с `GROUP BY`:
+   * 1) проверка доступа по `workflows`; 2) `count(*)` для `total`;
+   * 3) страница `workflow_runs` (`createdAt DESC`, вторичный ключ — `id` для
+   * стабильного порядка при совпадении дат); 4) суммы `node_runs` только по
+   * запускам страницы (`IN (...) GROUP BY run_id`). Так агрегат не считается
+   * для всей истории, а `total` не теряется на пустой странице.
+   *
+   * **Длительность/стоимость.** `durationMs` = `finishedAt − startedAt` (в
+   * `workflow_runs` нет своей `duration_ms`); `costUsd`/`costRub` — суммы
+   * `node_runs`, у запуска без строк `node_runs` — `0`.
+   *
+   * @param workflowId - uuid workflow
+   * @param userId - пользователь из access-токена (владелец или `editor`)
+   * @param limit - размер страницы (1..{@link MAX_RUN_HISTORY_LIMIT})
+   * @param offset - смещение от начала (0..)
+   * @returns запуски страницы и общее число запусков workflow
+   * @throws NotFoundException если workflow не найден, чужой или доступен
+   *   только с ролью `viewer`
+   */
+  async listRunsAsync(
+    workflowId: string,
+    userId: string,
+    limit: number,
+    offset: number,
+  ): Promise<RunHistoryResponse> {
+    const [workflow] = await this.db
+      .select({ id: workflows.id })
+      .from(workflows)
+      // R7.6: история — право editor (как запуск); viewer получает 404.
+      .where(workflowAccessFilter(this.db, workflowId, userId, 'editor'))
+      .limit(1);
+
+    if (!workflow) {
+      throw new NotFoundException(`Workflow ${workflowId} не найден`);
+    }
+
+    // Защита от некорректных значений, если метод вызовут в обход контроллера:
+    // SQL с отрицательным LIMIT/OFFSET всё равно упал бы, а огромный limit
+    // вытянул бы всю историю (RULES 1.17: граница валидируется и здесь).
+    const safeLimit = Math.min(Math.max(Math.trunc(limit), 1), MAX_RUN_HISTORY_LIMIT);
+    const safeOffset = Math.max(Math.trunc(offset), 0);
+
+    const [countRow] = await this.db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(workflowRuns)
+      .where(eq(workflowRuns.workflowId, workflowId));
+
+    const total = countRow?.total ?? 0;
+
+    const rows = await this.db
+      .select({
+        id: workflowRuns.id,
+        status: workflowRuns.status,
+        createdAt: workflowRuns.createdAt,
+        startedAt: workflowRuns.startedAt,
+        finishedAt: workflowRuns.finishedAt,
+      })
+      .from(workflowRuns)
+      .where(eq(workflowRuns.workflowId, workflowId))
+      // Сначала новые; `id` — вторичный ключ, иначе при одинаковом `created_at`
+      // (частая ситуация для запусков в одну миллисекунду) порядок страниц
+      // «плавал» бы и пагинация могла терять/дублировать строки.
+      .orderBy(desc(workflowRuns.createdAt), desc(workflowRuns.id))
+      .limit(safeLimit)
+      .offset(safeOffset);
+
+    if (rows.length === 0) {
+      return { runs: [], total };
+    }
+
+    const costs = await this.db
+      .select({
+        runId: nodeRuns.runId,
+        costUsd: sql<string | null>`coalesce(sum(${nodeRuns.costUsd}), 0)`,
+        costRub: sql<string | null>`coalesce(sum(${nodeRuns.costRub}), 0)`,
+      })
+      .from(nodeRuns)
+      .where(
+        inArray(
+          nodeRuns.runId,
+          rows.map((row) => row.id),
+        ),
+      )
+      .groupBy(nodeRuns.runId);
+
+    const costByRunId = new Map(costs.map((cost) => [cost.runId, cost]));
+
+    return {
+      runs: rows.map((row) => toRunSummary(row, costByRunId.get(row.id))),
+      total,
+    };
+  }
+
+  /**
    * Возвращает строку `workflow_runs` целиком — без проекции в публичный ответ.
    *
    * Нужна SSE-снимку (KI-347) и `GET /runs/:id/nodes`: первый отдаёт `error`
@@ -267,4 +410,55 @@ export class RunsService {
       error: run.error,
     };
   }
+}
+
+/**
+ * Собирает элемент истории запуска.
+ *
+ * `cost` отсутствует, если у запуска ещё нет строк `node_runs` (запуск
+ * `pending`/`running` без завершённых узлов) — тогда обе суммы `0`.
+ *
+ * @param row - подмножество колонок `workflow_runs`
+ * @param cost - суммы `node_runs` по запуску (если есть)
+ * @returns публичный элемент истории запусков
+ */
+function toRunSummary(row: RunHistoryRow, cost?: RunCostRow): RunSummary {
+  return {
+    id: row.id,
+    status: row.status,
+    createdAt: row.createdAt,
+    startedAt: row.startedAt,
+    finishedAt: row.finishedAt,
+    // `started_at` выставляется при переходе в `running`, поэтому у `pending`
+    // пара дат неполная и длительность неизвестна (а не 0).
+    durationMs:
+      row.startedAt === null || row.finishedAt === null
+        ? null
+        : // Расхождение часов приложения и БД могло бы дать отрицательное
+          // значение; в истории лучше 0, чем «−5 мс».
+          Math.max(0, row.finishedAt.getTime() - row.startedAt.getTime()),
+    costUsd: toAmount(cost?.costUsd),
+    costRub: toAmount(cost?.costRub),
+  };
+}
+
+/**
+ * Приводит значение `numeric`/`sum` из БД к числу.
+ *
+ * Drizzle отдаёт `numeric` строкой (RULES 4.23), а агрегат может прийти
+ * `null`-ом на пустой выборке: обе формы сводим к `0`. Локальная копия
+ * хелпера из `cost-budget.service.ts`: наружу он не экспортирован, а тянуть
+ * сервис бюджета в историю запусков ради одной строки — лишняя зависимость.
+ *
+ * @param value - значение из БД (строка, число или `null`)
+ * @returns число; `0`, если значение пустое или не число
+ */
+function toAmount(value: string | number | null | undefined): number {
+  if (value === null || value === undefined) {
+    return 0;
+  }
+
+  const parsed = typeof value === 'number' ? value : Number(value);
+
+  return Number.isFinite(parsed) ? parsed : 0;
 }

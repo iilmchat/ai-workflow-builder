@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
   Sse,
   SseSignal,
   UseGuards,
@@ -21,8 +22,11 @@ import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import { CostBudgetService } from './cost-budget.service.js';
 import {
   CreateRunSchema,
+  RunHistoryQuerySchema,
   type CreateRunDto,
   type NodeRunSnapshot,
+  type RunHistoryQueryDto,
+  type RunHistoryResponse,
 } from './dto/index.js';
 import type { RunBudgetResponse } from './dto/run-budget.dto.js';
 import { RunsService, type RunResponse } from './runs.service.js';
@@ -35,6 +39,21 @@ const RunIdParamSchema = z.object({
 
 /** Валидированный path-параметр `:id`. */
 type RunIdParamDto = z.infer<typeof RunIdParamSchema>;
+
+/**
+ * Zod-схема path-параметра `:id` истории запусков workflow
+ * (`GET /workflow/:id/runs`).
+ *
+ * Отдельная константа, а не переиспользование `RunIdParamSchema`: смысл
+ * параметра другой (uuid workflow, а не запуска), и в ошибке 400 это должно
+ * читаться однозначно.
+ */
+const WorkflowIdParamSchema = z.object({
+  id: z.uuid('id должен быть валидным UUID'),
+});
+
+/** Валидированный path-параметр `:id` истории запусков. */
+type WorkflowIdParamDto = z.infer<typeof WorkflowIdParamSchema>;
 
 /**
  * HTTP-контроллер запусков workflow.
@@ -185,5 +204,44 @@ export class RunsController {
     await this.runsStreamService.assertRunExistsAsync(params.id, user.sub);
 
     return this.runsStreamService.streamAsync(params.id, signal, user.sub);
+  }
+}
+
+/**
+ * HTTP-контроллер истории запусков workflow (v0.14 S1, DESIGN V014 § 3.1).
+ *
+ * **Почему отдельный класс, а не метод в {@link RunsController}.** Контракт
+ * DESIGN задаёт маршрут `GET /workflow/:id/runs`, а `RunsController` целиком
+ * висит на префиксе `/runs`; у одного класса в Nest ровно один `@Controller`
+ * prefix. Класс живёт в этом же файле и в `RunsModule`, потому что истории
+ * нужен `RunsService` (а не `WorkflowService`, который импортирует
+ * `RunsModule` — импорт в обратную сторону дал бы циклическую зависимость).
+ */
+@UseGuards(JwtAuthGuard)
+@Controller('workflow/:id/runs')
+export class RunsHistoryController {
+  constructor(private readonly runsService: RunsService) {}
+
+  /**
+   * `GET /workflow/:id/runs?limit=20&offset=0` — история запусков workflow.
+   *
+   * Тот же формат, что у `GET /workflow` (`limit`/`offset` через Zod), плюс
+   * `total` для нумерации страниц. `Cache-Control: no-store` — данные
+   * авторизованные и меняются по мере выполнения запусков.
+   *
+   * @param params - path-параметр `id` (uuid workflow)
+   * @param query - `limit` (1..100, по умолчанию 20) и `offset` (по умолчанию 0)
+   * @param user - пользователь из access-токена
+   * @returns запуски страницы и общее число запусков
+   * @throws NotFoundException если workflow не найден, чужой или только `viewer`
+   */
+  @Get()
+  @Header('Cache-Control', 'no-store')
+  async listRuns(
+    @Param(ZodValidationPipe.create(WorkflowIdParamSchema)) params: WorkflowIdParamDto,
+    @Query(ZodValidationPipe.create(RunHistoryQuerySchema)) query: RunHistoryQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<RunHistoryResponse> {
+    return this.runsService.listRunsAsync(params.id, user.sub, query.limit, query.offset);
   }
 }

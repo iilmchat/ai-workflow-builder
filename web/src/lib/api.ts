@@ -142,6 +142,49 @@ export const ApiRunBudgetSchema = z.object({
 export type ApiRunBudget = z.infer<typeof ApiRunBudgetSchema>;
 
 /**
+ * Сводка запуска в истории workflow (`GET /workflow/:id/runs`, v0.14 S1).
+ *
+ * Поля совпадают с backend `RunSummary`
+ * (`src/runs/dto/run-history.dto.ts`); паритет состава полей проверяет
+ * `api-contract.spec.ts` через `docs/development/api-contract.json`. Даты
+ * приходят ISO-строками после сериализации `Date`; `startedAt`, `finishedAt` и
+ * `durationMs` равны `null`, пока запуск не дошёл до соответствующей стадии.
+ *
+ * Стоимости — числа: backend агрегирует их из `node_runs` и отдаёт `0`, если
+ * узлов ещё не было. Это отличает историю от снимка узла
+ * (`NodeRunSnapshotSchema`), где те же метрики приходят строками.
+ */
+export const RunSummarySchema = z.object({
+  id: z.string(),
+  status: RunStatusSchema,
+  createdAt: z.string(),
+  startedAt: z.string().nullable(),
+  finishedAt: z.string().nullable(),
+  durationMs: z.number().int().nullable(),
+  costUsd: z.number(),
+  costRub: z.number(),
+});
+
+/** Сводка запуска в терминах API. */
+export type ApiRunSummary = z.infer<typeof RunSummarySchema>;
+
+/**
+ * Ответ `GET /workflow/:id/runs` — страница истории запусков (v0.14 S1).
+ *
+ * `total` — общее число запусков workflow без учёта пагинации: по нему UI
+ * считает число страниц, не запрашивая всю историю (DESIGN V014 § 3.1).
+ * Паритет состава полей проверяет `api-contract.spec.ts` через
+ * `docs/development/api-contract.json`.
+ */
+export const RunHistoryResponseSchema = z.object({
+  runs: z.array(RunSummarySchema),
+  total: z.number().int(),
+});
+
+/** История запусков workflow в терминах API. */
+export type ApiRunHistoryResponse = z.infer<typeof RunHistoryResponseSchema>;
+
+/**
  * Аннотации MCP-инструмента для UI-бейджей (`RO`, `DESTR`, `IDEM`).
  *
  * Зеркало backend `McpToolSummary` (`src/mcp/dto/mcp-servers.dto.ts`, v0.11

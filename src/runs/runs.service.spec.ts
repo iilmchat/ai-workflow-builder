@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import type { Queue } from 'bullmq';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
+  nodeRuns,
   workflowRuns,
   workflows,
   type Workflow,
@@ -14,10 +15,29 @@ import { NodeRunSnapshotMapper } from './node-run-snapshot.mapper.js';
 import type { NodeRunSnapshot } from './dto/index.js';
 import { RunsService } from './runs.service.js';
 import { RUNS_INSTANCE_ID } from './runs.worker-options.js';
+import { workflowAccessFilter } from '../workflow/workflow-access.js';
+
+/**
+ * Оборачивает `workflowAccessFilter` spy-моком с pass-through поведением.
+ *
+ * Нужно, чтобы тест `listRunsAsync` пиннил **роль** доступа (`editor`, R7.6):
+ * мок Drizzle SQL не исполняет, поэтому без проверки аргумента регрессия
+ * `editor` → `viewer` осталась бы зелёной. Реализация фильтра не подменяется —
+ * существующие тесты работают как раньше.
+ */
+vi.mock('../workflow/workflow-access.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../workflow/workflow-access.js')>();
+
+  return { ...actual, workflowAccessFilter: vi.fn(actual.workflowAccessFilter) };
+});
 
 /** Стабильные идентификаторы тестовых данных. */
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
 const RUN_ID = '22222222-2222-4222-8222-222222222222';
+const RUN_ID_2 = '33333333-3333-4333-8333-333333333333';
+/** Пользователь, от имени которого проверяется доступ к истории. */
+const USER_ID = '44444444-4444-4444-8444-444444444444';
 const STARTED_AT = new Date('2024-01-01T00:00:00.000Z');
 /** KI-015: дата создания намеренно отличается от даты старта. */
 const CREATED_AT = new Date('2023-12-31T23:00:00.000Z');
@@ -95,7 +115,7 @@ function chain(resolveWith: unknown): Record<string, ReturnType<typeof vi.fn>> {
     },
   });
 
-  for (const method of ['from', 'where', 'limit', 'values', 'set', 'orderBy']) {
+  for (const method of ['from', 'where', 'limit', 'values', 'set', 'orderBy', 'offset', 'groupBy']) {
     link[method] = vi.fn(() => proxy);
   }
 
@@ -358,6 +378,223 @@ describe('RunsService', () => {
 
       // Доступ проверен до чтения узлов: маппер не вызывался.
       expect(snapshotMapper.listAsync).not.toHaveBeenCalled();
+    });
+  });
+
+  // v0.14 S1 (DESIGN V014 § 3.1): история запусков workflow с пагинацией.
+  describe('listRunsAsync', () => {
+    /** Цепочки очередных SELECT'ов: доступ → count → страница → суммы. */
+    let chains: ReturnType<typeof chain>[];
+
+    /**
+     * Настраивает `db.select` на последовательность ответов.
+     *
+     * `listRunsAsync` делает до четырёх SELECT'ов подряд (проверка доступа,
+     * `count(*)`, страница запусков, суммы `node_runs`); каждый получает свой
+     * элемент `batches`. Недостающие ответы — пустые массивы.
+     *
+     * @param batches - результаты последовательных SELECT'ов
+     */
+    function stubSelects(...batches: unknown[][]): void {
+      // `workflowAccessFilter` собирает `EXISTS`-подзапрос участника через
+      // `db.select()`. Это второй вызов builder'а внутри `where` — он не
+      // ожидается через `await`, но в моке тоже занимает ответ. Вставляем
+      // пустую заглушку сразу после батча проверки доступа.
+      const sequenced = [batches[0] ?? [], [], ...batches.slice(1)];
+
+      chains = [];
+      db.select.mockImplementation(() => {
+        const next = chain(sequenced.shift() ?? []);
+        chains.push(next);
+
+        return next;
+      });
+    }
+
+    beforeEach(() => {
+      chains = [];
+    });
+
+    it('возвращает страницу с total, длительностью и суммами node_runs', async () => {
+      const finishedAt = new Date(STARTED_AT.getTime() + 1500);
+      stubSelects(
+        // 1. Проверка доступа: workflow найден (владелец/editor).
+        [{ id: WORKFLOW_ID }],
+        // 2. count(*) по всей истории — total не зависит от страницы.
+        [{ total: 2 }],
+        // 3. Страница запусков (сначала новые).
+        [
+          {
+            id: RUN_ID,
+            status: 'completed',
+            createdAt: CREATED_AT,
+            startedAt: STARTED_AT,
+            finishedAt,
+          },
+          {
+            id: RUN_ID_2,
+            status: 'running',
+            createdAt: STARTED_AT,
+            startedAt: STARTED_AT,
+            finishedAt: null,
+          },
+        ],
+        // 4. Суммы node_runs только для запусков страницы.
+        [
+          { runId: RUN_ID, costUsd: '0.123456', costRub: '0' },
+          { runId: RUN_ID_2, costUsd: null, costRub: '42.5' },
+        ],
+      );
+
+      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 20, 0);
+
+      expect(result.total).toBe(2);
+      expect(result.runs).toEqual([
+        {
+          id: RUN_ID,
+          status: 'completed',
+          createdAt: CREATED_AT,
+          startedAt: STARTED_AT,
+          finishedAt,
+          durationMs: 1500,
+          costUsd: 0.123456,
+          costRub: 0,
+        },
+        {
+          id: RUN_ID_2,
+          status: 'running',
+          createdAt: STARTED_AT,
+          startedAt: STARTED_AT,
+          finishedAt: null,
+          durationMs: null,
+          costUsd: 0,
+          costRub: 42.5,
+        },
+      ]);
+      expect(db.select).toHaveBeenCalledTimes(5);
+      // 1. Доступ проверяется по `workflows` до чтения истории (KI-202).
+      expect(chains[0].from).toHaveBeenCalledWith(workflows);
+      expect(chains[0].limit).toHaveBeenCalledWith(1);
+      // R7.6: фильтр доступа обязан требовать именно роль `editor`
+      // (viewer/чужой → пустая выборка). SQL в моке не исполняется, поэтому
+      // роль пиннится по аргументу вызова: регрессия `editor` → `viewer` иначе
+      // осталась бы зелёной, а проверка прав жила бы только в gitignored smoke.
+      expect(vi.mocked(workflowAccessFilter)).toHaveBeenCalledWith(
+        expect.anything(),
+        WORKFLOW_ID,
+        USER_ID,
+        'editor',
+      );
+      // 2. total — отдельный count(*) по workflow_runs (chains[1] — EXISTS-
+      //    подзапрос участника внутри фильтра доступа).
+      expect(chains[2].from).toHaveBeenCalledWith(workflowRuns);
+      // 3. Страница с пагинацией и стабильной сортировкой.
+      expect(chains[3].from).toHaveBeenCalledWith(workflowRuns);
+      expect(chains[3].orderBy).toHaveBeenCalled();
+      expect(chains[3].limit).toHaveBeenCalledWith(20);
+      expect(chains[3].offset).toHaveBeenCalledWith(0);
+      // 4. Суммы — по node_runs и только для id страницы.
+      expect(chains[4].from).toHaveBeenCalledWith(nodeRuns);
+      expect(chains[4].where).toHaveBeenCalled();
+      expect(chains[4].groupBy).toHaveBeenCalled();
+    });
+
+    it('чужой или недоступный workflow отдаёт 404 и не читает историю', async () => {
+      // workspace-filter вернул пусто → workflow не найден/чужой/только viewer.
+      stubSelects([]);
+
+      await expect(
+        service.listRunsAsync(WORKFLOW_ID, USER_ID, 20, 0),
+      ).rejects.toThrow(NotFoundException);
+
+      // Только сборка условия доступа: главный SELECT + EXISTS-подзапрос.
+      // Историю не читаем: count/страница/node_runs не запрашивались.
+      expect(db.select).toHaveBeenCalledTimes(2);
+      expect(snapshotMapper.listAsync).not.toHaveBeenCalled();
+    });
+
+    it('пустая страница отдаёт total и не запрашивает суммы node_runs', async () => {
+      stubSelects([{ id: WORKFLOW_ID }], [{ total: 7 }], []);
+
+      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 20, 40);
+
+      expect(result).toEqual({ runs: [], total: 7 });
+      // Четыре вызова builder'а: доступ, EXISTS-подзапрос, count, страница.
+      // Агрегат `node_runs` на пустой странице не нужен.
+      expect(db.select).toHaveBeenCalledTimes(4);
+      expect(chains[3].offset).toHaveBeenCalledWith(40);
+    });
+
+    it('без строк node_runs стоимости равны нулю (а не null)', async () => {
+      stubSelects(
+        [{ id: WORKFLOW_ID }],
+        [{ total: 1 }],
+        [
+          {
+            id: RUN_ID,
+            status: 'pending',
+            createdAt: CREATED_AT,
+            startedAt: STARTED_AT,
+            finishedAt: null,
+          },
+        ],
+        [],
+      );
+
+      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 20, 0);
+
+      expect(result.runs[0]).toMatchObject({
+        costUsd: 0,
+        costRub: 0,
+        durationMs: null,
+      });
+    });
+
+    it('защищает запрос: limit ограничен сверху, offset — снизу', async () => {
+      stubSelects(
+        [{ id: WORKFLOW_ID }],
+        [{ total: 1 }],
+        [
+          {
+            id: RUN_ID,
+            status: 'pending',
+            createdAt: CREATED_AT,
+            startedAt: null,
+            finishedAt: null,
+          },
+        ],
+        [],
+      );
+
+      // Контроллер валидирует значения Zod'ом, но сервис — вторая граница:
+      // огромный limit вытянул бы всю историю, отрицательный offset уронил SQL.
+      await service.listRunsAsync(WORKFLOW_ID, USER_ID, 10_000, -5);
+
+      expect(chains[3].limit).toHaveBeenCalledWith(100);
+      expect(chains[3].offset).toHaveBeenCalledWith(0);
+    });
+
+    it('длительность не отрицательна при рассинхроне часов (v0.14 S1)', async () => {
+      const startedAt = new Date('2024-01-01T00:00:10.000Z');
+      const finishedAt = new Date('2024-01-01T00:00:05.000Z');
+      stubSelects(
+        [{ id: WORKFLOW_ID }],
+        [{ total: 1 }],
+        [
+          {
+            id: RUN_ID,
+            status: 'failed',
+            createdAt: CREATED_AT,
+            startedAt,
+            finishedAt,
+          },
+        ],
+        [],
+      );
+
+      const result = await service.listRunsAsync(WORKFLOW_ID, USER_ID, 20, 0);
+
+      expect(result.runs[0].durationMs).toBe(0);
     });
   });
 });

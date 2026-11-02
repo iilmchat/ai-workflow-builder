@@ -30,7 +30,7 @@ import { RunLeaseService } from './run-lease.service.js';
 // v0.11 S12 (DESIGN § 3.4.2): единый маппер node_runs для SSE и REST.
 import { NodeRunSnapshotMapper } from './node-run-snapshot.mapper.js';
 import { WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
-import { RunsController } from './runs.controller.js';
+import { RunsController, RunsHistoryController } from './runs.controller.js';
 import { RunsProcessor } from './runs.processor.js';
 import { RunsService } from './runs.service.js';
 import { RunsStreamService } from './runs-stream.service.js';
@@ -96,7 +96,10 @@ import { RUNS_QUEUE_DB, RUNS_QUEUE_PREFIX } from './runs.worker-options.js';
       }),
     }),
   ],
-  controllers: [RunsController],
+  // v0.14 S1 (DESIGN V014 § 3.1): `GET /workflow/:id/runs` — история запусков.
+  // Отдельный контроллер, потому что у него другой префикс (`workflow/:id/runs`),
+  // а сервис — тот же `RunsService`.
+  controllers: [RunsController, RunsHistoryController],
   providers: [
     RunsService,
     RunsStreamService,
