@@ -19,6 +19,20 @@
 
 ### Added
 
+- **Метрики Prometheus (v1.0.0 S4, DESIGN § 3.3)** ([отчёт](development/reports/v1.0.0/S4-metrics.md)):
+  зависимость `prom-client@^15.1.3`; `MetricsService` с собственным `Registry`
+  и четырьмя метриками: `http_request_duration_seconds{method,route,status}`,
+  `run_execution_duration_seconds{node_type,status}`,
+  `run_cost_total{currency}` (USD/RUB раздельно, RULES 4.23),
+  `agent_step_duration_seconds{model}`. Глобальный `MetricsInterceptor` (APP_
+  INTERCEPTOR до `AuditInterceptor`) измеряет каждый HTTP-запрос через
+  `performance.now()` + `finalize` (успех/ошибка/отмена), не наблюдает сам
+  `/metrics`, подпись `route` — шаблон (`/workflow/:id`), а не фактический URL.
+  `GET /metrics` без авторизации (скрейпер Prometheus) отдаёт
+  `text/plain; version=0.0.4` с `Cache-Control: no-store`; префикс `metrics`
+  добавлен в `api-prefixes.json`. Интеграция: движок пишет длительность каждого
+  узла и стоимость успешных LLM/media-узлов; `AgentService` — длительность
+  каждого успешного LLM-шага. Ограничения — KI-574..582.
 - **Журнал аудита действий (v1.0.0 S3, DESIGN § 3.2)** ([отчёт](development/reports/v1.0.0/S3-audit.md)):
   таблица `audit_logs` (`id` uuid PK, `created_at` timestamptz,
   `user_id`/`organization_id` uuid NOT NULL FK CASCADE, `action` text,
@@ -111,6 +125,12 @@
 
 ### Changed
 
+- **Метрики как отдельная подсистема (v1.0.0 S4):** новый `@Global()`
+  `MetricsModule` (не требует правок `imports` у `EngineModule`/`AgentModule`);
+  `MetricsService` инжектится в `ExecutionEngineService` и `AgentService`.
+  Новый префикс `metrics` в `api-prefixes.json` (SPA-fallback и Vite-proxy
+  подхватывают автоматически). `prom-client` помечен upstream как deprecated
+  (замена — `@prometheus-io/client`) — KI-574.
 - **Роль пользователя и административный доступ (v1.0.0 S3):** `users.role`
   (`owner|admin|member|viewer`, NOT NULL default `member`, CHECK
   `users_role_check`); `registerAsync` создаёт создателя личной организации
@@ -138,6 +158,12 @@
 
 ### Security
 
+- **`/metrics` без авторизации — только для сетевого скрейпера (v1.0.0 S4):**
+  ручка намеренно открыта (Prometheus не умеет JWT, DESIGN § 3.3), поэтому её
+  нельзя публиковать наружу: доступ должен ограничиваться ingress/reverse-proxy
+  allowlist (scrape-сеть). Экспозиция содержит только агрегаты с ограниченными
+  подписями (маршруты, статусы, типы узлов, модели, валюты) — без
+  пользовательских данных и секретов. Требование к эксплуатации — KI-575.
 - **Аудит действий и доступ к журналу только для owner/admin (v1.0.0 S3):**
   мутирующие HTTP-запросы журналируются с автором и арендатором; секретные поля
   (`password`/`token`/`secret`/`apiKey`/`authorization`/`cookie`) вырезаются из
@@ -192,6 +218,16 @@
 
 ### Documented
 
+- **Ограничения метрик S4 (v1.0.0):** `prom-client` помечен deprecated
+  upstream — нужна миграция на `@prometheus-io/client` (KI-574); `/metrics`
+  без auth публиковать нельзя — только сетевая защита периметра (KI-575);
+  `agent_step_duration_seconds` без status-лейбла — ошибки агентских шагов не
+  наблюдаются (KI-576); агентский `llm_call` не инструментирован (KI-577);
+  переиспользованные узлы (KI-046) считаются completed с ~0 с (KI-578); реестр
+  на процесс — multi-instance скрейп на стороне Prometheus (KI-579);
+  fallback-подпись route нормализует только UUID (KI-580); нет default
+  process-метрик и моста OTel→Prometheus (KI-581); дашбордов/алертов Grafana в
+  репозитории нет (KI-582).
 - **Ограничения аудита S3 (v1.0.0):** политика retention/immutability не
   определена — CASCADE удаляет журнал вместе с арендатором (KI-565); мутирующие
   `/auth/*` (login/register/refresh/logout) не аудируются — нужен сервисный
@@ -2132,6 +2168,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 

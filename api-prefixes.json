@@ -9,6 +9,7 @@
     { "prefix": "llm" },
     { "prefix": "mcp" },
     { "prefix": "media" },
+    { "prefix": "metrics" },
     { "prefix": "nodes" },
     { "prefix": "runs", "sse": true },
     { "prefix": "templates" },

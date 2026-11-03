@@ -30,11 +30,12 @@ const REGISTRY_PATH = join(PROJECT_ROOT, 'api-prefixes.json');
 const SRC_DIR = join(PROJECT_ROOT, 'src');
 
 /**
- * Ожидаемые префиксы с контроллерами (11).
+ * Ожидаемые префиксы с контроллерами (12).
  *
  * `/api` сюда не входит: это legacy-префикс backend'а без собственного
  * `@Controller` (`controller: false` в реестре). `/admin` добавлен в v1.0.0 S3
- * под `@Controller('admin/audit')` (журнал аудита).
+ * под `@Controller('admin/audit')` (журнал аудита), `/metrics` — в v1.0.0 S4
+ * под `@Controller('metrics')` (экспозиция Prometheus).
  */
 const EXPECTED_CONTROLLER_PREFIXES = [
   'admin',
@@ -43,6 +44,7 @@ const EXPECTED_CONTROLLER_PREFIXES = [
   'llm',
   'mcp',
   'media',
+  'metrics',
   'nodes',
   'runs',
   'templates',
@@ -320,7 +322,7 @@ describe('API_PREFIXES: паритет с @Controller (KI-299/072/120/472)', () 
     );
   });
 
-  it('реестр содержит все 11 префиксов с контроллерами', async () => {
+  it('реестр содержит все 12 префиксов с контроллерами', async () => {
     const entries = await readRegistryAsync();
     const registryPrefixes = await readRegistryPrefixesAsync();
 
@@ -334,6 +336,7 @@ describe('API_PREFIXES: паритет с @Controller (KI-299/072/120/472)', () 
     expect(registryPrefixes).toContain('media');
     expect(registryPrefixes).toContain('templates');
     expect(registryPrefixes).toContain('admin');
+    expect(registryPrefixes).toContain('metrics');
     expect(new Set(registryPrefixes).size).toBe(registryPrefixes.length);
     // Дубли ловятся и по всему реестру, включая `/api` без контроллера.
     expect(new Set(entries.map((entry) => entry.prefix)).size).toBe(

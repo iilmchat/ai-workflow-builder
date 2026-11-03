@@ -23,6 +23,7 @@ import {
   normalizeToolResult,
 } from '../mcp/mcp-tool.adapter.js';
 import type { McpToolDescriptor } from '../mcp/mcp.types.js';
+import { MetricsService } from '../metrics/metrics.service.js';
 import {
   resetTracingAdapter,
   setTracingAdapter,
@@ -109,6 +110,7 @@ async function createHarness(
   mcpListToolsAsync: ReturnType<typeof vi.fn>;
   mcpCreateTool: ReturnType<typeof vi.fn>;
   httpFetchAsync: ReturnType<typeof vi.fn>;
+  observeAgentStep: ReturnType<typeof vi.fn>;
 }> {
   const generateAsync = vi.fn(
     (
@@ -161,6 +163,9 @@ async function createHarness(
       executeAsync: () => Promise.resolve({ ok: true }),
     }),
   );
+  // v1.0.0 S4: метрики — внешняя граница (Prometheus); юнит-тест проверяет
+  // только вызовы `observeAgentStep`, реестр не поднимается.
+  const observeAgentStep = vi.fn();
   // KI-407: бюджет — внешняя граница (БД), в юнит-тесте только «пускает» или
   // «бросает». Оценка фиксируется в моке, чтобы тест проверил, что передана
   // именно накопленная стоимость цикла.
@@ -239,6 +244,8 @@ async function createHarness(
         provide: McpToolAdapter,
         useValue: { createAgentTool: mcpCreateTool },
       },
+      // v1.0.0 S4: `AgentService` пишет длительность LLM-шагов в метрики.
+      { provide: MetricsService, useValue: { observeAgentStep } },
     ],
   }).compile();
 
@@ -256,6 +263,7 @@ async function createHarness(
     mcpListToolsAsync,
     mcpCreateTool,
     httpFetchAsync,
+    observeAgentStep,
   };
 }
 
@@ -730,6 +738,111 @@ describe('AgentService — span agent.step (KI-416)', () => {
     // Финальная итерация инструмент не вызывала — атрибута нет.
     expect(recorded[1]?.attributes).toMatchObject({ iteration: 2 });
     expect(recorded[1]?.attributes.tool_name).toBeUndefined();
+  });
+});
+
+/**
+ * Метрика `agent_step_duration_seconds` (v1.0.0 S4, DESIGN § 3.1).
+ *
+ * Цикл пишет длительность каждого **успешного** LLM-шага (гистограмма без
+ * label статуса), поэтому ошибки модели не наблюдаются.
+ */
+describe('AgentService — метрики LLM-шага (v1.0.0 S4)', () => {
+  /**
+   * Ответ LLM с искусственной задержкой.
+   *
+   * Нужна, чтобы `performance.now()` гарантированно дал ненулевую
+   * длительность: мгновенный мок мог бы уложиться в одно деление таймера.
+   *
+   * @param text - текст ответа модели (JSON-протокол)
+   * @returns реализация `generateAsync` с задержкой ~5 мс
+   */
+  function delayedReply(text: string): () => Promise<LlmGenerateResult> {
+    return async (): Promise<LlmGenerateResult> => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      return {
+        text,
+        usage: { inputTokens: 10, outputTokens: 5, model: 'claude-test' },
+      };
+    };
+  }
+
+  it('один LLM-шаг: observeAgentStep вызван один раз с моделью и duration > 0', async () => {
+    const { service, generateAsync, observeAgentStep } = await createHarness([
+      { text: '{"final":"готово"}' },
+    ]);
+
+    generateAsync.mockImplementationOnce(delayedReply('{"final":"готово"}'));
+
+    const result = await service.runAgentAsync(
+      agentNode({ model: 'claude-test' }),
+      {},
+      'run-1',
+    );
+
+    expect(result.answer).toBe('готово');
+    expect(observeAgentStep).toHaveBeenCalledTimes(1);
+
+    const [model, duration] = observeAgentStep.mock.calls[0] as [
+      string,
+      number,
+    ];
+
+    // Метка — модель узла (кардинальность ограничена списком моделей).
+    expect(model).toBe('claude-test');
+    expect(typeof duration).toBe('number');
+    expect(Number.isFinite(duration)).toBe(true);
+    expect(duration).toBeGreaterThan(0);
+    // В метрику уходят секунды, а не миллисекунды: 5 мс << 1 с.
+    expect(duration).toBeLessThan(1);
+  });
+
+  it('цикл tool → final: наблюдение на каждый LLM-шаг', async () => {
+    const { service, generateAsync, observeAgentStep } = await createHarness([
+      {
+        text: '{"tool":"vector_query","input":{"collection":"docs","query":"a"}}',
+      },
+      { text: '{"final":"готово"}' },
+    ]);
+
+    generateAsync
+      .mockImplementationOnce(
+        delayedReply(
+          '{"tool":"vector_query","input":{"collection":"docs","query":"a"}}',
+        ),
+      )
+      .mockImplementationOnce(delayedReply('{"final":"готово"}'));
+
+    await service.runAgentAsync(agentNode(), {}, 'run-1');
+
+    // Одна итерация = один LLM-вызов = одно наблюдение: tool-шаг между ними
+    // метрику не пишет (это не вызов модели).
+    expect(observeAgentStep).toHaveBeenCalledTimes(2);
+
+    const calls = observeAgentStep.mock.calls as [string, number][];
+
+    expect(calls.map((call) => call[0])).toEqual([
+      'claude-test',
+      'claude-test',
+    ]);
+    expect(calls.every((call) => call[1] > 0)).toBe(true);
+  });
+
+  it('ошибка LLM: observeAgentStep не вызывается (наблюдение только при успехе)', async () => {
+    const providerError = new LlmProviderException('anthropic', 'rate limit', {
+      retryable: true,
+    });
+    const { service, observeAgentStep } = await createHarness([
+      { error: providerError },
+    ]);
+
+    await expect(
+      service.runAgentAsync(agentNode(), {}, 'run-1'),
+    ).rejects.toBe(providerError);
+
+    // У гистограммы нет label статуса: падение шага не искажает длительности.
+    expect(observeAgentStep).not.toHaveBeenCalled();
   });
 });
 

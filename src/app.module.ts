@@ -33,6 +33,9 @@ import { LlmModule } from './llm/llm.module.js';
 // v0.11 S8: MCP-модуль также отдаёт HTTP-ручку каталога `GET /mcp/servers`.
 import { McpModule } from './mcp/mcp.module.js';
 import { MediaModule } from './media/media.module.js';
+// v1.0.0 S4: метрики Prometheus — @Global-модуль с ручкой GET /metrics.
+import { MetricsModule } from './metrics/metrics.module.js';
+import { MetricsInterceptor } from './metrics/metrics.interceptor.js';
 import { WorkflowModule } from './workflow/workflow.module.js';
 import { EngineModule } from './engine/engine.module.js';
 import { NodesModule } from './nodes/nodes.module.js';
@@ -128,6 +131,9 @@ const WEB_DIST_PATH = join(
     DbModule,
     RedisModule,
     ObservabilityModule,
+    // v1.0.0 S4 (DESIGN V100 § 3.3): подсистема метрик Prometheus. @Global:
+    // EngineModule/AgentModule получают MetricsService без правок их imports.
+    MetricsModule,
     AuthModule,
     // v1.0.0 S3 (DESIGN V100 § 3.2): подсистема аудита. Импорт нужен и ради
     // контроллера GET /admin/audit, и потому что AuditService экспортируется
@@ -157,6 +163,10 @@ const WEB_DIST_PATH = join(
     // KI-206/KI-234: guard глобальный — новые маршруты получают общий лимит
     // автоматически; чувствительные ручки ужесточают его через `@Throttle`.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // v1.0.0 S4 (DESIGN V100 § 3.3): глобальные HTTP-метрики. Регистрируется
+    // ПЕРЕД AuditInterceptor: это самый внешний слой, и замер длительности
+    // должен включать всю обработку запроса, в том числе запись аудита.
+    { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
     // v1.0.0 S3 (DESIGN V100 § 3.2): глобальный журнал аудита. Регистрация
     // через APP_INTERCEPTOR (а не декоратор на каждом контроллере) — новые
     // ручки пишутся в аудит автоматически; интерсептор сам решает, что

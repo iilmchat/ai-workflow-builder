@@ -25,6 +25,7 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { performance } from 'node:perf_hooks';
 import { SafeHttpClient } from '../common/http/safe-http.client.js';
 import { NodeDataValidationException } from '../engine/errors.js';
 import type { LlmUsage } from '../llm/llm-provider.interface.js';
@@ -39,6 +40,7 @@ import {
   MCP_MAX_TOOLS_PER_NODE_LIMIT,
   type McpToolRef,
 } from '../mcp/mcp.types.js';
+import { MetricsService } from '../metrics/metrics.service.js';
 import { withSpanAsync } from '../observability/tracing.js';
 import {
   BudgetExceededException,
@@ -529,6 +531,8 @@ export class AgentService {
    *   `RunsModule` не нужен
    * @param mcp - MCP-клиент для preflight и вызовов (v0.11 S7)
    * @param mcpAdapter - сборка `AgentTool` из MCP-инструментов (v0.11 S7)
+   * @param metrics - реестр метрик Prometheus; цикл агента пишет в него
+   *   длительность каждого LLM-шага (v1.0.0 S4, `agent_step_duration_seconds`)
    */
   constructor(
     private readonly llm: LlmService,
@@ -542,6 +546,9 @@ export class AgentService {
     private readonly costBudget: CostBudgetService,
     private readonly mcp: McpClientService,
     private readonly mcpAdapter: McpToolAdapter,
+    // v1.0.0 S4: метрики Prometheus (MetricsModule — @Global, отдельный
+    // импорт в RunsModule не нужен).
+    private readonly metrics: MetricsService,
   ) {
     this.defaultMaxIterations = clampInteger(
       config.get<unknown>('AGENT_MAX_ITERATIONS_DEFAULT'),
@@ -570,6 +577,10 @@ export class AgentService {
    * v0.11 S7: перед первым LLM-вызовом выполняется preflight MCP-серверов
    * (`prepareAsync`), а инструменты собираются из нативных и MCP-адаптеров.
    * Ошибка подключения падает **до** платного цикла (DESIGN § 3.2.5).
+   *
+   * v1.0.0 S4: каждый успешный LLM-шаг цикла пишет длительность в
+   * `MetricsService` (`agent_step_duration_seconds`); ошибки LLM не пишутся —
+   * у гистограммы нет label статуса.
    *
    * @param node - валидированные данные узла (`model`, `tools`, `mcpTools`, лимиты)
    * @param inputs - собранные входы узла (уходят в первое user-сообщение JSON)
@@ -691,9 +702,20 @@ export class AgentService {
           { iteration },
           async (span): Promise<AgentStepOutcome> => {
             const prompt = renderTranscript(messages);
+            // v1.0.0 S4: длительность LLM-шага для гистограммы
+            // `agent_step_duration_seconds`. `performance.now()` — монотонные
+            // миллисекунды (node:perf_hooks), в метрику уходят секунды.
+            const stepStartedAt = performance.now();
             const response = await this.llm.generateAsync(prompt, node.model, {
               maxTokens,
             });
+            // S4: наблюдение только после успешного ответа. У гистограммы нет
+            // label `status`, поэтому ошибки LLM не записываются: иначе
+            // длительность падений смешалась бы с успешными шагами.
+            this.metrics.observeAgentStep(
+              node.model,
+              (performance.now() - stepStartedAt) / 1000,
+            );
             // usage может отсутствовать (часть прокси не отдаёт токены): шаг всё
             // равно должен быть валидным `LlmUsage`, иначе ломается timeline.
             const stepUsage: LlmUsage = response.usage ?? {

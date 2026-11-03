@@ -38,6 +38,9 @@ import { DocumentService } from '../documents/document.service.js';
 import { DocumentTemplateService } from '../documents/document-template.service.js';
 import { DocumentTemplatesService } from '../documents/document-templates.service.js';
 import { FilesystemService } from '../filesystem/filesystem.service.js';
+// v1.0.0 S4 (DESIGN V100 § 3.4): метрики Prometheus. Экземпляр настоящий:
+// проверяется сквозной путь движок → метрики, реестр изолирован на тест.
+import { MetricsService } from '../metrics/metrics.service.js';
 
 /**
  * Интеграция R7.8 (KI-362): media-генерация → скачивание → локальное
@@ -198,6 +201,9 @@ describe.skipIf(!process.env.DATABASE_URL)(
       const moduleRef = await Test.createTestingModule({
         providers: [
           ExecutionEngineService,
+          // v1.0.0 S4: движок наблюдает длительность узла и стоимость через
+          // MetricsService — настоящий экземпляр (свой Registry на тест).
+          MetricsService,
           {
             provide: DocumentService,
             useValue: { 

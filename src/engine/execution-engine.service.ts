@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { and, eq, sql } from 'drizzle-orm';
 import { randomInt } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { isDeepStrictEqual } from 'node:util';
 import { isRetryableProviderError } from '../common/errors/retryable-provider.error.js';
 import { SafeHttpClient } from '../common/http/safe-http.client.js';
@@ -31,6 +32,9 @@ import {
   MEDIA_STORAGE,
   type IMediaStorage,
 } from '../media/media-storage.service.js';
+// v1.0.0 S4 (DESIGN V100 § 3.4): метрики Prometheus — длительность узлов и
+// стоимость вызовов. `MetricsModule` глобальный, отдельная проводка не нужна.
+import { MetricsService } from '../metrics/metrics.service.js';
 import { RunEventsService } from '../runs/run-events.service.js';
 // v0.11 S9 (DESIGN § 3.3.1, KI-066): heartbeat аренды запуска. Движок
 // запускает его после перевода запуска в `running` и гасит в `finally`.
@@ -409,6 +413,29 @@ export class ExecutionEngineService {
   /** Амплитуда случайного джиттера, мс (env `NODE_RETRY_JITTER_MS`). */
   private readonly retryJitterMs: number;
 
+  /**
+   * @param db - соединение Drizzle (RULES 4.10)
+   * @param engineService - построение плана выполнения графа
+   * @param runEvents - публикация событий прогресса запуска
+   * @param runLease - heartbeat аренды запуска (v0.11 S9, KI-066)
+   * @param llmExecutor - исполнитель LLM-узлов
+   * @param mediaExecutor - исполнитель media-узлов
+   * @param sandboxRunner - QuickJS-WASM для узла condition (R7.5)
+   * @param workflowService - источник подграфов узла sub_workflow (R6.7)
+   * @param llmRegistry - реестр провайдеров (эмбеддинги vector/memory)
+   * @param vectorStore - хранилище векторов и памяти (R7.4a)
+   * @param agentService - цикл agent-узла (R7.4b)
+   * @param config - конфигурация приложения (RULES 4.6: env только через DI)
+   * @param httpClient - единственный безопасный HTTP-клиент (v0.11 S14)
+   * @param webSearchRegistry - реестр web-search-провайдеров (v0.10 S2)
+   * @param documentService - DOCX-рендерер узла document_gen (v0.10 S6)
+   * @param pdfRenderer - PDF-рендерер узла document_gen (v0.12 S1)
+   * @param mediaStorage - хранилище media-файлов (`MEDIA_STORAGE`)
+   * @param documentTemplatesService - доступ к DOCX-шаблонам (v0.11 S4)
+   * @param documentTemplateService - рендерер `docxtemplater` (v0.11 S4)
+   * @param filesystemService - workspace workflow для read/write_file (v0.10 S7/S8)
+   * @param metrics - метрики Prometheus: длительность узлов и стоимость (v1.0 S4)
+   */
   constructor(
     @Inject(DRIZZLE) private readonly db: Database,
     private readonly engineService: EngineService,
@@ -454,6 +481,10 @@ export class ExecutionEngineService {
     // workspace workflow. Узлы получают только относительный путь, сервис
     // проверяет path traversal и лимит 5 МБ (RULES 4.38).
     private readonly filesystemService: FilesystemService,
+    // v1.0.0 S4 (DESIGN V100 § 3.4): наблюдения Prometheus — длительность
+    // выполнения узла (completed/failed) и стоимость вызовов провайдеров.
+    // Сервис из глобального `MetricsModule`; запись — единственная точка.
+    private readonly metrics: MetricsService,
   ) {
     // v0.11 S14 (DESIGN § 3.5.1): отдельный флаг **только** для узла `http`.
     // Читается один раз (RULES 4.6); трактовка строгая, как у `EnvSchema`:
@@ -997,25 +1028,50 @@ export class ExecutionEngineService {
       throw new Error(`Узел ${nodeId} не найден в графе`);
     }
 
-    // R7.7 (KI-365): span узла. Ошибка узла помечает span статусом ERROR
-    // автоматически (адаптер записывает exception), успех — `node.status`.
-    return withSpanAsync(
-      'node.execute',
-      { 'run.id': runId, 'node.id': nodeId, 'node.type': node.type },
-      async (span) => {
-        const outputs = await this.executeNodeRunAsync(
-          runId,
-          nodeId,
-          node,
-          plan,
-          subContext,
-        );
+    // v1.0.0 S4 (DESIGN V100 § 3.4): длительность узла — в Prometheus. Замер
+    // один на вызов `executeNodeAsync` (включая reuse, KI-046) и не учитывает
+    // внутренние повторы провайдера: это время жизни узла, а не попытки.
+    const startedAt = performance.now();
 
-        span.setAttribute('node.status', 'completed');
+    try {
+      // R7.7 (KI-365): span узла. Ошибка узла помечает span статусом ERROR
+      // автоматически (адаптер записывает exception), успех — `node.status`.
+      const outputs = await withSpanAsync(
+        'node.execute',
+        { 'run.id': runId, 'node.id': nodeId, 'node.type': node.type },
+        async (span) => {
+          const result = await this.executeNodeRunAsync(
+            runId,
+            nodeId,
+            node,
+            plan,
+            subContext,
+          );
 
-        return outputs;
-      },
-    );
+          span.setAttribute('node.status', 'completed');
+
+          return result;
+        },
+      );
+
+      this.metrics.observeNodeExecution(
+        node.type,
+        'completed',
+        (performance.now() - startedAt) / 1000,
+      );
+
+      return outputs;
+    } catch (error: unknown) {
+      // Ошибку не гасим: наружу уходит исходная (RULES 1.7), метрика —
+      // только побочное наблюдение, а не подмена результата.
+      this.metrics.observeNodeExecution(
+        node.type,
+        'failed',
+        (performance.now() - startedAt) / 1000,
+      );
+
+      throw error;
+    }
   }
 
   /**
@@ -1025,6 +1081,10 @@ export class ExecutionEngineService {
    * Вынесено отдельным методом, чтобы span `node.execute` (R7.7) оборачивал
    * весь жизненный цикл узла — включая запись `node_runs` и публикацию
    * событий, — но не раздувал публичный `executeNodeAsync`.
+   *
+   * Стоимость успешного шага (v1.0.0 S4) дополнительно уходит в Prometheus:
+   * ровно одно наблюдение на завершённый узел, повторы и переиспользование
+   * (KI-046) не учитываются.
    *
    * @param runId - uuid запуска
    * @param nodeId - `id` узла в графе
@@ -1178,6 +1238,21 @@ export class ExecutionEngineService {
             logs,
             finishedAt: new Date().toISOString(),
           });
+
+          // v1.0.0 S4 (DESIGN V100 § 3.4): стоимость успешного вызова — в
+          // Prometheus. Точка выбрана после UPDATE и события: наблюдение
+          // фиксирует **финальный успех** узла, а сбой публикации не засчитает
+          // стоимость упавшего узла. Повторы и reuse сюда не доходят:
+          // `runNodeAsync` вызван один раз на успешную попытку, а
+          // переиспользованный результат выходит из метода раньше.
+          // `numeric`-колонки приходят строками (RULES 4.23) — в реестр уходят
+          // числа; отсутствующая валюта остаётся `null` (валюты не смешиваются).
+          if (metrics.costUsd !== null || metrics.costRub !== null) {
+            this.metrics.observeCost(
+              metrics.costUsd === null ? null : Number(metrics.costUsd),
+              metrics.costRub === null ? null : Number(metrics.costRub),
+            );
+          }
 
           return step.outputs;
         } catch (error: unknown) {

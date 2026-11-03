@@ -19,6 +19,8 @@ import { DocumentTemplateNotFoundException } from '../documents/document.errors.
 // v0.10 S7/S8: сервис workspace для узлов read_file/write_file.
 import { FilesystemService } from '../filesystem/filesystem.service.js';
 import { MEDIA_STORAGE } from '../media/media-storage.service.js';
+// v1.0.0 S4: метрики Prometheus — движок наблюдает узлы и стоимость.
+import { MetricsService } from '../metrics/metrics.service.js';
 import type { RunEventDto } from '../runs/dto/index.js';
 import { RunEventsService } from '../runs/run-events.service.js';
 // v0.11 S9: heartbeat аренды запуска — в движке проверяется проводка.
@@ -367,6 +369,9 @@ describe('ExecutionEngineService', () => {
   let leaseStop: ReturnType<typeof vi.fn>;
   /** v0.11 S14: HTTP-клиент узла `http` (в тестах — фейк без сети). */
   let httpFetchAsync: ReturnType<typeof vi.fn>;
+  /** v1.0.0 S4: наблюдения Prometheus за длительностью узлов и стоимостью. */
+  let observeNodeExecution: ReturnType<typeof vi.fn>;
+  let observeCost: ReturnType<typeof vi.fn>;
   let fake: ReturnType<typeof createFakeDb>;
   /** Окружение для `ConfigService`-заглушки (изменяется в отдельных тестах). */
   let envConfig: Record<string, unknown>;
@@ -546,6 +551,10 @@ describe('ExecutionEngineService', () => {
       SANDBOX_TIMEOUT_MS: 100,
       SANDBOX_MEMORY_MB: 16,
     };
+    // v1.0.0 S4: реестр Prometheus в юнит-тесте не нужен — наблюдения
+    // проверяются по мокам (настоящий реестр проверяет metrics-спек).
+    observeNodeExecution = vi.fn();
+    observeCost = vi.fn();
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -638,6 +647,15 @@ describe('ExecutionEngineService', () => {
         { provide: SafeHttpClient, useValue: { fetchAsync: httpFetchAsync } },
         // R6.7 (KI-200): источник подграфов для узла sub_workflow.
         { provide: WorkflowService, useValue: { findOneAsync: findWorkflow } },
+        // v1.0.0 S4 (DESIGN V100 § 3.4): наблюдения Prometheus подменены
+        // моками — проверяется проводка движка, а не формат метрик.
+        {
+          provide: MetricsService,
+          useValue: {
+            observeNodeExecution,
+            observeCost,
+          },
+        },
         // R7.4a (KI-128): vector/memory-узлы. В юнит-тестах движка они не
         // выполняются, но зависимости обязаны резолвиться (иначе Nest падает
         // на компиляции модуля).
@@ -2249,6 +2267,104 @@ describe('ExecutionEngineService', () => {
     expect(llmExecute.mock.calls[0][0]).toEqual(expect.objectContaining({ id: 'C' }));
     expect(fake.rows).toHaveLength(3);
     expect(fake.rows.every((row) => row.status === 'completed')).toBe(true);
+  });
+
+  /* ───────────────── v1.0.0 S4: метрики Prometheus ───────────────── */
+
+  /**
+   * Проводка метрик Prometheus (v1.0.0 S4, DESIGN V100 § 3.4).
+   *
+   * Наблюдения здесь — моки: проверяется, что движок вызывает их в нужных
+   * точках с нужными аргументами. Формат самих метрик и `/metrics` — зона
+   * `metrics.service.spec.ts` (S4.1).
+   */
+  describe('v1.0.0 S4: метрики Prometheus', () => {
+    /** Все замеры `observeNodeExecution` в порядке вызовов. */
+    const nodeObservations = (): Array<[string, string, number]> =>
+      observeNodeExecution.mock.calls as Array<[string, string, number]>;
+
+    it('наблюдает completed-узел LLM с длительностью в секундах', async () => {
+      await service.executeAsync(RUN_ID, { nodes: [node('A', 'llm')], edges: [] });
+
+      expect(observeNodeExecution).toHaveBeenCalledTimes(1);
+
+      const [nodeType, status, seconds] = nodeObservations()[0];
+
+      expect(nodeType).toBe('llm');
+      expect(status).toBe('completed');
+      // performance.now() переводится в секунды: значение конечное, > 0 и явно
+      // не миллисекунды (иначе ошибка масштаба).
+      expect(Number.isFinite(seconds)).toBe(true);
+      expect(seconds).toBeGreaterThan(0);
+      expect(seconds).toBeLessThan(5);
+    });
+
+    it('наблюдает failed-узел и не глушит исходную ошибку', async () => {
+      llmExecute.mockRejectedValue(
+        new LlmProviderException('anthropic', 'boom', { retryable: false }),
+      );
+
+      await expect(
+        service.executeAsync(RUN_ID, { nodes: [node('A', 'llm')], edges: [] }),
+      ).rejects.toThrow('boom');
+
+      expect(observeNodeExecution).toHaveBeenCalledWith(
+        'llm',
+        'failed',
+        expect.any(Number),
+      );
+      // Упавший узел не попадает в completed-серию.
+      expect(observeNodeExecution).not.toHaveBeenCalledWith(
+        'llm',
+        'completed',
+        expect.any(Number),
+      );
+    });
+
+    it('наблюдает стоимость USD платного LLM-узла', async () => {
+      llmExecute.mockResolvedValue({
+        outputs: { text: 'ответ с метриками' },
+        metrics: {
+          inputTokens: 10,
+          outputTokens: 5,
+          costUsd: 0.0045,
+          model: 'claude-sonnet-4-20250514',
+        },
+      });
+
+      await service.executeAsync(RUN_ID, { nodes: [node('A', 'llm')], edges: [] });
+
+      // numeric-строка из node_runs обратно приводится к числу; рублёвой
+      // стоимости у LLM нет — второй аргумент `null`.
+      expect(observeCost).toHaveBeenCalledTimes(1);
+      expect(observeCost).toHaveBeenCalledWith(0.0045, null);
+    });
+
+    it('не наблюдает стоимость бесплатного узла (text)', async () => {
+      await service.executeAsync(RUN_ID, { nodes: [node('A', 'text')], edges: [] });
+
+      expect(observeCost).not.toHaveBeenCalled();
+    });
+
+    it('reuse-путь не дублирует наблюдение стоимости (KI-046)', async () => {
+      seedNodeRun({
+        nodeId: 'A',
+        status: 'completed',
+        inputs: {},
+        outputs: { text: 'результат прошлой попытки' },
+        costUsd: '0.001000',
+      });
+
+      const result = await service.executeAsync(RUN_ID, {
+        nodes: [node('A', 'llm')],
+        edges: [],
+      });
+
+      expect(result.status).toBe('completed');
+      // Узел не выполнялся — платить не за что, наблюдения нет.
+      expect(llmExecute).not.toHaveBeenCalled();
+      expect(observeCost).not.toHaveBeenCalled();
+    });
   });
 
   it('KI-038: пишет tokens_in/tokens_out/cost_usd в node_runs', async () => {

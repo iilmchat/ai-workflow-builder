@@ -11,6 +11,7 @@ import { LlmRegistryService } from '../llm/llm-registry.service.js';
 import { LlmService } from '../llm/llm.service.js';
 import { McpClientService } from '../mcp/mcp-client.service.js';
 import { McpToolAdapter } from '../mcp/mcp-tool.adapter.js';
+import { MetricsService } from '../metrics/metrics.service.js';
 import { CostBudgetService } from '../runs/cost-budget.service.js';
 import { QuickJsRunnerService } from '../sandbox/quickjs-runner.service.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
@@ -130,6 +131,9 @@ describe('AgentService — интеграция: http_request → final (R7.4b)'
             ),
           },
         },
+        // v1.0.0 S4: настоящий MetricsService — цикл агента пишет длительность
+        // LLM-шагов; своего реестра хватает, глобальный prom-client не нужен.
+        MetricsService,
       ],
     }).compile();
     const service = moduleRef.get(AgentService);
