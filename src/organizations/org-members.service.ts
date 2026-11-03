@@ -6,10 +6,11 @@ import {
 } from '@nestjs/common';
 import { asc, desc, eq } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { organizationInvitations, users } from '../db/schema.js';
+import { organizationInvitations, organizations, users } from '../db/schema.js';
+import { EmailService } from '../email/email.service.js';
 import type {
   InviteMemberDto,
-  OrganizationInvitationSummary,
+  InviteMemberResponse,
   OrganizationMembersResponse,
 } from './dto/member.dto.js';
 
@@ -37,8 +38,13 @@ const INVITATION_EXISTS_MESSAGE = 'Приглашение для этого emai
 export class OrgMembersService {
   /**
    * @param db - соединение Drizzle (инъекция по токену {@link DRIZZLE})
+   * @param emailService - отправка письма-приглашения (v1.1.0 S1); сбой
+   *   отправки не отменяет приглашение (fallback по DESIGN § 3.1)
    */
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: Database,
+    private readonly emailService: EmailService,
+  ) {}
 
   /**
    * Возвращает участников организации и ожидающие приглашения
@@ -54,7 +60,8 @@ export class OrgMembersService {
    * @throws UnauthorizedException если пользователь не найден в БД
    */
   async listAsync(userId: string): Promise<OrganizationMembersResponse> {
-    const organizationId = await this.resolveOrganizationIdAsync(userId);
+    const actor = await this.resolveActorAsync(userId);
+    const organizationId = actor.organizationId;
 
     const members = await this.db
       .select({
@@ -85,7 +92,7 @@ export class OrgMembersService {
 
   /**
    * Выписывает приглашение в организацию актора
-   * (`POST /admin/members/invite`).
+   * (`POST /admin/members/invite`) и пытается отправить письмо (v1.1.0 S1).
    *
    * Порядок проверок:
    * 1. организация актора — из БД, а не из токена (KI-554);
@@ -95,17 +102,23 @@ export class OrgMembersService {
    *    того же email в ту же организацию ловится уникальным индексом, а не 500
    *    от нарушения ограничения в гонке (KI-400). Пустой `returning()` — 409.
    *
+   * **Письмо — best-effort (DESIGN V110 § 3.1).** Приглашение в БД уже создано,
+   * поэтому сбой/отсутствие SMTP не отменяет операцию: `EmailService` ловит
+   * ошибку и возвращает `false`, а результат уезжает в ответ полем `emailSent`.
+   * Запрос ждёт отправку (outbox/очереди в v1.1.0 нет, KI-593), но таймауты
+   * SMTP ограничены в `EmailService`.
+   *
    * @param userId - `sub` access-токена (кто приглашает)
    * @param dto - валидированные email и роль приглашаемого
-   * @returns выписанное приглашение
+   * @returns выписанное приглашение и признак отправки письма
    * @throws UnauthorizedException если пользователь не найден в БД
    * @throws ConflictException если email занят или приглашение уже выписано
    */
   async inviteAsync(
     userId: string,
     dto: InviteMemberDto,
-  ): Promise<OrganizationInvitationSummary> {
-    const organizationId = await this.resolveOrganizationIdAsync(userId);
+  ): Promise<InviteMemberResponse> {
+    const actor = await this.resolveActorAsync(userId);
     const email = this.normalizeEmail(dto.email);
 
     const [registered] = await this.db
@@ -121,7 +134,7 @@ export class OrgMembersService {
     const [invitation] = await this.db
       .insert(organizationInvitations)
       .values({
-        organizationId,
+        organizationId: actor.organizationId,
         email,
         role: dto.role,
         invitedBy: userId,
@@ -135,25 +148,45 @@ export class OrgMembersService {
       throw new ConflictException(INVITATION_EXISTS_MESSAGE);
     }
 
+    // Письмо не влияет на успех приглашения: `false` — SMTP не настроен или
+    // отказал, приглашение уже в БД (fallback DESIGN § 3.1).
+    const emailSent = await this.emailService.sendInvitationAsync(
+      invitation.email,
+      actor.name,
+      this.emailService.buildInvitationLink(invitation.id),
+    );
+
     return {
       email: invitation.email,
       role: invitation.role,
       invitedBy: invitation.invitedBy,
       invitedAt: invitation.createdAt,
+      emailSent,
     };
   }
 
   /**
-   * Возвращает организацию пользователя по строке `users` (KI-554).
+   * Возвращает организацию пользователя (id и название) по строке `users`.
+   *
+   * Организация резолвится из БД, а не из access-токена (KI-554): токен живёт
+   * 24 часа, и после переезда пользователя в другую организацию `orgId` в нём
+   * устарел бы. JOIN с `organizations` нужен, чтобы тема письма-приглашения
+   * содержала название организации (v1.1.0 S1).
    *
    * @param userId - `sub` access-токена
-   * @returns uuid организации, в которой пользователь состоит
+   * @returns uuid организации и её название
    * @throws UnauthorizedException если строка `users` не найдена
    */
-  private async resolveOrganizationIdAsync(userId: string): Promise<string> {
+  private async resolveActorAsync(
+    userId: string,
+  ): Promise<{ organizationId: string; name: string }> {
     const [actor] = await this.db
-      .select({ organizationId: users.organizationId })
+      .select({
+        organizationId: users.organizationId,
+        name: organizations.name,
+      })
       .from(users)
+      .innerJoin(organizations, eq(users.organizationId, organizations.id))
       .where(eq(users.id, userId))
       .limit(1);
 
@@ -161,7 +194,7 @@ export class OrgMembersService {
       throw new UnauthorizedException('Пользователь не найден');
     }
 
-    return actor.organizationId;
+    return actor;
   }
 
   /**

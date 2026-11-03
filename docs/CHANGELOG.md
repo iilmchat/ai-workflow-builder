@@ -19,6 +19,20 @@
 
 ### Added
 
+- **SMTP и письма-приглашения (v1.1.0 S1, DESIGN V110 § 3.1)** ([отчёт](development/reports/v1.1.0/S1-smtp.md)):
+  зависимость `nodemailer` (+ `@types/nodemailer`); новый `src/email/`
+  (`EmailService`: `createTransport` по `SMTP_*`, таймауты 10/10/20 с,
+  маскирование email в логах; HTML+text шаблон с темой «Приглашение в
+  организацию {orgName}» и кнопкой «Присоединиться»; `buildInvitationLink` →
+  `<APP_PUBLIC_URL>/login?invite=<uuid>`; `EmailModule`). Env: `SMTP_HOST`,
+  `SMTP_PORT` (587), `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `SMTP_SECURE`
+  (строгий boolean, RULES 4.35) и `APP_PUBLIC_URL` (default
+  `http://localhost:3000`). `OrgMembersService.inviteAsync` после создания
+  приглашения отправляет письмо; `POST /admin/members/invite` возвращает
+  `emailSent`. Без SMTP — WARN, `emailSent: false` и приглашение в БД
+  (fallback); сбой SMTP — ERROR, 201 сохраняется. UI различает «письмо
+  отправлено» и «создано, но не отправлено» (`team.invite.success_no_email`).
+  Ограничения — KI-592..597.
 - **Команда организации и журнал аудита в UI (v1.0.0 S5, DESIGN § 2.1/§ 3.2)** ([отчёт](development/reports/v1.0.0/S5-team-ui.md)):
   API — `GET /admin/members` (участники организации и ожидающие приглашения,
   `Cache-Control: no-store`, доступен любому участнику) и
@@ -143,6 +157,13 @@
 
 ### Changed
 
+- **Ответ `POST /admin/members/invite` — `InviteMemberResponse` (v1.1.0 S1):**
+  к прежним полям приглашения добавлен `emailSent: boolean` — SMTP принял
+  письмо. Новый DTO в backend (`src/organizations/dto/member.dto.ts`) и
+  web-зеркале (`InviteMemberResponseSchema`), запись в
+  `docs/development/api-contract.json` и в обоих паритет-спеках. UI различает
+  «письмо отправлено» и «приглашение создано, письмо не отправлено» (новый
+  ключ `team.invite.success_no_email` в ru/en).
 - **`UserPublic` отдаёт организацию и роль (v1.0.0 S5, KI-555):**
   `GET /auth/me`, `POST /auth/login`, `/auth/register`, `/auth/refresh`
   возвращают `user.organizationId` (uuid) и `user.role`
@@ -217,6 +238,15 @@
 
 ### Fixed
 
+- **KI-584 — приглашения доставляются письмом (v1.1.0 S1, DESIGN V110 § 3.1)**
+  ([отчёт](development/reports/v1.1.0/S1-smtp.md)): добавлен SMTP-транспорт
+  (`nodemailer`) и шаблон письма; `OrgMembersService.inviteAsync` отправляет
+  письмо после создания приглашения, `POST /admin/members/invite` отдаёт
+  `emailSent`. При ненастроенном SMTP — прежний fallback: WARN, `emailSent:
+  false`, приглашение в БД и 201; при сбое SMTP — ERROR и тот же результат.
+  Смоук: без SMTP — 201 + WARN; с mock-SMTP письмо реально получено (тема,
+  получатель, ссылка `/login?invite=<uuid>`); при недоступном SMTP — ERROR,
+  `emailSent: false`.
 - **KI-555 / KI-573 / KI-554 (частично): профиль с организацией и UI аудита
   (v1.0.0 S5)** ([отчёт](development/reports/v1.0.0/S5-team-ui.md)):
   `GET /auth/me` отдаёт `orgId` и роль (KI-555), журнал `GET /admin/audit`
@@ -254,6 +284,15 @@
 
 ### Documented
 
+- **Ограничения SMTP-приглашений (v1.1.0 S1):** письмо отправляется синхронно
+  внутри HTTP-запроса — SMTP-задержка входит в latency инвайта (KI-592);
+  ретраев и статуса доставки нет, при временном сбое письмо теряется
+  (KI-593); параметр `?invite=<uuid>` UI не использует — регистрация «сжигает»
+  приглашение по email (KI-594); шаблон только русский (KI-595); отдельного
+  rate limit на отправку приглашений нет (KI-596); `emailSent` не хранится в
+  БД, статус виден только в ответе на инвайт (KI-597), а `true` означает
+  «SMTP принял», не «доставлено»; версии `nodemailer` и `@types/nodemailer`
+  различаются мажорно (KI-598).
 - **Ограничения команды организации (v1.0.0 S5):** приглашение работает только
   для ещё не зарегистрированных email — перенос существующего пользователя
   между организациями не поддержан (KI-583); письма не отправляются, доставка
@@ -2213,6 +2252,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 

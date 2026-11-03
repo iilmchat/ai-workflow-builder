@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module.js';
 import { AuthModule } from '../auth/auth.module.js';
+import { EmailModule } from '../email/email.module.js';
 import { OrgMembersController } from './org-members.controller.js';
 import { OrgMembersService } from './org-members.service.js';
 
@@ -11,10 +12,11 @@ import { OrgMembersService } from './org-members.service.js';
  * `AuthModule` нужен ради `JwtAuthGuard`/`JwtModule` (проверка access-токена),
  * `AuditModule` — ради `OrgOwnerGuard` (роль `owner`/`admin` из БД); guard
  * переиспользуется, а не дублируется, чтобы политика доступа к
- * административным ручкам оставалась в одном месте.
+ * административным ручкам оставалась в одном месте. v1.1.0 S1: `EmailModule`
+ * даёт `EmailService` для письма-приглашения (fallback при ненастроенном SMTP).
  */
 @Module({
-  imports: [AuthModule, AuditModule],
+  imports: [AuthModule, AuditModule, EmailModule],
   controllers: [OrgMembersController],
   providers: [OrgMembersService],
 })

@@ -492,6 +492,7 @@
   "team.invite.role": "Роль",
   "team.invite.submit": "Отправить приглашение",
   "team.invite.success": "Приглашение отправлено: {{email}}",
+  "team.invite.success_no_email": "Приглашение для {{email}} создано, но письмо не отправлено: SMTP не настроен или недоступен",
   "team.members.empty": "В организации пока только вы",
   "team.members.joined": "присоединился {{date}}",
   "team.members.load_failed": "Не удалось загрузить участников: {{reason}}",

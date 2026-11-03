@@ -5,6 +5,7 @@ import {
   NetworkSafetyEnvSchema,
   NodeRetryEnvSchema,
   RunLeaseEnvSchema,
+  SmtpEnvSchema,
   ThrottlerEnvSchema,
   VectorEnvSchema,
   WebSearchEnvSchema,
@@ -856,5 +857,65 @@ describe('HTTP_NODE_ALLOW_PRIVATE_NETWORKS (v0.11 S14, KI-434/435/478)', () => {
         HTTP_NODE_ALLOW_PRIVATE_NETWORKS: '',
       }).HTTP_NODE_ALLOW_PRIVATE_NETWORKS,
     ).toBe(false);
+  });
+});
+
+describe('SMTP env (v1.1.0 S1, DESIGN V110 § 3.1)', () => {
+  it('дефолты: почта не настроена, порт 587, secure=false, адрес отправителя и APP_PUBLIC_URL', () => {
+    expect(SmtpEnvSchema.parse({})).toEqual({
+      SMTP_PORT: 587,
+      SMTP_FROM: 'noreply@workflow-builder.local',
+      SMTP_SECURE: false,
+      APP_PUBLIC_URL: 'http://localhost:3000',
+    });
+
+    const parsed = EnvSchema.parse(baseEnv);
+
+    expect(parsed.SMTP_HOST).toBeUndefined();
+    expect(parsed.SMTP_USER).toBeUndefined();
+    expect(parsed.SMTP_PASS).toBeUndefined();
+    expect(parsed.SMTP_PORT).toBe(587);
+    expect(parsed.SMTP_SECURE).toBe(false);
+    expect(parsed.APP_PUBLIC_URL).toBe('http://localhost:3000');
+    // Пустая переменная в .env — «не задана» (KI-084): fallback остаётся WARN.
+    expect(
+      SmtpEnvSchema.parse({ SMTP_HOST: '' }).SMTP_HOST,
+    ).toBeUndefined();
+  });
+
+  it('SMTP_SECURE — строгий boolean (RULES 4.35), мусор отклоняется', () => {
+    expect(SmtpEnvSchema.parse({ SMTP_SECURE: 'true' }).SMTP_SECURE).toBe(true);
+    expect(SmtpEnvSchema.parse({ SMTP_SECURE: 'false' }).SMTP_SECURE).toBe(false);
+    expect(SmtpEnvSchema.parse({ SMTP_SECURE: true }).SMTP_SECURE).toBe(true);
+    expect(SmtpEnvSchema.parse({ SMTP_SECURE: false }).SMTP_SECURE).toBe(false);
+    // `z.coerce.boolean()` здесь дал бы true на строку 'false' — гейт против
+    // регресса: строка 'false' обязана остаться false.
+    expect(SmtpEnvSchema.parse({ SMTP_SECURE: 'false' }).SMTP_SECURE).not.toBe(true);
+    expect(SmtpEnvSchema.safeParse({ SMTP_SECURE: 'yes' }).success).toBe(false);
+    expect(SmtpEnvSchema.safeParse({ SMTP_SECURE: '1' }).success).toBe(false);
+    // Пустая строка — «не задана», остаётся дефолт false.
+    expect(SmtpEnvSchema.parse({ SMTP_SECURE: '' }).SMTP_SECURE).toBe(false);
+  });
+
+  it('порт приводится к числу и ограничен диапазоном', () => {
+    expect(SmtpEnvSchema.parse({ SMTP_PORT: '2525' }).SMTP_PORT).toBe(2525);
+    expect(() => SmtpEnvSchema.parse({ SMTP_PORT: '0' })).toThrow();
+    expect(() => SmtpEnvSchema.parse({ SMTP_PORT: '70000' })).toThrow();
+    expect(() => SmtpEnvSchema.parse({ SMTP_PORT: 'abc' })).toThrow();
+  });
+
+  it('APP_PUBLIC_URL: только http(s), без пустого значения', () => {
+    expect(
+      SmtpEnvSchema.parse({ APP_PUBLIC_URL: 'https://app.example.com' })
+        .APP_PUBLIC_URL,
+    ).toBe('https://app.example.com');
+    expect(() =>
+      SmtpEnvSchema.parse({ APP_PUBLIC_URL: 'ftp://example.com' }),
+    ).toThrow();
+    expect(() => SmtpEnvSchema.parse({ APP_PUBLIC_URL: 'not-a-url' })).toThrow();
+    // Пустое значение — дефолт локального запуска.
+    expect(SmtpEnvSchema.parse({ APP_PUBLIC_URL: '' }).APP_PUBLIC_URL).toBe(
+      'http://localhost:3000',
+    );
   });
 });

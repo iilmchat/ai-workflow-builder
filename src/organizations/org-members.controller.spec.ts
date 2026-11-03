@@ -12,7 +12,7 @@ import {
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import type { UserRole } from '../db/schema.js';
 import type {
-  OrganizationInvitationSummary,
+  InviteMemberResponse,
   OrganizationMembersResponse,
 } from './dto/member.dto.js';
 import { OrgMembersController } from './org-members.controller.js';
@@ -53,12 +53,13 @@ const membersResponse: OrganizationMembersResponse = {
   ],
 };
 
-/** Ответ сервиса на приглашение. */
-const invitationSummary: OrganizationInvitationSummary = {
+/** Ответ сервиса на приглашение (v1.1.0 S1: + признак отправки письма). */
+const invitationSummary: InviteMemberResponse = {
   email: 'new@example.com',
   role: 'member',
   invitedBy: DEMO_USER_ID,
   invitedAt: INVITED_AT,
+  emailSent: true,
 };
 
 /**
@@ -222,6 +223,9 @@ describe('OrgMembersController (v1.0.0 S5)', () => {
         role: 'member',
       });
       expect(response.body).toEqual(JSON.parse(JSON.stringify(invitationSummary)));
+      // v1.1.0 S1: 201 не означает «письмо доставлено» — признак отправки
+      // приходит клиенту отдельным полем.
+      expect(response.body.emailSent).toBe(true);
     });
 
     it('администратор (role=admin) тоже может приглашать', async () => {

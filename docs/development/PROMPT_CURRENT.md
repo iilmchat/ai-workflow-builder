@@ -1,6 +1,6 @@
 # PROMPT_CURRENT — системный промпт ассистента (v8.1)
 
-**Версия промпта:** 9.3
+**Версия промпта:** 9.4
 **Дата:** 2026-10-19
 **Статус:** актуален для HEAD после S9 (`v0.11.0`; релизный тег ещё не выставлен, `package.json` пока `0.10.1`)
 **Заменяет:** `PROMPT_CURRENT.md` v8.0 (архив: `archive/prompts/PROMPT_V8.md`); структура и правила поведения унаследованы от v7.2 (архив: `archive/prompts/PROMPT_V7.md`) и v4.1 (`archive/prompts/PROMPT_V4.md`)
@@ -412,6 +412,7 @@ PDF-рендер и разбор JSON/CSV в `document_gen`/`read_file`, `overwr
 **Итог.** HEAD после S9: **1359** backend-тестов, **395** frontend, 22 типа узлов, Open High 3. Реализован `v0.11.0` (DOCX-шаблоны, MCP Adapter, Run Lease); впереди — релизный docs-гейт, срезы S10–S17 и тёмная тема.
 
 **Продолжаем.**
+
 
 
 

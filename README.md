@@ -135,14 +135,20 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 ### 🔐 Совместная работа и безопасность
 
 - **Auth:** JWT + refresh-токены, сессии и защищённые маршруты.
-- **Организации и команда (v1.0 S1/S3/S5):** пользователь состоит в организации
-  (`users.organization_id`), роль — `owner`/`admin`/`member`/`viewer`;
-  `GET /auth/me` отдаёт `organizationId` и `role`. `GET /admin/members` —
-  участники и ожидающие приглашения, `POST /admin/members/invite` (owner/admin)
-  выписывает приглашение по email: регистрация по нему присоединяет
-  пользователя к организации с назначенной ролью. Журнал действий организации —
-  `GET /admin/audit` (owner/admin, keyset-пагинация). В верхней панели —
-  кнопка «Команда» (👥) с вкладками «Участники» и «Аудит».
+- **Организации и команда (v1.0 S1/S3/S5; письма — v1.1 S1):** пользователь
+  состоит в организации (`users.organization_id`), роль —
+  `owner`/`admin`/`member`/`viewer`; `GET /auth/me` отдаёт `organizationId` и
+  `role`. `GET /admin/members` — участники и ожидающие приглашения,
+  `POST /admin/members/invite` (owner/admin) выписывает приглашение по email и
+  отправляет письмо со ссылкой на регистрацию через SMTP (`nodemailer`; env
+  `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`,
+  `SMTP_SECURE`, `APP_PUBLIC_URL` для абсолютной ссылки). Без SMTP приглашение
+  создаётся, письмо не отправляется: в лог уходит WARN, API отвечает
+  `emailSent: false`, а UI показывает «создано, но письмо не отправлено».
+  Регистрация по приглашённому email присоединяет пользователя к организации с
+  назначенной ролью. Журнал действий организации — `GET /admin/audit`
+  (owner/admin, keyset-пагинация). В верхней панели — кнопка «Команда» (👥) с
+  вкладками «Участники» и «Аудит».
 - **Share:** публичные read-only ссылки и collaborative-доступ с ролями
   **owner / editor / viewer**.
 - **Rate limiting:** 5 запросов/мин на login и share, 300/мин общий лимит;

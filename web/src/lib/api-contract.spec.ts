@@ -51,6 +51,7 @@ import { CollaboratorSchema } from './collaborators-api';
 import { AuthUserSchema } from './auth-api';
 import { AuditLogSchema, AuditLogsResponseSchema } from './audit-api';
 import {
+  InviteMemberResponseSchema,
   OrganizationMembersResponseSchema,
   OrgInvitationSchema,
   OrgMemberSchema,
@@ -111,6 +112,8 @@ const MIRROR_SCHEMAS: Record<string, MirrorSchema> = {
   OrganizationInvitationSummary: OrgInvitationSchema,
   OrganizationMemberSummary: OrgMemberSchema,
   OrganizationMembersResponse: OrganizationMembersResponseSchema,
+  // v1.1.0 S1 (DESIGN V110 § 3.1): ответ инвайта — приглашение + emailSent.
+  InviteMemberResponse: InviteMemberResponseSchema,
   RunResponse: ApiRunSchema,
   // R7.1 (KI-048): бюджет запуска — новое зеркало REST-ответа.
   RunBudgetResponse: ApiRunBudgetSchema,
@@ -462,5 +465,24 @@ describe('REST-контракт: web-зеркала ↔ docs/development/api-con
       expect(fields).not.toContain('accessToken');
       expect(fields).not.toContain('password');
     }
+  });
+
+  it('ответ инвайта содержит emailSent и зеркалит контракт (v1.1.0 S1)', () => {
+    const contract = readContract();
+    const actual = actualContract();
+
+    // v1.1.0 S1 (DESIGN V110 § 3.1): приглашение создаётся и без SMTP, поэтому
+    // отдельный DTO `InviteMemberResponse` несёт `emailSent` — UI различает
+    // «письмо отправлено» и «только строка в БД».
+    expect(actual.InviteMemberResponse).toEqual(
+      contract.responses.InviteMemberResponse,
+    );
+    expect(actual.InviteMemberResponse).toContain('emailSent');
+
+    // Домен роли у ответа инвайта — тот же, что у элемента списка приглашений:
+    // владельца через приглашение назначить нельзя.
+    expect([...InvitableOrgRoleSchema.options].sort()).toEqual(
+      contract.enums?.['OrganizationInvitationSummary.role'],
+    );
   });
 });

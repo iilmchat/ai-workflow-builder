@@ -73,3 +73,29 @@ export const InviteMemberSchema = z.object({
 
 /** Валидированное тело приглашения в организацию. */
 export type InviteMemberDto = z.infer<typeof InviteMemberSchema>;
+
+/**
+ * Ответ `POST /admin/members/invite` (v1.1.0 S1, DESIGN V110 § 3.1).
+ *
+ * Совпадает с {@link OrganizationInvitationSummary} и добавляет `emailSent` —
+ * результат отправки письма. Приглашение создаётся **всегда** (fallback при
+ * ненастроенном/недоступном SMTP, DESIGN § 3.1), поэтому 201 не означает
+ * «письмо доставлено»; UI показывает «приглашение создано, но письмо не
+ * отправлено», если `emailSent === false`.
+ *
+ * Интерфейс объявлен «плоским», без `extends`: backend-гейт
+ * `api-contract.spec.ts` читает поля интерфейса компилятором TypeScript и
+ * наследование не разворачивает (KI-352).
+ */
+export interface InviteMemberResponse {
+  /** Email, на который выписано приглашение (нормализованный). */
+  email: string;
+  /** Роль, которая будет выдана при регистрации по этому email. */
+  role: InvitableUserRole;
+  /** uuid пользователя, отправившего приглашение. */
+  invitedBy: string;
+  /** Дата выписки приглашения (`organization_invitations.created_at`). */
+  invitedAt: Date;
+  /** `true`, если SMTP принял письмо; `false` — создано только в БД. */
+  emailSent: boolean;
+}

@@ -8,6 +8,7 @@ import {
 import {
   fetchOrganizationMembersAsync,
   inviteMemberAsync,
+  type InviteMemberResponse,
   type OrgInvitation,
   type OrgMember,
 } from '@/lib/org-api';
@@ -88,6 +89,12 @@ const PENDING_INVITATION: OrgInvitation = {
   invitedAt: '2026-03-03T00:00:00.000Z',
 };
 
+/** Ответ инвайта, когда письмо отправлено (v1.1.0 S1). */
+const INVITE_RESPONSE: InviteMemberResponse = {
+  ...PENDING_INVITATION,
+  emailSent: true,
+};
+
 /** Запись журнала аудита с ресурсом. */
 const LOG_WORKFLOW_CREATE: AuditLog = {
   id: '33333333-3333-4333-8333-333333333333',
@@ -132,7 +139,7 @@ describe('TeamPage — вкладки и роли (v1.0.0 S5)', () => {
       invitations: [PENDING_INVITATION],
     });
     vi.mocked(inviteMemberAsync).mockReset();
-    vi.mocked(inviteMemberAsync).mockResolvedValue(PENDING_INVITATION);
+    vi.mocked(inviteMemberAsync).mockResolvedValue(INVITE_RESPONSE);
     vi.mocked(fetchAuditLogsAsync).mockReset();
     vi.mocked(fetchAuditLogsAsync).mockResolvedValue({
       logs: [],
@@ -395,7 +402,7 @@ describe('TeamPage — приглашение (v1.0.0 S5)', () => {
       invitations: [],
     });
     vi.mocked(inviteMemberAsync).mockReset();
-    vi.mocked(inviteMemberAsync).mockResolvedValue(PENDING_INVITATION);
+    vi.mocked(inviteMemberAsync).mockResolvedValue(INVITE_RESPONSE);
     vi.mocked(fetchAuditLogsAsync).mockReset();
     vi.mocked(fetchAuditLogsAsync).mockResolvedValue({
       logs: [],
@@ -458,6 +465,43 @@ describe('TeamPage — приглашение (v1.0.0 S5)', () => {
     await waitFor(() =>
       expect(vi.mocked(fetchOrganizationMembersAsync)).toHaveBeenCalledTimes(2),
     );
+  });
+
+  it('показывает «письмо не отправлено», если emailSent=false (v1.1.0 S1)', async () => {
+    // Fallback SMTP (DESIGN V110 § 3.1): приглашение в БД есть, письма нет.
+    vi.mocked(inviteMemberAsync).mockResolvedValue({
+      ...INVITE_RESPONSE,
+      emailSent: false,
+    });
+
+    const { container } = renderTeam();
+
+    await screen.findByText(OWNER_MEMBER.email);
+
+    fireEvent.click(
+      container.querySelector('[data-team-invite]') as HTMLButtonElement,
+    );
+    fireEvent.change(
+      container.querySelector('[data-team-invite-email]') as HTMLInputElement,
+      { target: { value: 'no-smtp@example.com' } },
+    );
+    fireEvent.click(
+      container.querySelector('[data-team-invite-submit]') as HTMLButtonElement,
+    );
+
+    // Сообщение честно различает «создано» и «письмо отправлено»: при
+    // `emailSent: false` нельзя утверждать, что письмо ушло.
+    expect(
+      await screen.findByText(
+        ru['team.invite.success_no_email'].replace(
+          '{{email}}',
+          'no-smtp@example.com',
+        ),
+      ),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('[data-team-invite-success]'),
+    ).not.toBeNull();
   });
 
   it('не отправляет приглашение с некорректным email', async () => {

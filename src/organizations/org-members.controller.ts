@@ -16,7 +16,7 @@ import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import {
   InviteMemberSchema,
   type InviteMemberDto,
-  type OrganizationInvitationSummary,
+  type InviteMemberResponse,
   type OrganizationMembersResponse,
 } from './dto/member.dto.js';
 import { OrgMembersService } from './org-members.service.js';
@@ -63,11 +63,13 @@ export class OrgMembersController {
    * `POST /admin/members/invite` — приглашение в организацию по email.
    *
    * Тело валидируется `ZodValidationPipe`: мусорный email или роль `owner` —
-   * 400 до обращения к сервису. Ответ — 201 с выписанным приглашением.
+   * 400 до обращения к сервису. Ответ — 201 с выписанным приглашением и
+   * признаком `emailSent` (v1.1.0 S1): письмо отправляется best-effort, и 201
+   * не означает, что письмо доставлено (fallback при ненастроенном SMTP).
    *
    * @param user - payload access-токена (кто приглашает)
    * @param dto - валидированные `email` и `role` (`admin`/`member`/`viewer`)
-   * @returns выписанное приглашение
+   * @returns выписанное приглашение и признак отправки письма
    * @throws BadRequestException если тело не проходит `InviteMemberSchema`
    * @throws ForbiddenException если роль приглашающего не `owner`/`admin`
    * @throws ConflictException если email занят или приглашение уже выписано
@@ -78,7 +80,7 @@ export class OrgMembersController {
   async invite(
     @CurrentUser() user: JwtPayload,
     @Body(ZodValidationPipe.create(InviteMemberSchema)) dto: InviteMemberDto,
-  ): Promise<OrganizationInvitationSummary> {
+  ): Promise<InviteMemberResponse> {
     return this.orgMembersService.inviteAsync(user.sub, dto);
   }
 }

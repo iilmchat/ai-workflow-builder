@@ -44,6 +44,21 @@ export const OrgInvitationSchema = z.object({
 export type OrgInvitation = z.infer<typeof OrgInvitationSchema>;
 
 /**
+ * Ответ `POST /admin/members/invite` (v1.1.0 S1, DESIGN V110 § 3.1).
+ *
+ * Совпадает с {@link OrgInvitationSchema} и добавляет `emailSent` — признак
+ * того, что SMTP принял письмо. `false` не означает ошибку: приглашение
+ * создано в БД, но письмо не отправлено (SMTP не настроен или отказал) — UI
+ * обязан показать это отличие, а не утверждать «письмо отправлено».
+ */
+export const InviteMemberResponseSchema = OrgInvitationSchema.extend({
+  emailSent: z.boolean(),
+});
+
+/** Ответ `POST /admin/members/invite` в терминах API. */
+export type InviteMemberResponse = z.infer<typeof InviteMemberResponseSchema>;
+
+/**
  * Ответ `GET /admin/members` (v1.0.0 S5).
  *
  * `members` — принявшие приглашение пользователи организации; `invitations` —
@@ -95,25 +110,26 @@ export async function fetchOrganizationMembersAsync(): Promise<OrganizationMembe
 
 /**
  * Приглашает пользователя в организацию (`POST /admin/members/invite`,
- * v1.0.0 S5).
+ * v1.0.0 S5; v1.1.0 S1 — письмо).
  *
  * Доступно владельцу и администратору: UI скрывает форму для остальных ролей.
  * Приглашённый станет участником организации с указанной ролью после
- * регистрации по этому email — UI ограничивается сообщением «приглашение
- * отправлено» (доставку письма S5 не выполняет).
+ * регистрации по этому email. Приглашение создаётся всегда, а `emailSent`
+ * говорит, ушло ли письмо: при ненастроенном/недоступном SMTP бэкенд отвечает
+ * 201 с `emailSent: false`, и UI не должен утверждать «письмо отправлено».
  *
  * @param payload - `{ email, role }`, проверенный формой
- * @returns созданное приглашение
+ * @returns созданное приглашение и признак отправки письма
  * @throws ApiError при 409 (email уже зарегистрирован или приглашение уже
  *   отправлено), 403 (нет прав) или сетевой ошибке
  */
 export async function inviteMemberAsync(
   payload: InviteMemberPayload,
-): Promise<OrgInvitation> {
+): Promise<InviteMemberResponse> {
   const data = await requestAsync<unknown>('/admin/members/invite', {
     method: 'POST',
     body: JSON.stringify(InviteMemberPayloadSchema.parse(payload)),
   });
 
-  return OrgInvitationSchema.parse(data);
+  return InviteMemberResponseSchema.parse(data);
 }

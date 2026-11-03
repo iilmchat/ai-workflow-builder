@@ -492,6 +492,7 @@
   "team.invite.role": "Role",
   "team.invite.submit": "Send invitation",
   "team.invite.success": "Invitation sent: {{email}}",
+  "team.invite.success_no_email": "Invitation for {{email}} created, but the email was not sent: SMTP is not configured or unavailable",
   "team.members.empty": "You are the only member of the organization so far",
   "team.members.joined": "joined {{date}}",
   "team.members.load_failed": "Could not load members: {{reason}}",

@@ -305,8 +305,10 @@ export function TeamPage({ onClose }: TeamPageProps) {
    *
    * Email проверяется локально Zod'ом до запроса — та же схема, что принимает
    * backend (`InviteMemberPayloadSchema`), поэтому ошибка видна мгновенно.
-   * После успеха форма закрывается, список участников перезапрашивается, а
-   * строка «приглашение отправлено» остаётся в панели.
+   * После успеха форма закрывается, список участников перезапрашивается, а в
+   * панели остаётся сообщение: «приглашение отправлено» при `emailSent: true`
+   * либо «создано, но письмо не отправлено» при `false` (v1.1.0 S1 — SMTP
+   * опционален, приглашение живёт в БД независимо от письма).
    *
    * @param event - событие submit формы
    * @returns промис без значения
@@ -328,10 +330,17 @@ export function TeamPage({ onClose }: TeamPageProps) {
     setIsInviteBusy(true);
 
     try {
-      await inviteMemberAsync({ email: parsedEmail.data, role: inviteRole });
+      const created = await inviteMemberAsync({
+        email: parsedEmail.data,
+        role: inviteRole,
+      });
 
+      // v1.1.0 S1: приглашение создаётся и без SMTP. Сообщение различается,
+      // чтобы «письмо отправлено» не звучало при `emailSent: false`.
       setInviteSuccess(
-        i18n.t('team.invite.success', { email: parsedEmail.data }),
+        created.emailSent
+          ? i18n.t('team.invite.success', { email: parsedEmail.data })
+          : i18n.t('team.invite.success_no_email', { email: parsedEmail.data }),
       );
       setInviteEmail('');
       setInviteRole('member');

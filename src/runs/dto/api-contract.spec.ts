@@ -291,6 +291,15 @@ type DtoSource =
     path: ORGANIZATIONS_MEMBER_DTO_PATH,
     label: 'src/organizations/dto/member.dto.ts',
   },
+  // v1.1.0 S1 (DESIGN V110 § 3.1): ответ `POST /admin/members/invite` —
+  // приглашение плюс признак отправки письма (`emailSent`). Отдельный DTO, а не
+  // расширение `OrganizationInvitationSummary`: приглашение создаётся и без
+  // SMTP, и клиенту нужно отличать «письмо отправлено» от «только БД».
+  InviteMemberResponse: {
+    kind: 'interface',
+    path: ORGANIZATIONS_MEMBER_DTO_PATH,
+    label: 'src/organizations/dto/member.dto.ts',
+  },
   // v1.0.0 S3 (DESIGN V100 § 3.2): журнал аудита. До S5 эти ответы в гейте не
   // участвовали; UI S5 наконец их читает, поэтому состав полей фиксируется.
   AuditLogsResponse: {

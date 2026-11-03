@@ -873,6 +873,70 @@ export const ThrottlerEnvSchema = z.object({
 export type ThrottlerEnv = z.infer<typeof ThrottlerEnvSchema>;
 
 /**
+ * Zod-схема SMTP для писем-приглашений (v1.1.0 S1, DESIGN V110 § 3.1).
+ *
+ * Все переменные **опциональны**: без SMTP приглашение всё равно создаётся в
+ * БД, а `EmailService` возвращает `false` и пишет WARN (fallback — требование
+ * DESIGN § 3.1). `SMTP_HOST` — единственный признак «почта настроена»:
+ * `SMTP_USER`/`SMTP_PASS` нужны только провайдерам с аутентификацией.
+ *
+ * `SMTP_SECURE` разбирается **строго** (RULES 4.35): `z.coerce.boolean()`
+ * превратил бы строку `'false'` в `true`, и письмо пошло бы по implicit-TLS на
+ * порт 587. `true` — implicit TLS (обычно порт 465), `false` — STARTTLS
+ * (587); пустая строка — «не задана» (KI-084).
+ *
+ * `APP_PUBLIC_URL` — абсолютный адрес приложения для ссылки в письме. Backend
+ * не знает публичный домен (share-ссылки умышленно относительные), а письмо
+ * требует абсолютный URL; брать `Host` из запроса нельзя (host-header
+ * injection), поэтому база задаётся явно и по умолчанию совпадает с локальным
+ * запуском (`http://localhost:3000`, где приложение раздаёт SPA и API).
+ */
+export const SmtpEnvSchema = z.object({
+  /** SMTP-хост; не задан — письма не отправляются (WARN + приглашение в БД). */
+  SMTP_HOST: z.preprocess(
+    emptyToUndefined,
+    z.string().trim().min(1).max(255).optional(),
+  ),
+  /** Порт SMTP (587 — STARTTLS, 465 — implicit TLS). */
+  SMTP_PORT: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(65535).default(587),
+  ),
+  /** Пользователь SMTP-аутентификации (вместе с паролем). */
+  SMTP_USER: z.preprocess(
+    emptyToUndefined,
+    z.string().trim().min(1).max(320).optional(),
+  ),
+  /** Пароль SMTP-аутентификации (в логи не попадает, RULES 5.3). */
+  SMTP_PASS: z.preprocess(emptyToUndefined, z.string().max(1024).optional()),
+  /** Адрес отправителя в письме-приглашении. */
+  SMTP_FROM: z.preprocess(
+    emptyToUndefined,
+    z.string().trim().min(3).max(320).default('noreply@workflow-builder.local'),
+  ),
+  /**
+   * Implicit TLS (`true`, обычно 465) или STARTTLS (`false`, 587).
+   *
+   * Разбор строгий (RULES 4.35), как у `TRUST_PROXY`/`SANDBOX_ENABLED`.
+   */
+  SMTP_SECURE: z.preprocess(
+    emptyToUndefined,
+    z
+      .union([z.boolean(), z.enum(['true', 'false'])])
+      .transform((value) => value === true || value === 'true')
+      .default(false),
+  ),
+  /** Публичный адрес приложения для абсолютных ссылок в письмах. */
+  APP_PUBLIC_URL: z.preprocess(
+    emptyToUndefined,
+    httpUrl.default('http://localhost:3000'),
+  ),
+});
+
+/** Валидированные настройки SMTP (v1.1.0 S1). */
+export type SmtpEnv = z.infer<typeof SmtpEnvSchema>;
+
+/**
  * Zod-схема переменных окружения, обязательных для запуска приложения.
  *
  * Проверяется ровно один раз при инициализации `ConfigModule` (fail-fast):
@@ -1111,6 +1175,8 @@ export const EnvSchema = z.object({
   ...NodeRetryEnvSchema.shape,
   // v0.11 S5: общий throttler между инстансами (KI-420, DESIGN § 3.5.2).
   ...ThrottlerEnvSchema.shape,
+  // v1.1.0 S1: SMTP для писем-приглашений (DESIGN V110 § 3.1); опционален.
+  ...SmtpEnvSchema.shape,
 })
   /**
    * Fail-fast: отказ старта при `AUTH_DISABLED=true` в production.

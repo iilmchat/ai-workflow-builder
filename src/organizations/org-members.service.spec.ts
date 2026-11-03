@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { DRIZZLE, type Database } from '../db/db.module.js';
+import { EmailService } from '../email/email.service.js';
 import { OrgMembersService } from './org-members.service.js';
 import type {
   OrganizationInvitationSummary,
@@ -25,6 +26,7 @@ const INVITED_AT = new Date('2024-03-01T00:00:00.000Z');
 /** Методы Drizzle-цепочки, которые вызывают сервис и его тестовая заглушка. */
 const CHAIN_METHODS = [
   'from',
+  'innerJoin',
   'where',
   'orderBy',
   'limit',
@@ -80,10 +82,15 @@ function sqlParams(condition: unknown): unknown[] {
   return new PgDialect().sqlToQuery(condition as SQL).params;
 }
 
-describe('OrgMembersService (v1.0.0 S5)', () => {
+describe('OrgMembersService (v1.0.0 S5; v1.1.0 S1 — письмо)', () => {
   let service: OrgMembersService;
   let select: ReturnType<typeof vi.fn>;
   let insert: ReturnType<typeof vi.fn>;
+  /** Заглушка `EmailService` (v1.1.0 S1): отправка письма и сборка ссылки. */
+  let emailService: {
+    sendInvitationAsync: ReturnType<typeof vi.fn>;
+    buildInvitationLink: ReturnType<typeof vi.fn>;
+  };
   /** Очередь ответов для последовательных `select`-запросов. */
   let selectResults: unknown[][];
   /** Очередь ответов для `insert`-запросов. */
@@ -110,11 +117,19 @@ describe('OrgMembersService (v1.0.0 S5)', () => {
 
       return insertChain;
     });
+    emailService = {
+      sendInvitationAsync: vi.fn(() => Promise.resolve(true)),
+      buildInvitationLink: vi.fn(
+        (invitationId: string) =>
+          `http://localhost:3000/login?invite=${invitationId}`,
+      ),
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         OrgMembersService,
         { provide: DRIZZLE, useValue: { select, insert } as unknown as Database },
+        { provide: EmailService, useValue: emailService },
       ],
     }).compile();
 
@@ -202,7 +217,7 @@ describe('OrgMembersService (v1.0.0 S5)', () => {
 
   describe('inviteAsync', () => {
     it('выписывает приглашение в организацию из БД, а не из токена (KI-554)', async () => {
-      mockSelects([{ organizationId: OTHER_ORG_ID }], []);
+      mockSelects([{ organizationId: OTHER_ORG_ID, name: 'Acme Org' }], []);
       mockInsert([
         {
           id: INVITATION_ID,
@@ -224,6 +239,8 @@ describe('OrgMembersService (v1.0.0 S5)', () => {
         role: 'member',
         invitedBy: USER_ID,
         invitedAt: INVITED_AT,
+        // v1.1.0 S1: письмо отправлено (заглушка EmailService вернула true).
+        emailSent: true,
       });
       // Email нормализован, организация — из строки `users` актора.
       expect(insertChain?.values).toHaveBeenCalledWith({
@@ -235,10 +252,49 @@ describe('OrgMembersService (v1.0.0 S5)', () => {
       // Гонка инвайтов разрешается ON CONFLICT DO NOTHING + returning (KI-400).
       expect(insertChain?.onConflictDoNothing).toHaveBeenCalledTimes(1);
       expect(insertChain?.returning).toHaveBeenCalledTimes(1);
+      // v1.1.0 S1: письмо уходит на нормализованный email, с названием
+      // организации из БД и ссылкой по id приглашения.
+      expect(emailService.buildInvitationLink).toHaveBeenCalledWith(INVITATION_ID);
+      expect(emailService.sendInvitationAsync).toHaveBeenCalledWith(
+        'new@example.com',
+        'Acme Org',
+        `http://localhost:3000/login?invite=${INVITATION_ID}`,
+      );
+    });
+
+    it('возвращает 201-подобный ответ с emailSent=false, если SMTP не отправил (v1.1.0 S1)', async () => {
+      // Fallback DESIGN V110 § 3.1: приглашение в БД есть, письма нет.
+      emailService.sendInvitationAsync.mockResolvedValue(false);
+      mockSelects([{ organizationId: ORG_ID, name: 'Acme Org' }], []);
+      mockInsert([
+        {
+          id: INVITATION_ID,
+          organizationId: ORG_ID,
+          email: 'new@example.com',
+          role: 'viewer',
+          invitedBy: USER_ID,
+          createdAt: INVITED_AT,
+        },
+      ]);
+
+      const result = await service.inviteAsync(USER_ID, {
+        email: 'new@example.com',
+        role: 'viewer',
+      });
+
+      // Приглашение не отменяется из-за письма: 409/исключения нет.
+      expect(result).toMatchObject({
+        email: 'new@example.com',
+        role: 'viewer',
+        emailSent: false,
+      });
     });
 
     it('бросает ConflictException (409), если email уже зарегистрирован', async () => {
-      mockSelects([{ organizationId: ORG_ID }], [{ id: REGISTERED_ID }]);
+      mockSelects(
+        [{ organizationId: ORG_ID, name: 'Acme Org' }],
+        [{ id: REGISTERED_ID }],
+      );
 
       const error = await service
         .inviteAsync(USER_ID, { email: 'taken@example.com', role: 'viewer' })
@@ -248,12 +304,13 @@ describe('OrgMembersService (v1.0.0 S5)', () => {
       expect((error as Error).message).toContain(
         'перенос между организациями не поддерживается',
       );
-      // До INSERT дело не доходит.
+      // До INSERT дело не доходит, письмо не отправляется.
       expect(insert).not.toHaveBeenCalled();
+      expect(emailService.sendInvitationAsync).not.toHaveBeenCalled();
     });
 
     it('бросает ConflictException (409), если приглашение уже выписано (гонка)', async () => {
-      mockSelects([{ organizationId: ORG_ID }], []);
+      mockSelects([{ organizationId: ORG_ID, name: 'Acme Org' }], []);
       // ON CONFLICT DO NOTHING: уникальный индекс не дал вставить дубль,
       // returning() пуст — сервис отдаёт 409, а не 500.
       mockInsert([]);
@@ -261,6 +318,8 @@ describe('OrgMembersService (v1.0.0 S5)', () => {
       await expect(
         service.inviteAsync(USER_ID, { email: 'invite@example.com', role: 'admin' }),
       ).rejects.toThrow(ConflictException);
+      // Письмо на дубль не отправляется.
+      expect(emailService.sendInvitationAsync).not.toHaveBeenCalled();
     });
 
     it('бросает UnauthorizedException, если строки users нет', async () => {
@@ -270,6 +329,7 @@ describe('OrgMembersService (v1.0.0 S5)', () => {
         service.inviteAsync(USER_ID, { email: 'new@example.com', role: 'member' }),
       ).rejects.toThrow(UnauthorizedException);
       expect(insert).not.toHaveBeenCalled();
+      expect(emailService.sendInvitationAsync).not.toHaveBeenCalled();
     });
   });
 
