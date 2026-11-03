@@ -19,6 +19,22 @@
 
 ### Added
 
+- **Управление командой: смена роли и удаление участника (v1.1.0 S2, DESIGN V110 § 3.2)** ([отчёт](development/reports/v1.1.0/S2-team-management.md)):
+  `PATCH /admin/members/:userId` (смена роли `admin|member|viewer`, только
+  `owner`; 400 на свою роль и на `owner`, 404 на участника чужой организации) и
+  `DELETE /admin/members/:userId` (204; только `owner`; 400 на себя и владельца,
+  404 на чужую организацию). Новый `OrgOwnerOnlyGuard` (роль из БД, не из
+  токена), `UpdateMemberRoleSchema`/`MemberParamSchema` в
+  `src/organizations/dto/member.dto.ts`. Удаление в одной транзакции: графы
+  участника в организации переводятся владельцу, его строки
+  `workflow_collaborators` удаляются, участник переезжает в новую личную
+  организацию с ролью `owner`, активные refresh-токены отзываются. Аудит:
+  действия `member.role_change` и `member.remove`. UI `TeamPage`: селект роли и
+  кнопка «Удалить» (`window.confirm`) в строке участника, видны только владельцу
+  и не показываются для строки владельца; ошибки действия выводятся над
+  списком. i18n: `team.role.update`, `team.member.remove`,
+  `team.confirm.remove`, `team.error.cannot_remove_self`,
+  `team.member.action_failed` (ru/en). Ограничения — KI-599..604.
 - **SMTP и письма-приглашения (v1.1.0 S1, DESIGN V110 § 3.1)** ([отчёт](development/reports/v1.1.0/S1-smtp.md)):
   зависимость `nodemailer` (+ `@types/nodemailer`); новый `src/email/`
   (`EmailService`: `createTransport` по `SMTP_*`, таймауты 10/10/20 с,
@@ -157,6 +173,12 @@
 
 ### Changed
 
+- **Политика доступа к управлению составом организации (v1.1.0 S2):**
+  `PATCH`/`DELETE /admin/members/:userId` закрыты `OrgOwnerOnlyGuard` — только
+  `owner`, роль читается из БД при каждом запросе (не из access-токена, KI-554);
+  `POST /admin/members/invite` остаётся доступен `owner`/`admin` (S5). Ответ
+  `PATCH` — существующий `OrganizationMemberSummary` (контракт не менялся),
+  `DELETE` — 204 без тела; `api-contract.json` и паритет-гейты не правились.
 - **Ответ `POST /admin/members/invite` — `InviteMemberResponse` (v1.1.0 S1):**
   к прежним полям приглашения добавлен `emailSent: boolean` — SMTP принял
   письмо. Новый DTO в backend (`src/organizations/dto/member.dto.ts`) и
@@ -238,6 +260,13 @@
 
 ### Fixed
 
+- **KI-586 — управление участниками организации (v1.1.0 S2, DESIGN V110 § 3.2)**
+  ([отчёт](development/reports/v1.1.0/S2-team-management.md)): владелец может
+  менять роль и исключать участников; удаление — выход из организации с
+  передачей графов владельцу, удалением участия в workflow и отзывом
+  refresh-токенов; журнал получает `member.role_change`/`member.remove`.
+  Остатки (выбор стратегии переноса графов, невозможность повторного
+  приглашения, отзыв access-токена, несогласованность прав admin) — KI-599..604.
 - **KI-584 — приглашения доставляются письмом (v1.1.0 S1, DESIGN V110 § 3.1)**
   ([отчёт](development/reports/v1.1.0/S1-smtp.md)): добавлен SMTP-транспорт
   (`nodemailer`) и шаблон письма; `OrgMembersService.inviteAsync` отправляет
@@ -284,6 +313,15 @@
 
 ### Documented
 
+- **Ограничения управления командой (v1.1.0 S2):** удаление необратимо и
+  принудительно передаёт графы участника владельцу без выбора стратегии
+  (KI-599); удалённого участника нельзя пригласить обратно без SQL-правки
+  (KI-600); действующий access-токен не отзывается — устаревший `orgId` может
+  дать доступ к аудиту старой организации до 24 ч (KI-601, усиливает KI-587);
+  pending-приглашения удалённого и `created_by` его шаблонов остаются
+  (KI-602); роль `admin` не управляет составом, хотя DESIGN § 2.1 называет её
+  ролью управления командой (KI-603); подтверждение удаления — только
+  `window.confirm`, undo нет (KI-604).
 - **Ограничения SMTP-приглашений (v1.1.0 S1):** письмо отправляется синхронно
   внутри HTTP-запроса — SMTP-задержка входит в latency инвайта (KI-592);
   ретраев и статуса доставки нет, при временном сбое письмо теряется
@@ -2252,6 +2290,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 

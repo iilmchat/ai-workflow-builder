@@ -99,3 +99,34 @@ export interface InviteMemberResponse {
   /** `true`, если SMTP принял письмо; `false` — создано только в БД. */
   emailSent: boolean;
 }
+
+/**
+ * Параметр пути `/admin/members/:userId` (v1.1.0 S2).
+ *
+ * `userId` валидируется как uuid на границе HTTP: мусорный id — 400 от
+ * `ZodValidationPipe`, а не 500 из драйвера БД (RULES 1.17).
+ */
+export const MemberParamSchema = z.object({
+  /** uuid участника организации (строка `users.id`). */
+  userId: z.uuid('Некорректный uuid участника'),
+});
+
+/** Валидированные параметры пути участника. */
+export type MemberParamDto = z.infer<typeof MemberParamSchema>;
+
+/**
+ * Тело `PATCH /admin/members/:userId` — смена роли участника (v1.1.0 S2,
+ * DESIGN V110 § 3.2).
+ *
+ * `owner` недоступен: владелец — создатель организации, и смена роли не должна
+ * ни назначать второго владельца, ни разжаловать существующего. Домен — тот же
+ * {@link INVITABLE_USER_ROLES}, что у приглашения: назначить можно ровно те
+ * роли, которые можно выдать инвайтом.
+ */
+export const UpdateMemberRoleSchema = z.object({
+  /** Новая роль участника (`admin`/`member`/`viewer`). */
+  role: z.enum(INVITABLE_USER_ROLES),
+});
+
+/** Валидированное тело смены роли участника. */
+export type UpdateMemberRoleDto = z.infer<typeof UpdateMemberRoleSchema>;

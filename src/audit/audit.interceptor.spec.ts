@@ -200,6 +200,9 @@ describe('AuditInterceptor', () => {
       ],
       // v1.0.0 S5 (KI-563): приглашение в организацию.
       ['POST', '/admin/members/invite', 'member.invite'],
+      // v1.1.0 S2 (KI-586): управление составом организации.
+      ['PATCH', `/admin/members/${USER_ID}`, 'member.role_change'],
+      ['DELETE', `/admin/members/${USER_ID}`, 'member.remove'],
       ['POST', '/runs', 'run.start'],
       // Неизвестный маршрут не теряется: fallback http.<метод>.
       ['POST', '/engine/validate', 'http.post'],

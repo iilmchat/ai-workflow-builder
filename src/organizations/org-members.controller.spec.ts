@@ -1,5 +1,9 @@
 import type { INestApplication } from '@nestjs/common';
-import { ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
@@ -13,10 +17,12 @@ import { DRIZZLE, type Database } from '../db/db.module.js';
 import type { UserRole } from '../db/schema.js';
 import type {
   InviteMemberResponse,
+  OrganizationMemberSummary,
   OrganizationMembersResponse,
 } from './dto/member.dto.js';
 import { OrgMembersController } from './org-members.controller.js';
 import { OrgMembersService } from './org-members.service.js';
+import { OrgOwnerOnlyGuard } from './org-owner-only.guard.js';
 
 /** Пользователь из access-токена (JwtAuthGuard проверяет его в этих тестах). */
 const USER = { sub: DEMO_USER_ID, email: DEMO_USER_EMAIL, orgId: DEMO_ORG_ID };
@@ -60,6 +66,14 @@ const invitationSummary: InviteMemberResponse = {
   invitedBy: DEMO_USER_ID,
   invitedAt: INVITED_AT,
   emailSent: true,
+};
+
+/** Ответ сервиса на смену роли участника (v1.1.0 S2). */
+const updatedMember: OrganizationMemberSummary = {
+  userId: MEMBER_ID,
+  email: 'member@example.com',
+  role: 'viewer',
+  joinedAt: JOINED_AT,
 };
 
 /**
@@ -112,6 +126,8 @@ describe('OrgMembersController (v1.0.0 S5)', () => {
   let service: {
     listAsync: ReturnType<typeof vi.fn>;
     inviteAsync: ReturnType<typeof vi.fn>;
+    updateRoleAsync: ReturnType<typeof vi.fn>;
+    removeMemberAsync: ReturnType<typeof vi.fn>;
   };
   let jwt: { verifyAsync: ReturnType<typeof vi.fn> };
   /** Роль пользователя, которую вернёт заглушка `DRIZZLE` (guard). */
@@ -125,6 +141,8 @@ describe('OrgMembersController (v1.0.0 S5)', () => {
     service = {
       listAsync: vi.fn(() => Promise.resolve(membersResponse)),
       inviteAsync: vi.fn(() => Promise.resolve(invitationSummary)),
+      updateRoleAsync: vi.fn(() => Promise.resolve(updatedMember)),
+      removeMemberAsync: vi.fn(() => Promise.resolve()),
     };
     jwt = {
       verifyAsync: vi.fn(() => Promise.resolve(USER)),
@@ -147,6 +165,9 @@ describe('OrgMembersController (v1.0.0 S5)', () => {
         },
         // OrgOwnerGuard (v1.0.0 S3/S5): читает users.role по user.sub.
         { provide: DRIZZLE, useValue: createDbStub(() => currentRole) },
+        // OrgOwnerOnlyGuard (v1.1.0 S2): только owner для PATCH/DELETE;
+        // использует тот же стаб роли, что и OrgOwnerGuard.
+        OrgOwnerOnlyGuard,
       ],
     }).compile();
 
@@ -313,6 +334,165 @@ describe('OrgMembersController (v1.0.0 S5)', () => {
         email: 'new@example.com',
         role: 'member',
       });
+    });
+  });
+
+  describe('PATCH /admin/members/:userId (v1.1.0 S2)', () => {
+    it('владелец меняет роль: 200 и обновлённый участник', async () => {
+      const response = await request(app.getHttpServer())
+        .patch(`/admin/members/${MEMBER_ID}`)
+        .set(authHeader)
+        .send({ role: 'viewer' })
+        .expect(200);
+
+      expect(service.updateRoleAsync).toHaveBeenCalledWith(
+        DEMO_USER_ID,
+        MEMBER_ID,
+        { role: 'viewer' },
+      );
+      expect(response.body).toEqual(JSON.parse(JSON.stringify(updatedMember)));
+    });
+
+    it('роль owner назначать нельзя — 400 от Zod-пайпа, сервис не вызывается', async () => {
+      await request(app.getHttpServer())
+        .patch(`/admin/members/${MEMBER_ID}`)
+        .set(authHeader)
+        .send({ role: 'owner' })
+        .expect(400);
+
+      expect(service.updateRoleAsync).not.toHaveBeenCalled();
+    });
+
+    it('некорректный uuid участника — 400 от Zod-пайпа', async () => {
+      await request(app.getHttpServer())
+        .patch('/admin/members/not-a-uuid')
+        .set(authHeader)
+        .send({ role: 'viewer' })
+        .expect(400);
+
+      expect(service.updateRoleAsync).not.toHaveBeenCalled();
+    });
+
+    it('admin получает 403: управляет только owner', async () => {
+      currentRole = 'admin';
+
+      await request(app.getHttpServer())
+        .patch(`/admin/members/${MEMBER_ID}`)
+        .set(authHeader)
+        .send({ role: 'viewer' })
+        .expect(403);
+
+      expect(service.updateRoleAsync).not.toHaveBeenCalled();
+    });
+
+    it('member получает 403', async () => {
+      currentRole = 'member';
+
+      await request(app.getHttpServer())
+        .patch(`/admin/members/${MEMBER_ID}`)
+        .set(authHeader)
+        .send({ role: 'viewer' })
+        .expect(403);
+
+      expect(service.updateRoleAsync).not.toHaveBeenCalled();
+    });
+
+    it('смена собственной роли — 400 от сервиса', async () => {
+      service.updateRoleAsync.mockRejectedValue(
+        new BadRequestException('Нельзя изменить собственную роль'),
+      );
+
+      await request(app.getHttpServer())
+        .patch(`/admin/members/${DEMO_USER_ID}`)
+        .set(authHeader)
+        .send({ role: 'member' })
+        .expect(400);
+    });
+
+    it('участник чужой организации/несуществующий — 404', async () => {
+      service.updateRoleAsync.mockRejectedValue(
+        new NotFoundException('Участник не найден в организации'),
+      );
+
+      await request(app.getHttpServer())
+        .patch(`/admin/members/${MEMBER_ID}`)
+        .set(authHeader)
+        .send({ role: 'viewer' })
+        .expect(404);
+    });
+
+    it('без токена — 401, сервис не вызывается', async () => {
+      await request(app.getHttpServer())
+        .patch(`/admin/members/${MEMBER_ID}`)
+        .send({ role: 'viewer' })
+        .expect(401);
+
+      expect(service.updateRoleAsync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('DELETE /admin/members/:userId (v1.1.0 S2)', () => {
+    it('владелец исключает участника: 204, тело пустое', async () => {
+      const response = await request(app.getHttpServer())
+        .delete(`/admin/members/${MEMBER_ID}`)
+        .set(authHeader)
+        .expect(204);
+
+      expect(service.removeMemberAsync).toHaveBeenCalledWith(
+        DEMO_USER_ID,
+        MEMBER_ID,
+      );
+      expect(response.text).toBe('');
+    });
+
+    it('некорректный uuid участника — 400 от Zod-пайпа', async () => {
+      await request(app.getHttpServer())
+        .delete('/admin/members/not-a-uuid')
+        .set(authHeader)
+        .expect(400);
+
+      expect(service.removeMemberAsync).not.toHaveBeenCalled();
+    });
+
+    it('admin получает 403: удаляет только owner', async () => {
+      currentRole = 'admin';
+
+      await request(app.getHttpServer())
+        .delete(`/admin/members/${MEMBER_ID}`)
+        .set(authHeader)
+        .expect(403);
+
+      expect(service.removeMemberAsync).not.toHaveBeenCalled();
+    });
+
+    it('удаление самого себя — 400 от сервиса', async () => {
+      service.removeMemberAsync.mockRejectedValue(
+        new BadRequestException('Нельзя удалить самого себя из организации'),
+      );
+
+      await request(app.getHttpServer())
+        .delete(`/admin/members/${DEMO_USER_ID}`)
+        .set(authHeader)
+        .expect(400);
+    });
+
+    it('участник чужой организации/несуществующий — 404', async () => {
+      service.removeMemberAsync.mockRejectedValue(
+        new NotFoundException('Участник не найден в организации'),
+      );
+
+      await request(app.getHttpServer())
+        .delete(`/admin/members/${MEMBER_ID}`)
+        .set(authHeader)
+        .expect(404);
+    });
+
+    it('без токена — 401, сервис не вызывается', async () => {
+      await request(app.getHttpServer())
+        .delete(`/admin/members/${MEMBER_ID}`)
+        .expect(401);
+
+      expect(service.removeMemberAsync).not.toHaveBeenCalled();
     });
   });
 });

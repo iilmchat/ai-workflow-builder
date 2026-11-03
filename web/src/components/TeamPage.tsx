@@ -9,6 +9,8 @@ import {
 import {
   fetchOrganizationMembersAsync,
   inviteMemberAsync,
+  removeMemberAsync,
+  updateMemberRoleAsync,
   type OrgInvitation,
   type OrgMember,
 } from '@/lib/org-api';
@@ -141,6 +143,9 @@ export function TeamPage({ onClose }: TeamPageProps) {
   // Роль `null` (сессии ещё нет) трактуем как «нет прав»: модалку открывает
   // только аутентифицированный пользователь, но guard дешёвый.
   const canManageTeam = user !== null && MANAGEMENT_ROLES.has(user.role);
+  // v1.1.0 S2 (KI-586): управление составом (смена роли/удаление) доступно
+  // только владельцу — backend отвечает 403 администратору (OrgOwnerOnlyGuard).
+  const isOwner = user !== null && user.role === 'owner';
 
   const [activeTab, setActiveTab] = useState<TeamTab>('members');
 
@@ -160,6 +165,14 @@ export function TeamPage({ onClose }: TeamPageProps) {
   const [isInviteBusy, setIsInviteBusy] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
+
+  // Управление составом (v1.1.0 S2): ошибка действия и id участника, для
+  // которого запрос в полёте (блокирует его контролы, остальные остаются
+  // активными).
+  const [memberActionError, setMemberActionError] = useState<string | null>(
+    null,
+  );
+  const [busyMemberId, setBusyMemberId] = useState<string | null>(null);
 
   // Журнал аудита (GET /admin/audit). `0` — первая страница ещё не запрошена:
   // вкладка грузится лениво, при первом открытии.
@@ -353,6 +366,77 @@ export function TeamPage({ onClose }: TeamPageProps) {
       );
     } finally {
       setIsInviteBusy(false);
+    }
+  };
+
+  /**
+   * Меняет роль участника (v1.1.0 S2, только владелец).
+   *
+   * Роль приходит из `<select>`: значение парсится `InvitableOrgRoleSchema`
+   * (домен `admin`/`member`/`viewer`, `owner` назначить нельзя). После успеха
+   * список перезапрашивается — сервер остаётся источником истины. Ошибка
+   * (400 своя роль, 403, 404) показывается над списком, роль в контроле при
+   * ошибке не «залипает»: форму перерисует следующий `GET /admin/members`.
+   *
+   * @param member - участник, чью роль меняем
+   * @param role - новая роль из селекта
+   * @returns промис без значения
+   */
+  const handleRoleChange = async (
+    member: OrgMember,
+    role: InvitableOrgRole,
+  ): Promise<void> => {
+    setMemberActionError(null);
+    setBusyMemberId(member.userId);
+
+    try {
+      await updateMemberRoleAsync(member.userId, role);
+      setMembersReloadKey((value) => value + 1);
+    } catch (caught: unknown) {
+      setMemberActionError(
+        i18n.t('team.member.action_failed', { reason: reasonOf(caught) }),
+      );
+    } finally {
+      setBusyMemberId(null);
+    }
+  };
+
+  /**
+   * Исключает участника из организации (v1.1.0 S2, только владелец).
+   *
+   * Подтверждение — нативное `window.confirm` с email участника: операция
+   * заметная (участник теряет доступ к графам этой организации, графы
+   * переходят владельцу), а отдельная модалка подтверждения в S2 не вводилась.
+   * Себя удалить нельзя — defensive-проверка перед `confirm` (backend всё равно
+   * ответит 400), ключ `team.error.cannot_remove_self`.
+   *
+   * @param member - участник, которого исключаем
+   * @returns промис без значения
+   */
+  const handleRemoveMember = async (member: OrgMember): Promise<void> => {
+    setMemberActionError(null);
+
+    if (user !== null && member.userId === user.id) {
+      setMemberActionError(i18n.t('team.error.cannot_remove_self'));
+
+      return;
+    }
+
+    if (!window.confirm(i18n.t('team.confirm.remove', { email: member.email }))) {
+      return;
+    }
+
+    setBusyMemberId(member.userId);
+
+    try {
+      await removeMemberAsync(member.userId);
+      setMembersReloadKey((value) => value + 1);
+    } catch (caught: unknown) {
+      setMemberActionError(
+        i18n.t('team.member.action_failed', { reason: reasonOf(caught) }),
+      );
+    } finally {
+      setBusyMemberId(null);
     }
   };
 
@@ -603,6 +687,17 @@ export function TeamPage({ onClose }: TeamPageProps) {
                 </p>
               )}
 
+              {/* v1.1.0 S2: ошибка смены роли/удаления участника. */}
+              {memberActionError !== null && (
+                <p
+                  role="alert"
+                  data-team-member-error=""
+                  className="mb-3 text-xs text-red-600"
+                >
+                  {memberActionError}
+                </p>
+              )}
+
               {isMembersLoading && (
                 <p
                   className="text-xs text-muted-foreground"
@@ -675,6 +770,53 @@ export function TeamPage({ onClose }: TeamPageProps) {
                             date: formatDate(member.joinedAt),
                           })}
                         </span>
+
+                        {/* v1.1.0 S2 (KI-586): управление составом — только
+                            владелец и только для не-владельцев. Владельца
+                            нельзя ни разжаловать, ни удалить (backend: 400),
+                            поэтому у его строки контролов нет. */}
+                        {isOwner && member.role !== 'owner' && (
+                          <span
+                            className="flex items-center gap-1.5"
+                            data-team-member-actions=""
+                          >
+                            <select
+                              value={member.role}
+                              aria-label={t('team.role.update')}
+                              title={t('team.role.update')}
+                              data-team-member-role-select={member.userId}
+                              disabled={busyMemberId === member.userId}
+                              onChange={(event) => {
+                                const parsed = InvitableOrgRoleSchema.safeParse(
+                                  event.target.value,
+                                );
+
+                                if (parsed.success) {
+                                  void handleRoleChange(member, parsed.data);
+                                }
+                              }}
+                              className="cursor-pointer rounded-lg border border-border bg-background px-2 py-1 text-[11px] text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {InvitableOrgRoleSchema.options.map((role) => (
+                                <option key={role} value={role}>
+                                  {t(`team.role.${role}`)}
+                                </option>
+                              ))}
+                            </select>
+
+                            <button
+                              type="button"
+                              data-team-member-remove={member.userId}
+                              disabled={busyMemberId === member.userId}
+                              onClick={() => void handleRemoveMember(member)}
+                              aria-label={t('team.member.remove')}
+                              title={t('team.member.remove')}
+                              className="cursor-pointer rounded-lg border border-red-200 px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {t('team.member.remove')}
+                            </button>
+                          </span>
+                        )}
                       </li>
                     ))}
                   </ul>

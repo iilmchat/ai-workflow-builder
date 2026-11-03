@@ -1,17 +1,28 @@
 import {
+  BadRequestException,
   ConflictException,
   Inject,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { organizationInvitations, organizations, users } from '../db/schema.js';
+import {
+  organizationInvitations,
+  organizations,
+  refreshTokens,
+  users,
+  workflowCollaborators,
+  workflows,
+} from '../db/schema.js';
 import { EmailService } from '../email/email.service.js';
 import type {
   InviteMemberDto,
   InviteMemberResponse,
+  OrganizationMemberSummary,
   OrganizationMembersResponse,
+  UpdateMemberRoleDto,
 } from './dto/member.dto.js';
 
 /** Сообщение 409 для email, занятого действующим пользователем. */
@@ -20,6 +31,19 @@ const EMAIL_TAKEN_MESSAGE =
 
 /** Сообщение 409 для уже выписанного приглашения. */
 const INVITATION_EXISTS_MESSAGE = 'Приглашение для этого email уже отправлено';
+
+/** Сообщение 400: владелец не может изменить собственную роль (S2). */
+const SELF_ROLE_CHANGE_MESSAGE = 'Нельзя изменить собственную роль';
+
+/** Сообщение 400: владелец не может удалить самого себя (S2). */
+const SELF_REMOVE_MESSAGE = 'Нельзя удалить самого себя из организации';
+
+/** Сообщение 400: роль `owner` назначается только при создании организации. */
+const OWNER_ROLE_IMMUTABLE_MESSAGE =
+  'Роль владельца организации нельзя изменить или снять';
+
+/** Сообщение 404: участника нет в организации (в т.ч. чужая организация). */
+const MEMBER_NOT_FOUND_MESSAGE = 'Участник не найден в организации';
 
 /**
  * Сервис команды организации (v1.0.0 S5, KI-555/KI-563).
@@ -32,7 +56,14 @@ const INVITATION_EXISTS_MESSAGE = 'Приглашение для этого emai
  * только `userId` (из `sub` access-токена), а `organization_id` и роль читает из
  * строки `users`. Токен живёт 24 часа, и после переезда пользователя в другую
  * организацию `orgId` в нём устарел бы: список/инвайт из чужого арендатора
- * недопустим. Роль приглашающего проверяет `OrgOwnerGuard` — тоже по БД.
+ * недопустим. Роль операций управления проверяет `OrgOwnerOnlyGuard` (S2), тоже
+ * по БД.
+ *
+ * **Управление составом (v1.1.0 S2, KI-586).** Смена роли и удаление участника
+ * доступны только владельцу организации. Удаление — это выход из организации, а
+ * не удаление учётной записи: пользователь переезжает в новую личную
+ * организацию, его графы в этой организации переходят владельцу, а refresh-токены
+ * отзываются. Причины такого выбора — KI-599/601 и ADR-0005 (модель членства).
  */
 @Injectable()
 export class OrgMembersService {
@@ -163,6 +194,186 @@ export class OrgMembersService {
       invitedAt: invitation.createdAt,
       emailSent,
     };
+  }
+
+  /**
+   * Меняет роль участника организации (`PATCH /admin/members/:userId`,
+   * v1.1.0 S2, KI-586).
+   *
+   * Правила:
+   * 1. участник должен состоять **в организации актора** — выборка парой
+   *    `(id, organization_id)`, поэтому чужой пользователь неотличим от
+   *    несуществующего (404, класс KI-202: факт существования не раскрывается);
+   * 2. собственную роль менять нельзя (400) — иначе владелец мог бы «разжаловать»
+   *    себя и оставить организацию без владельца;
+   * 3. роль `owner` неизменяема (400): владелец организации один, назначается
+   *    при создании организации и снимается только удалением организации.
+   *    Пригласить/назначить `owner` нельзя и через `UpdateMemberRoleSchema`.
+   *
+   * Роль актора проверяет `OrgOwnerOnlyGuard` до вызова сервиса; сервис тем не
+   * менее сверяет организацию по БД (token `orgId` не используется — KI-554).
+   *
+   * @param actorUserId - `sub` access-токена (владелец организации)
+   * @param targetUserId - uuid участника из пути
+   * @param dto - валидированная новая роль (`admin`/`member`/`viewer`)
+   * @returns обновлённый участник (для списка команды)
+   * @throws NotFoundException если участника нет в организации актора
+   * @throws BadRequestException если цель — сам актор или роль `owner`
+   */
+  async updateRoleAsync(
+    actorUserId: string,
+    targetUserId: string,
+    dto: UpdateMemberRoleDto,
+  ): Promise<OrganizationMemberSummary> {
+    const actor = await this.resolveActorAsync(actorUserId);
+
+    if (targetUserId === actorUserId) {
+      throw new BadRequestException(SELF_ROLE_CHANGE_MESSAGE);
+    }
+
+    const [target] = await this.db
+      .select({ role: users.role })
+      .from(users)
+      .where(
+        and(
+          eq(users.id, targetUserId),
+          eq(users.organizationId, actor.organizationId),
+        ),
+      )
+      .limit(1);
+
+    if (target === undefined) {
+      throw new NotFoundException(MEMBER_NOT_FOUND_MESSAGE);
+    }
+
+    if (target.role === 'owner') {
+      throw new BadRequestException(OWNER_ROLE_IMMUTABLE_MESSAGE);
+    }
+
+    const [updated] = await this.db
+      .update(users)
+      .set({ role: dto.role })
+      .where(
+        and(
+          eq(users.id, targetUserId),
+          eq(users.organizationId, actor.organizationId),
+        ),
+      )
+      .returning({
+        userId: users.id,
+        email: users.email,
+        role: users.role,
+        joinedAt: users.createdAt,
+      });
+
+    if (updated === undefined) {
+      // Гонка: участника удалили между SELECT и UPDATE.
+      throw new NotFoundException(MEMBER_NOT_FOUND_MESSAGE);
+    }
+
+    return updated;
+  }
+
+  /**
+   * Исключает участника из организации (`DELETE /admin/members/:userId`,
+   * v1.1.0 S2, KI-586).
+   *
+   * **Это выход из организации, а не удаление учётной записи** — осознанно:
+   * удаление строки `users` каскадно снесло бы refresh-токены, шаблоны
+   * документов (`created_by` CASCADE) и оставило бы «висячие» workflow
+   * (у `workflows.user_id` FK нет). Вместо этого в одной транзакции
+   * (RULES 4.22):
+   *
+   * 1. **графы участника в этой организации переходят владельцу** — иначе они
+   *    стали бы недоступны никому: предикат доступа требует `user_id` = я или
+   *    строку участника, а после переезда ни одно из условий не выполняется
+   *    (KI-599; данные не теряются);
+   * 2. его строки `workflow_collaborators` удаляются — он больше не участник
+   *    workflow этой организации;
+   * 3. участник переезжает в новую личную организацию с ролью `owner`
+   *    (учётная запись и вход сохраняются);
+   * 4. активные refresh-токены отзываются, чтобы сессия не продлевалась (доступ
+   *    по уже выданному access-токену живёт до 24 ч — KI-601).
+   *
+   * Себя удалить нельзя (400), владельца — нельзя (400). Участник из чужой
+   * организации неотличим от несуществующего (404). После операции
+   * срабатывает `AuditInterceptor` с действием `member.remove`.
+   *
+   * @param actorUserId - `sub` access-токена (владелец организации)
+   * @param targetUserId - uuid участника из пути
+   * @returns промис без значения (контроллер отвечает 204)
+   * @throws NotFoundException если участника нет в организации актора
+   * @throws BadRequestException если цель — сам актор или владелец
+   */
+  async removeMemberAsync(
+    actorUserId: string,
+    targetUserId: string,
+  ): Promise<void> {
+    const actor = await this.resolveActorAsync(actorUserId);
+
+    if (targetUserId === actorUserId) {
+      throw new BadRequestException(SELF_REMOVE_MESSAGE);
+    }
+
+    const [target] = await this.db
+      .select({ id: users.id, email: users.email, role: users.role })
+      .from(users)
+      .where(
+        and(
+          eq(users.id, targetUserId),
+          eq(users.organizationId, actor.organizationId),
+        ),
+      )
+      .limit(1);
+
+    if (target === undefined) {
+      throw new NotFoundException(MEMBER_NOT_FOUND_MESSAGE);
+    }
+
+    if (target.role === 'owner') {
+      throw new BadRequestException(OWNER_ROLE_IMMUTABLE_MESSAGE);
+    }
+
+    await this.db.transaction(async (tx) => {
+      // 1. Графы участника остаются в организации, но меняют владельца.
+      await tx
+        .update(workflows)
+        .set({ userId: actorUserId })
+        .where(
+          and(
+            eq(workflows.userId, target.id),
+            eq(workflows.organizationId, actor.organizationId),
+          ),
+        );
+
+      // 2. Участие в workflow этой организации прекращается.
+      await tx
+        .delete(workflowCollaborators)
+        .where(eq(workflowCollaborators.userId, target.id));
+
+      // 3. Новая личная организация: учётная запись и вход сохраняются.
+      const [personalWorkspace] = await tx
+        .insert(organizations)
+        .values({ name: `Personal Workspace - ${target.email}` })
+        .returning();
+
+      await tx
+        .update(users)
+        .set({ organizationId: personalWorkspace.id, role: 'owner' })
+        .where(eq(users.id, target.id));
+
+      // 4. Отзыв refresh-токенов: доступ не продлевается за пределы
+      //    действующего access-токена (KI-601).
+      await tx
+        .update(refreshTokens)
+        .set({ revokedAt: new Date() })
+        .where(
+          and(
+            eq(refreshTokens.userId, target.id),
+            isNull(refreshTokens.revokedAt),
+          ),
+        );
+    });
   }
 
   /**

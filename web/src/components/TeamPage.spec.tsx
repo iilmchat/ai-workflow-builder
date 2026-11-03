@@ -8,6 +8,8 @@ import {
 import {
   fetchOrganizationMembersAsync,
   inviteMemberAsync,
+  removeMemberAsync,
+  updateMemberRoleAsync,
   type InviteMemberResponse,
   type OrgInvitation,
   type OrgMember,
@@ -31,6 +33,8 @@ vi.mock('@/lib/org-api', async (importOriginal) => {
     ...actual,
     fetchOrganizationMembersAsync: vi.fn(),
     inviteMemberAsync: vi.fn(),
+    updateMemberRoleAsync: vi.fn(),
+    removeMemberAsync: vi.fn(),
   };
 });
 
@@ -195,9 +199,14 @@ describe('TeamPage — вкладки и роли (v1.0.0 S5)', () => {
     expect(screen.getByText('owner@example.com')).toBeInTheDocument();
     expect(container.querySelectorAll('[data-team-member-you]')).toHaveLength(1);
 
-    // Роль — бейдж с подписью из i18n (`team.role.*`).
-    expect(screen.getByText(ru['team.role.owner'])).toBeInTheDocument();
-    expect(screen.getByText(ru['team.role.member'])).toBeInTheDocument();
+    // Роль — бейдж с подписью из i18n (`team.role.*`). Ищем именно бейджи
+    // (`[data-team-role]`): с v1.1.0 S2 те же подписи есть в `<option>`
+    // селекта смены роли, и `getByText` нашёл бы несколько узлов.
+    expect(
+      Array.from(container.querySelectorAll('[data-team-role]')).map(
+        (element) => element.textContent,
+      ),
+    ).toEqual([ru['team.role.owner'], ru['team.role.member']]);
 
     // Дата вступления локализуется и вставляется в шаблон.
     expect(screen.getAllByText(/присоединился/)).toHaveLength(2);
@@ -555,5 +564,165 @@ describe('TeamPage — приглашение (v1.0.0 S5)', () => {
     expect(
       container.querySelector('[data-team-invite-form]'),
     ).not.toBeNull();
+  });
+});
+
+describe('TeamPage — управление составом (v1.1.0 S2)', () => {
+  beforeEach(() => {
+    vi.mocked(fetchOrganizationMembersAsync).mockReset();
+    vi.mocked(fetchOrganizationMembersAsync).mockResolvedValue({
+      members: [OWNER_MEMBER, MEMBER],
+      invitations: [],
+    });
+    vi.mocked(updateMemberRoleAsync).mockReset();
+    vi.mocked(updateMemberRoleAsync).mockResolvedValue({
+      ...MEMBER,
+      role: 'viewer',
+    });
+    vi.mocked(removeMemberAsync).mockReset();
+    vi.mocked(removeMemberAsync).mockResolvedValue();
+    vi.mocked(fetchAuditLogsAsync).mockReset();
+    vi.mocked(fetchAuditLogsAsync).mockResolvedValue({
+      logs: [],
+      nextCursor: null,
+      total: 0,
+    });
+    // jsdom не реализует window.confirm — подменяем, иначе обработчик упадёт.
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    useAuthStore.setState({
+      user: authUserOf('owner'),
+      accessToken: 'test-token',
+      status: 'authenticated',
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useAuthStore.setState({ user: null, accessToken: null, status: 'unknown' });
+  });
+
+  it('owner видит селект роли и «Удалить» у участника, но не у владельца', async () => {
+    const { container } = renderTeam();
+
+    await screen.findByText(MEMBER.email);
+
+    const select = container.querySelector(
+      `[data-team-member-role-select="${MEMBER_ID}"]`,
+    ) as HTMLSelectElement | null;
+
+    expect(select).not.toBeNull();
+    expect(select?.value).toBe('member');
+    expect(
+      container.querySelector(`[data-team-member-remove="${MEMBER_ID}"]`),
+    ).not.toBeNull();
+    // У строки владельца контролов нет: его роль и состав неизменяемы.
+    expect(
+      container.querySelector(`[data-team-member-role-select="${OWNER_ID}"]`),
+    ).toBeNull();
+    expect(
+      container.querySelector(`[data-team-member-remove="${OWNER_ID}"]`),
+    ).toBeNull();
+  });
+
+  it('admin не видит управление составом (backend отвечает 403)', async () => {
+    useAuthStore.setState({ user: authUserOf('admin') });
+
+    const { container } = renderTeam();
+
+    await screen.findByText(MEMBER.email);
+
+    expect(container.querySelector('[data-team-member-actions]')).toBeNull();
+    // Приглашать admin может (S5), управлять составом — нет (S2).
+    expect(container.querySelector('[data-team-invite]')).not.toBeNull();
+  });
+
+  it('смена роли вызывает PATCH и перезапрашивает список', async () => {
+    const { container } = renderTeam();
+
+    await screen.findByText(MEMBER.email);
+
+    fireEvent.change(
+      container.querySelector(
+        `[data-team-member-role-select="${MEMBER_ID}"]`,
+      ) as HTMLSelectElement,
+      { target: { value: 'viewer' } },
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(updateMemberRoleAsync)).toHaveBeenCalledWith(
+        MEMBER_ID,
+        'viewer',
+      ),
+    );
+    // Сервер — источник истины: список перезапрашивается после действия.
+    await waitFor(() =>
+      expect(vi.mocked(fetchOrganizationMembersAsync)).toHaveBeenCalledTimes(2),
+    );
+  });
+
+  it('удаление: confirm accepted → DELETE и перезапрос списка', async () => {
+    const { container } = renderTeam();
+
+    await screen.findByText(MEMBER.email);
+
+    fireEvent.click(
+      container.querySelector(
+        `[data-team-member-remove="${MEMBER_ID}"]`,
+      ) as HTMLButtonElement,
+    );
+
+    // Текст подтверждения содержит email участника.
+    expect(window.confirm).toHaveBeenCalledWith(
+      ru['team.confirm.remove'].replace('{{email}}', MEMBER.email),
+    );
+    await waitFor(() =>
+      expect(vi.mocked(removeMemberAsync)).toHaveBeenCalledWith(MEMBER_ID),
+    );
+    await waitFor(() =>
+      expect(vi.mocked(fetchOrganizationMembersAsync)).toHaveBeenCalledTimes(2),
+    );
+  });
+
+  it('удаление: confirm cancelled → API не вызывается', async () => {
+    vi.mocked(window.confirm).mockReturnValue(false);
+
+    const { container } = renderTeam();
+
+    await screen.findByText(MEMBER.email);
+
+    fireEvent.click(
+      container.querySelector(
+        `[data-team-member-remove="${MEMBER_ID}"]`,
+      ) as HTMLButtonElement,
+    );
+
+    expect(vi.mocked(removeMemberAsync)).not.toHaveBeenCalled();
+  });
+
+  it('ошибка смены роли показывается над списком', async () => {
+    vi.mocked(updateMemberRoleAsync).mockRejectedValue(
+      new Error('403: только владелец'),
+    );
+
+    const { container } = renderTeam();
+
+    await screen.findByText(MEMBER.email);
+
+    fireEvent.change(
+      container.querySelector(
+        `[data-team-member-role-select="${MEMBER_ID}"]`,
+      ) as HTMLSelectElement,
+      { target: { value: 'admin' } },
+    );
+
+    expect(
+      await screen.findByText(
+        ru['team.member.action_failed'].replace(
+          '{{reason}}',
+          '403: только владелец',
+        ),
+      ),
+    ).toBeInTheDocument();
   });
 });

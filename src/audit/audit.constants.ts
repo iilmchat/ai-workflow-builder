@@ -25,6 +25,8 @@ export const AUDIT_ACTIONS = [
   'document_template.create',
   'document_template.delete',
   'member.invite',
+  'member.role_change',
+  'member.remove',
   'run.start',
 ] as const;
 
@@ -84,6 +86,19 @@ const AUDIT_ACTION_ROUTES: readonly AuditActionRoute[] = [
     action: 'member.invite',
   },
   { method: 'POST', pattern: /^\/runs$/, action: 'run.start' },
+  // v1.1.0 S2 (KI-586): управление составом организации — смена роли и
+  // удаление участника (только owner). В metadata попадают путь/параметры и
+  // тело запроса; пароли/токены вырезает AuditInterceptor.
+  {
+    method: 'PATCH',
+    pattern: /^\/admin\/members\/[^/]+$/,
+    action: 'member.role_change',
+  },
+  {
+    method: 'DELETE',
+    pattern: /^\/admin\/members\/[^/]+$/,
+    action: 'member.remove',
+  },
   { method: 'PATCH', pattern: /^\/workflow\/[^/]+$/, action: 'workflow.update' },
   {
     method: 'PATCH',

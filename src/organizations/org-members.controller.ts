@@ -1,10 +1,13 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   HttpCode,
   HttpStatus,
+  Param,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -15,23 +18,32 @@ import { OrgOwnerGuard } from '../audit/org-owner.guard.js';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import {
   InviteMemberSchema,
+  MemberParamSchema,
   type InviteMemberDto,
   type InviteMemberResponse,
+  type MemberParamDto,
+  type OrganizationMemberSummary,
   type OrganizationMembersResponse,
+  UpdateMemberRoleSchema,
+  type UpdateMemberRoleDto,
 } from './dto/member.dto.js';
 import { OrgMembersService } from './org-members.service.js';
+import { OrgOwnerOnlyGuard } from './org-owner-only.guard.js';
 
 /**
- * HTTP-контроллер команды организации (v1.0.0 S5).
+ * HTTP-контроллер команды организации (v1.0.0 S5; управление составом — v1.1.0 S2).
  *
  * Префикс маршрутов — `/admin/members`; префикс `admin` уже зарегистрирован в
  * `api-prefixes.json`, поэтому SPA-исключения и Vite-proxy видят новые ручки без
  * правок реестра.
  *
- * **Две разные политики доступа.** Список команды нужен каждому участнику
- * (роли `member`/`viewer` тоже должны видеть, с кем работают), поэтому на
- * `GET` стоит только `JwtAuthGuard`. Приглашение меняет состав организации —
- * на `POST` добавляется `OrgOwnerGuard` (`owner`/`admin`, 403 остальным).
+ * **Три политики доступа.**
+ * - `GET` — только `JwtAuthGuard`: состав команды нужен любому участнику
+ *   (`member`/`viewer` тоже должны видеть, с кем работают).
+ * - `POST invite` — `OrgOwnerGuard` (`owner`/`admin`): приглашение в S5 разрешено
+ *   администратору.
+ * - `PATCH`/`DELETE` — `OrgOwnerOnlyGuard` (только `owner`): смена роли и
+ *   удаление участника в v1.1.0 S2 — прерогатива владельца (DESIGN V110 § 3.2).
  *
  * **Организация — из БД, а не из токена (KI-554).** Контроллер передаёт сервису
  * только `user.sub`; `organizationId` и роль сервис/guard читают из строки
@@ -82,5 +94,66 @@ export class OrgMembersController {
     @Body(ZodValidationPipe.create(InviteMemberSchema)) dto: InviteMemberDto,
   ): Promise<InviteMemberResponse> {
     return this.orgMembersService.inviteAsync(user.sub, dto);
+  }
+
+  /**
+   * `PATCH /admin/members/:userId` — смена роли участника (v1.1.0 S2, KI-586).
+   *
+   * Доступ — только владелец организации (`OrgOwnerOnlyGuard`). Тело
+   * валидируется `UpdateMemberRoleSchema`: `role` — из `admin`/`member`/`viewer`,
+   * `owner` назначать нельзя (400). Собственную роль владелец менять не может
+   * (400), участник чужой организации неотличим от несуществующего (404).
+   *
+   * @param user - payload access-токена (владелец организации)
+   * @param params - `userId` из пути (валидированный uuid)
+   * @param dto - новая роль участника
+   * @returns обновлённый участник организации
+   * @throws BadRequestException если тело/путь не проходят схемы, цель — сам
+   *   актор или роль `owner`
+   * @throws ForbiddenException если роль актора не `owner`
+   * @throws NotFoundException если участника нет в организации актора
+   */
+  @Patch(':userId')
+  @UseGuards(JwtAuthGuard, OrgOwnerOnlyGuard)
+  async updateRole(
+    @CurrentUser() user: JwtPayload,
+    @Param(ZodValidationPipe.create(MemberParamSchema)) params: MemberParamDto,
+    @Body(ZodValidationPipe.create(UpdateMemberRoleSchema))
+    dto: UpdateMemberRoleDto,
+  ): Promise<OrganizationMemberSummary> {
+    return this.orgMembersService.updateRoleAsync(
+      user.sub,
+      params.userId,
+      dto,
+    );
+  }
+
+  /**
+   * `DELETE /admin/members/:userId` — исключение участника из организации
+   * (v1.1.0 S2, KI-586).
+   *
+   * Доступ — только владелец организации. Это **выход из организации**, а не
+   * удаление учётной записи: участник переезжает в новую личную организацию,
+   * его графы в этой организации переходят владельцу, refresh-токены
+   * отзываются (подробности — `OrgMembersService.removeMemberAsync`).
+   * Себя и владельца удалить нельзя (400), участника чужой организации нет
+   * (404).
+   *
+   * @param user - payload access-токена (владелец организации)
+   * @param params - `userId` из пути (валидированный uuid)
+   * @returns пустой ответ 204
+   * @throws BadRequestException если `userId` — не uuid, цель — сам актор или
+   *   владелец организации
+   * @throws ForbiddenException если роль актора не `owner`
+   * @throws NotFoundException если участника нет в организации актора
+   */
+  @Delete(':userId')
+  @UseGuards(JwtAuthGuard, OrgOwnerOnlyGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeMember(
+    @CurrentUser() user: JwtPayload,
+    @Param(ZodValidationPipe.create(MemberParamSchema)) params: MemberParamDto,
+  ): Promise<void> {
+    await this.orgMembersService.removeMemberAsync(user.sub, params.userId);
   }
 }

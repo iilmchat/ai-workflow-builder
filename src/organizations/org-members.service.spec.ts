@@ -1,4 +1,9 @@
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
@@ -18,6 +23,8 @@ const ORG_ID = '55555555-5555-4555-8555-555555555555';
 const OTHER_ORG_ID = '66666666-6666-4666-8666-666666666666';
 const REGISTERED_ID = '77777777-7777-4777-8777-777777777777';
 const INVITATION_ID = '88888888-8888-4888-8888-888888888888';
+/** uuid личной организации, в которую переезжает удалённый участник (S2). */
+const NEW_ORG_ID = '99999999-9999-4999-8999-999999999999';
 
 const CREATED_AT = new Date('2024-01-01T00:00:00.000Z');
 const JOINED_AT = new Date('2024-02-01T00:00:00.000Z');
@@ -30,6 +37,7 @@ const CHAIN_METHODS = [
   'where',
   'orderBy',
   'limit',
+  'set',
   'values',
   'onConflictDoNothing',
   'returning',
@@ -82,10 +90,12 @@ function sqlParams(condition: unknown): unknown[] {
   return new PgDialect().sqlToQuery(condition as SQL).params;
 }
 
-describe('OrgMembersService (v1.0.0 S5; v1.1.0 S1 — письмо)', () => {
+describe('OrgMembersService (v1.0.0 S5; S1 — письмо; v1.1.0 S2 — управление)', () => {
   let service: OrgMembersService;
   let select: ReturnType<typeof vi.fn>;
   let insert: ReturnType<typeof vi.fn>;
+  let update: ReturnType<typeof vi.fn>;
+  let removeRows: ReturnType<typeof vi.fn>;
   /** Заглушка `EmailService` (v1.1.0 S1): отправка письма и сборка ссылки. */
   let emailService: {
     sendInvitationAsync: ReturnType<typeof vi.fn>;
@@ -95,15 +105,21 @@ describe('OrgMembersService (v1.0.0 S5; v1.1.0 S1 — письмо)', () => {
   let selectResults: unknown[][];
   /** Очередь ответов для `insert`-запросов. */
   let insertResults: unknown[][];
+  /** Очередь ответов для `update`-запросов (`.returning()`). */
+  let updateResults: unknown[][];
   /** Все созданные `select`-цепочки: по ним проверяются WHERE и ORDER BY. */
   let selectChains: ChainSpies[];
+  /** Все созданные `update`-цепочки: по ним проверяются SET/WHERE. */
+  let updateChains: ChainSpies[];
   /** Цепочка последнего `insert` (проверка values/onConflictDoNothing). */
   let insertChain: ChainSpies | undefined;
 
   beforeEach(async () => {
     selectResults = [];
     insertResults = [];
+    updateResults = [];
     selectChains = [];
+    updateChains = [];
     insertChain = undefined;
 
     select = vi.fn(() => {
@@ -117,6 +133,13 @@ describe('OrgMembersService (v1.0.0 S5; v1.1.0 S1 — письмо)', () => {
 
       return insertChain;
     });
+    update = vi.fn(() => {
+      const created = chain(updateResults.shift() ?? []);
+      updateChains.push(created);
+
+      return created;
+    });
+    removeRows = vi.fn(() => chain([]));
     emailService = {
       sendInvitationAsync: vi.fn(() => Promise.resolve(true)),
       buildInvitationLink: vi.fn(
@@ -125,10 +148,22 @@ describe('OrgMembersService (v1.0.0 S5; v1.1.0 S1 — письмо)', () => {
       ),
     };
 
+    /** Объект, который сервис получает как `tx` внутри `db.transaction`. */
+    const tx = { select, insert, update, delete: removeRows };
+    const db = {
+      select,
+      insert,
+      update,
+      delete: removeRows,
+      transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback(tx),
+      ),
+    };
+
     const moduleRef = await Test.createTestingModule({
       providers: [
         OrgMembersService,
-        { provide: DRIZZLE, useValue: { select, insert } as unknown as Database },
+        { provide: DRIZZLE, useValue: db as unknown as Database },
         { provide: EmailService, useValue: emailService },
       ],
     }).compile();
@@ -156,6 +191,15 @@ describe('OrgMembersService (v1.0.0 S5; v1.1.0 S1 — письмо)', () => {
    */
   function mockInsert(result: unknown[]): void {
     insertResults.push(result);
+  }
+
+  /**
+   * Задаёт ответ `update`-запроса с `.returning()`.
+   *
+   * @param result - строки, которые вернёт `.returning()`
+   */
+  function mockUpdate(result: unknown[]): void {
+    updateResults.push(result);
   }
 
   describe('listAsync', () => {
@@ -330,6 +374,142 @@ describe('OrgMembersService (v1.0.0 S5; v1.1.0 S1 — письмо)', () => {
       ).rejects.toThrow(UnauthorizedException);
       expect(insert).not.toHaveBeenCalled();
       expect(emailService.sendInvitationAsync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateRoleAsync (v1.1.0 S2)', () => {
+    it('меняет роль участника организации и возвращает обновлённую строку', async () => {
+      mockSelects(
+        [{ organizationId: ORG_ID, name: 'Acme' }],
+        [{ role: 'member' }],
+      );
+      mockUpdate([
+        {
+          userId: MEMBER_ID,
+          email: 'member@example.com',
+          role: 'viewer',
+          joinedAt: JOINED_AT,
+        },
+      ]);
+
+      const result = await service.updateRoleAsync(USER_ID, MEMBER_ID, {
+        role: 'viewer',
+      });
+
+      expect(result).toEqual({
+        userId: MEMBER_ID,
+        email: 'member@example.com',
+        role: 'viewer',
+        joinedAt: JOINED_AT,
+      });
+      expect(updateChains[0]?.set).toHaveBeenCalledWith({ role: 'viewer' });
+      // UPDATE ограничен парой (участник, организация актора) — KI-554.
+      const updateParams = sqlParams(
+        updateChains[0]?.where.mock.calls[0]?.[0],
+      );
+      expect(updateParams).toContain(MEMBER_ID);
+      expect(updateParams).toContain(ORG_ID);
+    });
+
+    it('нельзя менять собственную роль — BadRequest, UPDATE не выполняется', async () => {
+      mockSelects([{ organizationId: ORG_ID, name: 'Acme' }]);
+
+      await expect(
+        service.updateRoleAsync(USER_ID, USER_ID, { role: 'viewer' }),
+      ).rejects.toThrow(BadRequestException);
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it('роль owner неизменяема — BadRequest, UPDATE не выполняется', async () => {
+      mockSelects(
+        [{ organizationId: ORG_ID, name: 'Acme' }],
+        [{ role: 'owner' }],
+      );
+
+      await expect(
+        service.updateRoleAsync(USER_ID, MEMBER_ID, { role: 'admin' }),
+      ).rejects.toThrow(BadRequestException);
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it('участник из другой организации — NotFound, UPDATE не выполняется', async () => {
+      // Выборка пары (id, organization_id) пуста: чужая организация неотличима
+      // от несуществующего участника.
+      mockSelects([{ organizationId: ORG_ID, name: 'Acme' }], []);
+
+      await expect(
+        service.updateRoleAsync(USER_ID, MEMBER_ID, { role: 'viewer' }),
+      ).rejects.toThrow(NotFoundException);
+      expect(update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('removeMemberAsync (v1.1.0 S2)', () => {
+    it('переносит графы владельцу, убирает участие, создаёт личную организацию и отзывает refresh-токены', async () => {
+      mockSelects(
+        [{ organizationId: ORG_ID, name: 'Acme' }],
+        [{ id: MEMBER_ID, email: 'member@example.com', role: 'member' }],
+      );
+      mockInsert([{ id: NEW_ORG_ID }]);
+
+      await expect(
+        service.removeMemberAsync(USER_ID, MEMBER_ID),
+      ).resolves.toBeUndefined();
+
+      // Три UPDATE в транзакции: перенос графов, переезд, отзыв токенов.
+      expect(update).toHaveBeenCalledTimes(3);
+      expect(updateChains[0]?.set).toHaveBeenCalledWith({ userId: USER_ID });
+      const transferParams = sqlParams(
+        updateChains[0]?.where.mock.calls[0]?.[0],
+      );
+      expect(transferParams).toContain(MEMBER_ID);
+      expect(transferParams).toContain(ORG_ID);
+      expect(updateChains[1]?.set).toHaveBeenCalledWith({
+        organizationId: NEW_ORG_ID,
+        role: 'owner',
+      });
+      expect(updateChains[2]?.set).toHaveBeenCalledWith({
+        revokedAt: expect.any(Date),
+      });
+
+      // Участие в workflow этой организации удалено.
+      expect(removeRows).toHaveBeenCalledTimes(1);
+      // Личная организация участника создана в той же транзакции.
+      expect(insertChain?.values).toHaveBeenCalledWith({
+        name: 'Personal Workspace - member@example.com',
+      });
+    });
+
+    it('нельзя удалить самого себя — BadRequest, транзакция не начинается', async () => {
+      mockSelects([{ organizationId: ORG_ID, name: 'Acme' }]);
+
+      await expect(
+        service.removeMemberAsync(USER_ID, USER_ID),
+      ).rejects.toThrow(BadRequestException);
+      expect(update).not.toHaveBeenCalled();
+      expect(removeRows).not.toHaveBeenCalled();
+    });
+
+    it('владельца организации удалить нельзя — BadRequest', async () => {
+      mockSelects(
+        [{ organizationId: ORG_ID, name: 'Acme' }],
+        [{ id: MEMBER_ID, email: 'owner@example.com', role: 'owner' }],
+      );
+
+      await expect(
+        service.removeMemberAsync(USER_ID, MEMBER_ID),
+      ).rejects.toThrow(BadRequestException);
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it('участник из другой организации — NotFound, транзакция не начинается', async () => {
+      mockSelects([{ organizationId: ORG_ID, name: 'Acme' }], []);
+
+      await expect(
+        service.removeMemberAsync(USER_ID, MEMBER_ID),
+      ).rejects.toThrow(NotFoundException);
+      expect(update).not.toHaveBeenCalled();
+      expect(removeRows).not.toHaveBeenCalled();
     });
   });
 

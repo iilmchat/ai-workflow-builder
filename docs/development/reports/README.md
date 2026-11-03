@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.1.0 | S2 | Team Management: `PATCH /admin/members/:userId` (смена роли) и `DELETE` (выход из организации) только для owner, `OrgOwnerOnlyGuard`, передача графов владельцу + личная организация + отзыв refresh-токенов, аудит `member.role_change`/`member.remove`, UI-контролы в `TeamPage` | 2026-11-03 | [S2-team-management.md](v1.1.0/S2-team-management.md) |
 | v1.1.0 | S1 | SMTP & Invitations: `nodemailer`, `SmtpEnvSchema` (`SMTP_*`, `APP_PUBLIC_URL`), `EmailService` (best-effort, WARN-фолбэк), HTML+text шаблон письма со ссылкой `/login?invite=<uuid>`, `emailSent` в ответе инвайта, UI-сообщение «создано, но письмо не отправлено» | 2026-11-03 | [S1-smtp.md](v1.1.0/S1-smtp.md) |
 | v1.0.0 | S5 | Team & Audit UI: `GET /admin/members` + `POST /admin/members/invite`, таблица `organization_invitations` (миграция 0016), «сжигание» приглашения при регистрации, действие `member.invite`, модалка `TeamPage` (вкладки «Участники»/«Аудит», keyset-аудит), кнопка «Команда» в TopBar, `UserPublic` с `organizationId`+`role` | 2026-11-03 | [S5-team-ui.md](v1.0.0/S5-team-ui.md) |
 | v1.0.0 | S4 | Prometheus Metrics: `MetricsService` (собственный Registry, 4 метрики), глобальный `MetricsInterceptor`, `GET /metrics` без auth, метрики движка (узлы/стоимость) и агента (LLM-шаги) | 2026-11-03 | [S4-metrics.md](v1.0.0/S4-metrics.md) |

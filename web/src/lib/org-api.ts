@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { InvitableOrgRoleSchema, OrgRoleSchema } from '@/types/organization';
+import {
+  InvitableOrgRoleSchema,
+  OrgRoleSchema,
+  type InvitableOrgRole,
+} from '@/types/organization';
 import { requestAsync } from './api';
 
 // Реэкспорт зеркал ролей: единая точка импорта для UI и паритет-гейта.
@@ -132,4 +136,53 @@ export async function inviteMemberAsync(
   });
 
   return InviteMemberResponseSchema.parse(data);
+}
+
+/**
+ * Меняет роль участника организации (`PATCH /admin/members/:userId`,
+ * v1.1.0 S2, KI-586).
+ *
+ * Доступно только владельцу организации: `admin`/`member`/`viewer` получают
+ * 403, и UI не показывает им управление составом. `owner` назначить нельзя —
+ * домен роли тот же, что у приглашения (`InvitableOrgRoleSchema`).
+ *
+ * @param userId - uuid участника (`users.id`)
+ * @param role - новая роль (`admin`/`member`/`viewer`)
+ * @returns обновлённый участник организации
+ * @throws ApiError при 400 (невалидная роль/своя роль), 403 (нет прав),
+ *   404 (участник не в организации) или сетевой ошибке
+ */
+export async function updateMemberRoleAsync(
+  userId: string,
+  role: InvitableOrgRole,
+): Promise<OrgMember> {
+  const data = await requestAsync<unknown>(
+    `/admin/members/${encodeURIComponent(userId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    },
+  );
+
+  return OrgMemberSchema.parse(data);
+}
+
+/**
+ * Исключает участника из организации (`DELETE /admin/members/:userId`,
+ * v1.1.0 S2, KI-586).
+ *
+ * Это выход из организации, а не удаление учётной записи: бэкенд переводит
+ * участника в новую личную организацию, а его графы остаются в этой
+ * организации и переходят владельцу. Доступно только владельцу; себя удалить
+ * нельзя (400), участника чужой организации нет (404).
+ *
+ * @param userId - uuid участника (`users.id`)
+ * @returns промис без значения (бэкенд отвечает 204)
+ * @throws ApiError при 400 (попытка удалить себя/владельца), 403 (нет прав),
+ *   404 (участник не в организации) или сетевой ошибке
+ */
+export async function removeMemberAsync(userId: string): Promise<void> {
+  await requestAsync<null>(`/admin/members/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+  });
 }
