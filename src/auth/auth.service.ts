@@ -8,10 +8,17 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { and, eq, gt, isNull } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull } from 'drizzle-orm';
 import { parseDurationToMs } from '../common/utils/parse-duration.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { organizations, refreshTokens, users, type User } from '../db/schema.js';
+import {
+  organizationInvitations,
+  organizations,
+  refreshTokens,
+  users,
+  type User,
+  type UserRole,
+} from '../db/schema.js';
 import type { LoginDto } from './dto/login.dto.js';
 import type { RegisterDto } from './dto/register.dto.js';
 import type { JwtPayload } from './interfaces/jwt-payload.js';
@@ -52,12 +59,23 @@ function hashToken(token: string): string {
 /** Единое сообщение для неудачного входа: не подсказываем, что именно неверно. */
 const INVALID_CREDENTIALS_MESSAGE = 'Неверный email или пароль';
 
-/** Публичное представление пользователя (без хэша пароля). */
+/**
+ * Публичное представление пользователя (без хэша пароля).
+ *
+ * С v1.0.0 S5 отдаёт `organizationId` и `role` (KI-555): UI команды должен
+ * знать, в какой организации состоит пользователь и что он может делать, не
+ * делая второй запрос. Оба поля читаются из строки `users`, а не из access-токена
+ * (KI-554): роль в токене устарела бы после её смены, а роль в БД — нет.
+ */
 export interface UserPublic {
   /** id пользователя (uuid). */
   id: string;
   /** Email пользователя. */
   email: string;
+  /** uuid организации-арендатора, в которой состоит пользователь. */
+  organizationId: string;
+  /** Роль пользователя в организации (`owner`/`admin`/`member`/`viewer`). */
+  role: UserRole;
   /** Дата регистрации. */
   createdAt: Date;
 }
@@ -77,7 +95,15 @@ export interface AuthResult {
  * @returns данные без `passwordHash`
  */
 function toPublic(user: User): UserPublic {
-  return { id: user.id, email: user.email, createdAt: user.createdAt };
+  return {
+    id: user.id,
+    email: user.email,
+    // Арендатор и роль — из строки `users`, а не из JWT (KI-554): токен живёт
+    // 24 часа, и после смены роли/организации он отдавал бы устаревшие данные.
+    organizationId: user.organizationId,
+    role: user.role,
+    createdAt: user.createdAt,
+  };
 }
 
 /**
@@ -138,16 +164,21 @@ export class AuthService {
   }
 
   /**
-   * Регистрирует пользователя вместе с личной организацией и сразу выдаёт токен.
+   * Регистрирует пользователя и сразу выдаёт токен.
    *
    * Проверка занятости email — до транзакции (снаружи): это чтение, конфликт
    * не требует отката. Создание организации и пользователя неделимо (RULES
    * 4.22): сбой между INSERT'ами оставил бы пользователя без арендатора, а
    * организация осталась бы сиротой.
    *
-   * Создатель личной организации получает роль `owner` (v1.0 S3): она даёт
-   * доступ к журналу аудита (`GET /admin/audit`). DEFAULT `member` в схеме —
-   * безопасный дефолт для будущих участников (S5), а не для регистрации.
+   * **Приглашение (v1.0.0 S5, KI-563).** Перед созданием личной организации
+   * ищется самое старое ожидающее приглашение по нормализованному email. Если
+   * оно есть, пользователь создаётся в организации пригласившего с указанной в
+   * приглашении ролью, а строка приглашения удаляется — **в той же транзакции**:
+   * иначе после сбоя приглашение осталось бы «ожидающим» для уже
+   * зарегистрированного email, а пользователь оказался бы не в той организации.
+   * Если приглашения нет — прежнее поведение: личная организация и роль `owner`
+   * (v1.0 S3), которая даёт доступ к журналу аудита (`GET /admin/audit`).
    *
    * @param dto - валидированные email/пароль
    * @returns токен и публичные данные пользователя
@@ -165,9 +196,42 @@ export class AuthService {
       throw new ConflictException('Email уже зарегистрирован');
     }
 
+    // Самое старое приглашение: если организаций несколько, пользователь
+    // попадает в ту, которая пригласила раньше (порядок стабилен по id).
+    const [invitation] = await this.db
+      .select()
+      .from(organizationInvitations)
+      .where(eq(organizationInvitations.email, email))
+      .orderBy(
+        asc(organizationInvitations.createdAt),
+        asc(organizationInvitations.id),
+      )
+      .limit(1);
+
     const passwordHash = await this.hashPasswordAsync(dto.password);
 
     const created = await this.db.transaction(async (tx) => {
+      if (invitation !== undefined) {
+        const [invited] = await tx
+          .insert(users)
+          .values({
+            email,
+            passwordHash,
+            organizationId: invitation.organizationId,
+            role: invitation.role,
+          })
+          .returning();
+
+        // Приглашение одноразовое: регистрация его «сжигает» в той же
+        // транзакции, поэтому повторная регистрация того же email (гонка)
+        // упрётся в уникальность users.email, а не в приглашение.
+        await tx
+          .delete(organizationInvitations)
+          .where(eq(organizationInvitations.id, invitation.id));
+
+        return invited;
+      }
+
       const [organization] = await tx
         .insert(organizations)
         .values({ name: `Personal Workspace - ${email}` })

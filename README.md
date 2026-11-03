@@ -135,6 +135,14 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 ### 🔐 Совместная работа и безопасность
 
 - **Auth:** JWT + refresh-токены, сессии и защищённые маршруты.
+- **Организации и команда (v1.0 S1/S3/S5):** пользователь состоит в организации
+  (`users.organization_id`), роль — `owner`/`admin`/`member`/`viewer`;
+  `GET /auth/me` отдаёт `organizationId` и `role`. `GET /admin/members` —
+  участники и ожидающие приглашения, `POST /admin/members/invite` (owner/admin)
+  выписывает приглашение по email: регистрация по нему присоединяет
+  пользователя к организации с назначенной ролью. Журнал действий организации —
+  `GET /admin/audit` (owner/admin, keyset-пагинация). В верхней панели —
+  кнопка «Команда» (👥) с вкладками «Участники» и «Аудит».
 - **Share:** публичные read-only ссылки и collaborative-доступ с ролями
   **owner / editor / viewer**.
 - **Rate limiting:** 5 запросов/мин на login и share, 300/мин общий лимит;

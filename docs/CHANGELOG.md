@@ -19,6 +19,24 @@
 
 ### Added
 
+- **Команда организации и журнал аудита в UI (v1.0.0 S5, DESIGN § 2.1/§ 3.2)** ([отчёт](development/reports/v1.0.0/S5-team-ui.md)):
+  API — `GET /admin/members` (участники организации и ожидающие приглашения,
+  `Cache-Control: no-store`, доступен любому участнику) и
+  `POST /admin/members/invite` (только owner/admin; `email` + роль
+  `admin|member|viewer`, 400 на роль `owner`, 409 на занятый email и повторный
+  инвайт). Новая таблица `organization_invitations` (миграция
+  `0016_numerous_gambit.sql`: `id`, `organization_id`/`invited_by` FK CASCADE,
+  CHECK роли, UNIQUE `(organization_id, email)`, индекс по `email`) и
+  «сжигание» приглашения при регистрации: пользователь создаётся в организации
+  пригласившего с назначенной ролью (в одной транзакции). Действие
+  `member.invite` добавлено в таблицу маршрутов аудита. UI — модалка
+  «Команда и аудит» (`web/src/components/TeamPage.tsx`) и кнопка 👥 «Команда» в
+  `TopBar`: вкладка «Участники» (состав, роли, пометка «вы», ожидающие
+  приглашения, форма приглашения для owner/admin) и вкладка «Аудит»
+  (дата/пользователь/действие/ресурс, keyset-пагинация по `nextCursor`, только
+  owner/admin). Зеркала контракта — `web/src/lib/org-api.ts`,
+  `web/src/lib/audit-api.ts`, `web/src/types/organization.ts`; i18n-ключи
+  `team.*`, `audit.*`, `topbar.team` в обоих языках.
 - **Метрики Prometheus (v1.0.0 S4, DESIGN § 3.3)** ([отчёт](development/reports/v1.0.0/S4-metrics.md)):
   зависимость `prom-client@^15.1.3`; `MetricsService` с собственным `Registry`
   и четырьмя метриками: `http_request_duration_seconds{method,route,status}`,
@@ -125,6 +143,17 @@
 
 ### Changed
 
+- **`UserPublic` отдаёт организацию и роль (v1.0.0 S5, KI-555):**
+  `GET /auth/me`, `POST /auth/login`, `/auth/register`, `/auth/refresh`
+  возвращают `user.organizationId` (uuid) и `user.role`
+  (`owner|admin|member|viewer`); поля читаются из строки `users`, а не из JWT
+  (KI-554). Зеркала `web/src/lib/auth-api.ts` и `web/src/stores/auth.ts`
+  дополнены полями, публичный REST-контракт — DTO `UserPublic`,
+  `OrganizationMemberSummary`, `OrganizationInvitationSummary`,
+  `OrganizationMembersResponse`, `AuditLogSummary`, `AuditLogsResponse` и
+  тремя доменами ролей; `GET /admin/members*` резолвят организацию из БД по
+  `sub`, поэтому устаревший `orgId` в токене не уводит операцию в чужой
+  арендатор.
 - **Метрики как отдельная подсистема (v1.0.0 S4):** новый `@Global()`
   `MetricsModule` (не требует правок `imports` у `EngineModule`/`AgentModule`);
   `MetricsService` инжектится в `ExecutionEngineService` и `AgentService`.
@@ -188,6 +217,13 @@
 
 ### Fixed
 
+- **KI-555 / KI-573 / KI-554 (частично): профиль с организацией и UI аудита
+  (v1.0.0 S5)** ([отчёт](development/reports/v1.0.0/S5-team-ui.md)):
+  `GET /auth/me` отдаёт `orgId` и роль (KI-555), журнал `GET /admin/audit`
+  доступен из UI с keyset-пагинацией (KI-573). KI-554 закрыт частично:
+  `/admin/members*` проверяют членство по БД, `GET /admin/audit` по-прежнему
+  фильтрует по `orgId` из токена — остаток вынесен в KI-587. Приглашение в
+  организацию пишется в журнал как `member.invite`.
 - **История запусков: keyset-пагинация (v0.16 S1, KI-542)** ([отчёт](development/reports/v0.16.0/S1-tech-debt.md)):
   `GET /workflow/:id/runs` листается непрозрачным курсором
   (`RunSummary.cursor`, `?cursor=`) вместо `offset`. Сервис фильтрует
@@ -218,6 +254,15 @@
 
 ### Documented
 
+- **Ограничения команды организации (v1.0.0 S5):** приглашение работает только
+  для ещё не зарегистрированных email — перенос существующего пользователя
+  между организациями не поддержан (KI-583); письма не отправляются, доставка
+  приглашения — вне S5 (KI-584); смены роли и удаления участника из организации
+  нет — только приглашение (KI-586); в UI аудита нет фильтров по
+  действию/пользователю/дате (KI-585); несколько организаций могут пригласить
+  один email — «сжигается» самое старое приглашение, остальные остаются
+  ожидающими (KI-588); email приглашённого хранится в metadata аудита в
+  открытом виде (KI-589).
 - **Ограничения метрик S4 (v1.0.0):** `prom-client` помечен deprecated
   upstream — нужна миграция на `@prometheus-io/client` (KI-574); `/metrics`
   без auth публиковать нельзя — только сетевая защита периметра (KI-575);
@@ -2168,6 +2213,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 

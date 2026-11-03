@@ -48,9 +48,20 @@ import {
   WebSearchProvidersResponseSchema,
 } from './api';
 import { CollaboratorSchema } from './collaborators-api';
+import { AuthUserSchema } from './auth-api';
+import { AuditLogSchema, AuditLogsResponseSchema } from './audit-api';
+import {
+  OrganizationMembersResponseSchema,
+  OrgInvitationSchema,
+  OrgMemberSchema,
+} from './org-api';
 import { ExportWorkflowSchema } from './export-import-api';
 import { ShareTokenSchema, SharedWorkflowSchema } from './share-api';
 import { NodeRunSnapshotSchema, RunStatusSchema } from '@/types/run-stream';
+import {
+  InvitableOrgRoleSchema,
+  OrgRoleSchema,
+} from '@/types/organization';
 
 /**
  * Путь к контракту для сообщений об ошибке (в виде ссылки на файл).
@@ -81,6 +92,9 @@ interface MirrorSchema {
  * `src/llm/**` и `src/media/**` — вне scope KI-352, KI-357).
  */
 const MIRROR_SCHEMAS: Record<string, MirrorSchema> = {
+  // v1.0.0 S3/S5: журнал аудита организации — запись и страница keyset.
+  AuditLogSummary: AuditLogSchema,
+  AuditLogsResponse: AuditLogsResponseSchema,
   // R7.6 (KI-197): участники workflow — новое зеркало REST-ответа.
   CollaboratorResponse: CollaboratorSchema,
   // v0.11 S3: публичное представление DOCX-шаблона (document-templates API).
@@ -93,6 +107,10 @@ const MIRROR_SCHEMAS: Record<string, MirrorSchema> = {
   // v0.11 S12 (DESIGN § 3.4.2): `GET /runs/:id/nodes` отдаёт массив снимков
   // узлов той же Zod-схемой, что и SSE-снимок.
   NodeRunSnapshot: NodeRunSnapshotSchema,
+  // v1.0.0 S5: участники и приглашения организации (GET /admin/members).
+  OrganizationInvitationSummary: OrgInvitationSchema,
+  OrganizationMemberSummary: OrgMemberSchema,
+  OrganizationMembersResponse: OrganizationMembersResponseSchema,
   RunResponse: ApiRunSchema,
   // R7.1 (KI-048): бюджет запуска — новое зеркало REST-ответа.
   RunBudgetResponse: ApiRunBudgetSchema,
@@ -101,6 +119,8 @@ const MIRROR_SCHEMAS: Record<string, MirrorSchema> = {
   RunSummary: RunSummarySchema,
   ShareTokenDto: ShareTokenSchema,
   SharedWorkflow: SharedWorkflowSchema,
+  // v1.0.0 S5: публичные данные пользователя теперь содержат организацию/роль.
+  UserPublic: AuthUserSchema,
   // v0.16 S1 (KI-548): конфигурация web-search для селекта провайдера.
   WebSearchProvidersResponse: WebSearchProvidersResponseSchema,
   WebSearchProviderInfo: WebSearchProviderInfoSchema,
@@ -389,5 +409,58 @@ describe('REST-контракт: web-зеркала ↔ docs/development/api-con
     expect([...WebSearchProviderNameSchema.options].sort()).toEqual(
       contract.enums?.['WebSearchProvidersResponse.defaultProvider'],
     );
+  });
+
+  it('команда и аудит зеркалят контракт и домены ролей (v1.0.0 S5)', () => {
+    const contract = readContract();
+    const actual = actualContract();
+
+    // v1.0.0 S5: пользователь принадлежит организации — `UserPublic` теперь
+    // содержит `organizationId` и `role`, а профиль участника/приглашения и
+    // страница журнала аудита — новые REST-ответы.
+    expect(actual.UserPublic).toEqual(contract.responses.UserPublic);
+    expect(actual.OrganizationMembersResponse).toEqual(
+      contract.responses.OrganizationMembersResponse,
+    );
+    expect(actual.OrganizationMemberSummary).toEqual(
+      contract.responses.OrganizationMemberSummary,
+    );
+    expect(actual.OrganizationInvitationSummary).toEqual(
+      contract.responses.OrganizationInvitationSummary,
+    );
+
+    // Страница журнала и запись: keyset-пагинация (`cursor`, `nextCursor`)
+    // описана в контракте, чтобы зеркала не разошлись с backend.
+    expect(actual.AuditLogsResponse).toEqual(
+      contract.responses.AuditLogsResponse,
+    );
+    expect(actual.AuditLogSummary).toEqual(contract.responses.AuditLogSummary);
+    expect(contract.responses.AuditLogSummary).toContain('cursor');
+    expect(actual.AuditLogSummary).toContain('cursor');
+
+    // Роль организации — один домен у пользователя и у участника; в
+    // приглашении `owner` недоступен (org owner один и не приглашается).
+    expect([...OrgRoleSchema.options].sort()).toEqual(
+      contract.enums?.['UserPublic.role'],
+    );
+    expect([...OrgRoleSchema.options].sort()).toEqual(
+      contract.enums?.['OrganizationMemberSummary.role'],
+    );
+    expect([...InvitableOrgRoleSchema.options].sort()).toEqual(
+      contract.enums?.['OrganizationInvitationSummary.role'],
+    );
+
+    // Секретов в ответах команды/аудита быть не должно (RULES 5.1): только
+    // идентификаторы, роли и метаданные действия.
+    for (const fields of [
+      actual.UserPublic,
+      actual.OrganizationMemberSummary,
+      actual.OrganizationInvitationSummary,
+      actual.AuditLogSummary,
+    ]) {
+      expect(fields).not.toContain('token');
+      expect(fields).not.toContain('accessToken');
+      expect(fields).not.toContain('password');
+    }
   });
 });

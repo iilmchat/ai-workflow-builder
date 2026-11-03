@@ -106,6 +106,20 @@ export const USER_ROLES = ['owner', 'admin', 'member', 'viewer'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
 /**
+ * Роли, которые можно назначить приглашением в организацию (v1.0.0 S5).
+ *
+ * `owner` в список не входит: владелец — создатель организации, и второй
+ * владелец через инвайт не появляется (DESIGN V100 S5). Список — единый источник
+ * для CHECK-ограничения `organization_invitations.role`, Zod-схемы инвайта и
+ * типа `InvitableUserRole`, поэтому UI и API не могут разойтись в допустимых
+ * значениях (KI-563).
+ */
+export const INVITABLE_USER_ROLES = ['admin', 'member', 'viewer'] as const;
+
+/** Роль, которую можно назначить приглашением в организацию (v1.0.0 S5). */
+export type InvitableUserRole = (typeof INVITABLE_USER_ROLES)[number];
+
+/**
  * users — учётные записи (R6.1a, KI-106; v1.0 S1 — арендатор; v1.0 S3 — роль).
  *
  * Пароль хранится как `scrypt$<salt_b64>$<hash_b64>` (node:crypto, без
@@ -176,6 +190,68 @@ export const refreshTokens = pgTable('refresh_tokens', {
 export type RefreshToken = typeof refreshTokens.$inferSelect;
 /** Значения для INSERT в `refresh_tokens`. */
 export type NewRefreshToken = typeof refreshTokens.$inferInsert;
+
+/**
+ * organization_invitations — приглашения в организацию (v1.0.0 S5, KI-563).
+ *
+ * Отдельная таблица, а не «приглашённые пользователи» в `users`: приглашённый
+ * ещё не зарегистрирован, у него нет `password_hash`, и создавать заранее
+ * пользователя с нерабочим паролем нельзя. Приглашение «созревает» при
+ * регистрации: `AuthService.registerAsync` находит самое старое приглашение по
+ * нормализованному email, создаёт пользователя в организации пригласившего с
+ * указанной ролью и удаляет строку приглашения (в той же транзакции).
+ *
+ * **Принадлежность организации, а не токену (KI-554).** И `organization_id`, и
+ * `invited_by` — NOT NULL: приглашение без арендатора/автора невозможно.
+ * Роль приглашающего проверяет `OrgOwnerGuard`, причём по строке `users`, а не
+ * по `orgId` из JWT: просроченный токен не даёт пригласить в чужую организацию.
+ *
+ * **Уникальность.** `UNIQUE (organization_id, email)` не даёт двум приглашениям
+ * одной организации указывать на один email; гонка двух одновременных инвайтов
+ * разрешается `ON CONFLICT DO NOTHING` + проверкой `.returning()` (KI-400), а не
+ * 500-й ошибкой. Индекс `email` обслуживает поиск приглашения при регистрации —
+ * выборку по email без организации (пригласить может любая организация).
+ *
+ * `ON DELETE CASCADE` с обеих сторон: удаление организации убирает её
+ * приглашения, удаление пригласившего — тоже (он не может быть автором
+ * несуществующей строки). CHECK на роль продублирован в БД, потому что Zod
+ * валидирует только вход API, а не прямые записи (RULES 1.17).
+ */
+export const organizationInvitations = pgTable(
+  'organization_invitations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    email: text('email').notNull(),
+    role: text('role').notNull().$type<InvitableUserRole>(),
+    invitedBy: uuid('invited_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    // Один email — одно ожидающее приглашение в организации (KI-563).
+    uniqueIndex('organization_invitations_org_email_uniq').on(
+      table.organizationId,
+      table.email,
+    ),
+    // Поиск приглашения при регистрации: email известен, организация ещё нет.
+    index('organization_invitations_email_idx').on(table.email),
+    check(
+      'organization_invitations_role_check',
+      sql`${table.role} in ('admin', 'member', 'viewer')`,
+    ),
+  ],
+);
+
+/** Строка таблицы `organization_invitations`. */
+export type OrganizationInvitation = typeof organizationInvitations.$inferSelect;
+/** Значения для INSERT в `organization_invitations`. */
+export type NewOrganizationInvitation = typeof organizationInvitations.$inferInsert;
 
 /**
  * audit_logs — журнал действий пользователей (v1.0.0 S3, DESIGN V100 § 3.2).

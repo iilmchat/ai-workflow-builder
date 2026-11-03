@@ -49,6 +49,8 @@ import ts from 'typescript';
 import { z } from 'zod';
 import { describe, expect, it } from 'vitest';
 import {
+  INVITABLE_USER_ROLES,
+  USER_ROLES,
   WORKFLOW_COLLABORATOR_ROLES,
   WORKFLOW_RUN_STATUSES,
 } from '../../db/schema.js';
@@ -106,6 +108,22 @@ const COLLABORATOR_DTO_PATH = join(
 
 /** Файл с `RunBudgetResponse` (`GET /runs/:id/budget`, R7.1). */
 const RUN_BUDGET_DTO_PATH = join(SPEC_DIR, 'run-budget.dto.ts');
+
+/** Файл с `UserPublic` (`GET /auth/me`, ответы login/register/refresh, v1.0.0 S5). */
+const AUTH_SERVICE_PATH = join(SPEC_DIR, '..', '..', 'auth', 'auth.service.ts');
+
+/** Файл с DTO команды организации (`/admin/members`, v1.0.0 S5). */
+const ORGANIZATIONS_MEMBER_DTO_PATH = join(
+  SPEC_DIR,
+  '..',
+  '..',
+  'organizations',
+  'dto',
+  'member.dto.ts',
+);
+
+/** Файл с DTO журнала аудита (`GET /admin/audit`, v1.0.0 S3). */
+const AUDIT_DTO_PATH = join(SPEC_DIR, '..', '..', 'audit', 'dto', 'audit.dto.ts');
 
 /** Файл с TS-типом `BudgetMode` — источник домена `RunBudgetResponse.mode`. */
 const COST_BUDGET_SERVICE_PATH = join(SPEC_DIR, '..', 'cost-budget.service.ts');
@@ -249,6 +267,42 @@ type DtoSource =
     path: WEB_SEARCH_INTERFACE_PATH,
     label: 'src/web-search/web-search.interface.ts',
   },
+  // v1.0.0 S5 (KI-555): публичное представление пользователя. С этого среза
+  // ответы `GET /auth/me`, login/register/refresh содержат организацию и роль.
+  UserPublic: {
+    kind: 'interface',
+    path: AUTH_SERVICE_PATH,
+    label: 'src/auth/auth.service.ts',
+  },
+  // v1.0.0 S5 (KI-555/KI-563): команда организации — список участников и
+  // ожидающих приглашений, плюс элемент каждого списка.
+  OrganizationMembersResponse: {
+    kind: 'interface',
+    path: ORGANIZATIONS_MEMBER_DTO_PATH,
+    label: 'src/organizations/dto/member.dto.ts',
+  },
+  OrganizationMemberSummary: {
+    kind: 'interface',
+    path: ORGANIZATIONS_MEMBER_DTO_PATH,
+    label: 'src/organizations/dto/member.dto.ts',
+  },
+  OrganizationInvitationSummary: {
+    kind: 'interface',
+    path: ORGANIZATIONS_MEMBER_DTO_PATH,
+    label: 'src/organizations/dto/member.dto.ts',
+  },
+  // v1.0.0 S3 (DESIGN V100 § 3.2): журнал аудита. До S5 эти ответы в гейте не
+  // участвовали; UI S5 наконец их читает, поэтому состав полей фиксируется.
+  AuditLogsResponse: {
+    kind: 'interface',
+    path: AUDIT_DTO_PATH,
+    label: 'src/audit/dto/audit.dto.ts',
+  },
+  AuditLogSummary: {
+    kind: 'interface',
+    path: AUDIT_DTO_PATH,
+    label: 'src/audit/dto/audit.dto.ts',
+  },
 };
 
 /**
@@ -336,6 +390,25 @@ const ENUM_SOURCES: Record<string, EnumSource> = {
     kind: 'zod',
     schema: WebSearchProviderNameSchema,
     label: 'src/web-search/web-search.interface.ts',
+  },
+  // v1.0.0 S5 (KI-555): роль пользователя в ответах auth — канонический
+  // `USER_ROLES` из схемы БД, второй копии списка нет.
+  'UserPublic.role': {
+    kind: 'zod',
+    schema: z.enum(USER_ROLES),
+    label: 'src/db/schema.ts',
+  },
+  // v1.0.0 S5: состав команды — все роли организации (владелец тоже участник).
+  'OrganizationMemberSummary.role': {
+    kind: 'zod',
+    schema: z.enum(USER_ROLES),
+    label: 'src/db/schema.ts',
+  },
+  // Владельца приглашением не назначить: домен инвайта уже (`INVITABLE_USER_ROLES`).
+  'OrganizationInvitationSummary.role': {
+    kind: 'zod',
+    schema: z.enum(INVITABLE_USER_ROLES),
+    label: 'src/db/schema.ts',
   },
 };
 

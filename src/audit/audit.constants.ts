@@ -24,6 +24,7 @@ export const AUDIT_ACTIONS = [
   'collaborator.remove',
   'document_template.create',
   'document_template.delete',
+  'member.invite',
   'run.start',
 ] as const;
 
@@ -52,8 +53,9 @@ interface AuditActionRoute {
  *
  * Маршруты сверены с контроллерами (`workflow.controller.ts`,
  * `templates.controller.ts`, `runs.controller.ts`,
- * `document-templates.controller.ts`): если ручка меняет путь, журнал начнёт
- * писать fallback `http.<метод>` — это видно в аудите и не ломает запись.
+ * `document-templates.controller.ts`, `org-members.controller.ts` v1.0.0 S5):
+ * если ручка меняет путь, журнал начнёт писать fallback `http.<метод>` — это
+ * видно в аудите и не ломает запись.
  */
 const AUDIT_ACTION_ROUTES: readonly AuditActionRoute[] = [
   { method: 'POST', pattern: /^\/workflow$/, action: 'workflow.create' },
@@ -73,6 +75,13 @@ const AUDIT_ACTION_ROUTES: readonly AuditActionRoute[] = [
     method: 'POST',
     pattern: /^\/workflow\/[^/]+\/document-templates$/,
     action: 'document_template.create',
+  },
+  // v1.0.0 S5 (KI-563): приглашение в организацию — действие команды.
+  // Email в metadata пишется, пароль/токены — нет (см. AuditInterceptor).
+  {
+    method: 'POST',
+    pattern: /^\/admin\/members\/invite$/,
+    action: 'member.invite',
   },
   { method: 'POST', pattern: /^\/runs$/, action: 'run.start' },
   { method: 'PATCH', pattern: /^\/workflow\/[^/]+$/, action: 'workflow.update' },

@@ -1,12 +1,23 @@
 import { z } from 'zod';
 import type { AuthUser } from '@/stores/auth';
+import { OrgRoleSchema } from '@/types/organization';
 import { requestAsync } from './api';
 
-/** Схема публичных данных пользователя (ответ backend). */
+/**
+ * Схема публичных данных пользователя (ответ backend).
+ *
+ * v1.0.0 S5 (DESIGN V100 § 3.2): пользователь принадлежит организации —
+ * `organizationId` (uuid) и `role` (роль в организации) приходят во всех
+ * ответах с `UserPublic` (`/auth/login`, `/auth/register`, `/auth/refresh`,
+ * `/auth/me`). Состав полей сверяет `api-contract.spec.ts` через
+ * `docs/development/api-contract.json` (`UserPublic`).
+ */
 export const AuthUserSchema = z.object({
   id: z.string(),
   email: z.string(),
   createdAt: z.string(),
+  organizationId: z.string(),
+  role: OrgRoleSchema,
 });
 
 /** Схема ответа `/auth/login`, `/auth/register`, `/auth/refresh`. */

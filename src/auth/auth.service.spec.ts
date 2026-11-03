@@ -3,8 +3,15 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import { createHash } from 'node:crypto';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import type { User, UserRole } from '../db/schema.js';
+import {
+  organizationInvitations,
+  type InvitableUserRole,
+  type User,
+  type UserRole,
+} from '../db/schema.js';
 import { AuthService } from './auth.service.js';
 
 /** Стабильные данные тестового пользователя. */
@@ -19,6 +26,10 @@ const TOKEN_ID = '44444444-4444-4444-8444-444444444444';
 const ORG_ID = '55555555-5555-4555-8555-555555555555';
 /** Ожидаемое имя личной организации по нормализованному email. */
 const ORG_NAME = `Personal Workspace - ${EMAIL}`;
+/** Приглашение в организацию (v1.0.0 S5, KI-563). */
+const INVITATION_ID = '66666666-6666-4666-8666-666666666666';
+const INVITER_ID = '77777777-7777-4777-8777-777777777777';
+const INVITED_AT = new Date('2024-02-01T00:00:00.000Z');
 
 /** Строка `users` без учёта `passwordHash` (его подставляет тест). */
 const baseUser: Omit<User, 'passwordHash'> = {
@@ -39,6 +50,10 @@ describe('AuthService', () => {
   let updateSet: ReturnType<typeof vi.fn>;
   let transaction: ReturnType<typeof vi.fn>;
   let signAsync: ReturnType<typeof vi.fn>;
+  /** `tx.delete(...)` регистрации по приглашению (v1.0.0 S5). */
+  let deleteTable: ReturnType<typeof vi.fn>;
+  /** `WHERE` удаления приглашения — проверяется, что удалена нужная строка. */
+  let deleteWhere: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     selectLimit = vi.fn(() => Promise.resolve([]));
@@ -49,17 +64,27 @@ describe('AuthService', () => {
       where: vi.fn(() => ({ returning: updateReturning })),
     }));
     signAsync = vi.fn(() => Promise.resolve(TOKEN));
+    deleteWhere = vi.fn(() => Promise.resolve());
+    deleteTable = vi.fn(() => ({ where: deleteWhere }));
 
     const update = vi.fn(() => ({ set: updateSet }));
     const insert = vi.fn(() => ({ values: insertValues }));
+    // Регистрация ищет приглашение через `.orderBy(...).limit(1)` (v1.0.0 S5),
+    // остальные запросы — сразу `.limit(1)`.
     const select = vi.fn(() => ({
-      from: vi.fn(() => ({ where: vi.fn(() => ({ limit: selectLimit })) })),
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: selectLimit,
+          orderBy: vi.fn(() => ({ limit: selectLimit })),
+        })),
+      })),
     }));
 
-    // Регистрация (RULES 4.22): организация + пользователь в одной транзакции.
+    // Регистрация (RULES 4.22): организация + пользователь в одной транзакции;
+    // регистрация по приглашению ещё и удаляет строку приглашения.
     // Ротация refresh-токена (R6.1b) тоже идёт в транзакции.
     transaction = vi.fn((callback: (tx: unknown) => Promise<unknown>) =>
-      callback({ select, insert, update }),
+      callback({ select, insert, update, delete: deleteTable }),
     );
 
     const db = {
@@ -106,6 +131,30 @@ describe('AuthService', () => {
   /** Строка `users`, которую возвращает INSERT при регистрации. */
   function registeredUser(): User {
     return { ...baseUser, passwordHash: 'scrypt$x$y' };
+  }
+
+  /**
+   * Строка `organization_invitations`, которую находит регистрация (v1.0.0 S5).
+   *
+   * @param role - роль, выданная приглашением (по умолчанию `admin`)
+   * @returns приглашение в организацию {@link ORG_ID}
+   */
+  function invitation(role: InvitableUserRole = 'admin'): {
+    id: string;
+    organizationId: string;
+    email: string;
+    role: InvitableUserRole;
+    invitedBy: string;
+    createdAt: Date;
+  } {
+    return {
+      id: INVITATION_ID,
+      organizationId: ORG_ID,
+      email: EMAIL,
+      role,
+      invitedBy: INVITER_ID,
+      createdAt: INVITED_AT,
+    };
   }
 
   /** Значения второго INSERT'а регистрации — в `users`. */
@@ -161,7 +210,13 @@ describe('AuthService', () => {
       const result = await service.registerAsync({ email: EMAIL, password: PASSWORD });
 
       expect(result.accessToken).toBe(TOKEN);
-      expect(result.user).toEqual({ id: USER_ID, email: EMAIL, createdAt: CREATED_AT });
+      expect(result.user).toEqual({
+        id: USER_ID,
+        email: EMAIL,
+        organizationId: ORG_ID,
+        role: 'owner',
+        createdAt: CREATED_AT,
+      });
       expect(result.user).not.toHaveProperty('passwordHash');
     });
 
@@ -177,6 +232,65 @@ describe('AuthService', () => {
       expect(values.passwordHash).not.toContain(PASSWORD);
       // Имя личной организации строится от того же нормализованного email.
       expect(insertValues).toHaveBeenNthCalledWith(1, { name: ORG_NAME });
+    });
+
+    it('по приглашению создаёт пользователя в организации пригласившего с его ролью (KI-563)', async () => {
+      // Первый SELECT — занятость email, второй — самое старое приглашение.
+      selectLimit
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([invitation('admin')]);
+      insertReturning.mockResolvedValueOnce([
+        { ...baseUser, role: 'admin', passwordHash: 'scrypt$x$y' },
+      ]);
+
+      const result = await service.registerAsync({ email: EMAIL, password: PASSWORD });
+
+      // Пользователь создан сразу в организации пригласившего и с ролью
+      // приглашения; личная организация не заводится (один INSERT).
+      expect(insertValues).toHaveBeenCalledTimes(1);
+      expect(insertValues).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: EMAIL,
+          organizationId: ORG_ID,
+          role: 'admin',
+        }),
+      );
+      expect(insertValues).not.toHaveBeenCalledWith({ name: ORG_NAME });
+
+      // Приглашение «сжигается» в той же транзакции: удалена именно найденная
+      // строка (по id), а не все приглашения на этот email.
+      expect(deleteTable).toHaveBeenCalledWith(organizationInvitations);
+      expect(deleteWhere).toHaveBeenCalledTimes(1);
+      const deletedCondition = deleteWhere.mock.calls[0]?.[0] as SQL;
+      expect(new PgDialect().sqlToQuery(deletedCondition).params).toContain(
+        INVITATION_ID,
+      );
+
+      expect(result.accessToken).toBe(TOKEN);
+      expect(signAsync).toHaveBeenCalledWith(
+        { sub: USER_ID, email: EMAIL, orgId: ORG_ID },
+        expect.objectContaining({ expiresIn: '24h' }),
+      );
+      expect(result.user).toEqual({
+        id: USER_ID,
+        email: EMAIL,
+        organizationId: ORG_ID,
+        role: 'admin',
+        createdAt: CREATED_AT,
+      });
+    });
+
+    it('без приглашения по-прежнему заводит личную организацию и роль owner (регрессия)', async () => {
+      // Приглашения на этот email нет — регистрация идёт прежним путём.
+      selectLimit.mockResolvedValue([]);
+      mockRegisterInserts({ id: ORG_ID, name: ORG_NAME }, registeredUser());
+
+      await service.registerAsync({ email: EMAIL, password: PASSWORD });
+
+      expect(insertValues).toHaveBeenNthCalledWith(1, { name: ORG_NAME });
+      expect(userInsertValues().organizationId).toBe(ORG_ID);
+      expect(userInsertValues().role).toBe('owner');
+      expect(deleteTable).not.toHaveBeenCalled();
     });
 
     it('бросает ConflictException на занятый email', async () => {
@@ -211,6 +325,9 @@ describe('AuthService', () => {
 
       expect(result.accessToken).toBe(TOKEN);
       expect(result.user.email).toBe(EMAIL);
+      // v1.0.0 S5 (KI-555): login отдаёт организацию и роль из строки `users`.
+      expect(result.user.organizationId).toBe(ORG_ID);
+      expect(result.user.role).toBe('owner');
     });
 
     it('кладёт organizationId пользователя в orgId токена (v1.0 S1)', async () => {
@@ -263,6 +380,8 @@ describe('AuthService', () => {
       await expect(service.getMeAsync(USER_ID)).resolves.toEqual({
         id: USER_ID,
         email: EMAIL,
+        organizationId: ORG_ID,
+        role: 'owner',
         createdAt: CREATED_AT,
       });
     });

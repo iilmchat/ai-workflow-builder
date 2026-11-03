@@ -23,6 +23,8 @@ const USER_ID = '33333333-3333-4333-8333-333333333333';
 const EMAIL = 'user@example.com';
 const ACCESS_TOKEN = 'signed.jwt.token';
 const REFRESH_TOKEN = 'opaque-refresh-token';
+/** Организация пользователя (v1.0.0 S5: `UserPublic` отдаёт её и роль). */
+const ORG_ID = '55555555-5555-4555-8555-555555555555';
 
 /** Результат логина, который отдаёт мок сервиса. */
 const authResult: AuthResult = {
@@ -30,6 +32,8 @@ const authResult: AuthResult = {
   user: {
     id: USER_ID,
     email: EMAIL,
+    organizationId: ORG_ID,
+    role: 'owner',
     createdAt: new Date('2024-01-01T00:00:00.000Z'),
   },
 };

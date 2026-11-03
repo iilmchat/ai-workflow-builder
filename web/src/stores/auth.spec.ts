@@ -6,6 +6,9 @@ const USER: AuthUser = {
   id: '11111111-1111-4111-8111-111111111111',
   email: 'user@example.com',
   createdAt: '2024-01-01T00:00:00.000Z',
+  // v1.0.0 S5: организация и роль — обязательные поля публичных данных.
+  organizationId: '22222222-2222-4222-8222-222222222222',
+  role: 'owner',
 };
 
 describe('useAuthStore (R6.1b.2)', () => {

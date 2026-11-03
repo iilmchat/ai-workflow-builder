@@ -1,10 +1,24 @@
 import { create } from 'zustand';
+import type { OrgRole } from '@/types/organization';
 
-/** Публичные данные пользователя (как отдаёт backend). */
+/**
+ * Публичные данные пользователя (как отдаёт backend).
+ *
+ * v1.0.0 S5 (DESIGN V100 § 3.2): пользователь всегда состоит в организации,
+ * поэтому `organizationId` и `role` — обязательные поля, а не опциональные:
+ * от их наличия зависит доступ к вкладкам «Команда и аудит» (роли
+ * `owner`/`admin` видят приглашения и журнал аудита). Схему ответа и паритет
+ * полей держат `AuthUserSchema` (`lib/auth-api.ts`) и
+ * `api-contract.spec.ts`.
+ */
 export interface AuthUser {
   id: string;
   email: string;
   createdAt: string;
+  /** uuid организации, в которой состоит пользователь. */
+  organizationId: string;
+  /** Роль пользователя в организации (`owner` | `admin` | `member` | `viewer`). */
+  role: OrgRole;
 }
 
 /** Состояние сессии. */

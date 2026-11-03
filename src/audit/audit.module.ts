@@ -13,6 +13,8 @@ import { OrgOwnerGuard } from './org-owner.guard.js';
  *   `AuditInterceptor` регистрируется в `AppModule` и инжектит сервис из этого
  *   модуля;
  * - `OrgOwnerGuard` — ролевая проверка административной ручки (`owner`/`admin`);
+ *   **экспортируется** с v1.0.0 S5: те же правила доступа нужны команде
+ *   организации (`POST /admin/members/invite`), и дублировать guard незачем;
  * - `imports: [AuthModule]` — контроллер использует `JwtAuthGuard` и
  *   `JwtService`, которые экспортирует `AuthModule`.
  *
@@ -24,6 +26,6 @@ import { OrgOwnerGuard } from './org-owner.guard.js';
   imports: [AuthModule],
   controllers: [AdminAuditController],
   providers: [AuditService, OrgOwnerGuard],
-  exports: [AuditService],
+  exports: [AuditService, OrgOwnerGuard],
 })
 export class AuditModule {}

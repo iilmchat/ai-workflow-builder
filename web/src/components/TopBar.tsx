@@ -21,6 +21,7 @@ import type { ImageToolFlowNode } from '@/types/graph';
 import { LoadModal } from './LoadModal';
 import { RunHistoryModal } from './RunHistoryModal';
 import { ShareModal } from './ShareModal';
+import { TeamPage } from './TeamPage';
 import { computeGraphHash } from '@/lib/graph-hash';
 import {
   clearWorkflowUrlParam,
@@ -123,6 +124,10 @@ export function TopBar() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
+  // v1.0.0 S5 (DESIGN V100 § 3.2): «Команда и аудит» — локальное состояние
+  // TopBar, как у истории запусков и шаринга: открытие модалки не влияет на
+  // граф и не нужно другим компонентам.
+  const [isTeamOpen, setIsTeamOpen] = useState(false);
   // R6.6.2: идёт файловая операция (экспорт/импорт) — кнопки блокируются,
   // чтобы повторный клик не запустил вторую выгрузку или второй импорт.
   const [isFileBusy, setIsFileBusy] = useState(false);
@@ -749,6 +754,25 @@ export function TopBar() {
             </button>
           )}
 
+          {/* v1.0.0 S5 (DESIGN V100 § 3.2): «Команда и аудит» — участники
+              организации, приглашения и журнал действий. Кнопка доступна
+              только аутентифицированному пользователю (у гостя нет организации)
+              и не зависит от сохранённости workflow: команда — свойство
+              аккаунта, а не графа. */}
+          {user !== null && (
+            <button
+              type="button"
+              data-topbar-team=""
+              onClick={() => setIsTeamOpen(true)}
+              aria-label={t('topbar.team')}
+              title={t('topbar.team')}
+              className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+            >
+              <span aria-hidden="true">👥</span>
+              {t('topbar.team')}
+            </button>
+          )}
+
           {/* KI-397: viewer не запускает workflow — кнопка скрыта. */}
           {!isViewer && (
             <button
@@ -828,6 +852,12 @@ export function TopBar() {
           isOwner={isWorkflowOwner}
           onClose={() => setIsShareOpen(false)}
         />
+      )}
+
+      {/* v1.0.0 S5: модалка команды монтируется только при наличии сессии —
+          у гостя нет организации, и запрос `GET /admin/members` был бы 401. */}
+      {isTeamOpen && user !== null && (
+        <TeamPage onClose={() => setIsTeamOpen(false)} />
       )}
     </>
   );

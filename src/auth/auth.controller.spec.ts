@@ -22,7 +22,14 @@ const EXPIRES_AT = '2026-10-22T00:00:00.000Z';
 
 const authResult: AuthResult = {
   accessToken: TOKEN,
-  user: { id: USER_ID, email: EMAIL, createdAt: new Date(CREATED_AT) },
+  user: {
+    id: USER_ID,
+    email: EMAIL,
+    // v1.0.0 S5 (KI-555): публичное представление отдаёт организацию и роль.
+    organizationId: ORG_ID,
+    role: 'owner',
+    createdAt: new Date(CREATED_AT),
+  },
 };
 
 describe('AuthController', () => {
@@ -50,7 +57,13 @@ describe('AuthController', () => {
       registerAsync: vi.fn(() => Promise.resolve(authResult)),
       loginAsync: vi.fn(() => Promise.resolve(authResult)),
       getMeAsync: vi.fn(() =>
-        Promise.resolve({ id: USER_ID, email: EMAIL, createdAt: new Date(CREATED_AT) }),
+        Promise.resolve({
+          id: USER_ID,
+          email: EMAIL,
+          organizationId: ORG_ID,
+          role: 'owner',
+          createdAt: new Date(CREATED_AT),
+        }),
       ),
       // R6.1b: refresh-токен выдаётся cookie, в теле его нет.
       createRefreshTokenAsync: vi.fn(() =>
@@ -199,7 +212,14 @@ describe('AuthController', () => {
         .expect(200);
 
       expect(response.body).toEqual(
-        expect.objectContaining({ id: USER_ID, email: EMAIL }),
+        expect.objectContaining({
+          id: USER_ID,
+          email: EMAIL,
+          // v1.0.0 S5 (KI-555): UI команды получает организацию и роль из
+          // /auth/me, не делая второй запрос.
+          organizationId: ORG_ID,
+          role: 'owner',
+        }),
       );
       expect(service.getMeAsync).toHaveBeenCalledWith(USER_ID);
     });

@@ -3,7 +3,9 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { fetchWorkflowRunsAsync } from '@/lib/api';
 import { APP_VERSION } from '@/lib/app-version';
+import { fetchOrganizationMembersAsync } from '@/lib/org-api';
 import ru from '@/i18n/ru.json';
+import { useAuthStore } from '@/stores/auth';
 import { useWorkflowStore } from '@/stores/workflow';
 import { TopBar } from './TopBar';
 
@@ -21,6 +23,23 @@ vi.mock('@/lib/api', async (importOriginal) => {
     ...actual,
     fetchWorkflowRunsAsync: vi.fn(() =>
       Promise.resolve({ runs: [], nextCursor: null, total: 0 }),
+    ),
+  };
+});
+
+/**
+ * Мок API команды (v1.0.0 S5).
+ *
+ * `TeamPage` при открытии грузит участников организации; в тесте шапки сеть не
+ * нужна — проверяется только факт открытия модалки.
+ */
+vi.mock('@/lib/org-api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/org-api')>();
+
+  return {
+    ...actual,
+    fetchOrganizationMembersAsync: vi.fn(() =>
+      Promise.resolve({ members: [], invitations: [] }),
     ),
   };
 });
@@ -207,3 +226,50 @@ describe('TopBar — единый статус с номером попытки 
     );
   });
 });
+
+describe('TopBar — команда и аудит (v1.0.0 S5)', () => {
+  /** Пользователь организации в тестах шапки. */
+  const USER = {
+    id: '11111111-1111-4111-8111-111111111111',
+    email: 'user@example.com',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    organizationId: '22222222-2222-4222-8222-222222222222',
+    role: 'member' as const,
+  };
+
+  afterEach(() => {
+    useAuthStore.setState({ user: null, accessToken: null, status: 'guest' });
+    vi.mocked(fetchOrganizationMembersAsync).mockClear();
+  });
+
+  it('кнопка «Команда» открывает модалку команды (data-topbar-team)', async () => {
+    useAuthStore.getState().setSession(USER, 'access-token');
+
+    const { container } = renderTopBar();
+    const button = container.querySelector(
+      '[data-topbar-team]',
+    ) as HTMLButtonElement | null;
+
+    expect(button).not.toBeNull();
+    // Кнопка не зависит от сохранённости workflow: она всегда доступна
+    // аутентифицированному пользователю (workflow в тесте не сохранён).
+    expect(button).not.toBeDisabled();
+    expect(button?.textContent).toContain(ru['topbar.team']);
+
+    fireEvent.click(button as HTMLButtonElement);
+
+    expect(
+      await screen.findByRole('dialog', { name: ru['team.title'] }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(vi.mocked(fetchOrganizationMembersAsync)).toHaveBeenCalled(),
+    );
+  });
+
+  it('гостю кнопка не показывается: без сессии нет организации', () => {
+    const { container } = renderTopBar();
+
+    expect(container.querySelector('[data-topbar-team]')).toBeNull();
+  });
+});
+

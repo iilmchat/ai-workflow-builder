@@ -126,7 +126,14 @@ describe('requestAsync: Content-Type (KI-479)', () => {
   it('FormData с токеном: Authorization ставится, Content-Type — нет', async () => {
     const fetchMock = stubFetch();
     useAuthStore.getState().setSession(
-      { id: 'user-1', email: 'user@example.com', createdAt: '2026-01-01T00:00:00.000Z' },
+      {
+        id: 'user-1',
+        email: 'user@example.com',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        // v1.0.0 S5: организация и роль — обязательные поля публичных данных.
+        organizationId: 'org-1',
+        role: 'owner',
+      },
       'access-token-1',
     );
     const formData = new FormData();
@@ -160,6 +167,8 @@ describe('requestAsync: Content-Type (KI-479)', () => {
               id: 'user-1',
               email: 'user@example.com',
               createdAt: '2026-01-01T00:00:00.000Z',
+              organizationId: 'org-1',
+              role: 'owner',
             },
             accessToken: 'access-token-2',
           }),

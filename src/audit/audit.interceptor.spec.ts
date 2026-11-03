@@ -198,6 +198,8 @@ describe('AuditInterceptor', () => {
         `/workflow/${RESOURCE_ID}/document-templates/${RESOURCE_ID}`,
         'document_template.delete',
       ],
+      // v1.0.0 S5 (KI-563): приглашение в организацию.
+      ['POST', '/admin/members/invite', 'member.invite'],
       ['POST', '/runs', 'run.start'],
       // Неизвестный маршрут не теряется: fallback http.<метод>.
       ['POST', '/engine/validate', 'http.post'],

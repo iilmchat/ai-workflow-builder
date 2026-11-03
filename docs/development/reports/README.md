@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.0.0 | S5 | Team & Audit UI: `GET /admin/members` + `POST /admin/members/invite`, таблица `organization_invitations` (миграция 0016), «сжигание» приглашения при регистрации, действие `member.invite`, модалка `TeamPage` (вкладки «Участники»/«Аудит», keyset-аудит), кнопка «Команда» в TopBar, `UserPublic` с `organizationId`+`role` | 2026-11-03 | [S5-team-ui.md](v1.0.0/S5-team-ui.md) |
 | v1.0.0 | S4 | Prometheus Metrics: `MetricsService` (собственный Registry, 4 метрики), глобальный `MetricsInterceptor`, `GET /metrics` без auth, метрики движка (узлы/стоимость) и агента (LLM-шаги) | 2026-11-03 | [S4-metrics.md](v1.0.0/S4-metrics.md) |
 | v1.0.0 | S3 | Audit Logs: `audit_logs`, глобальный `AuditInterceptor` (POST/PATCH/DELETE), `AuditService`, `GET /admin/audit` (owner/admin, keyset), `users.role` | 2026-11-02 | [S3-audit.md](v1.0.0/S3-audit.md) |
 | v1.0.0 | S2 | Workflow Isolation: `WorkflowAccess`/`toWorkflowAccess`, org-фильтр во всех выборках workflow/runs/document-templates/`sub_workflow`, кросс-организационные инвайты 404, публичный share без org-фильтра | 2026-11-02 | [S2-isolation.md](v1.0.0/S2-isolation.md) |

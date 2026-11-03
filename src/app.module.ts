@@ -36,6 +36,8 @@ import { MediaModule } from './media/media.module.js';
 // v1.0.0 S4: метрики Prometheus — @Global-модуль с ручкой GET /metrics.
 import { MetricsModule } from './metrics/metrics.module.js';
 import { MetricsInterceptor } from './metrics/metrics.interceptor.js';
+// v1.0.0 S5: команда организации — GET /admin/members, POST /admin/members/invite.
+import { OrgMembersModule } from './organizations/org-members.module.js';
 import { WorkflowModule } from './workflow/workflow.module.js';
 import { EngineModule } from './engine/engine.module.js';
 import { NodesModule } from './nodes/nodes.module.js';
@@ -139,6 +141,9 @@ const WEB_DIST_PATH = join(
     // контроллера GET /admin/audit, и потому что AuditService экспортируется
     // в контекст AppModule для глобального AuditInterceptor (ниже).
     AuditModule,
+    // v1.0.0 S5 (DESIGN V100 § 3.4): команда организации. Контроллер под
+    // префиксом /admin/members, OrgOwnerGuard берётся из AuditModule.
+    OrgMembersModule,
     LlmModule,
     WebSearchModule,
     DocumentsModule,
