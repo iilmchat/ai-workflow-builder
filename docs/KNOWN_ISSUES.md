@@ -8947,10 +8947,17 @@ MediaModelInfo, engine-DTO
 ## v1.0.0 — Prometheus Metrics (S4, 2026-11-03)
 
 ### KI-574 — `prom-client` помечен deprecated upstream
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-11-03
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Исправлено в:** v1.1.0 (S4) | **Обнаружено:** 2026-11-03
 - **Файлы:** `package.json`, `pnpm-lock.yaml`, `src/metrics/`
 - **Описание:** `pnpm add prom-client` (требование S4) установил 15.1.3; метаданные npm: «prom-client has been replaced by @prometheus-io/client». Пакет работает, но не развивается.
 - **Решение:** отдельной задачей мигрировать на `@prometheus-io/client` (сверить API `Registry`/`Histogram`/`Counter`, обновить импорты и тесты) либо зафиксировать версию и пересмотреть в v1.1.
+- **Fix (v1.1.0 S4):** `prom-client` удалён, установлен `@prometheus-io/client@0.16.1`
+  (Apache-2.0, официальный клиент Prometheus). Импорты `Registry`/`Histogram`/
+  `Counter`/`collectDefaultMetrics` заменены механически — API совместим;
+  `contentType` остался `text/plain; version=0.0.4; charset=utf-8`, тесты и
+  смоук подтверждают формат. Ограничение по Node (engines `^22 || ^24 || >=26`)
+  зафиксировано в KI-609.
+- **Связанные:** KI-576, KI-577, KI-581, KI-582, KI-609.
 
 ### KI-575 — `/metrics` без аутентификации: требование к периметру
 - **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-03
@@ -8959,16 +8966,33 @@ MediaModelInfo, engine-DTO
 - **Решение:** в S6/ops задокументировать: `/metrics` не публиковать наружу, доступ только из scrape-сети (ingress/reverse-proxy allowlist).
 
 ### KI-576 — `agent_step_duration_seconds` без status/error label
-- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-03
-- **Файлы:** `src/agent/agent.service.ts`
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Исправлено в:** v1.1.0 (S4) | **Обнаружено:** 2026-11-03
+- **Файлы:** `src/agent/agent.service.ts`, `src/metrics/metrics.service.ts`
 - **Описание:** по контракту S4 у метрики только label `model`; неуспешные LLM-шаги не записываются. Error-rate и latency отказов агента по метрикам не построить.
 - **Решение:** в S5 добавить `agent_step_errors_total{model,reason}` или label `status` (правка контракта метрики и дашбордов).
+- **Fix (v1.1.0 S4):** у `agent_step_duration_seconds` появился label `status`
+  (`success`/`error`). В `AgentService` вызов LLM обёрнут в `try/catch`:
+  успешный шаг пишется как `success`, ошибка — как `error`, после чего
+  пробрасывается в retry-guard. Ошибки больше не смешиваются с нормальными
+  шагами; дашборд считает их через
+  `rate(agent_step_duration_seconds_count{status="error"}[5m])`. Тесты:
+  `agent.service.spec.ts` (success/error), `metrics.service.spec.ts` (серии),
+  смоук — реальный запуск с mock-LLM 500.
+- **Связанные:** KI-574, KI-577, KI-581, KI-610.
 
 ### KI-577 — Агентский `llm_call` не инструментирован
-- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-03
-- **Файлы:** `src/agent/agent.service.ts`
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Исправлено в:** v1.1.0 (S4) | **Обнаружено:** 2026-11-03
+- **Файлы:** `src/agent/agent.service.ts`, `src/metrics/metrics.service.ts`
 - **Описание:** инструмент `llm_call` делает второй платный LLM-вызов внутри шага; он не попадает в `agent_step_duration_seconds` (latency tool-вызова не видна; стоимость учитывается отдельно через usage/budget).
 - **Решение:** при необходимости `agent_tool_llm_duration_seconds{model}` или общий `llm_request_duration_seconds` на уровне `LlmService` (S5).
+- **Fix (v1.1.0 S4):** добавлена гистограмма
+  `llm_call_duration_seconds{model,status}` с ведрами 0.05…60 с.
+  `executeToolAsync` замеряет выполнение `llm_call` (модель — из аргументов
+  инструмента или из модели агента) и пишет `success`/`error`; ошибка
+  инструмента не прерывает цикл. `model`-label санитизируется по реестру
+  моделей (`unknown` для произвольной строки от LLM), чтобы не раздувать
+  кардинальность. Смоук подтверждает серию после реального `llm_call`.
+- **Связанные:** KI-574, KI-576, KI-610.
 
 ### KI-578 — Переиспользованные узлы (KI-046) считаются completed с ~0 с
 - **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-03
@@ -8989,23 +9013,38 @@ MediaModelInfo, engine-DTO
 - **Решение:** расширить нормализацию (slug/hex/числа) либо брать шаблон из Nest-метаданных (`getClass()/getHandler()`), добавив паритет-тест.
 
 ### KI-581 — Нет default process-метрик и моста OTel→Prometheus
-- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-03
+- **Приоритет:** 🟢 Low | **Статус:** Fixed (частично) | **Исправлено в:** v1.1.0 (S4) | **Обнаружено:** 2026-11-03
 - **Файлы:** `src/metrics/metrics.service.ts`, `src/observability/`
 - **Описание:** экспортируются только 4 кастомные метрики; CPU/RSS/event-loop/GC (`collectDefaultMetrics`) и моста OTel-трейсов в Prometheus нет. DESIGN § 2.3 перечисляет только кастомные, но для дежурства стандартные process-метрики полезны.
 - **Решение:** добавить `collectDefaultMetrics({ register })` и/или OTel Prometheus exporter в v1.1 (следить за памятью и префиксами).
+- **Fix (v1.1.0 S4, частично):** в конструкторе `MetricsService` вызывается
+  `collectDefaultMetrics({ register: this.registry })` — CPU, RSS, heap,
+  event loop, GC, handles. Имена `process_*`/`nodejs_*` не конфликтуют с
+  доменными (`http_`, `run_`, `agent_`, `llm_call_`); тест и смоук проверяют
+  `nodejs_*`/`process_*`. **Остаток:** моста OTel-трейсов в Prometheus нет —
+  вынесен в KI-612.
+- **Связанные:** KI-574, KI-576, KI-577, KI-582, KI-609, KI-611, KI-612.
 
 ### KI-582 — Дашбордов/алертов Grafana в репозитории нет
-- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-03
-- **Файлы:** `docs/`, `deploy/` (план)
+- **Приоритет:** 🟢 Low | **Статус:** Fixed (частично) | **Исправлено в:** v1.1.0 (S4) | **Обнаружено:** 2026-11-03
+- **Файлы:** `infra/grafana/dashboard.json`, `infra/prometheus/prometheus.yml`
 - **Описание:** S4 даёт экспозицию; provisioning Grafana (dashboard JSON, alert rules) и scrape-config в репозитории отсутствуют — мониторинг пока ручной.
 - **Решение:** в S6 добавить `deploy/prometheus/` и `deploy/grafana/`: scrape-config + базовый дашборд (HTTP latency/error rate, длительности узлов, стоимость, шаги агента).
+- **Fix (v1.1.0 S4, частично):** добавлены `infra/prometheus/prometheus.yml`
+  (job `workflow-builder`, `metrics_path: /metrics`, target `localhost:3000`)
+  и `infra/grafana/dashboard.json` с тремя панелями: HTTP latency p95,
+  Run duration p95 по типам узлов, Agent errors (`status="error"` для
+  `agent_step` и `llm_call`). JSON парсится и проверяется смоуком.
+  **Остаток:** alert rules, provisioning datasource и проверка дашборда в CI
+  не добавлены (KI-610); target `localhost` требует правки для Docker (KI-613).
+- **Связанные:** KI-574, KI-575, KI-581, KI-610, KI-613.
 
 ---
 
 ## v1.0.0 — Team & Audit UI (S5, 2026-11-03)
 
 ### KI-583 — Приглашение не переносит уже зарегистрированного пользователя в организацию
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-11-03
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Исправлено в:** v1.1.0 (S4) | **Обнаружено:** 2026-11-03
 - **Файлы:** `src/organizations/org-members.service.ts`, `src/auth/auth.service.ts`
 - **Описание:** `POST /admin/members/invite` принимает только ещё не
   зарегистрированный email: если строка `users` с таким email существует, сервис
@@ -9209,7 +9248,7 @@ MediaModelInfo, engine-DTO
 - **Связанные:** KI-584, KI-592, KI-597.
 
 ### KI-594 — Параметр `?invite=<uuid>` в письме не используется UI
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-11-03
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Исправлено в:** v1.1.0 (S4) | **Обнаружено:** 2026-11-03
 - **Файлы:** `src/email/email.service.ts`,
   `web/src/components/auth/LoginPage.tsx`
 - **Описание:** ссылка в письме ведёт на `/login?invite=<uuid приглашения>`
@@ -9238,7 +9277,7 @@ MediaModelInfo, engine-DTO
 - **Связанные:** DESIGN V110 § 6, KI-584.
 
 ### KI-596 — Нет отдельного rate limit на отправку приглашений
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-11-03
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Исправлено в:** v1.1.0 (S4) | **Обнаружено:** 2026-11-03
 - **Файлы:** `src/organizations/org-members.controller.ts`,
   `src/email/email.service.ts`
 - **Описание:** `POST /admin/members/invite` подчиняется только глобальному
@@ -9288,7 +9327,7 @@ MediaModelInfo, engine-DTO
 ## v1.1.0 — Team Management (S2, 2026-11-03)
 
 ### KI-599 — Удаление участника принудительно передаёт его графы владельцу, без выбора
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-11-03
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed (частично) | **Исправлено в:** v1.1.0 (S4) | **Обнаружено:** 2026-11-03
 - **Файлы:** `src/organizations/org-members.service.ts`,
   `web/src/components/TeamPage.tsx`
 - **Описание:** «Исключение из организации» не может оставить графы
@@ -9305,7 +9344,7 @@ MediaModelInfo, engine-DTO
 - **Связанные:** KI-586, KI-583, KI-604.
 
 ### KI-600 — Удалённого участника нельзя пригласить обратно
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-11-03
+- **Приоритет:** 🟢 Low | **Статус:** Fixed (частично) | **Исправлено в:** v1.1.0 (S4) | **Обнаружено:** 2026-11-03
 - **Файлы:** `src/organizations/org-members.service.ts`
 - **Описание:** удаление оставляет учётную запись (участник переезжает в
   личную организацию), поэтому `POST /admin/members/invite` на его email
@@ -9465,29 +9504,106 @@ MediaModelInfo, engine-DTO
   выборе первой.
 - **Связанные:** KI-585.
 
-### KI-605 — Write-пути доверяют `orgId` из токена (High)
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-11-04
-- **Файлы:** `src/workflow/workflow.service.ts`, `src/audit/audit.interceptor.ts`
-- **Описание:** Удалённый участник старым токеном создаёт workflow в старой организации и пишет туда аудит. Владелец его не видит, но БД засоряется.
-- **Решение:** Перевести все write-пути на резолв `orgId` из БД (в S5).
+## v1.1.0 — Metrics Improvement (S4, 2026-11-04)
 
-### KI-606 — Список действий в UI-фильтре захардкожен
-- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-11-04
-- **Файлы:** `web/src/lib/audit-api.ts`
-- **Описание:** Новое действие backend не появится в селекте автоматически.
-- **Решение:** Добавить API `GET /admin/audit/actions` (v1.2+).
+### KI-609 — `@prometheus-io/client` требует Node 22/24/26+
+- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-04
+- **Файлы:** `package.json`, `pnpm-lock.yaml`, `.github/workflows/ci.yml`
+- **Описание:** `@prometheus-io/client@0.16.1` объявляет
+  `engines: { node: "^22 || ^24 || >=26" }`, тогда как `package.json` проекта
+  `engines` не фиксирует. CI использует Node 22, локальная машина — Node 24,
+  поэтому сейчас всё совместимо; на Node 20 (или 23) установка/работа не
+  гарантированы. Пакет молодой (0.x) — API может меняться.
+- **Решение:** зафиксировать `engines.node` в `package.json` (`>=22`) и
+  добавить его в README/RELEASES; при обновлении мажора `@prometheus-io/client`
+  прогонять `metrics.service.spec.ts` и смоук (формат экспозиции).
+- **Связанные:** KI-574.
 
-### KI-607 — 4 запроса к БД на страницу аудита
+### KI-610 — Grafana dashboard статичен: панели не проверяются в CI и нет alert rules
 - **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-11-04
-- **Файлы:** `src/audit/audit.service.ts`
-- **Описание:** Роль guard'а, org, count, страница.
-- **Решение:** Объединить чтение роли и org в один запрос (v1.2+).
+- **Файлы:** `infra/grafana/dashboard.json`
+- **Описание:** JSON дашборда — статический артефакт: CI проверяет только
+  `JSON.parse` (смоук), но не рендерит панели и не сверяет запросы с именами
+  метрик. При переименовании `http_request_duration_seconds`/
+  `agent_step_duration_seconds`/`llm_call_duration_seconds` панель молча
+  покажет «No data». Alert rules и provisioning datasource в репозиторий не
+  входили (DESIGN § 3.4 требует только dashboard.json + prometheus.yml).
+- **Решение:** добавить `infra/grafana/provisioning/` (datasource + dashboard
+  provider), alert rules (error rate агента, p95 HTTP) и лёгкий CI-тест:
+  парсить dashboard JSON, проверять, что каждый `expr` ссылается на имя
+  метрики из `MetricsService` (или из фиксированного списка).
+- **Связанные:** KI-582, KI-613.
 
-### KI-608 — UI не предотвращает `from > to`
+### KI-611 — `collectDefaultMetrics` регистрируется на каждый инстанс и не снимается
+- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-04
+- **Файлы:** `src/metrics/metrics.service.ts`
+- **Описание:** каждый `MetricsService` создаёт свой `Registry` и вызывает
+  `collectDefaultMetrics`, включая `PerformanceObserver` для GC (nodejs_gc_*).
+  В проде инстанс один, но тесты создают десятки сервисов; наблюдатели и
+  зарегистрированные коллекторы не снимаются при уничтожении сервиса
+  (Nest не вызывает для этого хук). На коротких тестах это незаметно, при
+  долгоживущем процессе с пересозданием сервиса — утечка наблюдателей.
+- **Решение:** вынести default-коллекторы в отдельный singleton-провайдер (или
+  регистрировать их один раз на процесс с общим реестром), при необходимости —
+  `OnApplicationShutdown` с `registry.clear()`; в тестах использовать
+  `collectDefaults: false`-опцию конструктора.
+- **Связанные:** KI-581.
+
+### KI-612 — OTel-трейсы не экспортируются в Prometheus
 - **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-11-04
-- **Файлы:** `web/src/components/TeamPage.tsx`
-- **Описание:** Backend отдаёт 400, UI показывает общую ошибку.
-- **Решение:** Добавить `min`/`max` в `<input type="date">`.
+- **Файлы:** `src/observability/`, `src/metrics/`
+- **Описание:** S4 добавил стандартные process-метрики, но моста
+  OTel→Prometheus нет: `OtelService` отправляет трейсы в OTLP-коллектор, а
+  `GET /metrics` отдаёт только Prometheus-клиент. Метрики из OTel-инструментов
+  (если появятся) не попадут в scrape; корреляция трейсов и метрик — только
+  на стороне Grafana (Tempo+Prometheus), если она настроена.
+- **Решение:** при необходимости добавить `@opentelemetry/exporter-prometheus`
+  и `MeterProvider` с тем же реестром либо явно зафиксировать, что источники
+  метрик — только `MetricsService`/`collectDefaultMetrics`.
+- **Связанные:** KI-581, KI-609.
+
+### KI-613 — Scrape-config `localhost:3000` зависит от способа запуска Prometheus
+- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-04
+- **Файлы:** `infra/prometheus/prometheus.yml`
+- **Описание:** target `localhost:3000` корректен, когда Prometheus запущен на
+  хосте рядом с backend. В Docker-сети `localhost` указывает на сам контейнер
+  Prometheus: нужен `host.docker.internal:3000` (Docker Desktop) или DNS-имя
+  сервиса backend; в Kubernetes — Service/namespace с network policy.
+  Конфиг — локальный пример, не production-манифест.
+- **Решение:** в S6 добавить варианты конфига для docker-compose/k8s и
+  задокументировать target в RELEASES/ops; `/metrics` не публиковать наружу
+  (KI-575).
+- **Связанные:** KI-575, KI-582, KI-610.
+
+### KI-609 — `@prometheus-io/client` требует Node 22/24/26+
+- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-04
+- **Файлы:** `package.json`
+- **Описание:** `engines.node` проекта не зафиксирован.
+- **Решение:** Добавить `engines.node: ">=22"`.
+
+### KI-610 — Grafana dashboard статичен
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-11-04
+- **Файлы:** `infra/grafana/dashboard.json`
+- **Описание:** Панели не проверяются в CI, alert rules/provisioning нет.
+- **Решение:** Добавить CI-тест на парсинг JSON и проверку `expr`.
+
+### KI-611 — `collectDefaultMetrics` не снимает GC-наблюдатель
+- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-04
+- **Файлы:** `src/metrics/metrics.service.ts`
+- **Описание:** При пересоздании сервиса в долгом процессе утечка наблюдателей.
+- **Решение:** Вызывать `clearDefaultMetrics` в `onApplicationShutdown`.
+
+### KI-612 — Нет моста OTel→Prometheus
+- **Приоритет:** 🟢 Low | **Статус:** Open | **Обнаружено:** 2026-11-04
+- **Файлы:** `src/metrics/metrics.service.ts`
+- **Описание:** Метрики из OTel-инструментов не попадают в `/metrics`.
+- **Решение:** Добавить мост.
+
+### KI-613 — Scrape-target `localhost:3000` — локальный пример
+- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-04
+- **Файлы:** `infra/prometheus/prometheus.yml`
+- **Описание:** В Docker-сети Prometheus увидит себя.
+- **Решение:** Использовать `host.docker.internal` или DNS сервиса.
 
 ## Сводка по статусам
 
@@ -9497,25 +9613,27 @@ KI-552..558 в v1.0.0 S1, KI-559..564 в v1.0.0 S2, KI-565..573 в v1.0.0 S3,
 KI-574..582 в v1.0.0 S4, закрытия KI-554 (частично)/555/563/573 и заведения
 KI-583..591 в v1.0.0 S5, закрытия KI-584 и заведения KI-592..598 в v1.1.0 S1,
 закрытия KI-586 и заведения KI-599..604 в v1.1.0 S2, закрытия KI-585/587,
-частичного закрытия KI-601 и заведения KI-605..608 в v1.1.0 S3): всего
-**595** записей `### KI-` (включая шаблон KI-001), статусов — **595**.
-Дополнительно удалены 6 кратких дублей KI-599..604 (они остались после docs-шага
-S2, хотя отчёт S2 сообщал об их удалении): до удаления было 597 заголовков при
-591 уникальном номере.
+частичного закрытия KI-601 и заведения KI-605..608 в v1.1.0 S3, закрытия
+KI-574/576/577, частичного закрытия KI-581/582 и заведения KI-609..613 в
+v1.1.0 S4): всего **600** записей `### KI-` (включая шаблон KI-001),
+статусов — **600**. Дополнительно удалены 4 кратких дубля KI-605..608 (они
+появились после docs-шага S3, хотя подробные записи уже были): до удаления
+было 604 заголовка при 600 уникальных номерах.
 
 | Статус | Количество |
 |---|---:|
-| Fixed | 249 |
-| Fixed (частично) | 3 |
-| Open | 289 |
-| Documented | 44 |
+| Fixed | 255 |
+| Fixed (частично) | 5 |
+| Open | 287 |
+| Documented | 43 |
 | Documented (не воспроизводится) | 1 |
 | Planned | 3 |
 | Deferred | 2 |
 | Won't Fix | 4 |
-| **Итого** | **595** |
+| **Итого** | **600** |
 
-Сумма по статусам = числу записей `### KI-` = 595 (RULES 3.20).
+Сумма по статусам = числу записей `### KI-` = 600 (RULES 3.20).
+
 
 
 

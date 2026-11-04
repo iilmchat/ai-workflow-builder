@@ -111,6 +111,8 @@ async function createHarness(
   mcpCreateTool: ReturnType<typeof vi.fn>;
   httpFetchAsync: ReturnType<typeof vi.fn>;
   observeAgentStep: ReturnType<typeof vi.fn>;
+  observeLlmCall: ReturnType<typeof vi.fn>;
+  hasModel: ReturnType<typeof vi.fn>;
 }> {
   const generateAsync = vi.fn(
     (
@@ -163,9 +165,13 @@ async function createHarness(
       executeAsync: () => Promise.resolve({ ok: true }),
     }),
   );
-  // v1.0.0 S4: метрики — внешняя граница (Prometheus); юнит-тест проверяет
-  // только вызовы `observeAgentStep`, реестр не поднимается.
+  // v1.0.0 S4 / v1.1.0 S4: метрики — внешняя граница (Prometheus); юнит-тест
+  // проверяет только вызовы observeAgentStep/observeLlmCall, реестр не поднимается.
   const observeAgentStep = vi.fn();
+  const observeLlmCall = vi.fn();
+  // v1.1.0 S4: перед записью model-label сервис сверяет модель с реестром
+  // (кардинальность). В тестах по умолчанию все модели «известны».
+  const hasModel = vi.fn((_modelId: string) => true);
   // KI-407: бюджет — внешняя граница (БД), в юнит-тесте только «пускает» или
   // «бросает». Оценка фиксируется в моке, чтобы тест проверил, что передана
   // именно накопленная стоимость цикла.
@@ -205,6 +211,7 @@ async function createHarness(
       {
         provide: LlmRegistryService,
         useValue: {
+          hasModel,
           resolveEmbeddingProviderAsync: vi.fn(() =>
             Promise.resolve({ embedAsync }),
           ),
@@ -244,8 +251,9 @@ async function createHarness(
         provide: McpToolAdapter,
         useValue: { createAgentTool: mcpCreateTool },
       },
-      // v1.0.0 S4: `AgentService` пишет длительность LLM-шагов в метрики.
-      { provide: MetricsService, useValue: { observeAgentStep } },
+      // v1.0.0 S4: `AgentService` пишет длительность LLM-шагов в метрики;
+      // v1.1.0 S4 — плюс `llm_call` и статусы success/error.
+      { provide: MetricsService, useValue: { observeAgentStep, observeLlmCall } },
     ],
   }).compile();
 
@@ -264,6 +272,8 @@ async function createHarness(
     mcpCreateTool,
     httpFetchAsync,
     observeAgentStep,
+    observeLlmCall,
+    hasModel,
   };
 }
 
@@ -768,7 +778,7 @@ describe('AgentService — метрики LLM-шага (v1.0.0 S4)', () => {
     };
   }
 
-  it('один LLM-шаг: observeAgentStep вызван один раз с моделью и duration > 0', async () => {
+  it('один LLM-шаг: observeAgentStep вызван со status=success, моделью и duration > 0', async () => {
     const { service, generateAsync, observeAgentStep } = await createHarness([
       { text: '{"final":"готово"}' },
     ]);
@@ -784,13 +794,16 @@ describe('AgentService — метрики LLM-шага (v1.0.0 S4)', () => {
     expect(result.answer).toBe('готово');
     expect(observeAgentStep).toHaveBeenCalledTimes(1);
 
-    const [model, duration] = observeAgentStep.mock.calls[0] as [
+    const [model, status, duration] = observeAgentStep.mock.calls[0] as [
+      string,
       string,
       number,
     ];
 
     // Метка — модель узла (кардинальность ограничена списком моделей).
     expect(model).toBe('claude-test');
+    // v1.1.0 S4 (KI-576): успешный шаг отделён от ошибок.
+    expect(status).toBe('success');
     expect(typeof duration).toBe('number');
     expect(Number.isFinite(duration)).toBe(true);
     expect(duration).toBeGreaterThan(0);
@@ -820,16 +833,17 @@ describe('AgentService — метрики LLM-шага (v1.0.0 S4)', () => {
     // метрику не пишет (это не вызов модели).
     expect(observeAgentStep).toHaveBeenCalledTimes(2);
 
-    const calls = observeAgentStep.mock.calls as [string, number][];
+    const calls = observeAgentStep.mock.calls as [string, string, number][];
 
     expect(calls.map((call) => call[0])).toEqual([
       'claude-test',
       'claude-test',
     ]);
-    expect(calls.every((call) => call[1] > 0)).toBe(true);
+    expect(calls.map((call) => call[1])).toEqual(['success', 'success']);
+    expect(calls.every((call) => call[2] > 0)).toBe(true);
   });
 
-  it('ошибка LLM: observeAgentStep не вызывается (наблюдение только при успехе)', async () => {
+  it('ошибка LLM: observeAgentStep со status=error, ошибка пробрасывается', async () => {
     const providerError = new LlmProviderException('anthropic', 'rate limit', {
       retryable: true,
     });
@@ -841,8 +855,132 @@ describe('AgentService — метрики LLM-шага (v1.0.0 S4)', () => {
       service.runAgentAsync(agentNode(), {}, 'run-1'),
     ).rejects.toBe(providerError);
 
-    // У гистограммы нет label статуса: падение шага не искажает длительности.
-    expect(observeAgentStep).not.toHaveBeenCalled();
+    // v1.1.0 S4 (KI-576): падение шага больше не «невидимо» — оно пишется с
+    // status='error' и не портит успешные серии.
+    expect(observeAgentStep).toHaveBeenCalledTimes(1);
+
+    const [model, status] = observeAgentStep.mock.calls[0] as [
+      string,
+      string,
+      number,
+    ];
+
+    expect(model).toBe('claude-test');
+    expect(status).toBe('error');
+  });
+
+  it('llm_call: отдельная метрика со status=success и моделью из аргументов', async () => {
+    const toolReply =
+      '{"tool":"llm_call","input":{"prompt":"ещё раз","model":"gpt-4o-mini"}}';
+    const { service, generateAsync, observeAgentStep, observeLlmCall } =
+      await createHarness([]);
+
+    generateAsync
+      .mockResolvedValueOnce({
+        text: toolReply,
+        usage: { inputTokens: 10, outputTokens: 5, model: 'claude-test' },
+      })
+      .mockImplementationOnce(delayedReply('второе мнение'))
+      .mockResolvedValueOnce({
+        text: '{"final":"готово"}',
+        usage: { inputTokens: 10, outputTokens: 5, model: 'claude-test' },
+      });
+
+    const result = await service.runAgentAsync(
+      agentNode({ tools: ['llm_call'] }),
+      {},
+      'run-1',
+    );
+
+    expect(result.answer).toBe('готово');
+    // Метрика llm_call — одна, с моделью из аргументов инструмента.
+    expect(observeLlmCall).toHaveBeenCalledTimes(1);
+
+    const [model, status, duration] = observeLlmCall.mock.calls[0] as [
+      string,
+      string,
+      number,
+    ];
+
+    expect(model).toBe('gpt-4o-mini');
+    expect(status).toBe('success');
+    expect(duration).toBeGreaterThan(0);
+    // Два LLM-шага агента (до и после инструмента) — оба success.
+    expect(
+      (observeAgentStep.mock.calls as [string, string, number][]).map(
+        (call) => call[1],
+      ),
+    ).toEqual(['success', 'success']);
+  });
+
+  it('llm_call: падение вызова пишется со status=error и не роняет цикл', async () => {
+    const toolReply = '{"tool":"llm_call","input":{"prompt":"ещё раз"}}';
+    const { service, generateAsync, observeLlmCall } = await createHarness([]);
+
+    generateAsync
+      .mockResolvedValueOnce({
+        text: toolReply,
+        usage: { inputTokens: 10, outputTokens: 5, model: 'claude-test' },
+      })
+      .mockRejectedValueOnce(
+        new LlmProviderException('openai', 'upstream 500'),
+      )
+      .mockResolvedValueOnce({
+        text: '{"final":"справился"}',
+        usage: { inputTokens: 10, outputTokens: 5, model: 'claude-test' },
+      });
+
+    const result = await service.runAgentAsync(
+      agentNode({ tools: ['llm_call'] }),
+      {},
+      'run-1',
+    );
+
+    // Инструмент возвращает текст ошибки модели, цикл продолжается.
+    expect(result.answer).toBe('справился');
+    expect(observeLlmCall).toHaveBeenCalledTimes(1);
+
+    const [model, status] = observeLlmCall.mock.calls[0] as [
+      string,
+      string,
+      number,
+    ];
+
+    // Модели в аргументах нет — метка берётся из модели агента.
+    expect(model).toBe('claude-test');
+    expect(status).toBe('error');
+  });
+
+  it('неизвестная модель в llm_call даёт label unknown (кардинальность)', async () => {
+    const toolReply =
+      '{"tool":"llm_call","input":{"prompt":"ещё раз","model":"ghost-model"}}';
+    const { service, generateAsync, observeLlmCall, hasModel } =
+      await createHarness([]);
+
+    hasModel.mockImplementation((modelId: string) => modelId !== 'ghost-model');
+
+    generateAsync
+      .mockResolvedValueOnce({
+        text: toolReply,
+        usage: { inputTokens: 10, outputTokens: 5, model: 'claude-test' },
+      })
+      .mockResolvedValueOnce({
+        text: 'второе мнение',
+        usage: { inputTokens: 10, outputTokens: 5, model: 'claude-test' },
+      })
+      .mockResolvedValueOnce({
+        text: '{"final":"готово"}',
+        usage: { inputTokens: 10, outputTokens: 5, model: 'claude-test' },
+      });
+
+    await service.runAgentAsync(
+      agentNode({ tools: ['llm_call'] }),
+      {},
+      'run-1',
+    );
+
+    // Произвольная строка от модели не создаёт новую серию Prometheus.
+    expect(observeLlmCall.mock.calls[0]?.[0]).toBe('unknown');
   });
 });
 

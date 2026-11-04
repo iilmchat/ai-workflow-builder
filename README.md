@@ -131,6 +131,14 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 - **Safe Filesystem (`read_file`/`write_file`):** чтение и запись TXT/CSV/JSON
   в изолированном `./data/workspace/{workflowId}/` с защитой от path traversal
   и лимитом 5 МБ на файл.
+- **Метрики и наблюдаемость (v1.0 S4; v1.1 S4):** `GET /metrics` (без auth,
+  только для scrape-сети) отдаёт `http_request_duration_seconds`,
+  `run_execution_duration_seconds`, `run_cost_total`,
+  `agent_step_duration_seconds{model,status}`,
+  `llm_call_duration_seconds{model,status}` и стандартные
+  `process_*`/`nodejs_*` (`collectDefaultMetrics`). Готовые конфиги —
+  `infra/prometheus/prometheus.yml` и `infra/grafana/dashboard.json`
+  (HTTP latency, длительность узлов, ошибки агента).
 
 ### 🔐 Совместная работа и безопасность
 

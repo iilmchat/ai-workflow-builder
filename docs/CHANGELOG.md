@@ -19,6 +19,24 @@
 
 ### Added
 
+- **Метрики: status агента, `llm_call`, process-метрики, Grafana (v1.1.0 S4,
+  DESIGN V110 § 3.4, KI-576/577/581/582)**
+  ([отчёт](development/reports/v1.1.0/S4-metrics.md)):
+  `agent_step_duration_seconds` получила label `status`
+  (`success`/`error`) — ошибки LLM больше не смешиваются с успешными шагами;
+  добавлена отдельная гистограмма `llm_call_duration_seconds{model,status}`
+  для платного вызова внутри tool-шага агента. В `MetricsService` включены
+  стандартные `collectDefaultMetrics` (CPU, RSS, heap, event loop, GC,
+  handles) с префиксами `process_*`/`nodejs_*`, не конфликтующими с доменными.
+  `LlmRegistryService.hasModel` ограничивает `model`-label известными
+  моделями (`unknown` для произвольной строки из графа/`llm_call`), чтобы не
+  раздувать кардинальность Prometheus. Добавлены `infra/prometheus/prometheus.yml`
+  (scrape `/metrics`, target `localhost:3000`) и `infra/grafana/dashboard.json`
+  с панелями HTTP latency p95, Run duration p95 и Agent errors.
+  Смоук на живом приложении — 18/18: реальный agent-run через mock OpenAI,
+  `curl /metrics` с `nodejs_`/`process_`/`llm_call_`, `status="success"` и
+  `status="error"` (mock 500). Ограничения — KI-609..613.
+
 - **Фильтры журнала аудита (v1.1.0 S3, DESIGN V110 § 3.3, KI-585)**
   ([отчёт](development/reports/v1.1.0/S3-audit-filters.md)):
   `GET /admin/audit` принимает `action` (точный код действия), `userId` (uuid
@@ -189,6 +207,12 @@
 
 ### Changed
 
+- **Миграция Prometheus-клиента (v1.1.0 S4, KI-574):** зависимость
+  `prom-client@15.1.3` заменена на `@prometheus-io/client@0.16.1` (официальный
+  клиент Prometheus, Apache-2.0). Импорты `Registry`/`Histogram`/`Counter`/
+  `collectDefaultMetrics` обновлены; API и формат экспозиции совместимы
+  (`text/plain; version=0.0.4; charset=utf-8`). Требование пакета к Node
+  (`^22 || ^24 || >=26`) зафиксировано в KI-609.
 - **Query-параметры `GET /admin/audit` и контракт (v1.1.0 S3, KI-585):**
   `AuditQuerySchema` расширена `action`/`userId`/`from`/`to`; `from > to`,
   невалидные даты/uuid/код действия — 400. В
@@ -294,6 +318,27 @@
 
 ### Fixed
 
+- **KI-574 — миграция на `@prometheus-io/client` (v1.1.0 S4)**
+  ([отчёт](development/reports/v1.1.0/S4-metrics.md)): `prom-client` удалён,
+  официальный клиент установлен; API реестра/гистограмм/счётчика и
+  `Content-Type` не изменились, все метрики и тесты переведены без правок
+  контракта.
+- **KI-576 — `status` в метрике шага агента (v1.1.0 S4)**
+  ([отчёт](development/reports/v1.1.0/S4-metrics.md)): успешные шаги —
+  `status="success"`, ошибки LLM — `status="error"` (с длительностью); ошибка
+  по-прежнему пробрасывается в retry-guard. Дашборд считает error-rate через
+  `rate(agent_step_duration_seconds_count{status="error"}[5m])`.
+- **KI-577 — инструментация `llm_call` (v1.1.0 S4)**
+  ([отчёт](development/reports/v1.1.0/S4-metrics.md)): гистограмма
+  `llm_call_duration_seconds{model,status}` пишется в `executeToolAsync`;
+  модель санитизируется по реестру, ошибка инструмента не роняет цикл.
+- **KI-581 (частично) — process-метрики (v1.1.0 S4)**
+  ([отчёт](development/reports/v1.1.0/S4-metrics.md)): `collectDefaultMetrics`
+  в изолированном реестре — `process_*`/`nodejs_*`; мост OTel→Prometheus
+  остался (KI-612).
+- **KI-582 (частично) — Grafana/Prometheus в репозитории (v1.1.0 S4)**
+  ([отчёт](development/reports/v1.1.0/S4-metrics.md)): dashboard JSON с тремя
+  панелями и scrape-config; alert rules/provisioning — KI-610.
 - **KI-585 — фильтры аудита (API + UI) (v1.1.0 S3, DESIGN V110 § 3.3)**
   ([отчёт](development/reports/v1.1.0/S3-audit-filters.md)): журнал можно
   фильтровать по действию, автору и датам; `total` считается по тому же
@@ -364,6 +409,13 @@
 
 ### Documented
 
+- **Ограничения метрик S4 (v1.1.0):** `@prometheus-io/client@0.16.1` требует
+  Node 22/24/26+, а `engines.node` проекта не зафиксирован — KI-609; Grafana
+  dashboard статичен, панели не проверяются в CI, alert rules нет — KI-610;
+  `collectDefaultMetrics` регистрируется на каждый инстанс `MetricsService` и
+  не снимается при shutdown — KI-611; моста OTel→Prometheus по-прежнему нет —
+  KI-612; scrape-target `localhost:3000` требует правки для Docker/k8s —
+  KI-613.
 - **Ограничения аудита S3 (v1.1.0):** удалённый участник со старым токеном
   по-прежнему может писать в старую организацию (`POST /workflow` и
   `AuditInterceptor` берут организацию из токена) — KI-605; список действий в
@@ -2348,6 +2400,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 

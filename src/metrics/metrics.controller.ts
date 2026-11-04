@@ -12,7 +12,7 @@ import { MetricsService } from './metrics.service.js';
  * (только агрегаты с ограниченными подписями).
  *
  * Заголовки выставляются из сервиса: `Content-Type` берётся из реестра
- * `prom-client` (`text/plain; version=0.0.4; charset=utf-8`), а
+ * `@prometheus-io/client` (`text/plain; version=0.0.4; charset=utf-8`), а
  * `Cache-Control: no-store` не даёт прокси/браузеру кэшировать экспозицию —
  * она меняется на каждом запросе. Тело — результат `registry.metrics()`,
  * поэтому формат остаётся на ответственности библиотеки, а не контроллера.

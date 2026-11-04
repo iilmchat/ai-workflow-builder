@@ -28,7 +28,10 @@ import { ConfigService } from '@nestjs/config';
 import { performance } from 'node:perf_hooks';
 import { SafeHttpClient } from '../common/http/safe-http.client.js';
 import { NodeDataValidationException } from '../engine/errors.js';
-import type { LlmUsage } from '../llm/llm-provider.interface.js';
+import type {
+  LlmGenerateResult,
+  LlmUsage,
+} from '../llm/llm-provider.interface.js';
 import { LlmProviderException } from '../llm/llm-provider.interface.js';
 import { calculateCostUsd } from '../llm/model-pricing.js';
 import { LlmRegistryService } from '../llm/llm-registry.service.js';
@@ -40,7 +43,10 @@ import {
   MCP_MAX_TOOLS_PER_NODE_LIMIT,
   type McpToolRef,
 } from '../mcp/mcp.types.js';
-import { MetricsService } from '../metrics/metrics.service.js';
+import {
+  MetricsService,
+  type MetricOperationStatus,
+} from '../metrics/metrics.service.js';
 import { withSpanAsync } from '../observability/tracing.js';
 import {
   BudgetExceededException,
@@ -316,6 +322,39 @@ function readLlmCallUsage(toolName: string, output: unknown): LlmUsage | null {
 }
 
 /**
+ * Определяет модель для метрики `llm_call_duration_seconds` (v1.1.0 S4).
+ *
+ * У `llm_call` модель необязательна: без неё инструмент вызывает модель
+ * агента (`context.model`). Аргумент приходит от модели, поэтому здесь только
+ * извлекается строка — ограничение кардинальности делает
+ * {@link AgentService.metricModelLabel} через реестр моделей.
+ *
+ * @param toolName - имя выполненного инструмента
+ * @param input - аргументы инструмента (`unknown` на границе контракта)
+ * @param fallbackModel - модель агента, если `input.model` не задана
+ * @returns id модели для label либо `null`, если это не `llm_call`
+ */
+function readLlmCallModel(
+  toolName: string,
+  input: unknown,
+  fallbackModel: string,
+): string | null {
+  if (toolName !== 'llm_call') {
+    return null;
+  }
+
+  if (
+    isPlainRecord(input) &&
+    typeof input.model === 'string' &&
+    input.model.trim().length > 0
+  ) {
+    return input.model.trim();
+  }
+
+  return fallbackModel;
+}
+
+/**
  * Проверяет, что строка — сбалансированный JSON-объект (с учётом строк).
  *
  * Нужно для ответов вида «```json {…} ```» или «Вот вызов: {…}»: модель не
@@ -578,9 +617,10 @@ export class AgentService {
    * (`prepareAsync`), а инструменты собираются из нативных и MCP-адаптеров.
    * Ошибка подключения падает **до** платного цикла (DESIGN § 3.2.5).
    *
-   * v1.0.0 S4: каждый успешный LLM-шаг цикла пишет длительность в
-   * `MetricsService` (`agent_step_duration_seconds`); ошибки LLM не пишутся —
-   * у гистограммы нет label статуса.
+   * v1.0.0 S4: каждый LLM-шаг цикла пишет длительность в
+   * `MetricsService` (`agent_step_duration_seconds`); с v1.1.0 S4 (KI-576) —
+   * с label `status` (`success`/`error`). Инструмент `llm_call` пишет
+   * отдельную `llm_call_duration_seconds` (KI-577).
    *
    * @param node - валидированные данные узла (`model`, `tools`, `mcpTools`, лимиты)
    * @param inputs - собранные входы узла (уходят в первое user-сообщение JSON)
@@ -706,16 +746,31 @@ export class AgentService {
             // `agent_step_duration_seconds`. `performance.now()` — монотонные
             // миллисекунды (node:perf_hooks), в метрику уходят секунды.
             const stepStartedAt = performance.now();
-            const response = await this.llm.generateAsync(prompt, node.model, {
-              maxTokens,
-            });
-            // S4: наблюдение только после успешного ответа. У гистограммы нет
-            // label `status`, поэтому ошибки LLM не записываются: иначе
-            // длительность падений смешалась бы с успешными шагами.
-            this.metrics.observeAgentStep(
-              node.model,
-              (performance.now() - stepStartedAt) / 1000,
-            );
+            let response: LlmGenerateResult;
+
+            try {
+              response = await this.llm.generateAsync(prompt, node.model, {
+                maxTokens,
+              });
+              // v1.1.0 S4 (KI-576): успешный шаг. `status` отделяет таймауты и
+              // отказы провайдера от нормальных ответов в той же гистограмме.
+              this.metrics.observeAgentStep(
+                this.metricModelLabel(node.model),
+                'success',
+                (performance.now() - stepStartedAt) / 1000,
+              );
+            } catch (error: unknown) {
+              // Ошибка LLM — тоже шаг агента: пишем длительность с
+              // `status='error'` и пробрасываем ошибку в retry-guard ниже.
+              // Иначе на дашборде были бы только успешные шаги, а p95 не
+              // учитывал бы «медленные падения».
+              this.metrics.observeAgentStep(
+                this.metricModelLabel(node.model),
+                'error',
+                (performance.now() - stepStartedAt) / 1000,
+              );
+              throw error;
+            }
             // usage может отсутствовать (часть прокси не отдаёт токены): шаг всё
             // равно должен быть валидным `LlmUsage`, иначе ломается timeline.
             const stepUsage: LlmUsage = response.usage ?? {
@@ -999,9 +1054,16 @@ export class AgentService {
     context: AgentToolContext,
   ): Promise<{ output: unknown; error: string | undefined }> {
     const startedAt = Date.now();
+    // v1.1.0 S4 (KI-577): отдельная гистограмма для `llm_call` — платного
+    // вызова модели внутри tool-шага. Модель берётся из аргументов (или из
+    // модели агента) и санитизируется по реестру перед записью в label.
+    const llmCallStartedAt = performance.now();
+    const llmCallModel = readLlmCallModel(tool.name, call.input, context.model);
 
     try {
       const output = await tool.executeAsync(call.input, context);
+
+      this.recordLlmCallMetric(llmCallModel, 'success', llmCallStartedAt);
 
       this.logger.log(
         `Агент: инструмент ${tool.name} выполнен за ${Date.now() - startedAt} мс`,
@@ -1011,6 +1073,8 @@ export class AgentService {
     } catch (error: unknown) {
       const message = toMessage(error);
 
+      this.recordLlmCallMetric(llmCallModel, 'error', llmCallStartedAt);
+
       // RULES 5.9: в лог — только имя инструмента и текст ошибки, без
       // аргументов (там могут быть пользовательские данные).
       this.logger.warn(
@@ -1019,6 +1083,45 @@ export class AgentService {
 
       return { output: null, error: message };
     }
+  }
+
+  /**
+   * Записывает длительность `llm_call` в метрику (v1.1.0 S4, KI-577).
+   *
+   * @param model - модель из аргументов инструмента либо `null`, если это не
+   *   `llm_call`
+   * @param status - `success` или `error`
+   * @param startedAt - `performance.now()` перед вызовом инструмента
+   */
+  private recordLlmCallMetric(
+    model: string | null,
+    status: MetricOperationStatus,
+    startedAt: number,
+  ): void {
+    if (model === null) {
+      return;
+    }
+
+    this.metrics.observeLlmCall(
+      this.metricModelLabel(model),
+      status,
+      (performance.now() - startedAt) / 1000,
+    );
+  }
+
+  /**
+   * Ограничивает `model`-label метрик известными моделями реестра.
+   *
+   * Идентификатор модели приходит из пользовательского графа (`node.model`)
+   * или из аргументов `llm_call`, которые формирует сама модель. Произвольная
+   * строка создала бы новую серию Prometheus на каждый вызов; `unknown` —
+   * одна общая серия для всего неподдерживаемого.
+   *
+   * @param modelId - запрошенный id модели
+   * @returns `modelId`, если он объявлен в реестре, иначе `unknown`
+   */
+  private metricModelLabel(modelId: string): string {
+    return this.registry.hasModel(modelId) ? modelId : 'unknown';
   }
 
   /**

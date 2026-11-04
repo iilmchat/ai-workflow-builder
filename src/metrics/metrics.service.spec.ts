@@ -50,22 +50,36 @@ describe('MetricsService', () => {
   });
 
   describe('реестр и contentType', () => {
-    it('регистрирует ровно четыре контрактные метрики', async () => {
+    it('регистрирует доменные метрики и process-метрики по умолчанию', async () => {
       const text = await service.getMetrics();
 
-      expect(text).toContain('# HELP http_request_duration_seconds');
-      expect(text).toContain('# TYPE http_request_duration_seconds histogram');
-      expect(text).toContain('# HELP run_execution_duration_seconds');
-      expect(text).toContain('# TYPE run_execution_duration_seconds histogram');
-      expect(text).toContain('# HELP run_cost_total');
-      expect(text).toContain('# TYPE run_cost_total counter');
-      expect(text).toContain('# HELP agent_step_duration_seconds');
-      expect(text).toContain('# TYPE agent_step_duration_seconds histogram');
-      // Только четыре `HELP`-блока: реестр изолирован от глобального
-      // `prom-client` и фоновых коллекторов.
-      expect(
-        text.split('\n').filter((line) => line.startsWith('# HELP ')),
-      ).toHaveLength(4);
+      // Доменные метрики — контракт с дашбордом (v1.1.0 S4 добавил llm_call).
+      for (const [name, type] of [
+        ['http_request_duration_seconds', 'histogram'],
+        ['run_execution_duration_seconds', 'histogram'],
+        ['run_cost_total', 'counter'],
+        ['agent_step_duration_seconds', 'histogram'],
+        ['llm_call_duration_seconds', 'histogram'],
+      ] as const) {
+        expect(text).toContain(`# HELP ${name}`);
+        expect(text).toContain(`# TYPE ${name} ${type}`);
+      }
+
+      // KI-581: process/runtime-метрики (CPU, RSS, heap, event loop) — с
+      // префиксами process_/nodejs_, не конфликтующими с доменными.
+      expect(text).toContain('# HELP process_cpu_user_seconds_total');
+      expect(text).toContain('# HELP process_resident_memory_bytes');
+      expect(text).toContain('# HELP nodejs_eventloop_lag_seconds');
+      expect(text).toContain('# HELP nodejs_heap_size_used_bytes');
+
+      // Ни один HELP не зарегистрирован дважды: конфликт имён дал бы ошибку
+      // регистрации, но проверяем и вывод (защита от дублей семейств).
+      const families = text
+        .split('\n')
+        .filter((line) => line.startsWith('# HELP '))
+        .map((line) => line.slice('# HELP '.length).split(' ')[0]);
+
+      expect(new Set(families).size).toBe(families.length);
     });
 
     it('contentType — прометеевский text/plain 0.0.4', () => {
@@ -147,15 +161,61 @@ describe('MetricsService', () => {
   });
 
   describe('observeAgentStep', () => {
-    it('пишет гистограмму с подписью model', async () => {
-      service.observeAgentStep('gpt-4o-mini', 0.25);
+    it('пишет гистограмму с подписями model/status (KI-576)', async () => {
+      service.observeAgentStep('gpt-4o-mini', 'success', 0.25);
+      service.observeAgentStep('gpt-4o-mini', 'error', 0.5);
 
       const text = await service.getMetrics();
-      const countLine = findLine(text, 'agent_step_duration_seconds_count{');
 
-      expect(labelKeys(countLine ?? '')).toEqual(['model']);
-      expect(countLine).toContain('model="gpt-4o-mini"');
-      expect(countLine).toContain('} 1');
+      expect(text).toContain(
+        'agent_step_duration_seconds_count{model="gpt-4o-mini",status="success"} 1',
+      );
+      expect(text).toContain(
+        'agent_step_duration_seconds_count{model="gpt-4o-mini",status="error"} 1',
+      );
+      expect(
+        labelKeys(findLine(text, 'agent_step_duration_seconds_count{') ?? ''),
+      ).toEqual(['model', 'status']);
+      // Ошибка и успех — разные серии: длительность падений не смешивается
+      // с нормальными шагами.
+      expect(
+        findLine(
+          text,
+          'agent_step_duration_seconds_sum{model="gpt-4o-mini",status="error"}',
+        ),
+      ).toContain('} 0.5');
+    });
+  });
+
+  describe('observeLlmCall', () => {
+    it('пишет отдельную гистограмму llm_call с model/status (KI-577)', async () => {
+      service.observeLlmCall('claude-test', 'success', 1.25);
+      service.observeLlmCall('claude-test', 'error', 0.1);
+
+      const text = await service.getMetrics();
+
+      expect(text).toContain(
+        'llm_call_duration_seconds_count{model="claude-test",status="success"} 1',
+      );
+      expect(text).toContain(
+        'llm_call_duration_seconds_count{model="claude-test",status="error"} 1',
+      );
+      expect(
+        labelKeys(findLine(text, 'llm_call_duration_seconds_count{') ?? ''),
+      ).toEqual(['model', 'status']);
+      expect(
+        findLine(
+          text,
+          'llm_call_duration_seconds_sum{model="claude-test",status="success"}',
+        ),
+      ).toContain('} 1.25');
+      // Это отдельная метрика, а не серия agent_step_*.
+      expect(
+        findLine(
+          text,
+          'agent_step_duration_seconds_count{model="claude-test"',
+        ),
+      ).toBeUndefined();
     });
   });
 

@@ -173,6 +173,17 @@ describe('LlmRegistryService', () => {
     );
   });
 
+  it('hasModel не бросает и отвечает только про известные id (v1.1.0 S4)', () => {
+    // Нужно метрикам: model — label, произвольная строка из графа/llm_call
+    // не должна создавать новую серию Prometheus.
+    expect(registry.hasModel('claude-sonnet-4-20250514')).toBe(true);
+    expect(registry.hasModel('gpt-4o')).toBe(true);
+    expect(registry.hasModel('unknown-model')).toBe(false);
+    expect(registry.hasModel('')).toBe(false);
+    // Проверка не зависит от конфигурации провайдера: id объявлен в реестре.
+    expect(registry.hasModel('claude-opus-4-20250514')).toBe(true);
+  });
+
   it('listModels возвращает модели обоих провайдеров с модальностями', () => {
     expect(registry.listModels()).toEqual([
       {

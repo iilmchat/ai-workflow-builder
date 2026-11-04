@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { Counter, Histogram, Registry } from 'prom-client';
+import {
+  collectDefaultMetrics,
+  Counter,
+  Histogram,
+  Registry,
+} from '@prometheus-io/client';
 
 /**
  * Ведра гистограммы HTTP-запросов (секунды).
@@ -29,13 +34,32 @@ const NODE_DURATION_BUCKETS = [0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300];
 const AGENT_STEP_BUCKETS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30];
 
 /**
- * Сервис метрик Prometheus (v1.0.0 S4, DESIGN V100 § 3.3).
+ * Ведра гистограммы инструмента `llm_call` (секунды).
  *
- * Держит **собственный** `Registry` вместо глобального `register`
- * `prom-client`: тесты создают несколько инстансов сервиса, и общий реестр
- * приводил бы к «Already registered metric» между ними. Изоляция реестра
- * также не даёт фоновым коллекторам библиотеки (если их включат позже)
- * появиться в ответе `GET /metrics` неожиданно.
+ * `llm_call` — полноценный вызов модели внутри агентского tool-шага, поэтому
+ * верхняя граница выше, чем у обычного шага: длинный ответ reasoning-модели
+ * укладывается в 60 с, всё дольше — в `+Inf`.
+ */
+const LLM_CALL_BUCKETS = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60];
+
+/**
+ * Статус операции для метрик агента и `llm_call` (v1.1.0 S4, KI-576).
+ *
+ * Отдельный label вместо двух метрик: один запрос Prometheus
+ * (`rate(..._count{status="error"}[5m])`) считает и успехи, и ошибки, а
+ * дашборд не дублирует серии. Значения — стабильный контракт: `success` и
+ * `error`.
+ */
+export type MetricOperationStatus = 'success' | 'error';
+
+/**
+ * Сервис метрик Prometheus (v1.0.0 S4, DESIGN V100 § 3.3; v1.1.0 S4 —
+ * миграция на `@prometheus-io/client`, status-label, `llm_call` и process-метрики).
+ *
+ * Держит **собственный** `Registry` вместо глобального `register`: тесты
+ * создают несколько инстансов сервиса, и общий реестр приводил бы к «Already
+ * registered metric» между ними. Изоляция реестра также не даёт фоновым
+ * коллекторам библиотеки появиться в ответе `GET /metrics` неожиданно.
  *
  * Метрики и их подписи — контракт с Prometheus и дашбордами, поэтому имена и
  * label'ы зафиксированы:
@@ -45,15 +69,25 @@ const AGENT_STEP_BUCKETS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30];
  *   выполнения узла workflow;
  * - `run_cost_total{currency}` — суммарная стоимость запусков в валюте
  *   (`USD`/`RUB`; RULES 4.23 — валюты не смешиваются);
- * - `agent_step_duration_seconds{model}` — длительность шага agent-цикла.
+ * - `agent_step_duration_seconds{model,status}` — длительность шага
+ *   agent-цикла (`status` появился в v1.1.0 S4, KI-576: ошибки LLM больше не
+ *   смешиваются с успешными шагами);
+ * - `llm_call_duration_seconds{model,status}` — длительность инструмента
+ *   `llm_call` внутри агента (v1.1.0 S4, KI-577).
+ *
+ * Плюс стандартные process/runtime-метрики `collectDefaultMetrics` с
+ * префиксами `process_` и `nodejs_` (v1.1.0 S4, KI-581). Префиксы не
+ * конфликтуют с доменными (`http_`, `run_`, `agent_`, `llm_call_`), поэтому
+ * дополнительные `prefix`-опции не нужны; конфликт имён дал бы ошибку
+ * регистрации в реестре.
  *
  * Сервис — единственная точка записи: потребители (интерсептор, executor'ы
- * engine/agent) не знают про `prom-client` и не могут создать метрику с
- * другим набором подписей.
+ * engine/agent) не знают про `@prometheus-io/client` и не могут создать
+ * метрику с другим набором подписей.
  */
 @Injectable()
 export class MetricsService {
-  /** Изолированный реестр сервиса (не глобальный `prom-client`). */
+  /** Изолированный реестр сервиса (не глобальный реестр клиента). */
   private readonly registry = new Registry();
 
   /** Гистограмма длительности HTTP-запросов. */
@@ -68,7 +102,10 @@ export class MetricsService {
   private readonly runCostTotal: Counter<'currency'>;
 
   /** Гистограмма длительности шагов agent-цикла. */
-  private readonly agentStepDuration: Histogram<'model'>;
+  private readonly agentStepDuration: Histogram<'model' | 'status'>;
+
+  /** Гистограмма длительности инструмента `llm_call`. */
+  private readonly llmCallDuration: Histogram<'model' | 'status'>;
 
   constructor() {
     this.httpRequestDuration = new Histogram<'method' | 'route' | 'status'>({
@@ -94,13 +131,26 @@ export class MetricsService {
       registers: [this.registry],
     });
 
-    this.agentStepDuration = new Histogram<'model'>({
+    this.agentStepDuration = new Histogram<'model' | 'status'>({
       name: 'agent_step_duration_seconds',
       help: 'Длительность шага agent-цикла в секундах',
-      labelNames: ['model'],
+      labelNames: ['model', 'status'],
       buckets: AGENT_STEP_BUCKETS,
       registers: [this.registry],
     });
+
+    this.llmCallDuration = new Histogram<'model' | 'status'>({
+      name: 'llm_call_duration_seconds',
+      help: 'Длительность инструмента llm_call в секундах',
+      labelNames: ['model', 'status'],
+      buckets: LLM_CALL_BUCKETS,
+      registers: [this.registry],
+    });
+
+    // v1.1.0 S4 (KI-581): CPU, RSS, heap, event loop, GC, handles. Коллекторы
+    // регистрируются в тот же изолированный реестр и собираются лениво при
+    // `GET /metrics`; имена `process_*`/`nodejs_*` не пересекаются с доменными.
+    collectDefaultMetrics({ register: this.registry });
   }
 
   /**
@@ -184,11 +234,46 @@ export class MetricsService {
   /**
    * Записывает длительность шага agent-цикла.
    *
-   * @param model - идентификатор модели, которой выполнялся шаг
+   * `status` (v1.1.0 S4, KI-576) разделяет успешные шаги и ошибки LLM: без
+   * него длительность падений (таймауты, 429, invalid key) смешивалась бы с
+   * нормальными ответами и p95 «нормального» шага был бы завышен. `model` —
+   * уже санитизированный идентификатор из реестра моделей (`unknown` для
+   * неизвестного), иначе строка из графа раздувала бы кардинальность.
+   *
+   * @param model - идентификатор модели шага (из реестра или `unknown`)
+   * @param status - `success` либо `error`
    * @param durationSeconds - длительность шага в секундах
    */
-  observeAgentStep(model: string, durationSeconds: number): void {
-    this.agentStepDuration.observe({ model }, durationSeconds);
+  observeAgentStep(
+    model: string,
+    status: MetricOperationStatus,
+    durationSeconds: number,
+  ): void {
+    this.agentStepDuration.observe(
+      { model, status },
+      durationSeconds,
+    );
+  }
+
+  /**
+   * Записывает длительность инструмента `llm_call` (v1.1.0 S4, KI-577).
+   *
+   * `llm_call` — платный вызов модели внутри tool-шага агента; его
+   * длительность не равна шагу агента (шаг включает ещё инструмент и
+   * парсинг ответа), поэтому метрика отдельная. `status='error'` пишется,
+   * когда вызов упал, — ошибка не прерывает цикл (инструмент возвращает
+   * текст ошибки модели).
+   *
+   * @param model - модель вызова (из реестра или `unknown`)
+   * @param status - `success` либо `error`
+   * @param durationSeconds - длительность вызова в секундах
+   */
+  observeLlmCall(
+    model: string,
+    status: MetricOperationStatus,
+    durationSeconds: number,
+  ): void {
+    this.llmCallDuration.observe({ model, status }, durationSeconds);
   }
 
   /**

@@ -72,6 +72,8 @@ describe('AgentService — интеграция: http_request → final (R7.4b)'
         {
           provide: LlmRegistryService,
           useValue: {
+            // v1.1.0 S4: метрики сверяют model-label с реестром.
+            hasModel: vi.fn(() => true),
             // В сценарии нет vector/memory-инструментов: эмбеддинги не нужны.
             resolveEmbeddingProviderAsync: vi.fn(() =>
               Promise.reject(new Error('embeddings не вызываются')),
@@ -132,7 +134,7 @@ describe('AgentService — интеграция: http_request → final (R7.4b)'
           },
         },
         // v1.0.0 S4: настоящий MetricsService — цикл агента пишет длительность
-        // LLM-шагов; своего реестра хватает, глобальный prom-client не нужен.
+        // LLM-шагов; своего реестра хватает, глобальный реестр клиента не нужен.
         MetricsService,
       ],
     }).compile();

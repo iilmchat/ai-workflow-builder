@@ -1,0 +1,25 @@
+# Prometheus scrape-конфигурация для локального запуска (v1.1.0 S4, KI-582).
+#
+# Backend отдаёт `GET /metrics` без авторизации (Prometheus не умеет JWT),
+# поэтому ручку нельзя публиковать наружу — только scrape-сеть (KI-575).
+#
+# Локально backend слушает `localhost:3000`. Если Prometheus запущен в
+# Docker-контейнере, `localhost` — это сам контейнер: замените target на
+# `host.docker.internal:3000` (Docker Desktop) или на имя сервиса backend в
+# docker-compose-сети. Для прод-развёртывания target задаётся DNS-именем
+# backend и закрывается network policy.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    service: workflow-builder
+
+scrape_configs:
+  - job_name: workflow-builder
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets:
+          - localhost:3000
+        labels:
+          env: local
