@@ -270,6 +270,10 @@ export type NewOrganizationInvitation = typeof organizationInvitations.$inferIns
  *
  * Индекс `(organization_id, created_at, id)` обслуживает keyset-пагинацию
  * `GET /admin/audit` (`ORDER BY created_at DESC, id DESC`) и org-фильтр изоляции.
+ * С v1.1.0 S3 (KI-585) добавлены индексы `(organization_id, action, created_at,
+ * id)` и `(organization_id, user_id, created_at, id)` — под фильтры журнала по
+ * действию и автору: порядок колонок повторяет `WHERE` + `ORDER BY`, поэтому
+ * фильтрованная страница не требует сортировки всего журнала в памяти.
  */
 export const auditLogs = pgTable(
   'audit_logs',
@@ -294,6 +298,18 @@ export const auditLogs = pgTable(
   (table) => [
     index('audit_logs_org_created_id_idx').on(
       table.organizationId,
+      table.createdAt,
+      table.id,
+    ),
+    index('audit_logs_org_action_created_id_idx').on(
+      table.organizationId,
+      table.action,
+      table.createdAt,
+      table.id,
+    ),
+    index('audit_logs_org_user_created_id_idx').on(
+      table.organizationId,
+      table.userId,
       table.createdAt,
       table.id,
     ),

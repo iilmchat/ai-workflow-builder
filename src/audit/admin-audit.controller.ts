@@ -3,7 +3,6 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.js';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
-import { toWorkflowAccess } from '../workflow/workflow-access.js';
 import { AuditService } from './audit.service.js';
 import {
   AuditQuerySchema,
@@ -37,21 +36,33 @@ export class AdminAuditController {
   constructor(private readonly auditService: AuditService) {}
 
   /**
-   * `GET /admin/audit?limit=20&cursor=…` — журнал действий организации.
+   * `GET /admin/audit?limit=20&cursor=…&action=…&userId=…&from=…&to=…` —
+   * журнал действий организации.
    *
    * Keyset-пагинация: `cursor` — непрозрачный курсор последнего элемента
    * предыдущей страницы (`AuditLogSummary.cursor` / `nextCursor` ответа).
-   * Порядок — `createdAt DESC, id DESC`, фильтр `organization_id = orgId`
-   * выполняет сервис, поэтому чужой журнал получить нельзя.
+   * Порядок — `createdAt DESC, id DESC`.
+   *
+   * **Организация — из БД, а не из токена (KI-587).** Контроллер передаёт
+   * сервису только `user.sub`: `organization_id` сервис читает из строки
+   * `users`, поэтому устаревший (или подложенный) `orgId` в access-токене не
+   * открывает журнал другой организации. Это же закрывает вектор KI-601:
+   * удалённый участник со старым токеном видит журнал своей **новой** личной
+   * организации, а не той, из которой его исключили.
+   *
+   * **Фильтры (v1.1.0 S3, KI-585).** `action` — точный код действия,
+   * `userId` — автор, `from`/`to` — границы `created_at` включительно
+   * (дата `YYYY-MM-DD` трактуется как UTC-сутки; UI отправляет ISO-моменты).
+   * Значения нормализует `AuditQuerySchema`, сервис только строит `WHERE`.
    *
    * `Cache-Control: no-store` — данные авторизованные, персональные и меняются
    * на каждом мутирующем запросе; кэшировать их нельзя.
    *
-   * @param query - `limit` (1..100, по умолчанию 20) и `cursor` (из ответа)
-   * @param user - пользователь и организация из access-токена
+   * @param query - размер страницы, курсор и фильтры
+   * @param user - пользователь из access-токена (`sub`; `orgId` не используется)
    * @returns записи страницы, курсор следующей страницы и общее число записей
-   * @throws BadRequestException если `limit`/`cursor` не проходят Zod-схему
-   *   (мусорный курсор — 400, а не 500 из сервиса)
+   * @throws BadRequestException если query не проходит Zod-схему
+   *   (мусорный курсор/дата/`action` — 400, а не 500 из сервиса)
    */
   @Get()
   @Header('Cache-Control', 'no-store')
@@ -64,10 +75,11 @@ export class AdminAuditController {
     const cursor =
       query.cursor === undefined ? undefined : decodeAuditCursor(query.cursor);
 
-    return this.auditService.listAsync(
-      toWorkflowAccess(user),
-      query.limit,
-      cursor,
-    );
+    return this.auditService.listAsync(user.sub, query.limit, cursor, {
+      action: query.action,
+      userId: query.userId,
+      from: query.from,
+      to: query.to,
+    });
   }
 }

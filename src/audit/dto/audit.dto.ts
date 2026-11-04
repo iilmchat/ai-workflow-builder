@@ -189,21 +189,154 @@ export const AuditCursorSchema = z
   );
 
 /**
- * Zod-схема query-параметров `GET /admin/audit` (v1.0.0 S3).
+ * Фильтры журнала аудита (v1.1.0 S3, KI-585).
+ *
+ * Сервис принимает уже нормализованные значения (`from`/`to` — `Date`), а не
+ * строки query: разбор и валидацию делает `AuditQuerySchema` на границе API
+ * (RULES 1.17). Пустое поле означает «фильтра нет» — `undefined` отличается от
+ * «фильтр по пустой строке», которого не бывает.
+ *
+ * `userId` — **автор действия**, а не текущий пользователь: владелец журнала
+ * может посмотреть действия конкретного участника. Фильтр по пользователю не
+ * расширяет видимость — организация всё равно берётся из БД по актору.
+ */
+export interface AuditFilter {
+  /** Код действия (`workflow.create`, `run.start`, …). */
+  readonly action?: string;
+  /** uuid автора действия (`audit_logs.user_id`). */
+  readonly userId?: string;
+  /** Нижняя граница `created_at` включительно. */
+  readonly from?: Date;
+  /** Верхняя граница `created_at` включительно. */
+  readonly to?: Date;
+}
+
+/**
+ * Формат даты без времени: `YYYY-MM-DD`.
+ *
+ * UI использует `<input type="date">`, поэтому дата приходит без зоны. Такая
+ * дата трактуется как UTC-сутки: `from` — начало дня, `to` — конец дня. UI
+ * (S3) отправляет полные ISO-моменты локальных суток, поэтому пользователь
+ * видит ожидаемое окно и в своём часовом поясе.
+ */
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Формат полного ISO-8601 с обязательной зоной (`Z` или `±HH:MM`). */
+const DATE_TIME_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * Разбирает значение `from`/`to` в `Date` с проверкой календарной даты.
+ *
+ * `new Date('2026-02-30')` молча нормализуется в 2 марта, поэтому для
+ * формата `YYYY-MM-DD` выполняется обратная проверка: ISO-строка должна
+ * начинаться с исходной даты. Для полного ISO-8601 проверяется формат и
+ * `Date.parse` (месяц/день вне диапазона дают `NaN`).
+ *
+ * @param value - значение query-параметра (`2026-11-01` или ISO-8601)
+ * @param edge - `start` для `from` (начало суток), `end` для `to` (конец суток)
+ * @returns момент времени либо `null`, если значение не является датой
+ */
+function parseAuditDate(value: string, edge: 'start' | 'end'): Date | null {
+  if (DATE_ONLY_PATTERN.test(value)) {
+    const iso =
+      edge === 'start' ? `${value}T00:00:00.000Z` : `${value}T23:59:59.999Z`;
+    const date = new Date(iso);
+
+    if (
+      Number.isNaN(date.getTime()) ||
+      !date.toISOString().startsWith(value)
+    ) {
+      return null;
+    }
+
+    return date;
+  }
+
+  if (!DATE_TIME_PATTERN.test(value)) {
+    return null;
+  }
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/**
+ * Zod-схема даты фильтра: `YYYY-MM-DD` или ISO-8601, на выходе — `Date`.
+ *
+ * @param edge - `start` для `from`, `end` для `to`
+ * @returns схема со строковым входом и `Date` на выходе
+ */
+function auditDateFilterSchema(edge: 'start' | 'end') {
+  return z
+    .string()
+    .trim()
+    .min(1, 'дата не может быть пустой')
+    .transform((value, ctx) => {
+      const parsed = parseAuditDate(value, edge);
+
+      if (parsed === null) {
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'дата должна быть YYYY-MM-DD или ISO-8601 (например, 2026-11-01)',
+        });
+
+        return z.NEVER;
+      }
+
+      return parsed;
+    });
+}
+
+/** Код действия: `<сущность>.<глагол>`, допускаются `_` в сегментах. */
+const AUDIT_ACTION_VALUE_PATTERN = /^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+$/;
+
+/**
+ * Zod-схема query-параметров `GET /admin/audit` (v1.0.0 S3; фильтры — v1.1.0 S3).
  *
  * `limit` приходит строкой, поэтому приводится через `z.coerce` (тот же приём,
  * что в `RunHistoryQuerySchema`/`ListWorkflowsQuerySchema`). `cursor`
  * опционален: его отсутствие — первая страница.
+ *
+ * Фильтры (KI-585) — `action` (точный код действия), `userId` (uuid автора),
+ * `from`/`to` (границы `created_at` включительно). Домен `action` намеренно не
+ * ограничен списком `AUDIT_ACTIONS`: интерсептор пишет fallback `http.<метод>`,
+ * а новое действие не должно требовать правки валидатора (формат проверяется,
+ * значение — нет). Если `from` позже `to`, запрос отклоняется 400, а не
+ * возвращает пустую страницу «молча».
  */
-export const AuditQuerySchema = z.object({
-  limit: z.coerce
-    .number()
-    .int('limit должен быть целым числом')
-    .min(1, 'limit должен быть не меньше 1')
-    .max(MAX_AUDIT_LIMIT, `limit не больше ${MAX_AUDIT_LIMIT}`)
-    .default(DEFAULT_AUDIT_LIMIT),
-  cursor: AuditCursorSchema.optional(),
-});
+export const AuditQuerySchema = z
+  .object({
+    limit: z.coerce
+      .number()
+      .int('limit должен быть целым числом')
+      .min(1, 'limit должен быть не меньше 1')
+      .max(MAX_AUDIT_LIMIT, `limit не больше ${MAX_AUDIT_LIMIT}`)
+      .default(DEFAULT_AUDIT_LIMIT),
+    cursor: AuditCursorSchema.optional(),
+    action: z
+      .string()
+      .trim()
+      .min(1, 'action не может быть пустым')
+      .max(128, 'action слишком длинный')
+      .regex(
+        AUDIT_ACTION_VALUE_PATTERN,
+        'action должен быть кодом вида workflow.create',
+      )
+      .optional(),
+    userId: z.uuid('userId должен быть uuid').optional(),
+    from: auditDateFilterSchema('start').optional(),
+    to: auditDateFilterSchema('end').optional(),
+  })
+  .refine(
+    (query) =>
+      query.from === undefined ||
+      query.to === undefined ||
+      query.from.getTime() <= query.to.getTime(),
+    { message: 'from не может быть позже to', path: ['from'] },
+  );
 
 /** Валидированные query-параметры журнала аудита. */
 export type AuditQueryDto = z.infer<typeof AuditQuerySchema>;

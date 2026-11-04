@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 import i18n from '@/i18n';
 import {
+  AUDIT_ACTION_FILTER_OPTIONS,
   fetchAuditLogsAsync,
   type AuditLog,
+  type AuditLogFilters,
 } from '@/lib/audit-api';
 import {
   fetchOrganizationMembersAsync,
@@ -80,6 +82,40 @@ function formatDateTime(value: string): string {
   }
 
   return date.toLocaleString(i18n.language === 'en' ? 'en-US' : 'ru-RU');
+}
+
+/**
+ * Начало локальных суток даты `YYYY-MM-DD` в ISO-8601 (UTC).
+ *
+ * `<input type="date">` отдаёт дату без зоны, а backend сравнивает
+ * `created_at >= from` в UTC. Поэтому границу считаем в часовом поясе
+ * пользователя (`new Date('YYYY-MM-DDT00:00:00')` — локальное время), а в
+ * query отправляем `toISOString()`: фильтр «с 1 ноября» включает записи
+ * с 00:00 1 ноября по местному времени.
+ *
+ * @param value - значение `<input type="date">`
+ * @returns ISO-момент начала суток либо `undefined` для пустой/битой даты
+ */
+function startOfLocalDayIso(value: string): string | undefined {
+  const date = new Date(`${value}T00:00:00`);
+
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+/**
+ * Конец локальных суток даты `YYYY-MM-DD` в ISO-8601 (UTC).
+ *
+ * Верхняя граница включительная (`to`), поэтому берётся `23:59:59.999`
+ * локального времени: иначе записи последней секунды дня выпали бы из фильтра
+ * (сравнение `created_at <= to`).
+ *
+ * @param value - значение `<input type="date">`
+ * @returns ISO-момент конца суток либо `undefined` для пустой/битой даты
+ */
+function endOfLocalDayIso(value: string): string | undefined {
+  const date = new Date(`${value}T23:59:59.999`);
+
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
 /**
@@ -187,6 +223,43 @@ export function TeamPage({ onClose }: TeamPageProps) {
     null,
   );
 
+  // Фильтры журнала (v1.1.0 S3, KI-585). Даты хранятся как `YYYY-MM-DD` из
+  // `<input type="date">`; в API уходят ISO-моменты локальных суток.
+  const [auditAction, setAuditAction] = useState('');
+  const [auditUser, setAuditUser] = useState('');
+  const [auditFrom, setAuditFrom] = useState('');
+  const [auditTo, setAuditTo] = useState('');
+
+  // Объект фильтров собирается мемоизированно: он — зависимость effect'а
+  // первой страницы, и новый объект на каждый рендер вызывал бы бесконечный
+  // перезапрос. Пустые поля не попадают в объект — сервис видит «фильтра нет».
+  const auditFilters = useMemo<AuditLogFilters>(() => {
+    const filters: AuditLogFilters = {};
+
+    if (auditAction !== '') {
+      filters.action = auditAction;
+    }
+
+    if (auditUser !== '') {
+      filters.userId = auditUser;
+    }
+
+    const from = auditFrom === '' ? undefined : startOfLocalDayIso(auditFrom);
+    const to = auditTo === '' ? undefined : endOfLocalDayIso(auditTo);
+
+    if (from !== undefined) {
+      filters.from = from;
+    }
+
+    if (to !== undefined) {
+      filters.to = to;
+    }
+
+    return filters;
+  }, [auditAction, auditUser, auditFrom, auditTo]);
+
+  const hasAuditFilters = Object.keys(auditFilters).length > 0;
+
   // Догрузка «Загрузить ещё» запускается из обработчика, а не из effect:
   // после размонтирования её промис всё ещё может завершиться — гасим поздний
   // setState по ref (модалка живёт недолго, но лишних обновлений не нужно).
@@ -234,7 +307,8 @@ export function TeamPage({ onClose }: TeamPageProps) {
   }, [membersReloadKey]);
 
   // Первая страница журнала: запрос уходит при первом открытии вкладки
-  // (auditFetchId становится 1 в `handleSelectTab`) и повторяется на retry.
+  // (auditFetchId становится 1 в `handleSelectTab`), повторяется на retry и
+  // при изменении фильтров (`auditFilters` — мемоизированный объект).
   useEffect(() => {
     if (auditFetchId === 0) {
       return;
@@ -246,7 +320,7 @@ export function TeamPage({ onClose }: TeamPageProps) {
     setAuditError(null);
     setAuditLoadMoreError(null);
 
-    fetchAuditLogsAsync(AUDIT_PAGE_SIZE)
+    fetchAuditLogsAsync(AUDIT_PAGE_SIZE, null, auditFilters)
       .then((page) => {
         if (!cancelled) {
           setLogs(page.logs);
@@ -272,7 +346,7 @@ export function TeamPage({ onClose }: TeamPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [auditFetchId]);
+  }, [auditFetchId, auditFilters]);
 
   // Escape закрывает окно — то же поведение, что у RunHistoryModal/ShareModal.
   useEffect(() => {
@@ -458,7 +532,7 @@ export function TeamPage({ onClose }: TeamPageProps) {
     setIsAuditLoadingMore(true);
     setAuditLoadMoreError(null);
 
-    fetchAuditLogsAsync(AUDIT_PAGE_SIZE, nextCursor)
+    fetchAuditLogsAsync(AUDIT_PAGE_SIZE, nextCursor, auditFilters)
       .then((page) => {
         if (!isMountedRef.current) {
           return;
@@ -492,6 +566,23 @@ export function TeamPage({ onClose }: TeamPageProps) {
           setIsAuditLoadingMore(false);
         }
       });
+  };
+
+  /**
+   * Сбрасывает фильтры журнала (v1.1.0 S3, KI-585).
+   *
+   * Все четыре поля меняются одним батчем React, поэтому effect первой
+   * страницы выполнится один раз: журнал перезапросится без фильтров, а
+   * `nextCursor` сбросится вместе со списком. Курсор предыдущего набора строк
+   * к новому неприменим.
+   *
+   * @returns ничего
+   */
+  const handleResetAuditFilters = () => {
+    setAuditAction('');
+    setAuditUser('');
+    setAuditFrom('');
+    setAuditTo('');
   };
 
   /** email участника по uuid: приглашающий и записи журнала показываются так. */
@@ -872,6 +963,83 @@ export function TeamPage({ onClose }: TeamPageProps) {
                 </span>
               </div>
 
+              {/* Фильтры журнала (v1.1.0 S3, KI-585). Любое изменение —
+                  перезапрос первой страницы: курсор предыдущего набора строк
+                  к новому неприменим. */}
+              <div
+                className="flex flex-wrap items-end gap-2 border-b border-border pb-2"
+                data-team-audit-filters=""
+                role="group"
+                aria-label={t('audit.filters')}
+              >
+                <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground">
+                  <span>{t('audit.action')}</span>
+                  <select
+                    value={auditAction}
+                    onChange={(event) => setAuditAction(event.target.value)}
+                    data-team-audit-action-filter=""
+                    className="cursor-pointer rounded-lg border border-border bg-background px-2 py-1 text-[11px] text-foreground"
+                  >
+                    <option value="">{t('audit.filter.all_actions')}</option>
+                    {AUDIT_ACTION_FILTER_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {actionMetaOf(option).label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground">
+                  <span>{t('audit.user')}</span>
+                  <select
+                    value={auditUser}
+                    onChange={(event) => setAuditUser(event.target.value)}
+                    data-team-audit-user-filter=""
+                    className="cursor-pointer rounded-lg border border-border bg-background px-2 py-1 text-[11px] text-foreground"
+                  >
+                    <option value="">{t('audit.filter.all_users')}</option>
+                    {members.map((member) => (
+                      <option key={member.userId} value={member.userId}>
+                        {member.email}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground">
+                  <span>{t('audit.filter.from')}</span>
+                  <input
+                    type="date"
+                    value={auditFrom}
+                    onChange={(event) => setAuditFrom(event.target.value)}
+                    data-team-audit-from=""
+                    className="rounded-lg border border-border bg-background px-2 py-1 text-[11px] text-foreground"
+                  />
+                </label>
+
+                <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground">
+                  <span>{t('audit.filter.to')}</span>
+                  <input
+                    type="date"
+                    value={auditTo}
+                    onChange={(event) => setAuditTo(event.target.value)}
+                    data-team-audit-to=""
+                    className="rounded-lg border border-border bg-background px-2 py-1 text-[11px] text-foreground"
+                  />
+                </label>
+
+                {hasAuditFilters && (
+                  <button
+                    type="button"
+                    onClick={handleResetAuditFilters}
+                    data-team-audit-reset=""
+                    className="cursor-pointer rounded-lg border border-border px-2 py-1 text-[11px] font-medium text-foreground hover:bg-muted"
+                  >
+                    {t('audit.filter.reset')}
+                  </button>
+                )}
+              </div>
+
               {/* Заголовок «таблицы»: те же колонки, что у строк ниже. */}
               <div className="grid grid-cols-[150px_1fr_1fr_1fr] gap-2 border-b border-border px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 <span>{t('audit.date')}</span>
@@ -915,7 +1083,9 @@ export function TeamPage({ onClose }: TeamPageProps) {
                     className="px-2 py-1 text-xs text-muted-foreground"
                     data-team-audit-empty=""
                   >
-                    {t('audit.empty')}
+                    {hasAuditFilters
+                      ? t('audit.empty_filtered')
+                      : t('audit.empty')}
                   </p>
                 )}
 

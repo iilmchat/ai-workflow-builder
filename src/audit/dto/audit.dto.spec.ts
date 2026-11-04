@@ -110,3 +110,79 @@ describe('keyset-курсор журнала аудита (v1.0.0 S3)', () => {
     );
   });
 });
+
+describe('фильтры журнала аудита (v1.1.0 S3, KI-585)', () => {
+  /** Автор действия для фильтра. */
+  const AUTHOR_ID = '88888888-8888-4888-8888-888888888888';
+
+  it('принимает action/userId/from/to и нормализует даты в Date', () => {
+    const parsed = AuditQuerySchema.parse({
+      action: 'workflow.create',
+      userId: AUTHOR_ID,
+      from: '2026-11-01',
+      to: '2026-11-02',
+    });
+
+    expect(parsed.action).toBe('workflow.create');
+    expect(parsed.userId).toBe(AUTHOR_ID);
+    // Дата без времени — UTC-сутки: from — начало, to — конец включительно.
+    expect(parsed.from).toEqual(new Date('2026-11-01T00:00:00.000Z'));
+    expect(parsed.to).toEqual(new Date('2026-11-02T23:59:59.999Z'));
+  });
+
+  it('принимает полный ISO-8601 и fallback-действия интерсептора', () => {
+    const parsed = AuditQuerySchema.parse({
+      action: 'http.post',
+      from: '2026-11-01T00:30:00+03:00',
+      to: '2026-11-01T21:30:00.000Z',
+    });
+
+    expect(parsed.action).toBe('http.post');
+    expect(parsed.from).toEqual(new Date('2026-10-31T21:30:00.000Z'));
+    expect(parsed.to).toEqual(new Date('2026-11-01T21:30:00.000Z'));
+  });
+
+  it.each([
+    ['не календарная дата', '2026-02-30'],
+    ['месяц вне диапазона', '2026-13-01'],
+    ['не дата', 'yesterday'],
+    ['пустая строка', ''],
+  ])('отклоняет from = %s', (_label, value) => {
+    expect(AuditQuerySchema.safeParse({ from: value }).success).toBe(false);
+  });
+
+  it('отклоняет from позже to (400, а не пустая страница)', () => {
+    expect(
+      AuditQuerySchema.safeParse({ from: '2026-11-03', to: '2026-11-01' })
+        .success,
+    ).toBe(false);
+    // Равные границы допустимы: фильтр на одни сутки.
+    expect(
+      AuditQuerySchema.safeParse({ from: '2026-11-01', to: '2026-11-01' })
+        .success,
+    ).toBe(true);
+  });
+
+  it.each([
+    ['пробел', 'not an action'],
+    ['без точки', 'workflow'],
+    ['верхний регистр', 'Workflow.Create'],
+    ['пустая строка', ''],
+    ['слишком длинный', `workflow.${'a'.repeat(130)}`],
+  ])('отклоняет action (%s)', (_label, value) => {
+    expect(AuditQuerySchema.safeParse({ action: value }).success).toBe(false);
+  });
+
+  it('отклоняет userId не-uuid', () => {
+    expect(AuditQuerySchema.safeParse({ userId: 'not-a-uuid' }).success).toBe(
+      false,
+    );
+  });
+
+  it('без фильтров схема не добавляет лишних полей', () => {
+    // Опциональные поля не появляются в результате — сервис видит «фильтра нет».
+    expect(AuditQuerySchema.parse({})).toEqual({
+      limit: DEFAULT_AUDIT_LIMIT,
+    });
+  });
+});

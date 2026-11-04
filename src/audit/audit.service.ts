@@ -1,12 +1,17 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, lt, or, sql } from 'drizzle-orm';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { and, desc, eq, gte, lt, lte, or, sql, type SQL } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { auditLogs } from '../db/schema.js';
-import type { WorkflowAccess } from '../workflow/workflow-access.js';
+import { auditLogs, users } from '../db/schema.js';
 import {
   encodeAuditCursor,
   MAX_AUDIT_LIMIT,
   type AuditCursor,
+  type AuditFilter,
   type AuditLogSummary,
   type AuditLogsResponse,
 } from './dto/audit.dto.js';
@@ -69,7 +74,8 @@ interface AuditLogRow {
  *
  * Таблица `audit_logs` append-only: сервис не обновляет и не удаляет строки,
  * только вставляет и читает. Изоляция арендаторов — на уровне SQL: список
- * всегда фильтруется по `organization_id = access.orgId`.
+ * всегда фильтруется по `organization_id`, прочитанному из `users` по `sub`
+ * access-токена (v1.1.0 S3, KI-587), а не по `orgId` из самого токена.
  */
 @Injectable()
 export class AuditService {
@@ -102,33 +108,45 @@ export class AuditService {
   /**
    * Возвращает страницу журнала аудита организации (`GET /admin/audit`).
    *
-   * **Изоляция.** WHERE всегда содержит `audit_logs.organization_id =
-   * access.orgId`: журнал другой организации не читается даже при известном
-   * id. Доступ (роль `owner`/`admin`) проверяет `OrgOwnerGuard` контроллера,
-   * сервис отвечает только за границу арендатора.
+   * **Изоляция и KI-587.** Организация резолвится из `users` по `userId`
+   * (`sub` access-токена), а не берётся из `JwtPayload.orgId`. Токен живёт
+   * 24 часа, и после переезда пользователя в другую организацию (или удаления
+   * из неё) `orgId` в токене устаревает: чтение журнала старой организации было
+   * бы доступно до истечения токена. Теперь `WHERE` всегда содержит
+   * `audit_logs.organization_id = <organization_id из БД>` (KI-587, KI-601).
+   *
+   * **Фильтры (KI-585).** `action`, `userId` (автор действия), `from` и `to`
+   * добавляются в тот же `WHERE`, что и org-условие, — и в страницу, и в
+   * `count(*)`. Поэтому `total` описывает отфильтрованный журнал, а не всю
+   * организацию. Фильтр `userId` не расширяет видимость: организация всё равно
+   * берётся из БД по актору.
    *
    * **Keyset-пагинация (как в истории запусков, KI-542).** Порядок —
    * `created_at DESC, id DESC`; курсор задаёт позицию последнего элемента
    * предыдущей страницы, поэтому новые записи между запросами не сдвигают
    * окно. Признак «есть ещё» — выборка `limit + 1`; `nextCursor` равен `null`,
-   * когда следующая страница пуста. `total` — отдельный `count(*)` по
-   * организации и не зависит от страницы.
+   * когда следующая страница пуста. `total` — отдельный `count(*)` по тому же
+   * предикату и не зависит от страницы.
    *
    * `cursor.createdAt` несёт микросекунды: `Date` их теряет, а без точного
    * совпадения `created_at` tie-break по `id` мог бы пропускать строки,
    * созданные в одну миллисекунду.
    *
-   * @param access - пользователь и его организация из access-токена
+   * @param userId - `sub` access-токена (id пользователя)
    * @param limit - размер страницы (1..{@link MAX_AUDIT_LIMIT})
    * @param cursor - позиция последнего элемента предыдущей страницы;
    *   `undefined` — первая страница
+   * @param filter - фильтры `action`/`userId`/`from`/`to` (v1.1.0 S3)
    * @returns записи страницы, курсор следующей страницы и общее число записей
    * @throws BadRequestException если `cursor.createdAt` — невалидная дата
+   * @throws UnauthorizedException если строки `users` с таким id нет (гонка с
+   *   удалением между guard'ом и сервисом; guard отвечает 401 раньше)
    */
   async listAsync(
-    access: WorkflowAccess,
+    userId: string,
     limit: number,
     cursor?: AuditCursor,
+    filter: AuditFilter = {},
   ): Promise<AuditLogsResponse> {
     // Контроллер валидирует limit Zod-схемой, но сервис — вторая граница
     // (RULES 1.17): огромный limit вытянул бы весь журнал организации.
@@ -141,14 +159,50 @@ export class AuditService {
       throw new BadRequestException('некорректный cursor журнала аудита');
     }
 
-    // Арендатор — обязательное условие и для count, и для страницы (S3).
-    const organizationFilter = eq(auditLogs.organizationId, access.orgId);
+    // Арендатор — из БД, а не из токена (KI-587): organization_id читается по
+    // sub, поэтому устаревший orgId в JWT не может открыть чужой/старый журнал.
+    const [actor] = await this.db
+      .select({ organizationId: users.organizationId })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (actor === undefined) {
+      throw new UnauthorizedException('Пользователь не найден');
+    }
+
+    // Общий предикат count и страницы: org-граница + фильтры (KI-585). total
+    // считается по нему, иначе счётчик показывал бы записи вне фильтра.
+    const filterConditions: SQL[] = [
+      eq(auditLogs.organizationId, actor.organizationId),
+    ];
+
+    if (filter.action !== undefined) {
+      filterConditions.push(eq(auditLogs.action, filter.action));
+    }
+
+    if (filter.userId !== undefined) {
+      filterConditions.push(eq(auditLogs.userId, filter.userId));
+    }
+
+    if (filter.from !== undefined) {
+      filterConditions.push(gte(auditLogs.createdAt, filter.from));
+    }
+
+    if (filter.to !== undefined) {
+      filterConditions.push(lte(auditLogs.createdAt, filter.to));
+    }
+
+    const listFilter = and(...filterConditions) ?? eq(
+      auditLogs.organizationId,
+      actor.organizationId,
+    );
 
     const pageFilter =
       cursor === undefined
-        ? organizationFilter
+        ? listFilter
         : and(
-            organizationFilter,
+            listFilter,
             // Строго после последнего элемента: при `created_at DESC, id DESC`
             // следующая страница — это (created_at, id) < (cursor.createdAt,
             // cursor.id). Курсор несёт µs, поэтому tie-break по id сохраняется.
@@ -159,14 +213,14 @@ export class AuditService {
                 lt(auditLogs.id, cursor.id),
               ),
             ),
-          );
+          ) ?? listFilter;
 
     // total не зависит от страницы: счётчик UI не должен «прыгать» при
     // пагинации (и visible на пустой странице).
     const [countRow] = await this.db
       .select({ total: sql<number>`count(*)::int` })
       .from(auditLogs)
-      .where(organizationFilter);
+      .where(listFilter);
 
     const total = countRow?.total ?? 0;
 

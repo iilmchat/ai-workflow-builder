@@ -10,7 +10,6 @@ import {
 } from '../auth/auth.constants.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import type { UserRole } from '../db/schema.js';
-import { toWorkflowAccess } from '../workflow/workflow-access.js';
 import { AdminAuditController } from './admin-audit.controller.js';
 import { AuditService } from './audit.service.js';
 import {
@@ -22,13 +21,11 @@ import {
 /** Пользователь из access-токена (JwtAuthGuard проверяет его в этих тестах). */
 const USER = { sub: DEMO_USER_ID, email: DEMO_USER_EMAIL, orgId: DEMO_ORG_ID };
 
-/**
- * Контекст доступа, который контроллер обязан собрать из токена.
- *
- * Ожидания — по точному объекту: если `orgId` потеряется в `toWorkflowAccess`,
- * сервис перестанет фильтровать журнал по организации.
- */
-const ACCESS = toWorkflowAccess(USER);
+/** Организация, которой нет у пользователя в актуальной строке `users`. */
+const STALE_ORG_ID = '99999999-9999-4999-8999-999999999999';
+
+/** Автор действия для фильтра `userId`. */
+const FILTER_USER_ID = '88888888-8888-4888-8888-888888888888';
 
 /** Стабильные идентификаторы тестовых данных. */
 const LOG_ID = '33333333-3333-4333-8333-333333333333';
@@ -162,23 +159,53 @@ describe('AdminAuditController (v1.0.0 S3)', () => {
       // Персональные авторизованные данные — кэш запрещён.
       .expect('Cache-Control', 'no-store');
 
-    // Страница по умолчанию: limit=20, курсора нет.
-    expect(service.listAsync).toHaveBeenCalledWith(ACCESS, 20, undefined);
+    // Страница по умолчанию: limit=20, курсора и фильтров нет.
+    expect(service.listAsync).toHaveBeenCalledWith(
+      DEMO_USER_ID,
+      20,
+      undefined,
+      {},
+    );
     expect(response.body).toEqual(
       JSON.parse(JSON.stringify(auditLogsResponse)),
     );
   });
 
-  it('v1.0.0 S2/S3: передаёт точный {userId, orgId} из токена в listAsync', async () => {
+  it('KI-587: передаёт в сервис только sub — orgId из токена не используется', async () => {
+    await request(app.getHttpServer())
+      .get('/admin/audit')
+      .set(authHeader)
+      .expect(200);
+
+    // Второй аргумент — размер страницы, третий — курсор, четвёртый — фильтры;
+    // организации в аргументах нет вообще: её резолвит сервис из users.
+    expect(service.listAsync).toHaveBeenCalledWith(
+      DEMO_USER_ID,
+      20,
+      undefined,
+      {},
+    );
+  });
+
+  it('KI-601: устаревший orgId в токене не попадает в сервис', async () => {
+    // Пользователь удалён из организации: в токене остался старый orgId,
+    // в БД он уже owner личной организации. Аудит должен читаться по БД.
+    jwt.verifyAsync.mockResolvedValue({ ...USER, orgId: STALE_ORG_ID });
+
     await request(app.getHttpServer())
       .get('/admin/audit')
       .set(authHeader)
       .expect(200);
 
     expect(service.listAsync).toHaveBeenCalledWith(
-      { userId: DEMO_USER_ID, orgId: DEMO_ORG_ID },
+      DEMO_USER_ID,
       20,
       undefined,
+      {},
+    );
+    // Старая организация не утекла ни в один аргумент вызова.
+    expect(JSON.stringify(service.listAsync.mock.calls)).not.toContain(
+      STALE_ORG_ID,
     );
   });
 
@@ -256,10 +283,71 @@ describe('AdminAuditController (v1.0.0 S3)', () => {
       .expect(200);
 
     expect(service.listAsync).toHaveBeenCalledWith(
-      ACCESS,
+      DEMO_USER_ID,
       5,
       decodeAuditCursor(cursor),
+      {},
     );
+  });
+
+  it('передаёт фильтры action/userId/from/to в сервис (KI-585)', async () => {
+    await request(app.getHttpServer())
+      .get(
+        `/admin/audit?action=workflow.create&userId=${FILTER_USER_ID}` +
+          '&from=2026-11-01&to=2026-11-02',
+      )
+      .set(authHeader)
+      .expect(200);
+
+    expect(service.listAsync).toHaveBeenCalledWith(
+      DEMO_USER_ID,
+      20,
+      undefined,
+      {
+        action: 'workflow.create',
+        userId: FILTER_USER_ID,
+        // Дата без времени трактуется как UTC-сутки: from — начало,
+        // to — конец включительно.
+        from: new Date('2026-11-01T00:00:00.000Z'),
+        to: new Date('2026-11-02T23:59:59.999Z'),
+      },
+    );
+  });
+
+  it('невалидный action — 400 от Zod-пайпа, сервис не вызывается', async () => {
+    await request(app.getHttpServer())
+      .get('/admin/audit?action=not%20an%20action')
+      .set(authHeader)
+      .expect(400);
+
+    expect(service.listAsync).not.toHaveBeenCalled();
+  });
+
+  it('невалидный userId — 400 от Zod-пайпа, сервис не вызывается', async () => {
+    await request(app.getHttpServer())
+      .get('/admin/audit?userId=not-a-uuid')
+      .set(authHeader)
+      .expect(400);
+
+    expect(service.listAsync).not.toHaveBeenCalled();
+  });
+
+  it('from позже to — 400, а не пустая страница «молча»', async () => {
+    await request(app.getHttpServer())
+      .get('/admin/audit?from=2026-11-03&to=2026-11-01')
+      .set(authHeader)
+      .expect(400);
+
+    expect(service.listAsync).not.toHaveBeenCalled();
+  });
+
+  it('несуществующая календарная дата (2026-02-30) — 400', async () => {
+    await request(app.getHttpServer())
+      .get('/admin/audit?from=2026-02-30')
+      .set(authHeader)
+      .expect(400);
+
+    expect(service.listAsync).not.toHaveBeenCalled();
   });
 
   it('мусорный cursor — 400 от Zod-пайпа, сервис не вызывается', async () => {
@@ -288,6 +376,11 @@ describe('AdminAuditController (v1.0.0 S3)', () => {
     await expect(controller.list({ limit: 20 }, USER)).resolves.toEqual(
       auditLogsResponse,
     );
-    expect(service.listAsync).toHaveBeenCalledWith(ACCESS, 20, undefined);
+    expect(service.listAsync).toHaveBeenCalledWith(
+      DEMO_USER_ID,
+      20,
+      undefined,
+      {},
+    );
   });
 });

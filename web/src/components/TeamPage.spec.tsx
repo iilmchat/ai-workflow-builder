@@ -285,18 +285,24 @@ describe('TeamPage — журнал аудита (v1.0.0 S5)', () => {
     );
 
     await waitFor(() =>
-      expect(vi.mocked(fetchAuditLogsAsync)).toHaveBeenCalledWith(20),
+      expect(vi.mocked(fetchAuditLogsAsync)).toHaveBeenCalledWith(20, null, {}),
     );
 
     // Строка журнала: подпись действия из `audit.action.*`, email участника по
-    // `userId` и `resourceId` в колонке «Ресурс».
+    // `userId` и `resourceId` в колонке «Ресурс». Ищем ячейки по data-атрибутам:
+    // с v1.1.0 S3 те же email/подписи есть в `<option>` фильтров.
+    await waitFor(() =>
+      expect(
+        container.querySelector('[data-team-audit-row]'),
+      ).not.toBeNull(),
+    );
     expect(
-      await screen.findByText(ru['audit.action.workflow.create']),
-    ).toBeInTheDocument();
-    expect(screen.getByText('member@example.com')).toBeInTheDocument();
+      container.querySelector('[data-team-audit-action="workflow.create"]')
+        ?.textContent,
+    ).toBe(ru['audit.action.workflow.create']);
     expect(
-      container.querySelector('[data-team-audit-row]'),
-    ).not.toBeNull();
+      container.querySelector('[data-team-audit-user]')?.textContent,
+    ).toBe('member@example.com');
     expect(
       screen.getByText(LOG_WORKFLOW_CREATE.resourceId as string),
     ).toBeInTheDocument();
@@ -355,7 +361,11 @@ describe('TeamPage — журнал аудита (v1.0.0 S5)', () => {
       container.querySelector('[data-team-tab-audit]') as HTMLButtonElement,
     );
 
-    await screen.findByText(ru['audit.action.workflow.create']);
+    await waitFor(() =>
+      expect(
+        container.querySelectorAll('[data-team-audit-row]'),
+      ).toHaveLength(1),
+    );
 
     const loadMore = container.querySelector(
       '[data-team-audit-load-more]',
@@ -365,13 +375,19 @@ describe('TeamPage — журнал аудита (v1.0.0 S5)', () => {
     fireEvent.click(loadMore);
 
     // Вторая страница дописана к первой: обе строки в списке.
-    await screen.findByText(ru['audit.action.run.start']);
+    await waitFor(() =>
+      expect(
+        container.querySelectorAll('[data-team-audit-row]'),
+      ).toHaveLength(2),
+    );
     expect(
-      container.querySelectorAll('[data-team-audit-row]'),
-    ).toHaveLength(2);
+      container.querySelector('[data-team-audit-action="run.start"]')
+        ?.textContent,
+    ).toBe(ru['audit.action.run.start']);
     expect(vi.mocked(fetchAuditLogsAsync)).toHaveBeenLastCalledWith(
       20,
       'cursor-page-2',
+      {},
     );
 
     // `nextCursor === null` — страниц больше нет: кнопка исчезла, показан «конец».
@@ -724,5 +740,252 @@ describe('TeamPage — управление составом (v1.1.0 S2)', () =>
         ),
       ),
     ).toBeInTheDocument();
+  });
+});
+
+describe('TeamPage — фильтры аудита (v1.1.0 S3)', () => {
+  beforeEach(() => {
+    vi.mocked(fetchOrganizationMembersAsync).mockReset();
+    vi.mocked(fetchOrganizationMembersAsync).mockResolvedValue({
+      members: [OWNER_MEMBER, MEMBER],
+      invitations: [],
+    });
+    vi.mocked(fetchAuditLogsAsync).mockReset();
+    vi.mocked(fetchAuditLogsAsync).mockResolvedValue({
+      logs: [],
+      nextCursor: null,
+      total: 0,
+    });
+
+    useAuthStore.setState({
+      user: authUserOf('owner'),
+      accessToken: 'test-token',
+      status: 'authenticated',
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useAuthStore.setState({ user: null, accessToken: null, status: 'unknown' });
+  });
+
+  it('рендерит фильтры действия, автора и дат на вкладке «Аудит»', async () => {
+    const { container } = renderTeam();
+
+    fireEvent.click(
+      container.querySelector('[data-team-tab-audit]') as HTMLButtonElement,
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchAuditLogsAsync)).toHaveBeenCalledWith(20, null, {}),
+    );
+
+    expect(container.querySelector('[data-team-audit-filters]')).not.toBeNull();
+    expect(
+      container.querySelector('[data-team-audit-action-filter]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-team-audit-user-filter]'),
+    ).not.toBeNull();
+    expect(container.querySelector('[data-team-audit-from]')).not.toBeNull();
+    expect(container.querySelector('[data-team-audit-to]')).not.toBeNull();
+    // Без активных фильтров кнопки «Сбросить» нет.
+    expect(container.querySelector('[data-team-audit-reset]')).toBeNull();
+    // В селекте действия — «Все действия» и известные коды (подписи из i18n).
+    expect(
+      screen.getByRole('option', { name: ru['audit.filter.all_actions'] }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('option', { name: ru['audit.action.workflow.create'] }),
+    ).toBeInTheDocument();
+  });
+
+  it('смена действия перезапрашивает журнал с action', async () => {
+    const { container } = renderTeam();
+
+    fireEvent.click(
+      container.querySelector('[data-team-tab-audit]') as HTMLButtonElement,
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchAuditLogsAsync)).toHaveBeenCalledTimes(1),
+    );
+
+    fireEvent.change(
+      container.querySelector(
+        '[data-team-audit-action-filter]',
+      ) as HTMLSelectElement,
+      { target: { value: 'workflow.create' } },
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchAuditLogsAsync)).toHaveBeenLastCalledWith(
+        20,
+        null,
+        { action: 'workflow.create' },
+      ),
+    );
+    // Активный фильтр даёт возможность сбросить его одним нажатием.
+    expect(container.querySelector('[data-team-audit-reset]')).not.toBeNull();
+  });
+
+  it('автор и даты уходят ISO-моментами локальных суток', async () => {
+    const { container } = renderTeam();
+
+    fireEvent.click(
+      container.querySelector('[data-team-tab-audit]') as HTMLButtonElement,
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchAuditLogsAsync)).toHaveBeenCalledTimes(1),
+    );
+
+    fireEvent.change(
+      container.querySelector(
+        '[data-team-audit-user-filter]',
+      ) as HTMLSelectElement,
+      { target: { value: MEMBER_ID } },
+    );
+    fireEvent.change(
+      container.querySelector('[data-team-audit-from]') as HTMLInputElement,
+      { target: { value: '2026-11-01' } },
+    );
+    fireEvent.change(
+      container.querySelector('[data-team-audit-to]') as HTMLInputElement,
+      { target: { value: '2026-11-02' } },
+    );
+
+    // Границы считаются в локальном поясе: «с 1 ноября» включает весь день
+    // по местному времени, а не UTC-сутки.
+    const expectedFrom = new Date('2026-11-01T00:00:00').toISOString();
+    const expectedTo = new Date('2026-11-02T23:59:59.999').toISOString();
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchAuditLogsAsync)).toHaveBeenLastCalledWith(
+        20,
+        null,
+        {
+          userId: MEMBER_ID,
+          from: expectedFrom,
+          to: expectedTo,
+        },
+      ),
+    );
+  });
+
+  it('«Загрузить ещё» передаёт те же фильтры и курсор', async () => {
+    vi.mocked(fetchAuditLogsAsync).mockReset();
+    vi.mocked(fetchAuditLogsAsync).mockResolvedValue({
+      logs: [LOG_WORKFLOW_CREATE],
+      nextCursor: 'cursor-page-2',
+      total: 2,
+    });
+
+    const { container } = renderTeam();
+
+    fireEvent.click(
+      container.querySelector('[data-team-tab-audit]') as HTMLButtonElement,
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchAuditLogsAsync)).toHaveBeenCalledTimes(1),
+    );
+
+    fireEvent.change(
+      container.querySelector(
+        '[data-team-audit-action-filter]',
+      ) as HTMLSelectElement,
+      { target: { value: 'workflow.create' } },
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchAuditLogsAsync)).toHaveBeenLastCalledWith(
+        20,
+        null,
+        { action: 'workflow.create' },
+      ),
+    );
+
+    fireEvent.click(
+      container.querySelector(
+        '[data-team-audit-load-more]',
+      ) as HTMLButtonElement,
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchAuditLogsAsync)).toHaveBeenLastCalledWith(
+        20,
+        'cursor-page-2',
+        { action: 'workflow.create' },
+      ),
+    );
+  });
+
+  it('«Сбросить» очищает фильтры и перезапрашивает журнал без них', async () => {
+    const { container } = renderTeam();
+
+    fireEvent.click(
+      container.querySelector('[data-team-tab-audit]') as HTMLButtonElement,
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchAuditLogsAsync)).toHaveBeenCalledTimes(1),
+    );
+
+    fireEvent.change(
+      container.querySelector(
+        '[data-team-audit-action-filter]',
+      ) as HTMLSelectElement,
+      { target: { value: 'run.start' } },
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchAuditLogsAsync)).toHaveBeenLastCalledWith(20, null, {
+        action: 'run.start',
+      }),
+    );
+
+    fireEvent.click(
+      container.querySelector('[data-team-audit-reset]') as HTMLButtonElement,
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchAuditLogsAsync)).toHaveBeenLastCalledWith(
+        20,
+        null,
+        {},
+      ),
+    );
+    // После сброса фильтров кнопка снова скрыта.
+    await waitFor(() =>
+      expect(
+        container.querySelector('[data-team-audit-reset]'),
+      ).toBeNull(),
+    );
+  });
+
+  it('пустой отфильтрованный журнал показывает отдельное сообщение', async () => {
+    const { container } = renderTeam();
+
+    fireEvent.click(
+      container.querySelector('[data-team-tab-audit]') as HTMLButtonElement,
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(fetchAuditLogsAsync)).toHaveBeenCalledTimes(1),
+    );
+
+    fireEvent.change(
+      container.querySelector(
+        '[data-team-audit-action-filter]',
+      ) as HTMLSelectElement,
+      { target: { value: 'run.start' } },
+    );
+
+    expect(
+      await screen.findByText(ru['audit.empty_filtered']),
+    ).toBeInTheDocument();
+    // Это не «журнал пуст» — общий текст без фильтров не показывается.
+    expect(screen.queryByText(ru['audit.empty'])).toBeNull();
   });
 });
