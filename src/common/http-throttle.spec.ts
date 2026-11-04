@@ -1,3 +1,4 @@
+import { jwtAuthDbProvider } from '../../test/helpers/jwt-auth-db.stub.js';
 import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
@@ -82,6 +83,7 @@ describe('HTTP rate limiting: ThrottlerGuard (KI-206, KI-234)', () => {
       ],
       controllers: [AuthController, WorkflowShareController],
       providers: [
+        jwtAuthDbProvider(),
         {
           provide: AuthService,
           useValue: {

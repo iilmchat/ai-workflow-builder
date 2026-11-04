@@ -1,3 +1,4 @@
+import { jwtAuthDbProvider } from '../../test/helpers/jwt-auth-db.stub.js';
 import { NotFoundException } from '@nestjs/common';
 import type { INestApplication, MessageEvent } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -15,7 +16,12 @@ import type { NodeRunSnapshot, RunHistoryResponse } from './dto/index.js';
 import { decodeRunHistoryCursor, encodeRunHistoryCursor } from './dto/index.js';
 
 /** Владелец, которого guard подставляет при `AUTH_DISABLED=true`. */
-const USER = { sub: DEMO_USER_ID, email: DEMO_USER_EMAIL, orgId: DEMO_ORG_ID };
+const USER = {
+  sub: DEMO_USER_ID,
+  email: DEMO_USER_EMAIL,
+  orgId: DEMO_ORG_ID,
+  ver: 0,
+};
 
 /**
  * Контекст доступа, который контроллер обязан собрать из токена (v1.0.0 S2).
@@ -163,6 +169,7 @@ describe('RunsController', () => {
     const moduleRef = await Test.createTestingModule({
       controllers: [RunsController, RunsHistoryController],
       providers: [
+        jwtAuthDbProvider(),
         { provide: RunsService, useValue: service },
         { provide: RunsStreamService, useValue: stream },
         // R7.1 (KI-048): ручка бюджета запуска.

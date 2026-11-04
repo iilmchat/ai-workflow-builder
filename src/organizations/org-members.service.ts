@@ -6,7 +6,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   organizationInvitations,
@@ -359,7 +359,14 @@ export class OrgMembersService {
 
       await tx
         .update(users)
-        .set({ organizationId: personalWorkspace.id, role: 'owner' })
+        .set({
+          organizationId: personalWorkspace.id,
+          role: 'owner',
+          // v1.1.0 S5 (KI-601): инкремент версии отзывает уже выданные
+          // access-токены участника — его следующий запрос получит 401, даже
+          // если он не сменил организацию (страховка к org-проверке guard'а).
+          tokenVersion: sql`${users.tokenVersion} + 1`,
+        })
         .where(eq(users.id, target.id));
 
       // 4. Отзыв refresh-токенов: доступ не продлевается за пределы

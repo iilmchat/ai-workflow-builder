@@ -1,3 +1,4 @@
+import { jwtAuthDbProvider } from '../../test/helpers/jwt-auth-db.stub.js';
 import { NotFoundException, type INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -12,7 +13,12 @@ import { WorkflowService } from './workflow.service.js';
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
 
 /** Владелец из access-токена: контроллер берёт userId только отсюда (R6.1a). */
-const USER = { sub: 'user-1', email: 'user@example.com', orgId: DEMO_ORG_ID };
+const USER = {
+  sub: 'user-1',
+  email: 'user@example.com',
+  orgId: DEMO_ORG_ID,
+  ver: 0,
+};
 
 /** Пара «пользователь + организация», которую контроллер отдаёт сервису (S2). */
 const ACCESS = { userId: USER.sub, orgId: USER.orgId };
@@ -54,6 +60,7 @@ describe('WorkflowController', () => {
     const moduleRef = await Test.createTestingModule({
       controllers: [WorkflowController],
       providers: [
+        jwtAuthDbProvider(),
         { provide: WorkflowService, useValue: service },
         // JwtAuthGuard (R6.1a) требует JwtService и ConfigService. Контроллер
         // вызывается напрямую, поэтому guard не срабатывает — зависимости нужны
@@ -75,9 +82,9 @@ describe('WorkflowController', () => {
       const dto = { userId: 'attacker', name: 'My workflow', nodes: [], edges: [] };
 
       await expect(controller.create(dto, USER)).resolves.toEqual(workflow);
-      // KI-204: `userId` из тела игнорируется — владелец и организация приходят
-      // из токена единым объектом `WorkflowAccess` (v1.0 S2).
-      expect(service.createAsync).toHaveBeenCalledWith(dto, ACCESS);
+      // KI-204/KI-605: `userId` из тела игнорируется, организация резолвится
+      // в сервисе из БД — контроллер передаёт только `sub`.
+      expect(service.createAsync).toHaveBeenCalledWith(dto, USER.sub);
     });
   });
 
@@ -189,6 +196,7 @@ describe('WorkflowController — export/import (R6.6.1)', () => {
     const moduleRef = await Test.createTestingModule({
       controllers: [WorkflowController],
       providers: [
+        jwtAuthDbProvider(),
         { provide: WorkflowService, useValue: service },
         // AUTH_DISABLED=true → запросы идут от системного пользователя
         // (как в workflow-share.spec.ts), поэтому владельца можно проверить.
@@ -250,10 +258,7 @@ describe('WorkflowController — export/import (R6.6.1)', () => {
 
     expect(response.body).toEqual({ ...workflow, createdAt: expect.any(String), updatedAt: expect.any(String) });
     // Лишние ключи отброшены Zod'ом: подменить владельца или id через body нельзя.
-    expect(service.importAsync).toHaveBeenCalledWith(artifact, {
-      userId: DEMO_USER_ID,
-      orgId: DEMO_ORG_ID,
-    });
+    expect(service.importAsync).toHaveBeenCalledWith(artifact, DEMO_USER_ID);
   });
 
   it('POST /workflow/import — 400 без обязательного version', async () => {

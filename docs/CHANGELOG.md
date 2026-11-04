@@ -19,6 +19,20 @@
 
 ### Added
 
+- **Отзыв access-токена и защита write-путей (v1.1.0 S5, KI-601/KI-605)**
+  ([отчёт](development/reports/v1.1.0/S5-security.md)):
+  колонка `users.token_version` (миграция `0018_daffy_triathlon.sql`, DEFAULT 0)
+  и поле `ver` в access-токене. `JwtAuthGuard` при каждом запросе сверяет
+  `organization_id` и `token_version` с БД: удалённый/переехавший участник
+  получает 401 на любом маршруте, не дожидаясь истечения 24 ч. Удаление
+  участника инкрементит версию в транзакции. `WorkflowService.createAsync`/
+  `importAsync` принимают только `userId` и резолвят организацию из `users`;
+  контроллеры `workflow`/`templates` передают `sub`. `AuditInterceptor` пишет
+  организацию из payload, уже сверенного guard'ом с БД. Для
+  `member.invite`/`member.remove` email в metadata маскируется
+  (`a***@example.com`, KI-589). Смоук 16/16: старый токен B → 401 на
+  `/auth/me`, `/workflow`, `/admin/audit`, `POST /workflow`; новый вход
+  работает с личной организацией.
 - **Метрики: status агента, `llm_call`, process-метрики, Grafana (v1.1.0 S4,
   DESIGN V110 § 3.4, KI-576/577/581/582)**
   ([отчёт](development/reports/v1.1.0/S4-metrics.md)):
@@ -207,6 +221,13 @@
 
 ### Changed
 
+- **Контракт access-токена: поле `ver` и сверка с БД (v1.1.0 S5, KI-601):**
+  `JwtPayload` дополнен `ver` (`users.token_version`), токены без него
+  трактуются как версия 0. `JwtAuthGuard` после проверки подписи делает один
+  SELECT по `sub` и отклоняет токен при несовпадении организации/версии; в
+  `request.user` кладётся актуальный `orgId` из БД. `POST /workflow` и
+  `POST /workflow/import` больше не принимают организацию из контроллера —
+  `WorkflowService` резолвит её по `userId` (KI-605).
 - **Миграция Prometheus-клиента (v1.1.0 S4, KI-574):** зависимость
   `prom-client@15.1.3` заменена на `@prometheus-io/client@0.16.1` (официальный
   клиент Prometheus, Apache-2.0). Импорты `Registry`/`Histogram`/`Counter`/
@@ -278,6 +299,23 @@
 
 ### Security
 
+- **Отзыв access-токена при удалении из организации (v1.1.0 S5, KI-601)**
+  ([отчёт](development/reports/v1.1.0/S5-security.md)): `users.token_version` +
+  `JwtPayload.ver`; `JwtAuthGuard` сверяет организацию и версию с БД на каждом
+  запросе, поэтому устаревший access-токен удалённого участника не даёт доступа
+  ни к чтению, ни к записи. `OrgMembersService.removeMemberAsync` инкрементит
+  версию в транзакции. Смоук: 401 на `/auth/me`, `/workflow`, `/admin/audit`,
+  `POST /workflow` старым токеном; новый вход B — личная организация, `ver=1`.
+  Остатки (logout, SELECT на запрос) — KI-614/KI-615.
+- **Write-пути не доверяют `orgId` из токена (v1.1.0 S5, KI-605):**
+  `WorkflowService.createAsync`/`importAsync` резолвят организацию из `users`,
+  `AuditInterceptor` использует payload, сверенный guard'ом; удалённый участник
+  больше не может создать workflow в старой организации и записать строку в её
+  аудит. Проверено смоуком (16/16).
+- **Маскировка email в аудите (v1.1.0 S5, KI-589):** для действий
+  `member.invite`/`member.remove` metadata рекурсивно маскируется
+  (`a***@example.com`); полный адрес в журнал не попадает. Тесты и смоук
+  подтверждают отсутствие полного email.
 - **Организация журнала аудита резолвится из БД (v1.1.0 S3, KI-587/KI-601)**
   ([отчёт](development/reports/v1.1.0/S3-audit-filters.md)):
   `GET /admin/audit` больше не доверяет `orgId` из access-токена — контроллер
@@ -318,6 +356,23 @@
 
 ### Fixed
 
+- **KI-601 — отзыв access-токена (v1.1.0 S5)**
+  ([отчёт](development/reports/v1.1.0/S5-security.md)): `users.token_version`
+  (миграция 0018) и `ver` в JWT; `JwtAuthGuard` сверяет версию и организацию с
+  БД, удаление участника инкрементит версию. Тесты: `jwt-auth.guard.spec.ts`,
+  `auth.service.spec.ts`, `org-members.service.spec.ts`; смоук — старый токен
+  B получает 401 на всех проверенных ручках.
+- **KI-605 — write-пути читают организацию из БД (v1.1.0 S5)**
+  ([отчёт](development/reports/v1.1.0/S5-security.md)):
+  `WorkflowService.createAsync`/`importAsync` принимают `userId` и резолвят
+  `users.organization_id`; контроллеры передают `sub`; `AuditInterceptor`
+  пишет организацию из сверенного payload. `workflow.service.spec.ts`
+  проверяет SELECT по `users`, 401 без пользователя и запись org из БД.
+- **KI-589 — email в metadata аудита замаскирован (v1.1.0 S5)**
+  ([отчёт](development/reports/v1.1.0/S5-security.md)): для
+  `member.invite`/`member.remove` email рекурсивно маскируется в body/params;
+  `a***@example.com`, полный адрес не сохраняется. Тесты
+  `audit.interceptor.spec.ts` (4 кейса) и смоук.
 - **KI-574 — миграция на `@prometheus-io/client` (v1.1.0 S4)**
   ([отчёт](development/reports/v1.1.0/S4-metrics.md)): `prom-client` удалён,
   официальный клиент установлен; API реестра/гистограмм/счётчика и
@@ -409,6 +464,11 @@
 
 ### Documented
 
+- **Ограничения S5 (v1.1.0):** logout не отзывает access-токен — `token_version`
+  инкрементится только при удалении участника, а не при выходе (KI-614);
+  `JwtAuthGuard` делает SELECT в БД на каждый аутентифицированный запрос
+  (KI-615); маскирование email включено только для `member.invite`/
+  `member.remove`, `collaborator.invite` по-прежнему пишет адрес (KI-616).
 - **Ограничения метрик S4 (v1.1.0):** `@prometheus-io/client@0.16.1` требует
   Node 22/24/26+, а `engines.node` проекта не зафиксирован — KI-609; Grafana
   dashboard статичен, панели не проверяются в CI, alert rules нет — KI-610;
@@ -2400,6 +2460,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 

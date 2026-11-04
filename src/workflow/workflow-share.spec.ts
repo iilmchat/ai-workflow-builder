@@ -1,3 +1,4 @@
+import { jwtAuthDbProvider } from '../../test/helpers/jwt-auth-db.stub.js';
 import { NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -69,6 +70,7 @@ describe('WorkflowService — share (R6.2.1, v1.0 S2)', () => {
 
     const moduleRef = await Test.createTestingModule({
       providers: [
+        jwtAuthDbProvider(),
         WorkflowService,
         { provide: DRIZZLE, useValue: db as unknown as Database },
       ],
@@ -200,6 +202,7 @@ describe('Share-эндпоинты (R6.2.1)', () => {
     const moduleRef = await Test.createTestingModule({
       controllers: [WorkflowController, WorkflowShareController],
       providers: [
+        jwtAuthDbProvider(),
         { provide: WorkflowService, useValue: service },
         // JwtAuthGuard (R6.1a): для 401-пути AUTH_DISABLED переключается в тесте.
         { provide: JwtService, useValue: { verifyAsync: vi.fn() } },

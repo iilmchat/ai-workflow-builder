@@ -79,7 +79,7 @@ export class WorkflowController {
    * `POST /workflow` — создаёт workflow.
    *
    * @param dto - тело запроса, валидированное по CreateWorkflowSchema
-   * @param user - владелец и организация из access-токена
+   * @param user - владелец из access-токена
    * @returns созданный workflow со статусом 201
    */
   @Post()
@@ -88,9 +88,9 @@ export class WorkflowController {
     @Body(ZodValidationPipe.create(CreateWorkflowSchema)) dto: CreateWorkflowDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<Workflow> {
-    // Владелец и арендатор — только из токена (R6.1a, v1.0 S1); в body их нет
-    // (KI-204, DESIGN_V100_ENTERPRISE § 3.1).
-    return this.workflowService.createAsync(dto, toWorkflowAccess(user));
+    // Владелец — из токена (R6.1a); организация резолвится в сервисе из БД
+    // (v1.1.0 S5, KI-605), а не передаётся из контроллера.
+    return this.workflowService.createAsync(dto, user.sub);
   }
 
   /**
@@ -132,7 +132,7 @@ export class WorkflowController {
    * и подставить чужого владельца через body невозможно.
    *
    * @param dto - тело запроса, валидированное по ImportWorkflowSchema
-   * @param user - владелец нового workflow и организация из access-токена
+   * @param user - владелец нового workflow из access-токена
    * @returns созданный workflow со статусом 201
    */
   @Post('import')
@@ -141,7 +141,8 @@ export class WorkflowController {
     @Body(ZodValidationPipe.create(ImportWorkflowSchema)) dto: ImportWorkflowDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<Workflow> {
-    return this.workflowService.importAsync(dto, toWorkflowAccess(user));
+    // Организация резолвится в сервисе из БД (v1.1.0 S5, KI-605).
+    return this.workflowService.importAsync(dto, user.sub);
   }
 
   /**

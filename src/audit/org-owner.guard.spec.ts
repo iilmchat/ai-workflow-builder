@@ -17,7 +17,12 @@ const EMAIL = 'user@example.com';
 const ORG_ID = '55555555-5555-4555-8555-555555555555';
 
 /** Payload аутентифицированного пользователя (v1.0 S3). */
-const PAYLOAD: JwtPayload = { sub: USER_ID, email: EMAIL, orgId: ORG_ID };
+const PAYLOAD: JwtPayload = {
+  sub: USER_ID,
+  email: EMAIL,
+  orgId: ORG_ID,
+  ver: 1,
+};
 
 /** Минимальный запрос, который читает guard (без `any`, RULES 4.15). */
 interface TestRequest {

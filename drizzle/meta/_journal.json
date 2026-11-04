@@ -127,6 +127,13 @@
       "when": 1793821230286,
       "tag": "0017_kind_gorilla_man",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793829508528,
+      "tag": "0018_daffy_triathlon",
+      "breakpoints": true
     }
   ]
 }

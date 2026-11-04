@@ -19,7 +19,12 @@ import {
 } from './dto/audit.dto.js';
 
 /** Пользователь из access-токена (JwtAuthGuard проверяет его в этих тестах). */
-const USER = { sub: DEMO_USER_ID, email: DEMO_USER_EMAIL, orgId: DEMO_ORG_ID };
+const USER = {
+  sub: DEMO_USER_ID,
+  email: DEMO_USER_EMAIL,
+  orgId: DEMO_ORG_ID,
+  ver: 0,
+};
 
 /** Организация, которой нет у пользователя в актуальной строке `users`. */
 const STALE_ORG_ID = '99999999-9999-4999-8999-999999999999';
@@ -66,7 +71,7 @@ const auditLogsResponse: AuditLogsResponse = {
  * дочитать её через `limit`, поэтому стаб отдаёт строки при `await` на любом
  * звене. Возвращаемые строки вычисляются лениво — роль задаётся тестом.
  */
-interface GuardSelectChain extends PromiseLike<Array<{ role: UserRole }>> {
+interface GuardSelectChain extends PromiseLike<Array<{ role: UserRole; organizationId: string; tokenVersion: number }>> {
   from(table: unknown): GuardSelectChain;
   where(condition: unknown): GuardSelectChain;
   limit(count: number): GuardSelectChain;
@@ -78,10 +83,12 @@ interface GuardSelectChain extends PromiseLike<Array<{ role: UserRole }>> {
  * @returns стаб соединения Drizzle с одной таблицей `users`
  */
 function createDbStub(getRole: () => UserRole | null): Database {
-  const rows = (): Array<{ role: UserRole }> => {
+  const rows = (): Array<{ role: UserRole; organizationId: string; tokenVersion: number }> => {
     const role = getRole();
 
-    return role === null ? [] : [{ role }];
+    return role === null
+      ? []
+      : [{ role, organizationId: DEMO_ORG_ID, tokenVersion: 0 }];
   };
 
   const chain: GuardSelectChain = {
@@ -187,26 +194,17 @@ describe('AdminAuditController (v1.0.0 S3)', () => {
     );
   });
 
-  it('KI-601: устаревший orgId в токене не попадает в сервис', async () => {
-    // Пользователь удалён из организации: в токене остался старый orgId,
-    // в БД он уже owner личной организации. Аудит должен читаться по БД.
+  it('KI-601: устаревший orgId в токене отклоняется guard\'ом до сервиса', async () => {
+    // Пользователь переехал в другую организацию: в токене остался старый
+    // orgId, в БД — новый. Guard отвечает 401, журнал не читается вовсе.
     jwt.verifyAsync.mockResolvedValue({ ...USER, orgId: STALE_ORG_ID });
 
     await request(app.getHttpServer())
       .get('/admin/audit')
       .set(authHeader)
-      .expect(200);
+      .expect(401);
 
-    expect(service.listAsync).toHaveBeenCalledWith(
-      DEMO_USER_ID,
-      20,
-      undefined,
-      {},
-    );
-    // Старая организация не утекла ни в один аргумент вызова.
-    expect(JSON.stringify(service.listAsync.mock.calls)).not.toContain(
-      STALE_ORG_ID,
-    );
+    expect(service.listAsync).not.toHaveBeenCalled();
   });
 
   it('администратор (role=admin) тоже получает 200', async () => {

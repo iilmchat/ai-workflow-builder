@@ -15,7 +15,6 @@ import type { JwtPayload } from '../auth/interfaces/jwt-payload.js';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import type { Workflow } from '../db/schema.js';
 import { WorkflowService } from '../workflow/workflow.service.js';
-import { toWorkflowAccess } from '../workflow/workflow-access.js';
 import type { TemplateSummary } from './dto/template.dto.js';
 import { TemplateLoaderService } from './template-loader.service.js';
 
@@ -101,9 +100,8 @@ export class TemplatesController {
       throw new NotFoundException(`Шаблон ${params.id} не найден`);
     }
 
-    // Владелец и арендатор — из токена: новый workflow получает организацию
-    // пользователя (v1.0 S1/S2, DESIGN § 3.1). Контекст доступа собирается
-    // хелпером `toWorkflowAccess`, чтобы orgId нельзя было забыть.
-    return this.workflowService.importAsync(template, toWorkflowAccess(user));
+    // Владелец — из токена; организация нового workflow резолвится в сервисе
+    // из БД (v1.1.0 S5, KI-605).
+    return this.workflowService.importAsync(template, user.sub);
   }
 }

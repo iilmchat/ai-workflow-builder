@@ -311,7 +311,9 @@ export class AuthService {
    * поэтому тип берём от самого параметра, без приведения (RULES 4.15).
    *
    * `orgId` берётся из строки `users` (NOT NULL после бэкфилла v1.0.0), поэтому
-   * каждый подписанный токен несёт арендатора (DESIGN § 3.1/§ 4).
+   * каждый подписанный токен несёт арендатора (DESIGN § 3.1/§ 4). `ver` —
+   * `users.token_version` (v1.1.0 S5, KI-601): guard сверяет его с БД, поэтому
+   * после инкремента версии старый access-токен перестаёт действовать.
    *
    * @param user - строка `users` (с `organizationId`)
    * @returns подписанный JWT
@@ -321,6 +323,8 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       orgId: user.organizationId,
+      // v1.1.0 S5 (KI-601): версия для принудительного отзыва access-токена.
+      ver: user.tokenVersion,
     };
 
     return this.jwt.signAsync(payload, {

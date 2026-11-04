@@ -1,9 +1,9 @@
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Param, SQL } from 'drizzle-orm';
 import type { Database } from '../db/db.module.js';
 import { DRIZZLE } from '../db/db.module.js';
-import { workflows, type Workflow } from '../db/schema.js';
+import { users, workflows, type Workflow } from '../db/schema.js';
 import { WorkflowService } from './workflow.service.js';
 import type { WorkflowAccess } from './workflow-access.js';
 
@@ -11,6 +11,8 @@ import type { WorkflowAccess } from './workflow-access.js';
 const WORKFLOW_ID = '11111111-1111-4111-8111-111111111111';
 /** Организация-арендатор workflow (v1.0 S1). */
 const ORG_ID = '55555555-5555-4555-8555-555555555555';
+/** Другая организация — проверка, что org читается из БД (v1.1.0 S5). */
+const OTHER_ORG_ID = '66666666-6666-4666-8666-666666666666';
 
 /** Контекст доступа: пользователь и его организация (v1.0 S2). */
 const ACCESS: WorkflowAccess = { userId: 'user-1', orgId: ORG_ID };
@@ -229,9 +231,10 @@ describe('WorkflowService', () => {
     it('вставляет запись через Drizzle и возвращает созданный workflow', async () => {
       const dto = { name: 'My workflow', nodes: [], edges: [] };
 
-      const result = await service.createAsync(dto, ACCESS);
+      const result = await service.createAsync(dto, ACCESS.userId);
 
-      expect(db.insert).toHaveBeenCalledWith(workflows);
+      // v1.1.0 S5 (KI-605): организация резолвится из users по userId.
+      expect(db.select).toHaveBeenCalled();
       expect(insertChain.values).toHaveBeenCalledWith({
         userId: ACCESS.userId,
         organizationId: ORG_ID,
@@ -242,6 +245,35 @@ describe('WorkflowService', () => {
       });
       expect(insertChain.returning).toHaveBeenCalled();
       expect(result).toEqual(baseWorkflow);
+    });
+
+    it('читает organizationId из БД, а не из аргумента (KI-605)', async () => {
+      const actorChain = chain(() => [{ organizationId: OTHER_ORG_ID }]);
+      db.select.mockReturnValueOnce(actorChain);
+
+      await service.createAsync(
+        { name: 'Graph', nodes: [], edges: [] },
+        'user-2',
+      );
+
+      // SELECT именно по users.id, найденная организация уходит в INSERT.
+      expect(actorChain.from).toHaveBeenCalledWith(users);
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-2',
+          organizationId: OTHER_ORG_ID,
+        }),
+      );
+    });
+
+    it('401, если пользователя нет в БД (резолв организации)', async () => {
+      const actorChain = chain(() => []);
+      db.select.mockReturnValueOnce(actorChain);
+
+      await expect(
+        service.createAsync({ name: 'Graph', nodes: [], edges: [] }, 'ghost'),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(db.insert).not.toHaveBeenCalled();
     });
 
     it('прокидывает description, nodes и edges без изменений', async () => {
@@ -255,7 +287,7 @@ describe('WorkflowService', () => {
           nodes,
           edges,
         },
-        { userId: 'user-2', orgId: ORG_ID },
+        'user-2',
       );
 
       expect(insertChain.values).toHaveBeenCalledWith(
@@ -280,9 +312,10 @@ describe('WorkflowService', () => {
         exportedAt: '2026-10-16T00:00:00.000Z',
       };
 
-      const result = await service.importAsync(dto, { userId: 'user-2', orgId: ORG_ID });
+      const result = await service.importAsync(dto, 'user-2');
 
-      // Импорт делегирует вставку createAsync — путь записи один.
+      // Импорт делегирует вставку createAsync — путь записи один, организация
+      // резолвится из БД (v1.1.0 S5, KI-605).
       expect(insertChain.values).toHaveBeenCalledWith(
         expect.objectContaining({
           userId: 'user-2',

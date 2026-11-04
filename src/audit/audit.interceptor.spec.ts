@@ -17,7 +17,7 @@ const PARAM_RESOURCE_ID = '88888888-8888-4888-8888-888888888888';
 const EMAIL = 'user@example.com';
 
 /** Payload access-токена: автор действия и его организация. */
-const USER: JwtPayload = { sub: USER_ID, email: EMAIL, orgId: ORG_ID };
+const USER: JwtPayload = { sub: USER_ID, email: EMAIL, orgId: ORG_ID, ver: 1 };
 
 /** Минимальный запрос, который читает интерсептор. */
 interface TestRequest {
@@ -403,6 +403,86 @@ describe('AuditInterceptor', () => {
 
       expect(JSON.stringify(recordedEntry().metadata['body'])).toContain(
         '[max-depth]',
+      );
+    });
+  });
+
+  describe('маскировка email (v1.1.0 S5, KI-589)', () => {
+    it('маскирует email приглашённого в metadata member.invite', async () => {
+      await runAsync(
+        {
+          method: 'POST',
+          path: '/admin/members/invite',
+          user: USER,
+          params: {},
+          body: { email: 'alice@example.com', role: 'member' },
+        },
+        { statusCode: 201, responseBody: { email: 'alice@example.com' } },
+      );
+
+      const entry = recordedEntry();
+      const body = entry.metadata['body'] as Record<string, unknown>;
+
+      expect(entry.action).toBe('member.invite');
+      expect(body.email).toBe('a***@example.com');
+      expect(JSON.stringify(entry.metadata)).not.toContain('alice@example.com');
+    });
+
+    it('маскирует email в строке и во вложенном объекте member.invite', async () => {
+      await runAsync(
+        {
+          method: 'POST',
+          path: '/admin/members/invite',
+          user: USER,
+          params: { source: 'invite bob@example.com' },
+          body: {
+            role: 'member',
+            nested: { contact: 'carol@example.org' },
+          },
+        },
+        { statusCode: 201, responseBody: { id: RESOURCE_ID } },
+      );
+
+      const serialized = JSON.stringify(recordedEntry().metadata);
+
+      expect(serialized).toContain('b***@example.com');
+      expect(serialized).toContain('c***@example.org');
+      expect(serialized).not.toContain('bob@example.com');
+      expect(serialized).not.toContain('carol@example.org');
+    });
+
+    it('маскирует email и для member.remove', async () => {
+      await runAsync(
+        {
+          method: 'DELETE',
+          path: `/admin/members/${RESOURCE_ID}`,
+          user: USER,
+          params: { id: RESOURCE_ID, email: 'dave@example.com' },
+        },
+        { statusCode: 204, responseBody: undefined },
+      );
+
+      expect(JSON.stringify(recordedEntry().metadata)).toContain(
+        'd***@example.com',
+      );
+    });
+
+    it('не трогает email в metadata других действий', async () => {
+      await runAsync(
+        {
+          method: 'POST',
+          path: '/workflow',
+          user: USER,
+          params: {},
+          body: { contact: 'erin@example.com' },
+        },
+        { statusCode: 201, responseBody: { id: RESOURCE_ID } },
+      );
+
+      // Маскируются только действия управления составом; прочие metadata
+      // остаются как есть (email там — часть пользовательских данных).
+      expect(JSON.stringify(recordedEntry().metadata)).toContain(
+        'erin@example.com',
       );
     });
   });

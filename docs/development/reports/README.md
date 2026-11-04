@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.1.0 | S5 | Security Polish: отзыв access-токена (`users.token_version` + `JwtPayload.ver`, сверка `orgId`/`ver` в `JwtAuthGuard`), организация в write-путях из БД (`WorkflowService.createAsync`/`importAsync`, аудит), маскировка email в `member.invite`/`member.remove`, миграция 0018, смоук 16/16 | 2026-11-05 | [S5-security.md](v1.1.0/S5-security.md) |
 | v1.1.0 | S4 | Metrics Improvement: миграция `prom-client` → `@prometheus-io/client@0.16.1`, `status` в `agent_step_duration_seconds` (success/error), `llm_call_duration_seconds{model,status}`, `collectDefaultMetrics` (`process_*`/`nodejs_*`), кардинальность `model` через `LlmRegistryService.hasModel`, `infra/prometheus/prometheus.yml` + `infra/grafana/dashboard.json`, смоук 18/18 | 2026-11-04 | [S4-metrics.md](v1.1.0/S4-metrics.md) |
 | v1.1.0 | S3 | Audit Filters & Security Fix: фильтры `action`/`userId`/`from`/`to` в `GET /admin/audit` (total по тому же предикату, keyset+фильтры, индексы миграции 0017), организация резолвится из `users` по `sub` (KI-587/KI-601, частично), UI-фильтры и сброс в `TeamPage`, смоук 31/31 | 2026-11-04 | [S3-audit-filters.md](v1.1.0/S3-audit-filters.md) |
 | v1.1.0 | S2 | Team Management: `PATCH /admin/members/:userId` (смена роли) и `DELETE` (выход из организации) только для owner, `OrgOwnerOnlyGuard`, передача графов владельцу + личная организация + отзыв refresh-токенов, аудит `member.role_change`/`member.remove`, UI-контролы в `TeamPage` | 2026-11-03 | [S2-team-management.md](v1.1.0/S2-team-management.md) |

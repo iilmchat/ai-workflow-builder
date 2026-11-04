@@ -467,6 +467,9 @@ describe('OrgMembersService (v1.0.0 S5; S1 — письмо; v1.1.0 S2 — уп�
       expect(updateChains[1]?.set).toHaveBeenCalledWith({
         organizationId: NEW_ORG_ID,
         role: 'owner',
+        // v1.1.0 S5 (KI-601): версия токена инкрементится — старый access
+        // перестаёт действовать сразу, не дожидаясь истечения.
+        tokenVersion: expect.anything(),
       });
       expect(updateChains[2]?.set).toHaveBeenCalledWith({
         revokedAt: expect.any(Date),

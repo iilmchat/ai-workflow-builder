@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { and, desc, eq, getTableColumns, sql, type SQL } from 'drizzle-orm';
 import { isDeepStrictEqual } from 'node:util';
@@ -56,11 +57,16 @@ const EXPORT_FORMAT_VERSION = 1 as const;
 /**
  * Сервис CRUD-операций над workflow.
  *
- * Все методы принимают {@link WorkflowAccess} — пользователя и его организацию
- * из access-токена. Изоляция арендаторов (v1.0.0 S2, DESIGN V100 § 3.1)
- * применяется на уровне SQL: каждая выборка workflow ограничена
+ * Большинство методов принимает {@link WorkflowAccess} — пользователя и его
+ * организацию из access-токена. Изоляция арендаторов (v1.0.0 S2, DESIGN V100
+ * § 3.1) применяется на уровне SQL: каждая выборка workflow ограничена
  * `organization_id`, а доступ владельца/участника проверяется теми же
  * предикатами из `workflow-access.ts`.
+ *
+ * **Write-пути и KI-605.** `createAsync`/`importAsync` принимают только
+ * `userId` (`sub`), а организацию читают из `users` — подложить устаревший
+ * `orgId` через контроллер нельзя (v1.1.0 S5). Остальные методы по-прежнему
+ * получают `WorkflowAccess`, но guard отдаёт в нём проверенную БД-организацию.
  *
  * Необязательный `access` сохранён только у `findAllAsync`/`findOneAsync`/
  * `updateAsync`/`removeAsync` для внутренних вызовов и тестов: без него фильтра
@@ -75,20 +81,49 @@ export class WorkflowService {
   constructor(@Inject(DRIZZLE) private readonly db: Database) {}
 
   /**
+   * Резолвит организацию актора из БД по `sub` access-токена (v1.1.0 S5,
+   * KI-605).
+   *
+   * Write-пути не должны доверять `orgId` из токена: даже если guard уже
+   * проверил его, сервис — вторая граница (RULES 1.17) и может быть вызван
+   * напрямую (внутренние сценарии/тесты). Отсутствие строки `users` —
+   * 401, как в `AuditService.listAsync`.
+   *
+   * @param userId - `sub` access-токена
+   * @returns контекст доступа с организацией из `users`
+   * @throws UnauthorizedException если пользователя нет
+   */
+  private async resolveAccessAsync(userId: string): Promise<WorkflowAccess> {
+    const [actor] = await this.db
+      .select({ organizationId: users.organizationId })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (actor === undefined) {
+      throw new UnauthorizedException('Пользователь не найден');
+    }
+
+    return { userId, orgId: actor.organizationId };
+  }
+
+  /**
    * Создаёт новый workflow.
    *
-   * Владелец и организация-арендатор приходят из access-токена (KI-204: в DTO
-   * их нет), `nodes`/`edges` — уже с применёнными значениями по умолчанию `[]`.
+   * Владелец приходит из access-токена (`userId`), организация-арендатор
+   * читается из `users` (v1.1.0 S5, KI-605): подложить чужой/устаревший
+   * `orgId` в токен или вызвать сервис с чужой парой больше нельзя.
    *
-   * `organizationId` — арендатор из того же токена (v1.0 S1, DESIGN § 3.1):
-   * колонка NOT NULL, поэтому клиент не может создать граф вне своей
-   * организации.
+   * `nodes`/`edges` — уже с применёнными значениями по умолчанию `[]`.
    *
    * @param dto - валидированные данные создания workflow
-   * @param access - пользователь и его организация из access-токена
+   * @param userId - `sub` access-токена (владелец нового workflow)
    * @returns созданная запись workflow
+   * @throws UnauthorizedException если пользователя нет в БД
    */
-  async createAsync(dto: CreateWorkflowDto, access: WorkflowAccess): Promise<Workflow> {
+  async createAsync(dto: CreateWorkflowDto, userId: string): Promise<Workflow> {
+    const access = await this.resolveAccessAsync(userId);
+
     const [created] = await this.db
       .insert(workflows)
       .values({
@@ -123,13 +158,14 @@ export class WorkflowService {
    * Транзакция (RULES 4.22) не нужна: запись одна, связанных изменений нет.
    *
    * @param dto - валидированный артефакт (то, что отдаёт `GET /workflow/:id/export`)
-   * @param access - владелец нового workflow и его организация из access-токена
+   * @param userId - `sub` access-токена (владелец нового workflow)
    * @returns созданный workflow
+   * @throws UnauthorizedException если пользователя нет в БД
    */
-  async importAsync(dto: ImportWorkflowDto, access: WorkflowAccess): Promise<Workflow> {
+  async importAsync(dto: ImportWorkflowDto, userId: string): Promise<Workflow> {
     const created = await this.createAsync(
       { name: dto.name, nodes: dto.nodes, edges: dto.edges },
-      access,
+      userId,
     );
 
     this.logger.debug(

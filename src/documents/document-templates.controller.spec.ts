@@ -1,3 +1,4 @@
+import { jwtAuthDbProvider } from '../../test/helpers/jwt-auth-db.stub.js';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -86,6 +87,7 @@ async function createAppAsync(): Promise<{
   const moduleRef = await Test.createTestingModule({
     controllers: [DocumentTemplatesController],
     providers: [
+        jwtAuthDbProvider(),
       { provide: DocumentTemplatesService, useValue: templates },
       // JwtAuthGuard (R6.1a): AUTH_DISABLED=true — запросы идут от системного
       // пользователя, токен в тестах не нужен.

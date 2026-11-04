@@ -25,7 +25,12 @@ import { OrgMembersService } from './org-members.service.js';
 import { OrgOwnerOnlyGuard } from './org-owner-only.guard.js';
 
 /** Пользователь из access-токена (JwtAuthGuard проверяет его в этих тестах). */
-const USER = { sub: DEMO_USER_ID, email: DEMO_USER_EMAIL, orgId: DEMO_ORG_ID };
+const USER = {
+  sub: DEMO_USER_ID,
+  email: DEMO_USER_EMAIL,
+  orgId: DEMO_ORG_ID,
+  ver: 0,
+};
 
 /** Стабильные идентификаторы тестовых данных. */
 const MEMBER_ID = '33333333-3333-4333-8333-333333333333';
@@ -84,7 +89,7 @@ const updatedMember: OrganizationMemberSummary = {
  * дочитать её через `limit`, поэтому стаб отдаёт строки при `await` на любом
  * звене. Возвращаемые строки вычисляются лениво — роль задаётся тестом.
  */
-interface GuardSelectChain extends PromiseLike<Array<{ role: UserRole }>> {
+interface GuardSelectChain extends PromiseLike<Array<{ role: UserRole; organizationId: string; tokenVersion: number }>> {
   from(table: unknown): GuardSelectChain;
   where(condition: unknown): GuardSelectChain;
   limit(count: number): GuardSelectChain;
@@ -93,14 +98,17 @@ interface GuardSelectChain extends PromiseLike<Array<{ role: UserRole }>> {
 /**
  * Заглушка `DRIZZLE` для `OrgOwnerGuard`: всегда отдаёт текущую роль.
  *
- * @param getRole - функция, возвращающая роль пользователя (`null` — нет строки)
+ * @param getRole - функция, возвращающая роль пользователя (
+ull` — нет строки)
  * @returns стаб соединения Drizzle с одной таблицей `users`
  */
 function createDbStub(getRole: () => UserRole | null): Database {
-  const rows = (): Array<{ role: UserRole }> => {
+  const rows = (): Array<{ role: UserRole; organizationId: string; tokenVersion: number }> => {
     const role = getRole();
 
-    return role === null ? [] : [{ role }];
+    return role === null
+      ? []
+      : [{ role, organizationId: DEMO_ORG_ID, tokenVersion: 0 }];
   };
 
   const chain: GuardSelectChain = {

@@ -1,3 +1,4 @@
+import { jwtAuthDbProvider } from '../../test/helpers/jwt-auth-db.stub.js';
 /**
  * Тесты ручки каталога MCP-серверов (v0.11 S8, DESIGN § 3.2.6).
  *
@@ -121,6 +122,7 @@ async function createControllerAsync(options: {
   const moduleRef = await Test.createTestingModule({
     controllers: [McpController],
     providers: [
+        jwtAuthDbProvider(),
       McpController,
       {
         provide: McpServerRegistry,

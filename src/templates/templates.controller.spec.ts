@@ -1,3 +1,4 @@
+import { jwtAuthDbProvider } from '../../test/helpers/jwt-auth-db.stub.js';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
@@ -43,6 +44,7 @@ describe('TemplatesController (R6.6.1)', () => {
       // Загрузчик — настоящий: тест проверяет и реальные файлы src/templates/*.json,
       // а не только маршрутизацию (onModuleInit вызывается на app.init()).
       providers: [
+        jwtAuthDbProvider(),
         TemplateLoaderService,
         { provide: WorkflowService, useValue: service },
         { provide: JwtService, useValue: { verifyAsync: vi.fn() } },
@@ -90,17 +92,17 @@ describe('TemplatesController (R6.6.1)', () => {
 
     expect(response.body).toEqual({ ...createdWorkflow, createdAt: expect.any(String), updatedAt: expect.any(String) });
 
-    const [artifact, access] = service.importAsync.mock.calls[0] as [
+    const [artifact, userId] = service.importAsync.mock.calls[0] as [
       { name: string; nodes: unknown[]; edges: unknown[] },
-      { userId: string; orgId: string },
+      string,
     ];
 
     expect(artifact.name).toBe('Text → LLM');
     expect(artifact.nodes).toHaveLength(2);
     expect(artifact.edges).toHaveLength(1);
-    // Владелец и арендатор — из токена одним контекстом доступа
-    // (AUTH_DISABLED → системный пользователь).
-    expect(access).toEqual({ userId: DEMO_USER_ID, orgId: DEMO_ORG_ID });
+    // Контроллер передаёт только `sub`; организация резолвится в сервисе из БД
+    // (v1.1.0 S5, KI-605). AUTH_DISABLED → системный пользователь.
+    expect(userId).toBe(DEMO_USER_ID);
   });
 
   it('POST /templates/nonexistent/instantiate — 404 без вызова сервиса', async () => {

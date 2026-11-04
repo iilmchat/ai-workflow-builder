@@ -146,6 +146,15 @@ export const users = pgTable(
     email: text('email').notNull().unique(),
     passwordHash: text('password_hash').notNull(),
     role: text('role').notNull().default('member').$type<UserRole>(),
+    /**
+     * Версия access-токена (v1.1.0 S5, KI-601).
+     *
+     * Увеличивается при принудительном отзыве сессий (сейчас — удаление
+     * участника из организации). `JwtAuthGuard` сверяет `ver` из токена с этим
+     * значением; несовпадение — 401, токен перестаёт действовать, не дожидаясь
+     * истечения 24 ч. DEFAULT 0 — старые токены без `ver` считаются версией 0.
+     */
+    tokenVersion: integer('token_version').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

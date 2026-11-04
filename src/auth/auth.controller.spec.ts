@@ -1,3 +1,4 @@
+import { jwtAuthDbProvider } from '../../test/helpers/jwt-auth-db.stub.js';
 import type { INestApplication } from '@nestjs/common';
 import { UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -82,6 +83,7 @@ describe('AuthController', () => {
     const moduleRef = await Test.createTestingModule({
       controllers: [AuthController],
       providers: [
+        jwtAuthDbProvider({ organizationId: ORG_ID, tokenVersion: 0 }),
         { provide: AuthService, useValue: service },
         { provide: JwtService, useValue: { verifyAsync } },
         {

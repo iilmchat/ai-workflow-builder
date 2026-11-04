@@ -38,6 +38,8 @@ const baseUser: Omit<User, 'passwordHash'> = {
   email: EMAIL,
   // Регистрация создаёт владельца личной организации (v1.0 S3).
   role: 'owner',
+  // v1.1.0 S5: версия access-токена (KI-601).
+  tokenVersion: 0,
   createdAt: CREATED_AT,
 };
 
@@ -199,7 +201,7 @@ describe('AuthService', () => {
 
       expect(result.accessToken).toBe(TOKEN);
       expect(signAsync).toHaveBeenCalledWith(
-        { sub: USER_ID, email: EMAIL, orgId: ORG_ID },
+        { sub: USER_ID, email: EMAIL, orgId: ORG_ID, ver: 0 },
         expect.objectContaining({ expiresIn: '24h' }),
       );
     });
@@ -268,7 +270,7 @@ describe('AuthService', () => {
 
       expect(result.accessToken).toBe(TOKEN);
       expect(signAsync).toHaveBeenCalledWith(
-        { sub: USER_ID, email: EMAIL, orgId: ORG_ID },
+        { sub: USER_ID, email: EMAIL, orgId: ORG_ID, ver: 0 },
         expect.objectContaining({ expiresIn: '24h' }),
       );
       expect(result.user).toEqual({
@@ -337,7 +339,21 @@ describe('AuthService', () => {
       await service.loginAsync({ email: EMAIL, password: PASSWORD });
 
       expect(signAsync).toHaveBeenCalledWith(
-        { sub: USER_ID, email: EMAIL, orgId: ORG_ID },
+        { sub: USER_ID, email: EMAIL, orgId: ORG_ID, ver: 0 },
+        expect.objectContaining({ expiresIn: '24h' }),
+      );
+    });
+
+    it('кладёт tokenVersion в ver access-токена (v1.1.0 S5, KI-601)', async () => {
+      const passwordHash = await service.hashPasswordAsync(PASSWORD);
+      selectLimit.mockResolvedValue([
+        { ...baseUser, passwordHash, tokenVersion: 7 },
+      ]);
+
+      await service.loginAsync({ email: EMAIL, password: PASSWORD });
+
+      expect(signAsync).toHaveBeenCalledWith(
+        { sub: USER_ID, email: EMAIL, orgId: ORG_ID, ver: 7 },
         expect.objectContaining({ expiresIn: '24h' }),
       );
     });
@@ -479,7 +495,7 @@ describe('AuthService', () => {
       await service.rotateRefreshTokenAsync('opaque-old');
 
       expect(signAsync).toHaveBeenCalledWith(
-        { sub: USER_ID, email: EMAIL, orgId: ORG_ID },
+        { sub: USER_ID, email: EMAIL, orgId: ORG_ID, ver: 0 },
         expect.objectContaining({ expiresIn: '24h' }),
       );
     });

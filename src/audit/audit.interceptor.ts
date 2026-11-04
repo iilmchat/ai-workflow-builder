@@ -39,6 +39,25 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * Действия, в metadata которых маскируется email (v1.1.0 S5, KI-589).
+ *
+ * `member.invite` пишет email приглашённого в тело запроса, `member.remove`
+ * может содержать email в параметрах/теле будущих версий. Персональные данные
+ * не должны лежать в журнале в открытом виде (RULES 5.9): владелец видит
+ * `a***@example.com` вместо полного адреса.
+ */
+const EMAIL_MASKED_ACTIONS: ReadonlySet<string> = new Set([
+  'member.invite',
+  'member.remove',
+]);
+
+/** Email-подобная подстрока в значении metadata. */
+const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+
+/** Максимальная глубина маскировки (та же, что у санитизации). */
+const MAX_EMAIL_MASK_DEPTH = 8;
+
+/**
  * Минимальный контракт запроса, нужный интерсептору (без `any`, RULES 4.15).
  *
  * Поля необязательны там, где Nest/Express их не гарантируют в тестовом
@@ -69,10 +88,20 @@ interface AuditResponse {
  * Глобальный интерсептор журнала аудита (v1.0.0 S3, DESIGN V100 § 3.2).
  *
  * Перехватывает **успешные** мутирующие запросы (`POST`/`PATCH`/`DELETE`) и
- * пишет запись в `audit_logs`: автора и организацию берёт из access-токена
- * (`request.user`), действие — из метода и фактического пути
- * ({@link resolveAuditAction}), ресурс — из тела ответа (`.id`) либо из
- * path-параметра `id`, детали — из санитизированного запроса.
+ * пишет запись в `audit_logs`: автора и организацию берёт из `request.user`,
+ * действие — из метода и фактического пути ({@link resolveAuditAction}),
+ * ресурс — из тела ответа (`.id`) либо из path-параметра `id`, детали — из
+ * санитизированного запроса.
+ *
+ * **Организация — из БД (v1.1.0 S5, KI-605).** `request.user.orgId` — не
+ * сырое значение из JWT: `JwtAuthGuard` сверяет его с `users.organization_id`
+ * и кладёт в payload актуальную организацию (или отвечает 401). Поэтому
+ * аудит пишется в организацию, где пользователь состоит сейчас, а не в ту,
+ * что осталась в устаревшем токене.
+ *
+ * **Email в metadata (v1.1.0 S5, KI-589).** Для действий `member.invite` и
+ * `member.remove` email-подобные подстроки маскируются (`a***@example.com`):
+ * журнал не должен хранить PII в открытом виде (RULES 5.9).
  *
  * **Почему только успешные.** Запись делается в `tap(next)` — после того как
  * обработчик вернул результат. Если запрос упал (4xx/5xx), записи нет: журнал
@@ -186,19 +215,26 @@ export class AuditInterceptor implements NestInterceptor {
     try {
       const access = toWorkflowAccess(user);
       const params = request.params ?? {};
+      const action = resolveAuditAction(method, path);
+      const metadata: Record<string, unknown> = {
+        method,
+        path,
+        params: { ...params },
+        body: sanitizeAuditBody(request.body),
+        statusCode,
+      };
 
       const entry: AuditEntry = {
+        // v1.1.0 S5 (KI-601): `user.orgId` уже сверен с БД и обновлён
+        // JwtAuthGuard'ом, поэтому устаревший/подложенный orgId из токена сюда
+        // не доходит. `access` собирается из этого же payload.
         userId: access.userId,
         organizationId: access.orgId,
-        action: resolveAuditAction(method, path),
+        action,
         resourceId: resolveResourceId(body, params),
-        metadata: {
-          method,
-          path,
-          params: { ...params },
-          body: sanitizeAuditBody(request.body),
-          statusCode,
-        },
+        metadata: EMAIL_MASKED_ACTIONS.has(action)
+          ? maskEmailsInMetadata(metadata)
+          : metadata,
       };
 
       await this.auditService.recordAsync(entry);
@@ -332,4 +368,71 @@ function sanitizeValue(value: unknown, depth: number): unknown {
   }
 
   return value;
+}
+
+/**
+ * Маскирует email в metadata действий `member.invite`/`member.remove`
+ * (v1.1.0 S5, KI-589).
+ *
+ * Обход рекурсивный: email может лежать в `body.email`, во вложенном объекте
+ * или в строке параметра. Оригинальные объекты не мутируются — строится копия.
+ *
+ * @param metadata - собранные metadata записи
+ * @returns копия с замаскированными email
+ */
+function maskEmailsInMetadata(
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  return maskEmailsDeep(metadata, 0) as Record<string, unknown>;
+}
+
+/**
+ * Рекурсивно заменяет email-подобные подстроки на `a***@example.com`.
+ *
+ * @param value - любое значение metadata
+ * @param depth - текущая глубина (защита от циклов/дерева)
+ * @returns копия со скрытыми локальными частями email
+ */
+function maskEmailsDeep(value: unknown, depth: number): unknown {
+  if (depth > MAX_EMAIL_MASK_DEPTH) {
+    return '[max-depth]';
+  }
+
+  if (typeof value === 'string') {
+    return value.replace(EMAIL_PATTERN, maskEmail);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => maskEmailsDeep(item, depth + 1));
+  }
+
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        maskEmailsDeep(item, depth + 1),
+      ]),
+    );
+  }
+
+  return value;
+}
+
+/**
+ * Маскирует локальную часть email, сохраняя домен.
+ *
+ * `alice@example.com` → `a***@example.com`; уже замаскированное значение
+ * остаётся таким же (идемпотентность). Строки без `@` не меняются.
+ *
+ * @param email - найденная email-подстрока
+ * @returns маскированный адрес
+ */
+function maskEmail(email: string): string {
+  const at = email.lastIndexOf('@');
+
+  if (at <= 0) {
+    return email;
+  }
+
+  return `${email.slice(0, 1)}***${email.slice(at)}`;
 }

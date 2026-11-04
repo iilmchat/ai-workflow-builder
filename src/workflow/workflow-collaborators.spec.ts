@@ -1,3 +1,4 @@
+import { jwtAuthDbProvider } from '../../test/helpers/jwt-auth-db.stub.js';
 import {
   BadRequestException,
   ConflictException,
@@ -143,6 +144,7 @@ describe('WorkflowService — участники (R7.6)', () => {
 
     const moduleRef = await Test.createTestingModule({
       providers: [
+        jwtAuthDbProvider(),
         WorkflowService,
         { provide: DRIZZLE, useValue: db as unknown as Database },
       ],
@@ -441,6 +443,7 @@ describe('Collaborator-эндпоинты (R7.6)', () => {
     const moduleRef = await Test.createTestingModule({
       controllers: [WorkflowController],
       providers: [
+        jwtAuthDbProvider(),
         { provide: WorkflowService, useValue: service },
         { provide: JwtService, useValue: { verifyAsync: vi.fn() } },
         {
