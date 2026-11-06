@@ -289,6 +289,14 @@
 
 ### Changed
 
+- **Паритет-гейт для `GET /llm/health` (v1.3.0 S2, KI-627)**
+  ([отчёт](development/reports/v1.3.0/S2-healthcheck.md)):
+  в `docs/development/api-contract.json` добавлены `LlmHealthResponse`
+  (`local`, `routerEnabled`) и `LocalLlmHealth` (`available`, `lastCheck`);
+  backend-спек регистрирует TS-интерфейсы ответа, web-спек — зеркала
+  `LlmHealthResponseSchema`/`LocalLlmHealthSchema`, оба получили
+  регрессионные тесты на точный состав. Расширение точечное: `LlmModelInfo` и
+  `MediaModelInfo` остаются вне гейта (KI-357).
 - **Контракт access-токена: поле `ver` и сверка с БД (v1.1.0 S5, KI-601):**
   `JwtPayload` дополнен `ver` (`users.token_version`), токены без него
   трактуются как версия 0. `JwtAuthGuard` после проверки подписи делает один
@@ -367,6 +375,16 @@
 
 ### Security
 
+- **Auth-guard на `GET /llm/health` (v1.3.0 S2, KI-626)**
+  ([отчёт](development/reports/v1.3.0/S2-healthcheck.md)):
+  `@UseGuards(JwtAuthGuard)` на `GET /llm/health` — без access-токена 401 «Нет
+  токена», при `AUTH_DISABLED=true` guard подставляет системного пользователя;
+  `LlmModule` импортирует `AuthModule` ради `JwtService`. `GET /llm/models`
+  осознанно оставлен публичным: список моделей грузится на старте SPA до
+  подтверждения сессии, секретов в ответе нет; остаточный риск — KI-633.
+  Тесты: 401 без токена, 401 с невалидным токеном, 200 с токеном, 200 при
+  `AUTH_DISABLED=true`, публичность `/llm/models`. Смоук: 401/200 на живом
+  backend.
 - **Отзыв access-токена при удалении из организации (v1.1.0 S5, KI-601)**
   ([отчёт](development/reports/v1.1.0/S5-security.md)): `users.token_version` +
   `JwtPayload.ver`; `JwtAuthGuard` сверяет организацию и версию с БД на каждом
@@ -424,6 +442,15 @@
 
 ### Fixed
 
+- **KI-621 — внеочередной пинг после восстановления LM Studio (v1.3.0 S2;
+  Fixed (частично))** ([отчёт](development/reports/v1.3.0/S2-healthcheck.md)):
+  при переходе `unavailable → available` `LlmHealthService` через 5 с
+  (`LLM_HEALTH_RECOVERY_PING_DELAY_MS`) выполняет подтверждающий пинг, не
+  дожидаясь очередного 30-секундного тика. Бесконечного цикла нет: пинг
+  планируется только на самом переходе, `unref()` не удерживает event loop,
+  `stop()` снимает и его. Обнаружение восстановления по-прежнему происходит на
+  очередном тике — остаток вынесен в KI-632. Тесты: +3 (fake timers: ровно
+  +5 с, отмена `stop()`, неудачный внеочередной пинг не зацикливается).
 - **KI-601 — отзыв access-токена (v1.1.0 S5)**
   ([отчёт](development/reports/v1.1.0/S5-security.md)): `users.token_version`
   (миграция 0018) и `ver` в JWT; `JwtAuthGuard` сверяет версию и организацию с
@@ -532,6 +559,11 @@
 
 ### Documented
 
+- **Ограничения S2 healthcheck (v1.3.0):** восстановление LM Studio
+  обнаруживается только на очередном тике интервала (до 30 с), а вторая
+  половина KI-621 (частые fallback-попытки при `available` до тика) не
+  затронута — KI-632; `GET /llm/models` остаётся публичным, потому что SPA
+  грузит список моделей до подтверждения сессии, — KI-633.
 - **Ограничения S5 (v1.1.0):** logout не отзывает access-токен — `token_version`
   инкрементится только при удалении участника, а не при выходе (KI-614);
   `JwtAuthGuard` делает SELECT в БД на каждый аутентифицированный запрос
@@ -2528,6 +2560,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 

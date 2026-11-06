@@ -30,12 +30,20 @@
  * (ср. `web/src/types/run-stream-contract.spec.ts`). Файл встраивается в
  * тестовый бандл на этапе сборки, поэтому функция синхронная — I/O в рантайме
  * нет (RULES 1.4).
+ *
+ * **Точечное расширение на health-ответ LLM (v1.3.0 S2, KI-627).** В гейт
+ * добавлены зеркала `LlmHealthResponseSchema` и `LocalLlmHealthSchema` — ответ
+ * `GET /llm/health`. Расширение намеренно узкое: остальные LLM/Media-ответы
+ * (`LlmModelInfoSchema`, `MediaModelInfoSchema`) по-прежнему вне контракта
+ * (KI-357).
  */
 import { describe, expect, it } from 'vitest';
 import {
   ApiDocumentTemplateSchema,
   ApiRunBudgetSchema,
   ApiRunSchema,
+  LlmHealthResponseSchema,
+  LocalLlmHealthSchema,
   McpServersResponseSchema,
   McpServerStatusSchema,
   McpServerSummarySchema,
@@ -91,6 +99,10 @@ interface MirrorSchema {
  * `src/templates/dto` — вне read-scope KI-352, KI-357),
  * `LlmModelInfoSchema`/`MediaModelInfoSchema` (зеркала backend лежат в
  * `src/llm/**` и `src/media/**` — вне scope KI-352, KI-357).
+ *
+ * v1.3.0 S2 (KI-627): health-ответ LLM (`LlmHealthResponse`/`LocalLlmHealth`)
+ * добавлен в список ниже; это точечное расширение — остальные LLM/Media-ответы
+ * по-прежнему вне гейта.
  */
 const MIRROR_SCHEMAS: Record<string, MirrorSchema> = {
   // v1.0.0 S3/S5: журнал аудита организации — запись и страница keyset.
@@ -115,6 +127,10 @@ const MIRROR_SCHEMAS: Record<string, MirrorSchema> = {
   // v1.1.0 S1 (DESIGN V110 § 3.1): ответ инвайта — приглашение + emailSent;
   // v1.2.0 S2: добавлен emailQueued (глобальный флаг письма в очереди).
   InviteMemberResponse: InviteMemberResponseSchema,
+  // v1.3.0 S2 (KI-627): health-ответ LLM — гейт расширен точечно на ответ и его
+  // вложенный DTO; остальные LLM/Media-модели вне гейта (KI-357).
+  LlmHealthResponse: LlmHealthResponseSchema,
+  LocalLlmHealth: LocalLlmHealthSchema,
   RunResponse: ApiRunSchema,
   // R7.1 (KI-048): бюджет запуска — новое зеркало REST-ответа.
   RunBudgetResponse: ApiRunBudgetSchema,
@@ -489,5 +505,30 @@ describe('REST-контракт: web-зеркала ↔ docs/development/api-con
     expect([...InvitableOrgRoleSchema.options].sort()).toEqual(
       contract.enums?.['OrganizationInvitationSummary.role'],
     );
+  });
+
+  it('GET /llm/health зеркалит контракт и не расширяет гейт на LLM-модели (v1.3.0 S2, KI-627)', () => {
+    const contract = readContract();
+    const actual = actualContract();
+
+    // v1.3.0 S2 (KI-627): ответ health и его вложенный DTO обязаны совпадать с
+    // контрактом — раньше эта пара не покрывалась field-level гейтом.
+    expect(actual.LlmHealthResponse).toEqual(
+      contract.responses.LlmHealthResponse,
+    );
+    expect(actual.LocalLlmHealth).toEqual(contract.responses.LocalLlmHealth);
+
+    // В health-ответе нет ничего, кроме состояния GPU и флага роутера
+    // (`available`/`lastCheck`/`routerEnabled`): ни ключей, ни адресов
+    // локального бэкенда там быть не может (RULES 5.1).
+    for (const fields of [actual.LlmHealthResponse, actual.LocalLlmHealth]) {
+      expect(fields).not.toContain('apiKey');
+      expect(fields).not.toContain('token');
+      expect(fields).not.toContain('url');
+    }
+
+    // Расширение точечное: LLM/Media-модели по-прежнему вне контракта (KI-357).
+    expect(Object.keys(contract.responses)).not.toContain('LlmModelInfo');
+    expect(Object.keys(contract.responses)).not.toContain('MediaModelInfo');
   });
 });

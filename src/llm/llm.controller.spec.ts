@@ -1,6 +1,14 @@
 import type { INestApplication } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import { jwtAuthDbProvider } from '../../test/helpers/jwt-auth-db.stub.js';
+import {
+  DEMO_ORG_ID,
+  DEMO_USER_EMAIL,
+  DEMO_USER_ID,
+} from '../auth/auth.constants.js';
 import { LlmController } from './llm.controller.js';
 import { LlmHealthService } from './llm-health.service.js';
 import { LlmRegistryService } from './llm-registry.service.js';
@@ -8,6 +16,17 @@ import { LlmRouterService } from './llm-router.service.js';
 
 /** ISO-строка последней завершённой проверки GPU (фикстура). */
 const LAST_CHECK = '2026-11-06T09:00:00.000Z';
+
+/** Пользователь из access-токена (v1.3.0 S2, KI-626): его проверяет настоящий guard. */
+const USER = {
+  sub: DEMO_USER_ID,
+  email: DEMO_USER_EMAIL,
+  orgId: DEMO_ORG_ID,
+  ver: 0,
+};
+
+/** Заголовок авторизации с «валидным» токеном (verifyAsync замокан). */
+const AUTH_HEADER = { Authorization: 'Bearer valid-token' };
 
 describe('LlmController', () => {
   let app: INestApplication;
@@ -20,6 +39,10 @@ describe('LlmController', () => {
   };
   /** Мок роутера: флаг `LLM_ROUTER_ENABLED`. */
   let router: { isEnabled: ReturnType<typeof vi.fn> };
+  /** Мок `JwtService` для настоящего `JwtAuthGuard` (verifyAsync). */
+  let jwt: { verifyAsync: ReturnType<typeof vi.fn> };
+  /** Режим dev/CI: guard подставляет системного пользователя (R6.1a). */
+  let authDisabled: boolean;
 
   beforeEach(async () => {
     registry = {
@@ -38,6 +61,8 @@ describe('LlmController', () => {
       getLastCheckAt: vi.fn(() => LAST_CHECK),
     };
     router = { isEnabled: vi.fn(() => true) };
+    jwt = { verifyAsync: vi.fn(() => Promise.resolve(USER)) };
+    authDisabled = false;
 
     const moduleRef = await Test.createTestingModule({
       controllers: [LlmController],
@@ -46,6 +71,18 @@ describe('LlmController', () => {
         // KI-618: контроллер читает статус healthcheck и флаг роутера.
         { provide: LlmHealthService, useValue: health },
         { provide: LlmRouterService, useValue: router },
+        // KI-626: настоящий `JwtAuthGuard` на `GET /llm/health` требует
+        // `JwtService`, `ConfigService` и строку `users` из `DRIZZLE`.
+        { provide: JwtService, useValue: jwt },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: vi.fn((key: string) =>
+              key === 'AUTH_DISABLED' ? authDisabled : undefined,
+            ),
+          },
+        },
+        jwtAuthDbProvider(),
       ],
     }).compile();
 
@@ -81,6 +118,15 @@ describe('LlmController', () => {
     expect(response.body).toEqual([]);
   });
 
+  it('GET /llm/models остаётся публичным: 200 без токена при AUTH_DISABLED=false (KI-626)', async () => {
+    // Осознанное решение S2: список моделей грузится на старте SPA, до
+    // подтверждения сессии. Секретов в ответе нет — только id/метки моделей.
+    const response = await request(app.getHttpServer()).get('/llm/models').expect(200);
+
+    expect(response.body).toHaveLength(2);
+    expect(jwt.verifyAsync).not.toHaveBeenCalled();
+  });
+
   it('делегирует список реестру', () => {
     expect(controller.listModels()).toHaveLength(2);
     expect(registry.listModels).toHaveBeenCalledTimes(1);
@@ -90,6 +136,7 @@ describe('LlmController', () => {
     it('online: available=true, lastCheck — ISO-строка проверки, routerEnabled=true', async () => {
       const response = await request(app.getHttpServer())
         .get('/llm/health')
+        .set(AUTH_HEADER)
         .expect(200);
 
       // Состав ответа фиксирован: ровно два верхних ключа и два поля в `local`.
@@ -111,6 +158,7 @@ describe('LlmController', () => {
 
         const response = await request(app.getHttpServer())
           .get('/llm/health')
+          .set(AUTH_HEADER)
           .expect(200);
 
         // `unknown` и `unavailable` для UI-индикатора — одинаково «GPU офлайн»;
@@ -129,6 +177,7 @@ describe('LlmController', () => {
 
       const response = await request(app.getHttpServer())
         .get('/llm/health')
+        .set(AUTH_HEADER)
         .expect(200);
 
       expect(response.body.routerEnabled).toBe(false);
@@ -148,6 +197,60 @@ describe('LlmController', () => {
       expect(health.getStatus).toHaveBeenCalledTimes(1);
       expect(health.getLastCheckAt).toHaveBeenCalledTimes(1);
       expect(router.isEnabled).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('auth-guard на GET /llm/health (v1.3.0 S2, KI-626)', () => {
+    it('отвечает 401 без заголовка Authorization и не вызывает health/router', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/llm/health')
+        .expect(401);
+
+      expect(response.body.message).toBe('Нет токена');
+      // Guard срабатывает до обработчика: статус GPU не читается.
+      expect(health.getStatus).not.toHaveBeenCalled();
+      expect(health.getLastCheckAt).not.toHaveBeenCalled();
+      expect(router.isEnabled).not.toHaveBeenCalled();
+    });
+
+    it('отвечает 401 при невалидном токене', async () => {
+      // Настоящий guard ловит именно свой 401, а не пробрасывает ошибку JWT.
+      jwt.verifyAsync.mockRejectedValue(new Error('jwt malformed'));
+
+      const response = await request(app.getHttpServer())
+        .get('/llm/health')
+        .set({ Authorization: 'Bearer broken-token' })
+        .expect(401);
+
+      expect(response.body.message).toBe('Невалидный токен');
+      expect(health.getStatus).not.toHaveBeenCalled();
+    });
+
+    it('отвечает 200 с валидным токеном', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/llm/health')
+        .set(AUTH_HEADER)
+        .expect(200);
+
+      expect(response.body.local.available).toBe(true);
+      // verifyAsync вызван один раз; строка users сверена с payload.
+      expect(jwt.verifyAsync).toHaveBeenCalledTimes(1);
+      expect(health.getStatus).toHaveBeenCalledTimes(1);
+    });
+
+    it('при AUTH_DISABLED=true (dev/CI) отвечает 200 без токена от системного пользователя', async () => {
+      authDisabled = true;
+
+      const response = await request(app.getHttpServer())
+        .get('/llm/health')
+        .expect(200);
+
+      expect(response.body).toEqual({
+        local: { available: true, lastCheck: LAST_CHECK },
+        routerEnabled: true,
+      });
+      // Токен не проверяется: guard подставил системного пользователя.
+      expect(jwt.verifyAsync).not.toHaveBeenCalled();
     });
   });
 });

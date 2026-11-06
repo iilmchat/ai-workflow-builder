@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../auth/auth.module.js';
 import { LlmController } from './llm.controller.js';
 import { LlmHealthService } from './llm-health.service.js';
 import { LlmNodeExecutor } from './llm-node-executor.service.js';
@@ -20,8 +21,13 @@ import { LlmService } from './llm.service.js';
  * `RunsModule` → `LlmModule` (ради `LlmNodeExecutor`), а не наоборот, поэтому
  * цикла в графе модулей не возникает. `ConfigService` приходит из глобального
  * `ConfigModule`.
+ *
+ * `AuthModule` импортируется ради `JwtAuthGuard` на `GET /llm/health`
+ * (v1.3.0 S2, KI-626): guard инжектит `JwtService`/`ConfigService`, которые
+ * экспортирует этот модуль. Цикла нет: `AuthModule` не зависит от `LlmModule`.
  */
 @Module({
+  imports: [AuthModule],
   controllers: [LlmController],
   providers: [
     LlmProviderFactory,

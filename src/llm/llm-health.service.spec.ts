@@ -4,6 +4,7 @@ import type { ILlmProvider } from './llm-provider.interface.js';
 import {
   LLM_HEALTH_FAILURE_THRESHOLD,
   LLM_HEALTH_INTERVAL_MS,
+  LLM_HEALTH_RECOVERY_PING_DELAY_MS,
   LlmHealthService,
 } from './llm-health.service.js';
 import { LlmRegistryService } from './llm-registry.service.js';
@@ -256,5 +257,110 @@ describe('LlmHealthService (v1.2 S1)', () => {
     expect(local.isAvailableAsync).toHaveBeenCalledTimes(2);
 
     health.stop();
+  });
+
+  describe('внеочередной пинг после восстановления (v1.3.0 S2, KI-621)', () => {
+    it('после восстановления пинг ровно через 5 с и без цикла', async () => {
+      vi.useFakeTimers();
+      vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      // Три неудачи подряд (порог), затем успех — восстановление.
+      const local = stubLocal([false, false, false, true, true]);
+      const health = await createHealth(local.provider);
+
+      health.start();
+      // Пинг №1 — сразу при старте, не дожидаясь интервала.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(local.isAvailableAsync).toHaveBeenCalledTimes(1);
+
+      // Пинги №2 и №3 — обычные тики; на третьей неудаче статус unavailable.
+      await vi.advanceTimersByTimeAsync(LLM_HEALTH_INTERVAL_MS);
+      await vi.advanceTimersByTimeAsync(LLM_HEALTH_INTERVAL_MS);
+      expect(local.isAvailableAsync).toHaveBeenCalledTimes(3);
+      expect(health.getStatus()).toBe('unavailable');
+
+      // Пинг №4 — успех на очередном тике: восстановление и внеочередной пинг.
+      await vi.advanceTimersByTimeAsync(LLM_HEALTH_INTERVAL_MS);
+      expect(local.isAvailableAsync).toHaveBeenCalledTimes(4);
+      expect(health.getStatus()).toBe('available');
+
+      // Раньше 5 с внеочередного пинга нет.
+      await vi.advanceTimersByTimeAsync(LLM_HEALTH_RECOVERY_PING_DELAY_MS - 1);
+      expect(local.isAvailableAsync).toHaveBeenCalledTimes(4);
+
+      // Ровно через 5 с — внеочередной пинг №5.
+      await vi.advanceTimersByTimeAsync(1);
+      expect(local.isAvailableAsync).toHaveBeenCalledTimes(5);
+
+      // Цикла нет: до следующего обычного тика новых пингов не появляется.
+      await vi.advanceTimersByTimeAsync(
+        LLM_HEALTH_INTERVAL_MS - LLM_HEALTH_RECOVERY_PING_DELAY_MS - 1,
+      );
+      expect(local.isAvailableAsync).toHaveBeenCalledTimes(5);
+
+      // Следующий пинг — только по обычному тику 30 с (пинг №6).
+      await vi.advanceTimersByTimeAsync(1);
+      expect(local.isAvailableAsync).toHaveBeenCalledTimes(6);
+
+      health.stop();
+    });
+
+    it('stop() отменяет запланированный внеочередной пинг', async () => {
+      vi.useFakeTimers();
+      vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const local = stubLocal([false, false, false, true, true]);
+      const health = await createHealth(local.provider);
+
+      health.start();
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(LLM_HEALTH_INTERVAL_MS);
+      await vi.advanceTimersByTimeAsync(LLM_HEALTH_INTERVAL_MS);
+      await vi.advanceTimersByTimeAsync(LLM_HEALTH_INTERVAL_MS);
+      expect(local.isAvailableAsync).toHaveBeenCalledTimes(4);
+      expect(health.getStatus()).toBe('available');
+
+      // Внеочередной пинг ещё не сработал — stop() должен его снять.
+      health.stop();
+      await vi.advanceTimersByTimeAsync(LLM_HEALTH_INTERVAL_MS);
+      expect(local.isAvailableAsync).toHaveBeenCalledTimes(4);
+    });
+
+    it('неудачный внеочередной пинг не зацикливает проверки и не выводит из роутинга', async () => {
+      vi.useFakeTimers();
+      vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      // Восстановление, затем неудача внеочередного пинга и обычного тика.
+      const local = stubLocal([false, false, false, true, false, false, false]);
+      const health = await createHealth(local.provider);
+
+      health.start();
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(LLM_HEALTH_INTERVAL_MS);
+      await vi.advanceTimersByTimeAsync(LLM_HEALTH_INTERVAL_MS);
+      await vi.advanceTimersByTimeAsync(LLM_HEALTH_INTERVAL_MS);
+      expect(health.getStatus()).toBe('available');
+
+      // Внеочередной пинг №5 — неудача: порог 3 не достигнут, статус available.
+      await vi.advanceTimersByTimeAsync(LLM_HEALTH_RECOVERY_PING_DELAY_MS);
+      expect(local.isAvailableAsync).toHaveBeenCalledTimes(5);
+      expect(health.getStatus()).toBe('available');
+      // Провайдер остаётся в роутинге — повторного пинга не требуется.
+      await expect(health.isAvailableAsync()).resolves.toBe(true);
+      expect(local.isAvailableAsync).toHaveBeenCalledTimes(5);
+
+      // Новый внеочередной пинг не запланирован: до обычного тика тишина.
+      await vi.advanceTimersByTimeAsync(
+        LLM_HEALTH_INTERVAL_MS - LLM_HEALTH_RECOVERY_PING_DELAY_MS - 1,
+      );
+      expect(local.isAvailableAsync).toHaveBeenCalledTimes(5);
+
+      // Обычный тик через 30 с — пинг №6 (тоже неудача, но статус ещё available).
+      await vi.advanceTimersByTimeAsync(1);
+      expect(local.isAvailableAsync).toHaveBeenCalledTimes(6);
+      expect(health.getStatus()).toBe('available');
+
+      health.stop();
+    });
   });
 });

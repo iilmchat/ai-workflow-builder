@@ -31,6 +31,13 @@
  * Zod-зеркалами. Раньше обе стороны могли разойтись в значениях роли молча —
  * ровно класс KI-437.
  *
+ * **Точечное расширение на health-ответ LLM (v1.3.0 S2, KI-627).** В гейт
+ * добавлены `LlmHealthResponse` и его вложенный `LocalLlmHealth` — ответ
+ * `GET /llm/health`. Расширение намеренно узкое: остальные LLM/Media-ответы
+ * (`LlmModelInfo`, `MediaModelInfo`) по-прежнему вне контракта (KI-357), потому
+ * что их зеркала лежат в `src/llm/**` и `src/media/**` и меняются отдельными
+ * задачами.
+ *
  * Сравниваются **имена** полей и **значения** enum-доменов (не типы и не
  * проверки): гейт отвечает на вопрос «тот же состав контракта?». Ужесточение
  * самих схем-зеркал web (`z.uuid()` вместо `z.string()`, `.min(1)` для
@@ -155,6 +162,22 @@ const WEB_SEARCH_INTERFACE_PATH = join(
 );
 
 /**
+ * Файл с DTO health-ответа LLM (`GET /llm/health`, v1.3.0 S2, KI-627).
+ *
+ * `LlmHealthResponse` и вложенный `LocalLlmHealth` — TS-интерфейсы, поэтому
+ * поля читаются компилятором TypeScript, как у остальных REST-ответов без
+ * Zod-схемы.
+ */
+const LLM_HEALTH_DTO_PATH = join(
+  SPEC_DIR,
+  '..',
+  '..',
+  'llm',
+  'dto',
+  'llm-health.dto.ts',
+);
+
+/**
  * Где объявлен DTO ответа и как из него читать поля.
  *
  * - `zod` — DTO описан Zod-схемой: поля берутся из `shape` (как в SSE-гейте);
@@ -177,7 +200,12 @@ type DtoSource =
  * не REST-ответы, KI-357), `TemplateSummary` (`src/templates/dto` — вне
  * read-scope KI-352, KI-357), `LlmModelInfo`/`MediaModelInfo` (зеркала живут в
  * `src/llm/**` и `src/media/**` — вне scope KI-352, KI-357).
- */const DTO_SOURCES: Record<string, DtoSource> = {
+ *
+ * v1.3.0 S2 (KI-627): health-ответ LLM (`LlmHealthResponse` с вложенным
+ * `LocalLlmHealth`) добавлен в список ниже; это точечное расширение — остальные
+ * LLM/Media-ответы (`LlmModelInfo`, `MediaModelInfo`) по-прежнему вне гейта.
+ */
+const DTO_SOURCES: Record<string, DtoSource> = {
   // v0.11 S12 (DESIGN § 3.4.2): ответ `GET /runs/:id/nodes` — массив снимков
   // узлов. Zod-схема общая со SSE-снимком, поэтому REST и SSE не расходятся.
   NodeRunSnapshot: {
@@ -311,6 +339,21 @@ type DtoSource =
     kind: 'interface',
     path: AUDIT_DTO_PATH,
     label: 'src/audit/dto/audit.dto.ts',
+  },
+  // v1.3.0 S2 (KI-627): ответ `GET /llm/health` — состояние локального
+  // провайдера и флаг роутера. Гейт расширен точечно: только health-ответ и его
+  // вложенный DTO; остальные LLM/Media-модели (`LlmModelInfo`, `MediaModelInfo`)
+  // в контракт не входят (KI-357). Оба DTO — TS-интерфейсы, поэтому поля
+  // читаются компилятором TypeScript.
+  LlmHealthResponse: {
+    kind: 'interface',
+    path: LLM_HEALTH_DTO_PATH,
+    label: 'src/llm/dto/llm-health.dto.ts',
+  },
+  LocalLlmHealth: {
+    kind: 'interface',
+    path: LLM_HEALTH_DTO_PATH,
+    label: 'src/llm/dto/llm-health.dto.ts',
   },
 };
 
@@ -992,5 +1035,25 @@ describe('REST-контракт: backend DTO ↔ docs/development/api-contract.j
     await expect(
       readInterfaceFieldsAsync(RUNS_SERVICE_PATH, 'GhostResponse', 'src/runs/runs.service.ts'),
     ).rejects.toThrow(/не найден/);
+  });
+
+  it('GET /llm/health описан в контракте, гейт не расширен на LLM-модели (v1.3.0 S2, KI-627)', async () => {
+    const contract = await readContractAsync();
+    const actual = await actualContractAsync();
+
+    // Ответ ручки health минимален: состояние локального провайдера и признак
+    // участия роутера в маршрутизации — UI-индикатору GPU больше ничего не нужно.
+    expect(contract.responses.LlmHealthResponse).toEqual(['local', 'routerEnabled']);
+    // Вложенный DTO: доступность LM Studio и момент последней завершённой
+    // проверки (`''`, если проверок ещё не было).
+    expect(contract.responses.LocalLlmHealth).toEqual(['available', 'lastCheck']);
+    // Фактический состав backend-DTO обязан совпасть с контрактом: именно этот
+    // ответ раньше не покрывался гейтом (KI-627).
+    expect(actual.LlmHealthResponse).toEqual(contract.responses.LlmHealthResponse);
+    expect(actual.LocalLlmHealth).toEqual(contract.responses.LocalLlmHealth);
+    // Расширение точечное: LLM/Media-модели по-прежнему вне контракта (KI-357),
+    // иначе гейт молча потребовал бы зеркала всех LLM-ответов.
+    expect(Object.keys(contract.responses)).not.toContain('LlmModelInfo');
+    expect(Object.keys(contract.responses)).not.toContain('MediaModelInfo');
   });
 });
