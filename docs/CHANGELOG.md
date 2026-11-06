@@ -17,6 +17,55 @@
 ---
 ## [Unreleased]
 
+## [1.2.0] — 2026-11-06
+
+**Minor-релиз: LLM Router & SMTP Retry (GPU Integration).**
+
+### Added
+
+- **LLM Router (S1):** `LlmRouterService` с fallback LM Studio → облако. `LlmHealthService`. `ILlmProvider.isAvailableAsync`. Исправлен баг с общим `AbortSignal`.
+- **SMTP Retry (S2):** BullMQ-очередь `email-invitations`.
+- **UI & Docs (S3):** `GET /llm/health`, индикатор GPU в TopBar, `emailQueued`.
+- **ADR-0011, 0012.**
+
+### Changed
+
+- **`InviteMemberResponse.emailSent`:** Всегда `false` (письмо в очереди).
+
+### Fixed
+
+- **KI-593 (частично):** Ретраи SMTP.
+- **KI-618:** `GET /llm/health`.
+- **KI-622:** `emailQueued`.
+
+### Documented
+
+- **KI-617, 619..621, 623..628.**
+
+## [1.1.0] — 2026-11-05
+
+**Minor-релиз: Enterprise Polish (SMTP, Team Management, Audit Filters, Metrics, Security).**
+
+### Added
+
+- **SMTP & Invitations (S1, KI-584).**
+- **Team Management (S2, KI-586).**
+- **Audit Filters (S3, KI-585).**
+- **Metrics Improvement (S4).**
+- **Security (S5):** `token_version`, write-path isolation, email masking.
+
+### Changed
+
+- **JWT Payload:** Добавлено поле `ver`.
+
+### Fixed
+
+- **KI-584, 586, 585, 601, 605, 589.**
+
+### Documented
+
+- **KI-592..616.**
+
 ## [1.3.0] — 2026-11-06
 
 ### Added
@@ -2571,6 +2620,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 
