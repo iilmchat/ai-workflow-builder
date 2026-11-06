@@ -19,6 +19,20 @@
 
 ### Added
 
+- **Индикатор GPU и `emailQueued` (v1.2.0 S3, DESIGN V120 § 3.4;
+  KI-618, KI-622)** ([отчёт](development/reports/v1.2.0/S3-ui-docs.md)):
+  `GET /llm/health` отдаёт `{ local: { available, lastCheck }, routerEnabled }`
+  (`LlmHealthService.getLastCheckAt()`, `LlmRouterService.isEnabled()`); в
+  `TopBar` — зелёная/серая точка `GPU: online/offline` с опросом раз в 30 с и
+  `data-gpu-status` для CDP-смоука. `InviteMemberResponse` получил
+  `emailQueued` — результат постановки письма в BullMQ; `emailSent` сохранён и
+  всегда `false`. `TeamPage` различает «Приглашение отправлено (в очереди)» и
+  «создано, но письмо не отправлено» по `emailQueued`. Контракт
+  `api-contract.json` и оба паритет-спека обновлены; README — разделы
+  «LLM Router» и «SMTP Retry», актуализирована таблица «Статус проекта».
+  Тесты: backend **+10** (1901 passed), web **+6** (499 passed); смоук
+  **18/18** (GPU online/offline, `emailQueued: true`, задание в очереди).
+  **KI-618** и **KI-622** закрыты. Ограничения — KI-626..628.
 - **LLM Router и healthcheck LM Studio (v1.2.0 S1, DESIGN V120 § 3.1–3.2)**
   ([отчёт](development/reports/v1.2.0/S1-llm-router.md)):
   `ILlmProvider.isAvailableAsync()` — облачные провайдеры отвечают `true` без
@@ -2494,6 +2508,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 

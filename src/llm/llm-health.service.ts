@@ -56,6 +56,15 @@ export class LlmHealthService implements OnModuleInit, OnModuleDestroy {
   /** Сколько проверок подряд завершились неудачей. */
   private consecutiveFailures = 0;
 
+  /**
+   * Момент последней завершённой проверки; `null` — проверок ещё не было.
+   *
+   * Хранится, чтобы отдать наружу `GET /llm/health` (`lastCheck`, KI-618):
+   * UI-индикатор показывает, когда статус GPU обновлялся в последний раз, и
+   * отличает «проверка была давно» от «проверки не было вовсе».
+   */
+  private lastCheckedAt: Date | null = null;
+
   /** Таймер периодической проверки; `null` — healthcheck не запущен. */
   private timer: NodeJS.Timeout | null = null;
 
@@ -90,6 +99,21 @@ export class LlmHealthService implements OnModuleInit, OnModuleDestroy {
    */
   getStatus(): LlmHealthStatus {
     return this.status;
+  }
+
+  /**
+   * ISO-строка момента последней **завершённой** проверки (KI-618).
+   *
+   * Нужна ручке `GET /llm/health` (`local.lastCheck`): по ней UI-индикатор
+   * показывает, насколько свежим является статус. Пустая строка — проверок ещё
+   * не было: ни таймер не сработал, ни `isAvailableAsync` не выполнил пинг
+   * (например, локальный провайдер не сконфигурирован).
+   *
+   * @returns `Date.toISOString()` последней проверки либо `''`, если проверок
+   *   ещё не было
+   */
+  getLastCheckAt(): string {
+    return this.lastCheckedAt?.toISOString() ?? '';
   }
 
   /**
@@ -192,7 +216,8 @@ export class LlmHealthService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Применяет результат проверки к счётчику и статусу.
+   * Применяет результат проверки к счётчику, статусу и времени последней
+   * проверки.
    *
    * WARN пишется только при переходе в `unavailable` — иначе при выключенном
    * LM Studio лог получал бы запись каждые 30 секунд.
@@ -200,6 +225,10 @@ export class LlmHealthService implements OnModuleInit, OnModuleDestroy {
    * @param available - результат последней проверки
    */
   private applyResult(available: boolean): void {
+    // Время фиксируется до ветвления: «последняя проверка» — это завершившийся
+    // пинг, независимо от его исхода (KI-618).
+    this.lastCheckedAt = new Date();
+
     if (available) {
       const wasUnavailable = this.status === 'unavailable';
 

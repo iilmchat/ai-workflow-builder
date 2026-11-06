@@ -1,7 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { fetchWorkflowRunsAsync } from '@/lib/api';
+import {
+  fetchLlmHealthAsync,
+  fetchWorkflowRunsAsync,
+  type LlmHealthResponse,
+} from '@/lib/api';
 import { APP_VERSION } from '@/lib/app-version';
 import { fetchOrganizationMembersAsync } from '@/lib/org-api';
 import ru from '@/i18n/ru.json';
@@ -10,11 +14,13 @@ import { useWorkflowStore } from '@/stores/workflow';
 import { TopBar } from './TopBar';
 
 /**
- * Мок API истории запусков (v0.14 S2).
+ * Мок API истории запусков (v0.14 S2) и healthcheck'а GPU (v1.2.0 S3).
  *
  * При открытии `RunHistoryModal` сразу грузит первую страницу; в тесте шапки
- * сеть не нужна. Остальные функции `@/lib/api` остаются настоящими — их
- * импортирует стор, и подменять весь модуль ради одной функции не нужно.
+ * сеть не нужна. `TopBar` при монтировании опрашивает `GET /llm/health` —
+ * по умолчанию локальный GPU доступен (online), отдельные тесты переопределяют
+ * ответ. Остальные функции `@/lib/api` остаются настоящими — их импортирует
+ * стор, и подменять весь модуль ради двух функций не нужно.
  */
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
@@ -23,6 +29,12 @@ vi.mock('@/lib/api', async (importOriginal) => {
     ...actual,
     fetchWorkflowRunsAsync: vi.fn(() =>
       Promise.resolve({ runs: [], nextCursor: null, total: 0 }),
+    ),
+    fetchLlmHealthAsync: vi.fn(() =>
+      Promise.resolve({
+        local: { available: true, lastCheck: '2026-11-06T09:00:00.000Z' },
+        routerEnabled: true,
+      }),
     ),
   };
 });
@@ -270,6 +282,132 @@ describe('TopBar — команда и аудит (v1.0.0 S5)', () => {
     const { container } = renderTopBar();
 
     expect(container.querySelector('[data-topbar-team]')).toBeNull();
+  });
+});
+
+/** healthcheck: локальный GPU доступен (v1.2.0 S3). */
+const HEALTH_ONLINE: LlmHealthResponse = {
+  local: { available: true, lastCheck: '2026-11-06T09:00:00.000Z' },
+  routerEnabled: true,
+};
+
+/** healthcheck: LM Studio не ответил (v1.2.0 S3). */
+const HEALTH_OFFLINE: LlmHealthResponse = {
+  local: { available: false, lastCheck: '2026-11-06T09:00:30.000Z' },
+  routerEnabled: true,
+};
+
+describe('TopBar — индикатор GPU (v1.2.0 S3)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.mocked(fetchLlmHealthAsync).mockReset();
+    vi.mocked(fetchLlmHealthAsync).mockResolvedValue(HEALTH_ONLINE);
+  });
+
+  it('рисует online-статус, когда локальный GPU доступен', async () => {
+    vi.mocked(fetchLlmHealthAsync).mockResolvedValue(HEALTH_ONLINE);
+
+    const { container } = renderTopBar();
+    const badge = await waitFor(() => {
+      const element = container.querySelector('[data-gpu-status="online"]');
+      expect(element).not.toBeNull();
+
+      return element as HTMLElement;
+    });
+
+    expect(badge).toHaveTextContent(ru['topbar.gpu.online']);
+    expect(container.querySelector('[data-gpu-status="offline"]')).toBeNull();
+  });
+
+  it('переходит в offline при ошибке healthcheck', async () => {
+    vi.mocked(fetchLlmHealthAsync).mockRejectedValue(
+      new Error('backend недоступен'),
+    );
+
+    const { container } = renderTopBar();
+    const badge = await waitFor(() => {
+      const element = container.querySelector('[data-gpu-status="offline"]');
+      expect(element).not.toBeNull();
+
+      return element as HTMLElement;
+    });
+
+    expect(badge).toHaveTextContent(ru['topbar.gpu.offline']);
+  });
+
+  it('offline при local.available=false', async () => {
+    vi.mocked(fetchLlmHealthAsync).mockResolvedValue(HEALTH_OFFLINE);
+
+    const { container } = renderTopBar();
+    const badge = await waitFor(() => {
+      const element = container.querySelector('[data-gpu-status="offline"]');
+      expect(element).not.toBeNull();
+
+      return element as HTMLElement;
+    });
+
+    expect(badge).toHaveTextContent(ru['topbar.gpu.offline']);
+  });
+
+  it('повторяет опрос через 30 000 мс (vi.useFakeTimers)', async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetchLlmHealthAsync).mockResolvedValue(HEALTH_ONLINE);
+
+    renderTopBar();
+
+    // Первый запрос уходит сразу при монтировании, не дожидаясь интервала.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(vi.mocked(fetchLlmHealthAsync)).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(30_000);
+    });
+    expect(vi.mocked(fetchLlmHealthAsync)).toHaveBeenCalledTimes(2);
+
+    // Интервал ровно 30 с: за 29 999 мс нового запроса нет.
+    await act(async () => {
+      vi.advanceTimersByTime(29_999);
+    });
+    expect(vi.mocked(fetchLlmHealthAsync)).toHaveBeenCalledTimes(2);
+  });
+
+  it('после unmount не опрашивает и не обновляет состояние', async () => {
+    vi.useFakeTimers();
+
+    // Запрос «зависает» до unmount: ответ придёт уже размонтированному
+    // компоненту — `cancelled`-флаг обязан погасить setState.
+    const pending: { resolve: (value: LlmHealthResponse) => void } = {
+      resolve: () => undefined,
+    };
+    vi.mocked(fetchLlmHealthAsync).mockImplementation(
+      () =>
+        new Promise<LlmHealthResponse>((resolve) => {
+          pending.resolve = resolve;
+        }),
+    );
+
+    const { unmount } = renderTopBar();
+
+    expect(vi.mocked(fetchLlmHealthAsync)).toHaveBeenCalledTimes(1);
+
+    unmount();
+
+    // clearInterval снял таймер: новых опросов после unmount нет.
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(vi.mocked(fetchLlmHealthAsync)).toHaveBeenCalledTimes(1);
+
+    // Поздний ответ не должен ни упасть, ни обновить состояние размонтированного
+    // дерева: React 19 молча игнорирует setState после unmount, но `cancelled`
+    // исключает сам вызов обновления.
+    await act(async () => {
+      pending.resolve(HEALTH_ONLINE);
+      await Promise.resolve();
+    });
+    expect(vi.mocked(fetchLlmHealthAsync)).toHaveBeenCalledTimes(1);
   });
 });
 

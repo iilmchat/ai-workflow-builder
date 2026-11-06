@@ -393,9 +393,12 @@ export function TeamPage({ onClose }: TeamPageProps) {
    * Email проверяется локально Zod'ом до запроса — та же схема, что принимает
    * backend (`InviteMemberPayloadSchema`), поэтому ошибка видна мгновенно.
    * После успеха форма закрывается, список участников перезапрашивается, а в
-   * панели остаётся сообщение: «приглашение отправлено» при `emailSent: true`
-   * либо «создано, но письмо не отправлено» при `false` (v1.1.0 S1 — SMTP
-   * опционален, приглашение живёт в БД независимо от письма).
+   * панели остаётся сообщение, выбранное по `emailQueued` (v1.2.0 S2 — письмо
+   * ставится в очередь `email-invitations`, а не отправляется синхронно):
+   * «приглашение отправлено (в очереди)» при `true` либо «создано, но письмо
+   * не отправлено» при `false` (очередь/Redis недоступны, приглашение живёт в
+   * БД независимо от письма). `emailSent` в ответе всегда `false` и для выбора
+   * текста не используется.
    *
    * @param event - событие submit формы
    * @returns промис без значения
@@ -422,10 +425,11 @@ export function TeamPage({ onClose }: TeamPageProps) {
         role: inviteRole,
       });
 
-      // v1.1.0 S1: приглашение создаётся и без SMTP. Сообщение различается,
-      // чтобы «письмо отправлено» не звучало при `emailSent: false`.
+      // v1.2.0 S2: приглашение создаётся и без очереди писем. Сообщение
+      // различается по `emailQueued`, чтобы «письмо отправлено» не звучало,
+      // когда письмо осталось только в БД (`emailSent` всегда false).
       setInviteSuccess(
-        created.emailSent
+        created.emailQueued
           ? i18n.t('team.invite.success', { email: parsedEmail.data })
           : i18n.t('team.invite.success_no_email', { email: parsedEmail.data }),
       );

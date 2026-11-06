@@ -93,10 +93,16 @@ const PENDING_INVITATION: OrgInvitation = {
   invitedAt: '2026-03-03T00:00:00.000Z',
 };
 
-/** Ответ инвайта, когда письмо отправлено (v1.1.0 S1). */
+/**
+ * Ответ инвайта, когда письмо поставлено в очередь (v1.2.0 S2).
+ *
+ * `emailSent` всегда `false` (письмо не отправляется синхронно), поэтому
+ * успех письма в UI определяется только по `emailQueued`.
+ */
 const INVITE_RESPONSE: InviteMemberResponse = {
   ...PENDING_INVITATION,
-  emailSent: true,
+  emailQueued: true,
+  emailSent: false,
 };
 
 /** Запись журнала аудита с ресурсом. */
@@ -478,9 +484,12 @@ describe('TeamPage — приглашение (v1.0.0 S5)', () => {
       }),
     );
 
-    // Сообщение об успехе — с приглашённым email; форма закрыта.
+    // Сообщение об успехе — с приглашённым email; форма закрыта. Текст берём
+    // из i18n: v1.2.0 S2 добавил маркер очереди (`(в очереди)`).
     expect(
-      await screen.findByText(`Приглашение отправлено: new@example.com`),
+      await screen.findByText(
+        ru['team.invite.success'].replace('{{email}}', 'new@example.com'),
+      ),
     ).toBeInTheDocument();
     expect(
       container.querySelector('[data-team-invite-form]'),
@@ -492,11 +501,11 @@ describe('TeamPage — приглашение (v1.0.0 S5)', () => {
     );
   });
 
-  it('показывает «письмо не отправлено», если emailSent=false (v1.1.0 S1)', async () => {
-    // Fallback SMTP (DESIGN V110 § 3.1): приглашение в БД есть, письма нет.
+  it('показывает «письмо не отправлено», если emailQueued=false (v1.2.0 S2)', async () => {
+    // Очередь/Redis недоступны: приглашение в БД есть, письмо не поставлено.
     vi.mocked(inviteMemberAsync).mockResolvedValue({
       ...INVITE_RESPONSE,
-      emailSent: false,
+      emailQueued: false,
     });
 
     const { container } = renderTeam();
@@ -515,7 +524,7 @@ describe('TeamPage — приглашение (v1.0.0 S5)', () => {
     );
 
     // Сообщение честно различает «создано» и «письмо отправлено»: при
-    // `emailSent: false` нельзя утверждать, что письмо ушло.
+    // `emailQueued: false` нельзя утверждать, что письмо ушло.
     expect(
       await screen.findByText(
         ru['team.invite.success_no_email'].replace(
@@ -527,6 +536,34 @@ describe('TeamPage — приглашение (v1.0.0 S5)', () => {
     expect(
       container.querySelector('[data-team-invite-success]'),
     ).not.toBeNull();
+  });
+
+  it('показывает «отправлено (в очереди)», если emailQueued=true (v1.2.0 S2)', async () => {
+    const { container } = renderTeam();
+
+    await screen.findByText(OWNER_MEMBER.email);
+
+    fireEvent.click(
+      container.querySelector('[data-team-invite]') as HTMLButtonElement,
+    );
+    fireEvent.change(
+      container.querySelector('[data-team-invite-email]') as HTMLInputElement,
+      { target: { value: 'queued@example.com' } },
+    );
+    fireEvent.click(
+      container.querySelector('[data-team-invite-submit]') as HTMLButtonElement,
+    );
+
+    // При `emailQueued: true` UI не утверждает «письмо отправлено», а говорит
+    // про очередь: доставку подтвердит только SMTP-воркер.
+    expect(
+      await screen.findByText(
+        ru['team.invite.success'].replace('{{email}}', 'queued@example.com'),
+      ),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('[data-team-invite-success]')?.textContent,
+    ).toContain('в очереди');
   });
 
   it('не отправляет приглашение с некорректным email', async () => {

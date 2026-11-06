@@ -162,6 +162,44 @@ describe('LlmHealthService (v1.2 S1)', () => {
     await expect(health.checkAsync()).resolves.toBe(false);
     await expect(health.isAvailableAsync()).resolves.toBe(false);
     expect(health.getStatus()).toBe('unknown');
+    // Пинга не было — «последней проверки» тоже нет (KI-618).
+    expect(health.getLastCheckAt()).toBe('');
+  });
+
+  describe('getLastCheckAt (v1.2.0 S3, KI-618)', () => {
+    it('до первой проверки — пустая строка, после успешной — ISO-строка', async () => {
+      const local = stubLocal([true]);
+      const health = await createHealth(local.provider);
+
+      // Healthcheck ещё не выполнялся: lastCheck = '' (а не «сейчас»).
+      expect(health.getLastCheckAt()).toBe('');
+
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-11-06T10:00:00.000Z'));
+
+      await expect(health.checkAsync()).resolves.toBe(true);
+      expect(health.getLastCheckAt()).toBe('2026-11-06T10:00:00.000Z');
+      // Возвращается именно ISO-строка, пригодная для JSON/Date.parse.
+      expect(Number.isNaN(Date.parse(health.getLastCheckAt()))).toBe(false);
+
+      // Каждая завершённая проверка сдвигает время вперёд.
+      vi.setSystemTime(new Date('2026-11-06T10:00:30.000Z'));
+      await expect(health.checkAsync()).resolves.toBe(true);
+      expect(health.getLastCheckAt()).toBe('2026-11-06T10:00:30.000Z');
+    });
+
+    it('неуспешная проверка тоже обновляет lastCheck: она завершилась', async () => {
+      const local = stubLocal([false]);
+      const health = await createHealth(local.provider);
+
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-11-06T10:01:00.000Z'));
+
+      await expect(health.checkAsync()).resolves.toBe(false);
+      // Статус остаётся unknown (порог не достигнут), но проверка была.
+      expect(health.getStatus()).toBe('unknown');
+      expect(health.getLastCheckAt()).toBe('2026-11-06T10:01:00.000Z');
+    });
   });
 
   it('isAvailableAsync при unknown делает реальную проверку', async () => {

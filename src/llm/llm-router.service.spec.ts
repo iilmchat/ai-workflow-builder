@@ -374,4 +374,26 @@ describe('LlmRouterService (v1.2 S1)', () => {
 
     expect(cloud.generateAsync.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
   });
+
+  describe('isEnabled (v1.2.0 S3, KI-618)', () => {
+    it('true, если LLM_ROUTER_ENABLED=true', async () => {
+      const { router } = await createRouter({ enabled: true });
+
+      expect(router.isEnabled()).toBe(true);
+    });
+
+    it('false, если LLM_ROUTER_ENABLED=false', async () => {
+      const { router } = await createRouter({ enabled: false });
+
+      expect(router.isEnabled()).toBe(false);
+    });
+
+    it('false, если переменная не задана (дефолт — роутер выключен)', async () => {
+      // `readBooleanFlag` при отсутствии значения отдаёт fallback=false, а не
+      // `true` (RULES 4.35: 'false' не должен становиться true).
+      const { router } = await createRouter({});
+
+      expect(router.isEnabled()).toBe(false);
+    });
+  });
 });

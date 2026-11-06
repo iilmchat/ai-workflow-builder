@@ -64,13 +64,14 @@ const membersResponse: OrganizationMembersResponse = {
   ],
 };
 
-/** Ответ сервиса на приглашение (v1.2.0 S2: письмо в очереди, emailSent=false). */
+/** Ответ сервиса на приглашение (v1.2.0 S2: письмо в очереди, emailSent=false; KI-622). */
 const invitationSummary: InviteMemberResponse = {
   email: 'new@example.com',
   role: 'member',
   invitedBy: DEMO_USER_ID,
   invitedAt: INVITED_AT,
   emailSent: false,
+  emailQueued: true,
 };
 
 /** Ответ сервиса на смену роли участника (v1.1.0 S2). */
@@ -252,9 +253,10 @@ describe('OrgMembersController (v1.0.0 S5)', () => {
         role: 'member',
       });
       expect(response.body).toEqual(JSON.parse(JSON.stringify(invitationSummary)));
-      // v1.2.0 S2: 201 не означает «письмо доставлено» — письмо в очереди,
-      // emailSent остаётся false (KI-622).
+      // v1.2.0 S2: 201 не означает «письмо доставлено» — emailSent остаётся
+      // false, а поставлено ли задание в очередь, сообщает emailQueued (KI-622).
       expect(response.body.emailSent).toBe(false);
+      expect(response.body.emailQueued).toBe(true);
     });
 
     it('администратор (role=admin) тоже может приглашать', async () => {

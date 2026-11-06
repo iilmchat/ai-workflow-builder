@@ -1,9 +1,10 @@
-import { useCallback, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import i18n, { setLanguage, type Language } from '@/i18n';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import { useTheme } from '@/hooks/use-theme';
+import { fetchLlmHealthAsync } from '@/lib/api';
 import { APP_VERSION } from '@/lib/app-version';
 import { logoutAsync } from '@/lib/auth-api';
 import { exportFileNameOf, triggerDownload } from '@/lib/download-blob';
@@ -40,6 +41,15 @@ function Spinner() {
 
 /** Статусы, при которых запуск уже идёт и повторный запуск запрещён. */
 const ACTIVE_RUN_STATUSES: ReadonlySet<RunStatus> = new Set(['pending', 'running']);
+
+/**
+ * Период опроса доступности GPU (v1.2.0 S3, DESIGN V120 § 3.4).
+ *
+ * Те же 30 секунд, что у healthcheck'а backend (`LLM_HEALTH_INTERVAL_MS`):
+ * более частый опрос не дал бы новых данных, более редкий — показывал бы
+ * устаревший статус после восстановления LM Studio.
+ */
+const GPU_HEALTH_POLL_MS = 30_000;
 
 /** Подпись и цвет бейджа статуса запуска. */
 const RUN_STATUS_STYLE: Record<RunStatus, { labelKey: string; className: string }> = {
@@ -134,6 +144,10 @@ export function TopBar() {
   // R6.6.2: скрытый `<input type="file">`. Клик по кнопке «Импорт» открывает
   // системный выбор файла, сам input в интерфейсе не виден.
   const importInputRef = useRef<HTMLInputElement>(null);
+  // v1.2.0 S3 (DESIGN V120 § 3.4): доступен ли локальный LLM-бэкенд (GPU).
+  // Исходное значение — `false`: до первого ответа healthcheck'а о GPU ничего
+  // не известно, и индикатор не должен обещать online.
+  const [isGpuOnline, setIsGpuOnline] = useState(false);
   const { resolved, setTheme } = useTheme();
   const { t, i18n: i18nInstance } = useTranslation();
   const currentLang = i18nInstance.language as Language;
@@ -161,6 +175,47 @@ export function TopBar() {
       currentWorkflowId !== null &&
       state.lastSavedHash !== computeGraphHash(state.nodes, state.edges),
   );
+
+  // v1.2.0 S3 (DESIGN V120 § 3.4): статус GPU опрашивается при монтировании и
+  // далее раз в GPU_HEALTH_POLL_MS. `cancelled` гасит setState, если запрос
+  // завершится уже после размонтирования (закрыли редактор/сменили страницу),
+  // а `clearInterval` снимает таймер: без него опрос жил бы до конца вкладки.
+  useEffect(() => {
+    let cancelled = false;
+
+    /**
+     * Запрашивает состояние GPU и обновляет индикатор.
+     *
+     * Ошибка запроса — это offline, а не повод для уведомления: healthcheck
+     * фоновый и не должен мешать работе с графом.
+     *
+     * @returns промис без значения
+     */
+    const checkGpuHealthAsync = async () => {
+      try {
+        const health = await fetchLlmHealthAsync();
+
+        if (!cancelled) {
+          setIsGpuOnline(health.local.available);
+        }
+      } catch {
+        if (!cancelled) {
+          setIsGpuOnline(false);
+        }
+      }
+    };
+
+    void checkGpuHealthAsync();
+
+    const timer = setInterval(() => {
+      void checkGpuHealthAsync();
+    }, GPU_HEALTH_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
 
   /**
    * Выходит из аккаунта: отзывает refresh-токен и чистит сессию.
@@ -522,6 +577,25 @@ export function TopBar() {
           data-app-logo=""
           className="h-6 w-auto shrink-0"
         />
+
+        {/* v1.2.0 S3 (DESIGN V120 § 3.4): индикатор локального GPU. Точка
+            зелёная при `available: true`, серая — offline (ошибка запроса,
+            `available: false` или ответ ещё не пришёл). Текст дублирует цвет
+            словами — состояние читается без цветового зрения, `data-gpu-status`
+            — контракт для CDP-смоука. */}
+        <span
+          data-gpu-status={isGpuOnline ? 'online' : 'offline'}
+          title={t(isGpuOnline ? 'topbar.gpu.online' : 'topbar.gpu.offline')}
+          className="flex shrink-0 items-center gap-1.5 text-[10px] leading-none text-muted-foreground"
+        >
+          <span
+            aria-hidden="true"
+            className={`inline-block size-2 rounded-full ${
+              isGpuOnline ? 'bg-green-500' : 'bg-slate-400'
+            }`}
+          />
+          {t(isGpuOnline ? 'topbar.gpu.online' : 'topbar.gpu.offline')}
+        </span>
 
         {/* KI-446: имя workflow и копирайт с версией — одна колонка.
             Строка версии стоит под именем, а не у правого края: там действия

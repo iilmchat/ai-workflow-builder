@@ -75,14 +75,15 @@ export const InviteMemberSchema = z.object({
 export type InviteMemberDto = z.infer<typeof InviteMemberSchema>;
 
 /**
- * Ответ `POST /admin/members/invite` (v1.1.0 S1; очередь — v1.2.0 S2).
+ * Ответ `POST /admin/members/invite` (v1.1.0 S1; очередь — v1.2.0 S2,
+ * `emailQueued` — KI-622).
  *
- * Совпадает с {@link OrganizationInvitationSummary} и сохраняет `emailSent` для
- * обратной совместимости контракта. С v1.2.0 S2 письмо ставится в очередь
- * `email-invitations` и отправляется воркером асинхронно, поэтому в HTTP-ответе
- * **всегда** `emailSent: false`: доставка ещё не подтверждена. Поле больше не
- * отличает «поставлено в очередь» от «не удалось поставить» (KI-622); UI-текст
- * «письмо не отправлено» до S3 тоже неточен.
+ * Совпадает с {@link OrganizationInvitationSummary}, сохраняет `emailSent` для
+ * обратной совместимости и добавляет `emailQueued`: с v1.2.0 S2 письмо ставится
+ * в очередь `email-invitations` и отправляется воркером асинхронно, поэтому
+ * HTTP-ответ может сказать только «задание поставлено», но не «письмо
+ * доставлено». `emailSent` теперь всегда `false` (доставка не подтверждена), а
+ * отличать «в очереди» от «не поставлено» умеет только `emailQueued` (KI-622).
  *
  * Интерфейс объявлен «плоским», без `extends`: backend-гейт
  * `api-contract.spec.ts` читает поля интерфейса компилятором TypeScript и
@@ -98,11 +99,16 @@ export interface InviteMemberResponse {
   /** Дата выписки приглашения (`organization_invitations.created_at`). */
   invitedAt: Date;
   /**
-   * Всегда `false` с v1.2.0 S2: письмо отправляется асинхронно, а API пока не
-   * умеет отличать «в очереди» от «не поставлено» (KI-622). Поле оставлено
-   * ради совместимости с клиентами v1.1.0.
+   * Всегда `false` с v1.2.0 S2, поле для обратной совместимости: доставка в
+   * HTTP-ответе не подтверждается — письмо отправляет воркер очереди.
    */
   emailSent: boolean;
+  /**
+   * `true` — письмо поставлено в очередь `email-invitations`, но доставка ещё
+   * не подтверждена; `false` — очередь/Redis недоступна, приглашение создано в
+   * БД, письмо не поставлено (KI-622).
+   */
+  emailQueued: boolean;
 }
 
 /**

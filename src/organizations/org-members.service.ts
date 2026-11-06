@@ -137,13 +137,16 @@ export class OrgMembersService {
    * сначала создаётся в БД, затем задание ставится в BullMQ
    * (`email-invitations`, 3 попытки, exponential backoff). HTTP-запрос не ждёт
    * SMTP: отправку делает `EmailProcessor`. Ошибка постановки в Redis не
-   * отменяет приглашение — сервис пишет ERROR, а ответ несёт
-   * `emailSent: false`.
+   * отменяет приглашение — сервис пишет ERROR, приглашение остаётся в БД.
+   *
+   * Результат постановки возвращается клиенту полем `emailQueued` (KI-622):
+   * `emailSent` всегда `false`, потому что доставка в HTTP-ответе не
+   * подтверждается.
    *
    * @param userId - `sub` access-токена (кто приглашает)
    * @param dto - валидированные email и роль приглашаемого
-   * @returns выписанное приглашение; `emailSent` всегда `false` (письмо в
-   *   очереди либо не поставлено — KI-622)
+   * @returns выписанное приглашение; `emailQueued` — поставлено ли письмо в
+   *   очередь, `emailSent` всегда `false` (KI-622)
    * @throws UnauthorizedException если пользователь не найден в БД
    * @throws ConflictException если email занят или приглашение уже выписано
    */
@@ -183,8 +186,9 @@ export class OrgMembersService {
 
     // Письмо не влияет на успех приглашения: с v1.2.0 S2 оно ставится в
     // очередь `email-invitations`, а ошибка Redis/постановки лишь логируется
-    // (`queueInvitationAsync` → `false`). Приглашение уже в БД.
-    await this.emailService.queueInvitationAsync(
+    // (`queueInvitationAsync` → `false`). Приглашение уже в БД. Результат
+    // постановки возвращается клиенту как `emailQueued` (KI-622).
+    const emailQueued = await this.emailService.queueInvitationAsync(
       invitation.email,
       actor.name,
       this.emailService.buildInvitationLink(invitation.id),
@@ -198,6 +202,9 @@ export class OrgMembersService {
       // С v1.2.0 S2 письмо отправляется асинхронно воркером очереди, поэтому
       // в HTTP-ответе доставка ещё не подтверждена (KI-622).
       emailSent: false,
+      // `true` — задание в очереди; `false` — очередь/Redis недоступна, письмо
+      // не поставлено, но приглашение создано.
+      emailQueued,
     };
   }
 

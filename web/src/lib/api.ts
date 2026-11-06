@@ -833,6 +833,56 @@ export async function fetchLlmModelsAsync(): Promise<LlmModelInfo[]> {
 }
 
 /**
+ * Состояние локального LLM-бэкенда (GPU) в ответе `GET /llm/health`
+ * (v1.2.0 S3, DESIGN V120 § 3.4).
+ *
+ * Зеркало backend-интерфейса `LocalLlmHealth`: `available` — последняя проверка
+ * LM Studio успешна, `lastCheck` — ISO-момент последней завершённой проверки
+ * (пустая строка, если проверок ещё не было).
+ */
+export const LocalLlmHealthSchema = z.object({
+  available: z.boolean(),
+  lastCheck: z.string(),
+});
+
+/** Состояние локального LLM-бэкенда в терминах API. */
+export type LocalLlmHealth = z.infer<typeof LocalLlmHealthSchema>;
+
+/**
+ * Ответ `GET /llm/health` (v1.2.0 S3, DESIGN V120 § 3.4).
+ *
+ * Нужен индикатору GPU в `TopBar`: `local.available` рисует online/offline, а
+ * `routerEnabled` — действующий флаг `LLM_ROUTER_ENABLED` (при `false` роутер
+ * не пробует локальный провайдер вообще). Поля совпадают с backend
+ * `LlmHealthResponse`; статус — свойство backend-процесса, поэтому запрос
+ * повторяется периодически, а не кэшируется.
+ */
+export const LlmHealthResponseSchema = z.object({
+  local: LocalLlmHealthSchema,
+  routerEnabled: z.boolean(),
+});
+
+/** Состояние LLM-роутера и GPU в терминах API. */
+export type LlmHealthResponse = z.infer<typeof LlmHealthResponseSchema>;
+
+/**
+ * Возвращает состояние локального LLM-бэкенда (GPU) и роутера
+ * (`GET /llm/health`, v1.2.0 S3).
+ *
+ * Используется индикатором в шапке: при ошибке запроса или
+ * `local.available: false` индикатор становится offline. Ручка внутренняя (для
+ * SPA) и не требует прав администратора: состояние GPU не содержит секретов.
+ *
+ * @returns состояние локального провайдера и флаг роутера
+ * @throws ApiError при сетевой ошибке, не-2xx статусе или неожиданном формате
+ */
+export async function fetchLlmHealthAsync(): Promise<LlmHealthResponse> {
+  const data = await requestAsync<unknown>('/llm/health');
+
+  return LlmHealthResponseSchema.parse(data);
+}
+
+/**
  * Возвращает конфигурацию web-search-провайдеров (v0.15 S3).
  *
  * Нужна селекту провайдера в узле `web_search`: UI показывает его только когда

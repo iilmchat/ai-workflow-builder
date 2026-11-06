@@ -93,6 +93,21 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 - **Провайдеры медиа:** GPTunnel CreativeLab, Replicate, FAL, OpenAI Images.
 - **Бюджет запуска:** лимит стоимости, учёт токенов и `cost_rub` / `cost_usd`.
 
+### 🖥️ LLM Router
+
+- **GPU-бэкенд и облачный fallback (v1.2 S1):** при `LLM_ROUTER_ENABLED=true`
+  LLM-вызов сначала идёт в локальный LM Studio; при ошибке или таймауте —
+  WARN и повтор в облако моделью `LLM_ROUTER_FALLBACK_MODEL` (по умолчанию
+  `gpt-4o-mini`). Флаг по умолчанию `false`: без него поведение прежнее, все
+  вызовы идут в облако. Healthcheck пингует `GET /v1/models` раз в 30 с; после
+  трёх неудач подряд локальный провайдер исключается из роутинга до
+  восстановления.
+- **Индикатор GPU (v1.2 S3, KI-618):** `GET /llm/health` отдаёт
+  `{ local: { available, lastCheck }, routerEnabled }`; в шапке редактора
+  горит зелёная/серая точка `GPU: online` / `GPU: offline`, статус
+  перезапрашивается каждые 30 с. Ограничения — KI-617..621; ручка не покрыта
+  auth- и паритет-гейтом — KI-626..627.
+
 ### 🧠 Состояние и агенты
 
 - **pgvector:** векторные коллекции, upsert и semantic search.
@@ -154,9 +169,13 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
   `POST /admin/members/invite` (owner/admin) выписывает приглашение по email и
   отправляет письмо со ссылкой на регистрацию через SMTP (`nodemailer`; env
   `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`,
-  `SMTP_SECURE`, `APP_PUBLIC_URL` для абсолютной ссылки). Без SMTP приглашение
-  создаётся, письмо не отправляется: в лог уходит WARN, API отвечает
-  `emailSent: false`, а UI показывает «создано, но письмо не отправлено».
+  `SMTP_SECURE`, `APP_PUBLIC_URL` для абсолютной ссылки). С v1.2 S2 письмо не
+  отправляется в HTTP-запросе: оно ставится в очередь BullMQ `email-invitations`
+  (3 попытки, exponential backoff), а воркер догоняет отправку. Ответ несёт
+  `emailQueued` (`true` — задание поставлено) и `emailSent` (всегда `false`:
+  доставка не подтверждена). Если очередь недоступна, приглашение всё равно
+  создаётся, а UI различает «отправлено (в очереди)» и «создано, но письмо не
+  отправлено» (v1.2 S3, KI-622).
   Регистрация по приглашённому email присоединяет пользователя к организации с
   назначенной ролью. Владелец управляет составом: `PATCH /admin/members/:userId`
   меняет роль (`admin`/`member`/`viewer`), `DELETE /admin/members/:userId`
@@ -183,6 +202,18 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
   приватные адреса (v0.11 S14, KI-434/435/478).
 - **Секреты:** ключи провайдеров шифруются AES-256-GCM; Husky блокирует
   коммиты с паттернами реальных ключей.
+
+### 📧 SMTP Retry
+
+- **Очередь писем-приглашений (v1.2 S2, DESIGN V120 § 3.3):** `EmailService`
+  кладёт задание `send-invitation` в BullMQ-очередь `email-invitations`
+  (`attempts: 3`, exponential backoff 5 с, `removeOnComplete`/`removeOnFail`).
+  HTTP-ручка приглашения отвечает сразу (201), письмо отправляет воркер
+  `EmailProcessor`; недоступный SMTP ретраится, а не теряет письмо. Payload
+  валидируется Zod в воркере, битые данные уходят в `UnrecoverableError`.
+  Очередь использует уже существующие `REDIS_URL`, `BULLMQ_PREFIX`,
+  `REDIS_QUEUE_DB`; SMTP настраивается прежними `SMTP_*` и `APP_PUBLIC_URL`.
+  Ограничения (resend, PII в payload, ретраи без SMTP) — KI-623..625.
 
 ### 🗄️ Хранилище и наблюдаемость
 
@@ -292,11 +323,11 @@ backend должен быть запущен первым.
 
 | Показатель | Значение |
 |---|---|
-| Версия | **v0.11.1** |
-| Backend-тесты | **1439** (18 skipped, 104 файла) |
-| Frontend-тесты | **419** (50 файлов) |
+| Версия | **v1.1.0** (v1.2.0 — в разработке) |
+| Backend-тесты | **1901** (2 skipped, 127 файлов) |
+| Frontend-тесты | **499** (54 файла) |
 | Типов узлов | **22** |
-| KI-реестр | **KI-525** — последний номер; всего **513** записей (0 Open High) |
+| KI-реестр | **KI-628** — последний номер; всего **615** записей |
 | CI | GitHub Actions: build, typecheck, migrations, tests (backend + web) |
 | Docker | multi-stage образ + `docker-compose.prod.yml`, публикация в GHCR |
 

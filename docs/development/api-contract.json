@@ -7,7 +7,7 @@
     "CollaboratorResponse": ["email", "invitedAt", "invitedBy", "role", "userId"],
     "DocumentTemplateSummary": ["bytes", "createdAt", "id", "name", "placeholders"],
     "ExportWorkflowDto": ["edges", "exportedAt", "name", "nodes", "version"],
-    "InviteMemberResponse": ["email", "emailSent", "invitedAt", "invitedBy", "role"],
+    "InviteMemberResponse": ["email", "emailQueued", "emailSent", "invitedAt", "invitedBy", "role"],
     "McpServerSummary": ["error", "name", "status", "tools", "transport"],
     "McpServersResponse": ["enabled", "maxToolsPerNode", "servers"],
     "McpToolSummary": ["description", "destructiveHint", "idempotentHint", "name", "readOnlyHint", "title"],

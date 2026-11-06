@@ -112,7 +112,8 @@ const MIRROR_SCHEMAS: Record<string, MirrorSchema> = {
   OrganizationInvitationSummary: OrgInvitationSchema,
   OrganizationMemberSummary: OrgMemberSchema,
   OrganizationMembersResponse: OrganizationMembersResponseSchema,
-  // v1.1.0 S1 (DESIGN V110 § 3.1): ответ инвайта — приглашение + emailSent.
+  // v1.1.0 S1 (DESIGN V110 § 3.1): ответ инвайта — приглашение + emailSent;
+  // v1.2.0 S2: добавлен emailQueued (глобальный флаг письма в очереди).
   InviteMemberResponse: InviteMemberResponseSchema,
   RunResponse: ApiRunSchema,
   // R7.1 (KI-048): бюджет запуска — новое зеркало REST-ответа.
@@ -467,16 +468,20 @@ describe('REST-контракт: web-зеркала ↔ docs/development/api-con
     }
   });
 
-  it('ответ инвайта содержит emailSent и зеркалит контракт (v1.1.0 S1)', () => {
+  it('ответ инвайта содержит emailQueued/emailSent и зеркалит контракт (v1.2.0 S2)', () => {
     const contract = readContract();
     const actual = actualContract();
 
     // v1.1.0 S1 (DESIGN V110 § 3.1): приглашение создаётся и без SMTP, поэтому
-    // отдельный DTO `InviteMemberResponse` несёт `emailSent` — UI различает
-    // «письмо отправлено» и «только строка в БД».
+    // отдельный DTO `InviteMemberResponse` несёт `emailSent`. v1.2.0 S2:
+    // письмо ставится в BullMQ-очередь, и `emailSent` всегда `false`; реальный
+    // признак постановки в очередь — `emailQueued`, по нему UI выбирает текст
+    // («отправлено (в очереди)» либо «письмо не отправлено»). Зеркало обязано
+    // содержать оба поля — иначе гейт поймает расхождение с контрактом.
     expect(actual.InviteMemberResponse).toEqual(
       contract.responses.InviteMemberResponse,
     );
+    expect(actual.InviteMemberResponse).toContain('emailQueued');
     expect(actual.InviteMemberResponse).toContain('emailSent');
 
     // Домен роли у ответа инвайта — тот же, что у элемента списка приглашений:

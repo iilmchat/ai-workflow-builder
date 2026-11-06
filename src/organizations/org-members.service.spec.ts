@@ -283,8 +283,10 @@ describe('OrgMembersService (v1.0.0 S5; S1 — письмо; v1.1.0 S2 — уп�
         role: 'member',
         invitedBy: USER_ID,
         invitedAt: INVITED_AT,
-        // v1.2.0 S2: письмо в очереди, доставка ещё не подтверждена.
+        // v1.2.0 S2: доставка ещё не подтверждена — emailSent всегда false.
         emailSent: false,
+        // KI-622: очередь ответила успехом — задание поставлено.
+        emailQueued: true,
       });
       // Email нормализован, организация — из строки `users` актора.
       expect(insertChain?.values).toHaveBeenCalledWith({
@@ -307,7 +309,7 @@ describe('OrgMembersService (v1.0.0 S5; S1 — письмо; v1.1.0 S2 — уп�
       );
     });
 
-    it('возвращает emailSent=false, если очередь недоступна (Redis), но приглашение создано', async () => {
+    it('возвращает emailQueued=false и emailSent=false, если очередь недоступна (Redis), но приглашение создано', async () => {
       // Fallback DESIGN V120 § 3.3: приглашение в БД есть, письмо не поставлено.
       emailService.queueInvitationAsync.mockResolvedValue(false);
       mockSelects([{ organizationId: ORG_ID, name: 'Acme Org' }], []);
@@ -327,12 +329,16 @@ describe('OrgMembersService (v1.0.0 S5; S1 — письмо; v1.1.0 S2 — уп�
         role: 'viewer',
       });
 
-      // Приглашение не отменяется из-за письма: 409/исключения нет.
+      // Приглашение не отменяется из-за письма: 409/исключения нет. Очередь
+      // недоступна — emailQueued честно false (KI-622), доставки не будет.
       expect(result).toMatchObject({
         email: 'new@example.com',
         role: 'viewer',
         emailSent: false,
+        emailQueued: false,
       });
+      expect(result.emailQueued).toBe(false);
+      expect(result.emailSent).toBe(false);
       expect(emailService.queueInvitationAsync).toHaveBeenCalledTimes(1);
     });
 
