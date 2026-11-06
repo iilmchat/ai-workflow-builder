@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
 import { LlmController } from './llm.controller.js';
+import { LlmHealthService } from './llm-health.service.js';
 import { LlmNodeExecutor } from './llm-node-executor.service.js';
 import { LlmProviderFactory } from './llm-provider.factory.js';
 import { LLM_PROVIDERS, LlmRegistryService } from './llm-registry.service.js';
+import { LlmRouterService } from './llm-router.service.js';
 import { LlmService } from './llm.service.js';
 
 /**
@@ -31,6 +33,11 @@ import { LlmService } from './llm.service.js';
       useFactory: (factory: LlmProviderFactory) => factory.createProvidersAsync(),
     },
     LlmRegistryService,
+    // v1.2 S1: healthcheck локального LM Studio (пинг раз в 30 с) и роутер
+    // «локальный GPU → облачный fallback». Healthcheck не зависит от флага
+    // LLM_ROUTER_ENABLED: статус нужен и будущему UI-индикатору (DESIGN § 3.4).
+    LlmHealthService,
+    LlmRouterService,
     LlmService,
     LlmNodeExecutor,
   ],

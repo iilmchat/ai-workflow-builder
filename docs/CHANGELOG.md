@@ -19,6 +19,23 @@
 
 ### Added
 
+- **LLM Router и healthcheck LM Studio (v1.2.0 S1, DESIGN V120 § 3.1–3.2)**
+  ([отчёт](development/reports/v1.2.0/S1-llm-router.md)):
+  `ILlmProvider.isAvailableAsync()` — облачные провайдеры отвечают `true` без
+  сетевого запроса, `LmStudioProvider` пингует `GET /v1/models` с таймаутом
+  3 с. Новый `LlmRouterService`: при `LLM_ROUTER_ENABLED=true` вызов сначала
+  идёт в LM Studio (модель — выбранная, если она объявлена локально, иначе
+  первая локальная), при ошибке — WARN и повтор в облако моделью
+  `LLM_ROUTER_FALLBACK_MODEL` (default `gpt-4o-mini`). Таймаут 60 с ставится
+  на каждую попытку, поэтому истёкший таймаут LM Studio не отменяет fallback.
+  `LlmHealthService` раз в 30 с пингует LM Studio; после 3 неудач подряд
+  статус `unavailable`, и роутер пропускает GPU; `setInterval.unref()` и
+  остановка в `onModuleDestroy`. `LlmService` делегирует вызов роутеру,
+  семафоры провайдеров (KI-067) и span `llm.call` (KI-365) перенесены туда же.
+  Env: `LLM_ROUTER_ENABLED` (default false, строгий boolean),
+  `LLM_ROUTER_FALLBACK_MODEL`. Тесты: +26 (router/health/lmstudio), смоук
+  18/18 на mock LM Studio и mock облака (local → 500 → fallback →
+  ECONNREFUSED → fallback). Ограничения — KI-617..621.
 - **Отзыв access-токена и защита write-путей (v1.1.0 S5, KI-601/KI-605)**
   ([отчёт](development/reports/v1.1.0/S5-security.md)):
   колонка `users.token_version` (миграция `0018_daffy_triathlon.sql`, DEFAULT 0)
@@ -2460,6 +2477,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 

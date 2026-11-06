@@ -125,6 +125,38 @@ export class LlmRegistryService {
   }
 
   /**
+   * Возвращает локального провайдера (LM Studio), если он сконфигурирован.
+   *
+   * Нужен роутеру и healthcheck'у (v1.2 S1): приоритет локального GPU-бэкенда
+   * задан DESIGN V120 § 3.1, а «локальный» — это флаг провайдера
+   * (`isLocal === true`), а не жёстко `lmstudio`: если в будущем появится
+   * другой локальный бэкенд, он подхватится без правок роутера.
+   *
+   * @returns провайдер с `isLocal === true` либо `undefined`, если локального нет
+   */
+  findLocalProvider(): ILlmProvider | undefined {
+    return this.providers.find(
+      (provider) => provider.isLocal === true && provider.isConfigured,
+    );
+  }
+
+  /**
+   * Возвращает первого облачного провайдера (не локального).
+   *
+   * Используется как последний резерв роутера (v1.2 S1), когда модель из
+   * `LLM_ROUTER_FALLBACK_MODEL` не объявлена ни одним провайдером: лучше
+   * отправить вызов в настроенное облако с его первой моделью, чем упасть,
+   * хотя fallback-модель — операторская настройка, а не выбор пользователя.
+   *
+   * @returns провайдер с `isLocal !== true` либо `undefined`, если облака нет
+   */
+  findCloudProvider(): ILlmProvider | undefined {
+    return this.providers.find(
+      (provider) => provider.isLocal !== true && provider.isConfigured,
+    );
+  }
+
+  /**
    * Возвращает список моделей провайдеров, готовых к вызовам.
    *
    * Неконфигурированные провайдеры (без API-ключа) отфильтровываются (KI-039):

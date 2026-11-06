@@ -8,6 +8,7 @@ import {
 } from './llm-provider.interface.js';
 import { REASONING_MAX_TOKENS } from './llm-constants.js';
 import { AnthropicProvider } from './providers/anthropic.provider.js';
+import { LmStudioProvider } from './providers/lmstudio.provider.js';
 import { OpenAiCompatibleProvider } from './providers/openai-compatible.provider.js';
 
 /** Заглушка ключа для LM Studio: локальный сервер ключ не проверяет. */
@@ -581,7 +582,7 @@ export class LlmProviderFactory {
    *
    * @returns провайдер либо `null`, если моделей нет ни в env, ни в API
    */
-  private async createLmStudioProvider(): Promise<OpenAiCompatibleProvider | null> {
+  private async createLmStudioProvider(): Promise<LmStudioProvider | null> {
     const baseURL =
       this.config.get<string>('LMSTUDIO_BASE_URL') ?? LMSTUDIO_DEFAULT_BASE_URL;
     const envModels = this.parseModelIds(
@@ -595,7 +596,7 @@ export class LlmProviderFactory {
       return null;
     }
 
-    return new OpenAiCompatibleProvider({
+    return new LmStudioProvider({
       name: 'lmstudio',
       apiKey: LMSTUDIO_PLACEHOLDER_KEY,
       baseURL,

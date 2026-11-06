@@ -505,4 +505,13 @@ describe('OpenAiCompatibleProvider.embedAsync (R7.4a)', () => {
       'openai/text-embedding-3-small',
     );
   });
+
+  it('isAvailableAsync у облачного провайдера — true без сетевого запроса (v1.2 S1)', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    const provider = new OpenAiCompatibleProvider(providerConfig());
+
+    await expect(provider.isAvailableAsync()).resolves.toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });

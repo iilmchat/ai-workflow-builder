@@ -937,6 +937,44 @@ export const SmtpEnvSchema = z.object({
 export type SmtpEnv = z.infer<typeof SmtpEnvSchema>;
 
 /**
+ * Zod-схема LLM-роутера «локальный GPU → облако» (v1.2 S1, DESIGN V120 § 3.1).
+ *
+ * `LLM_ROUTER_ENABLED=false` (дефолт) полностью выключает новую логику:
+ * провайдер резолвится по id модели, как до v1.2. `true` — вызовы сначала идут
+ * в LM Studio (если он настроен), а при ошибке/недоступности — в облачную
+ * модель `LLM_ROUTER_FALLBACK_MODEL`.
+ *
+ * Разбор boolean строгий, как у `SANDBOX_ENABLED`/`MCP_ENABLED` (RULES 4.35):
+ * `z.coerce.boolean()` превратил бы строку `'false'` в `true` и включил
+ * роутинг «сам». Пустая строка — «не задано» (KI-084).
+ */
+export const LlmRouterEnvSchema = z.object({
+  /** Включён ли роутинг на локальный LM Studio с fallback в облако (default false). */
+  LLM_ROUTER_ENABLED: z.preprocess(
+    emptyToUndefined,
+    z
+      .union([z.boolean(), z.enum(['true', 'false'])])
+      .transform((value) => value === true || value === 'true')
+      .optional(),
+  )
+    .default(false),
+  /**
+   * Модель облачного fallback (default `gpt-4o-mini`).
+   *
+   * Должна быть объявлена сконфигурированным облачным провайдером. Если нет —
+   * роутер возьмёт первую модель первого облачного провайдера и напишет WARN
+   * (KI-619): fallback-модель — операторская настройка, а не выбор в графе.
+   */
+  LLM_ROUTER_FALLBACK_MODEL: z.preprocess(
+    emptyToUndefined,
+    z.string().trim().min(1).max(200).optional(),
+  ).default('gpt-4o-mini'),
+});
+
+/** Валидированные настройки LLM-роутера (v1.2 S1). */
+export type LlmRouterEnv = z.infer<typeof LlmRouterEnvSchema>;
+
+/**
  * Zod-схема переменных окружения, обязательных для запуска приложения.
  *
  * Проверяется ровно один раз при инициализации `ConfigModule` (fail-fast):
@@ -1177,6 +1215,8 @@ export const EnvSchema = z.object({
   ...ThrottlerEnvSchema.shape,
   // v1.1.0 S1: SMTP для писем-приглашений (DESIGN V110 § 3.1); опционален.
   ...SmtpEnvSchema.shape,
+  // v1.2 S1: роутер LLM «локальный LM Studio → облако» (DESIGN V120 § 3.1).
+  ...LlmRouterEnvSchema.shape,
 })
   /**
    * Fail-fast: отказ старта при `AUTH_DISABLED=true` в production.

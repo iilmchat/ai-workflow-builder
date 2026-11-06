@@ -197,6 +197,20 @@ export class AnthropicProvider implements ILlmProvider {
   }
 
   /**
+   * Доступен ли провайдер (v1.2 S1, DESIGN V120 § 3.1).
+   *
+   * Облачный Anthropic считается доступным без сетевого запроса: ключ проверен
+   * фабрикой (`isConfigured`), а пинг на каждый вызов — лишний round-trip к
+   * платному upstream. Реальная недоступность проявится ошибкой вызова и
+   * ретраями движка.
+   *
+   * @returns всегда `true`
+   */
+  isAvailableAsync(): Promise<boolean> {
+    return Promise.resolve(true);
+  }
+
+  /**
    * Генерирует текст через Anthropic Messages API.
    *
    * @param prompt - пользовательский промпт

@@ -291,6 +291,13 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
   private readonly client: OpenAI | null;
   /** Имя переменной окружения с ключом (для текста ошибки). */
   private readonly envKey: string | undefined;
+  /**
+   * Базовый адрес API.
+   *
+   * Хранится отдельно от SDK-клиента: наследнику {@link LmStudioProvider}
+   * нужен `GET {baseURL}/models` для healthcheck'а (v1.2 S1).
+   */
+  protected readonly baseURL: string;
 
   /**
    * @param config - идентификатор, ключ, baseURL и список моделей
@@ -299,6 +306,7 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
     this.name = config.name;
     this.models = config.models;
     this.envKey = config.envKey;
+    this.baseURL = config.baseURL;
     this.isLocal = config.isLocal ?? false;
     this.resolveModel = config.resolveModel;
     this.resolveEmbeddingModel = config.resolveEmbeddingModel;
@@ -332,6 +340,20 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
    */
   get isConfigured(): boolean {
     return this.client !== null;
+  }
+
+  /**
+   * Доступен ли провайдер (v1.2 S1, DESIGN V120 § 3.1).
+   *
+   * Облачный OpenAI-совместимый API считается доступным без сетевого запроса:
+   * ключ проверен фабрикой, а пинг на каждый вызов — лишний round-trip к
+   * платному upstream. Локальный LM Studio переопределяет метод в
+   * {@link LmStudioProvider}, который реально проверяет `GET /models`.
+   *
+   * @returns `true` — облачный провайдер готов к вызову
+   */
+  isAvailableAsync(): Promise<boolean> {
+    return Promise.resolve(true);
   }
 
   /**

@@ -1,6 +1,7 @@
 import {
   DocumentTemplateEnvSchema,
   EnvSchema,
+  LlmRouterEnvSchema,
   McpEnvSchema,
   NetworkSafetyEnvSchema,
   NodeRetryEnvSchema,
@@ -917,5 +918,44 @@ describe('SMTP env (v1.1.0 S1, DESIGN V110 § 3.1)', () => {
     expect(SmtpEnvSchema.parse({ APP_PUBLIC_URL: '' }).APP_PUBLIC_URL).toBe(
       'http://localhost:3000',
     );
+  });
+});
+
+describe('LLM Router env (v1.2 S1, DESIGN V120 § 3.1)', () => {
+  it('дефолты: роутер выключен, fallback gpt-4o-mini', () => {
+    const parsed = EnvSchema.parse(baseEnv);
+
+    expect(parsed.LLM_ROUTER_ENABLED).toBe(false);
+    expect(parsed.LLM_ROUTER_FALLBACK_MODEL).toBe('gpt-4o-mini');
+  });
+
+  it("строго разбирает 'true'/'false' и пустую строку (RULES 4.35)", () => {
+    expect(
+      LlmRouterEnvSchema.parse({ LLM_ROUTER_ENABLED: 'true' }).LLM_ROUTER_ENABLED,
+    ).toBe(true);
+    expect(
+      LlmRouterEnvSchema.parse({ LLM_ROUTER_ENABLED: 'false' }).LLM_ROUTER_ENABLED,
+    ).toBe(false);
+    // Строка 'false' не должна превращаться в true (ловушка coerce.boolean).
+    expect(EnvSchema.parse({ ...baseEnv, LLM_ROUTER_ENABLED: 'false' }).LLM_ROUTER_ENABLED).toBe(
+      false,
+    );
+    expect(
+      EnvSchema.parse({ ...baseEnv, LLM_ROUTER_ENABLED: '' }).LLM_ROUTER_ENABLED,
+    ).toBe(false);
+    expect(() =>
+      EnvSchema.parse({ ...baseEnv, LLM_ROUTER_ENABLED: 'yes' }),
+    ).toThrow();
+  });
+
+  it('fallback-модель: пустое значение уходит в дефолт (KI-084)', () => {
+    expect(
+      LlmRouterEnvSchema.parse({ LLM_ROUTER_FALLBACK_MODEL: '' })
+        .LLM_ROUTER_FALLBACK_MODEL,
+    ).toBe('gpt-4o-mini');
+    expect(
+      LlmRouterEnvSchema.parse({ LLM_ROUTER_FALLBACK_MODEL: '  gpt-4o  ' })
+        .LLM_ROUTER_FALLBACK_MODEL,
+    ).toBe('gpt-4o');
   });
 });

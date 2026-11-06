@@ -1,53 +1,35 @@
 import { Test } from '@nestjs/testing';
 import {
   LlmProviderException,
-  type ILlmProvider,
   type LlmGenerateOptions,
   type LlmGenerateResult,
 } from './llm-provider.interface.js';
-import { LlmRegistryService } from './llm-registry.service.js';
+import { LlmRouterService } from './llm-router.service.js';
 import { LlmService } from './llm.service.js';
 
 describe('LlmService', () => {
   let service: LlmService;
-  let generateAsync: ReturnType<
+  let routerGenerateAsync: ReturnType<
     typeof vi.fn<(prompt: string, options: LlmGenerateOptions) => Promise<LlmGenerateResult>>
   >;
 
   beforeEach(async () => {
-    generateAsync = vi.fn((_prompt: string, _options: LlmGenerateOptions) =>
-      Promise.resolve({
-        text: 'ответ провайдера',
-        usage: { inputTokens: 3, outputTokens: 2, model: 'fake-model' },
-      }),
+    routerGenerateAsync = vi.fn(
+      (_prompt: string, _options: LlmGenerateOptions) =>
+        Promise.resolve({
+          text: 'ответ роутера',
+          usage: { inputTokens: 3, outputTokens: 2, model: 'fake-model' },
+          isLocal: false,
+        }),
     );
-
-    const provider: ILlmProvider = {
-      name: 'fake',
-      // KI-317: модальности обязательны в ModelInfo — у заглушки текстовые.
-      models: [
-        {
-          id: 'fake-model',
-          label: 'Fake',
-          inputModalities: ['text'],
-          outputModalities: ['text'],
-        },
-      ],
-      isConfigured: true,
-      generateAsync,
-      // R7.4a: метод обязателен в контракте ILlmProvider.
-      embedAsync: vi.fn(),
-    };
-
-    const registry = {
-      resolveByModel: vi.fn(() => provider),
-      listModels: vi.fn(() => []),
-    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         LlmService,
-        { provide: LlmRegistryService, useValue: registry },
+        {
+          provide: LlmRouterService,
+          useValue: { generateAsync: routerGenerateAsync },
+        },
       ],
     }).compile();
 
@@ -58,86 +40,74 @@ describe('LlmService', () => {
     vi.restoreAllMocks();
   });
 
-  it('делегирует вызов провайдеру и пробрасывает usage наверх (KI-038)', async () => {
+  it('делегирует вызов роутеру и пробрасывает результат наверх (KI-038)', async () => {
     await expect(service.generateAsync('привет', 'fake-model')).resolves.toEqual({
-      text: 'ответ провайдера',
+      text: 'ответ роутера',
       usage: { inputTokens: 3, outputTokens: 2, model: 'fake-model' },
-      // KI-148: сервис проставляет флаг локальности, провайдер его не задал.
       isLocal: false,
     });
 
-    expect(generateAsync).toHaveBeenCalledTimes(1);
+    expect(routerGenerateAsync).toHaveBeenCalledTimes(1);
 
-    const [prompt, options] = generateAsync.mock.calls[0];
+    const [prompt, options] = routerGenerateAsync.mock.calls[0];
 
     expect(prompt).toBe('привет');
     expect(options.model).toBe('fake-model');
-    // RULES 4.19: вызов не может висеть без таймаута.
-    expect(options.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('передаёт модель в options, даже если её попытались переопределить (v1.2 S1)', async () => {
+    // Тип `Omit<LlmGenerateOptions, 'model'>` защищает на этапе компиляции, но
+    // runtime-объект из JS-кода может содержать лишнее поле: model из
+    // аргумента должен победить.
+    await service.generateAsync('привет', 'fake-model', {
+      ...({ model: 'подмена' } as Record<string, unknown>),
+    } as Omit<LlmGenerateOptions, 'model'>);
+
+    expect(routerGenerateAsync.mock.calls[0][1].model).toBe('fake-model');
   });
 
   it('пробрасывает usage: null, если провайдер не отдал метрики (KI-038)', async () => {
-    generateAsync.mockResolvedValue({ text: 'без метрик', usage: null });
+    routerGenerateAsync.mockResolvedValue({ text: 'без метрик', usage: null });
 
     await expect(service.generateAsync('привет', 'fake-model')).resolves.toEqual({
       text: 'без метрик',
       usage: null,
-      isLocal: false,
     });
   });
 
-  it('KI-148: помечает результат isLocal для локального провайдера', async () => {
-    const localProvider: ILlmProvider = {
-      name: 'lmstudio',
-      // KI-317: модальности обязательны в ModelInfo.
-      models: [
-        {
-          id: 'qwen2.5-7b-instruct',
-          label: 'qwen2.5-7b-instruct (local)',
-          inputModalities: ['text'],
-          outputModalities: ['text'],
-        },
-      ],
-      isConfigured: true,
+  it('сохраняет isLocal от роутера (KI-148, v1.2 S1)', async () => {
+    routerGenerateAsync.mockResolvedValue({
+      text: 'локальный ответ',
+      usage: { inputTokens: 3, outputTokens: 2, model: 'qwen2.5-7b-instruct' },
       isLocal: true,
-      generateAsync: vi.fn(() =>
-        Promise.resolve({
-          text: 'локальный ответ',
-          usage: { inputTokens: 3, outputTokens: 2, model: 'qwen2.5-7b-instruct' },
-        }),
-      ),
-      // R7.4a: метод обязателен в контракте ILlmProvider.
-      embedAsync: vi.fn(),
-    };
-    const registry = {
-      resolveByModel: vi.fn(() => localProvider),
-      listModels: vi.fn(() => []),
-    };
-    const moduleRef = await Test.createTestingModule({
-      providers: [LlmService, { provide: LlmRegistryService, useValue: registry }],
-    }).compile();
-    const localService = moduleRef.get(LlmService);
+    });
 
-    await expect(
-      localService.generateAsync('привет', 'qwen2.5-7b-instruct'),
-    ).resolves.toEqual({
+    await expect(service.generateAsync('привет', 'gpt-4o-mini')).resolves.toEqual({
       text: 'локальный ответ',
       usage: { inputTokens: 3, outputTokens: 2, model: 'qwen2.5-7b-instruct' },
       isLocal: true,
     });
   });
 
-  it('пробрасывает LlmProviderException от провайдера, не гася стек', async () => {
+  it('пробрасывает LlmProviderException от роутера, не гася стек', async () => {
     const failure = new LlmProviderException('fake', 'провайдер упал');
 
-    generateAsync.mockRejectedValue(failure);
+    routerGenerateAsync.mockRejectedValue(failure);
 
     await expect(service.generateAsync('привет', 'fake-model')).rejects.toBe(failure);
   });
 
-  it('передаёт system из options', async () => {
-    await service.generateAsync('привет', 'fake-model', { system: 'ты кот' });
+  it('передаёт system и signal из options', async () => {
+    const controller = new AbortController();
 
-    expect(generateAsync.mock.calls[0][1].system).toBe('ты кот');
+    await service.generateAsync('привет', 'fake-model', {
+      system: 'ты кот',
+      signal: controller.signal,
+    });
+
+    const [, options] = routerGenerateAsync.mock.calls[0];
+
+    expect(options.system).toBe('ты кот');
+    expect(options.signal).toBe(controller.signal);
   });
 });
