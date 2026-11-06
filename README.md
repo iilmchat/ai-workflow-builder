@@ -1,16 +1,16 @@
 # IIChatTools AI Workflow Builder
 
 [![CI](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml/badge.svg)](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.1-blue.svg)](docs/CHANGELOG.md)
-[![Backend tests](https://img.shields.io/badge/backend_tests-1439-brightgreen.svg)](docs/development/RELEASES.md)
-[![Frontend tests](https://img.shields.io/badge/frontend_tests-419-brightgreen.svg)](docs/development/RELEASES.md)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](docs/CHANGELOG.md)
+[![Backend tests](https://img.shields.io/badge/backend_tests-1935-brightgreen.svg)](docs/development/RELEASES.md)
+[![Frontend tests](https://img.shields.io/badge/frontend_tests-500-brightgreen.svg)](docs/development/RELEASES.md)
 [![License](https://img.shields.io/badge/license-proprietary-lightgrey.svg)](#лицензия)
 
 > **Визуальный конструктор AI-сценариев.** Собирайте LLM-, медиа- и агентные
 > workflow на холсте, запускайте их в фоне и наблюдайте за результатом в
 > реальном времени.
 
-**Версия:** `v0.11.1` · **Стек:** NestJS 12 · React 19 · PostgreSQL 17 + pgvector ·
+**Версия:** `v1.3.0` · **Стек:** NestJS 12 · React 19 · PostgreSQL 17 + pgvector ·
 S3 · OpenTelemetry · Docker/GHCR
 **© 2026 RuChating (iilmchat)**
 
@@ -336,11 +336,11 @@ backend должен быть запущен первым.
 
 | Показатель | Значение |
 |---|---|
-| Версия | **v1.2.0** (v1.3.0 — в разработке) |
-| Backend-тесты | **1926** (2 skipped, 128 файлов) |
-| Frontend-тесты | **499** (54 файла) |
+| Версия | **v1.3.0** |
+| Backend-тесты | **1935** (2 skipped, 128 файлов) |
+| Frontend-тесты | **500** (54 файла) |
 | Типов узлов | **22** |
-| KI-реестр | **KI-631** — последний номер; всего **618** записей |
+| KI-реестр | **KI-634** — последний номер; всего **621** запись |
 | CI | GitHub Actions: build, typecheck, migrations, tests (backend + web) |
 | Docker | multi-stage образ + `docker-compose.prod.yml`, публикация в GHCR |
 

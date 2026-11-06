@@ -3,7 +3,7 @@
 > **Навигационный хаб проекта.** Здесь собраны все документы: от руководства
 > пользователя до правил разработки и чек-листа релиза.
 >
-> **Версия продукта:** `v0.11.1` · **Обновлено:** 2026-10-19 · **HEAD:** актуальный
+> **Версия продукта:** `v1.3.0` · **Обновлено:** 2026-11-06 · **HEAD:** актуальный
 
 ---
 
@@ -106,7 +106,11 @@
 
 | Версия | Документ | Статус | О чём |
 |---|---|---|---|
-| v0.11 | [DESIGN_V011_FEATURES.md](development/v0.11/DESIGN_V011_FEATURES.md) | Release prep (S0–S17 + S8; тег не выставлен) | DOCX-шаблоны, MCP Adapter + API/UI, Run Lease/Reliability, History, dark theme |
+| v1.3 | — (DESIGN не заводился) | Released (v1.3.0) | точечные срезы без DESIGN: S1 — сверка возможностей моделей, S2 — auth/паритет health, S3 — release prep; см. [отчёты](development/reports/v1.3.0/) |
+| v1.2 | [DESIGN_V120_FEATURES.md](development/v1.2/DESIGN_V120_FEATURES.md) | Released (v1.2.0) | LLM Router, healthcheck GPU, SMTP Retry (BullMQ), UI-индикатор |
+| v1.1 | [DESIGN_V110_FEATURES.md](development/v1.1/DESIGN_V110_FEATURES.md) | Released (v1.1.0) | команда организации, приглашения SMTP, аудит-фильтры, метрики, security |
+| v1.0 | [DESIGN_V100_ENTERPRISE.md](development/v1.0/DESIGN_V100_ENTERPRISE.md) | Released (v1.0.0) | организации, изоляция, аудит, метрики, Team UI |
+| v0.11 | [DESIGN_V011_FEATURES.md](development/v0.11/DESIGN_V011_FEATURES.md) | Released (v0.11.1) | DOCX-шаблоны, MCP Adapter + API/UI, Run Lease/Reliability, History, dark theme |
 | v0.10 | [DESIGN_V010_FEATURES.md](development/v0.10/DESIGN_V010_FEATURES.md) | Released (v0.10.0) | Web Search, Document Generation, safe filesystem, Docker/GHCR |
 | v0.9 | [DESIGN_V09_FEATURES.md](development/v0.9/DESIGN_V09_FEATURES.md) | Released (v0.9.0) | медиа, состояние (pgvector/Memory), агенты, sandbox, наблюдаемость |
 | v0.8 | [DESIGN_V08_FEATURES.md](development/v0.8/DESIGN_V08_FEATURES.md) | Approved | Auth, Share, sub-workflows, Canvas UX, LLM upgrade |
@@ -141,11 +145,11 @@
 
 | Показатель | Значение |
 |---|---|
-| Версия продукта | **v0.11.1** |
-| Backend-тесты | **1439** (18 skipped, 104 файла) |
-| Frontend-тесты | **419** (50 файлов) |
+| Версия продукта | **v1.3.0** |
+| Backend-тесты | **1935** (2 skipped, 128 файлов) |
+| Frontend-тесты | **500** (54 файла) |
 | Типов узлов | **22** |
-| KI-реестр | **KI-525** — последний номер; всего **513** записей |
+| KI-реестр | **KI-634** — последний номер; всего **621** запись |
 | Открытых High KI | **0** |
 | Языки интерфейса | RU / EN |
 | Стек | NestJS 12 · React 19 · PostgreSQL 17 + pgvector · S3 · OTel · Docker/GHCR |
@@ -198,4 +202,4 @@ docs/
 
 ---
 
-**© 2026 RuChating (iilmchat) · IIChatTools AI Workflow Builder v0.11.1**
+**© 2026 RuChating (iilmchat) · IIChatTools AI Workflow Builder v1.3.0**

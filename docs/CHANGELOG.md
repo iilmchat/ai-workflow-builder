@@ -17,6 +17,8 @@
 ---
 ## [Unreleased]
 
+## [1.3.0] — 2026-11-06
+
 ### Added
 
 - **Сверка возможностей модели при подмене роутером (v1.3.0 S1; KI-617)**
@@ -289,6 +291,15 @@
 
 ### Changed
 
+- **Release Prep v1.3.0 (S3)** ([отчёт](development/reports/v1.3.0/S3-release.md)):
+  версии `package.json` и `web/package.json` → `1.3.0`; `[Unreleased]`
+  закреплён как `[1.3.0] — 2026-11-06`, сверху добавлена пустая секция
+  `[Unreleased]`; сводка KI пересчитана grep'ом (621 запись), удалены дубли
+  KI-632/633, KI-623/628/629 возвращены в Documented (были помечены закрытыми
+  без изменений кода), заведён KI-634; обновлены README, `docs/README`,
+  `USER_GUIDE` (раздел «Что нового в v1.0–v1.3», ограничения 1.3.0) и
+  `MANUAL_TESTING_GUIDE` (+9 кейсов блока V1.3, итого 148). Финальные гейты:
+  build 0/0, typecheck 0, backend **1935**, web **500**, parity/e2e зелёные.
 - **Паритет-гейт для `GET /llm/health` (v1.3.0 S2, KI-627)**
   ([отчёт](development/reports/v1.3.0/S2-healthcheck.md)):
   в `docs/development/api-contract.json` добавлены `LlmHealthResponse`
