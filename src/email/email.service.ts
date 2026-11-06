@@ -1,11 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
 import { createTransport, type Transporter } from 'nodemailer';
 import {
   buildInvitationHtml,
   buildInvitationSubject,
   buildInvitationText,
 } from './email.templates.js';
+import {
+  EMAIL_INVITATION_JOB_OPTIONS,
+  EMAIL_INVITATIONS_QUEUE,
+  SEND_INVITATION_JOB,
+  type EmailInvitationJobData,
+} from './email.queue.js';
 
 /** Порт SMTP по умолчанию (STARTTLS). */
 const DEFAULT_SMTP_PORT = 587;
@@ -16,10 +24,10 @@ const DEFAULT_APP_PUBLIC_URL = 'http://localhost:3000';
 /**
  * Таймаут установки SMTP-соединения и приветствия, мс.
  *
- * Приглашение создаётся синхронно с HTTP-запросом (outbox/очереди в v1.1.0
- * нет, KI-593), поэтому зависший SMTP не должен держать запрос минутами:
- * 10 секунд на соединение — компромисс между медленным внешним SMTP и
- * отзывчивостью `POST /admin/members/invite`.
+ * С v1.2.0 S2 отправка выполняется воркером очереди `email-invitations`, а не
+ * в HTTP-запросе, но таймауты всё равно нужны: зависший SMTP не должен
+ * держать job (и его lock) минутами. 10 секунд на соединение — компромисс
+ * между медленным внешним SMTP и скоростью повторов.
  */
 const SMTP_TIMEOUT_MS = 10_000;
 
@@ -65,13 +73,19 @@ function maskEmail(email: string): string {
 }
 
 /**
- * Сервис отправки писем-приглашений в организацию (v1.1.0 S1, DESIGN § 3.1).
+ * Сервис писем-приглашений в организацию (v1.1.0 S1; очередь — v1.2.0 S2).
  *
  * **Fallback обязателен.** SMTP — опциональная подсистема: если `SMTP_HOST` не
  * задан, приглашение всё равно создаётся в БД (`OrgMembersService`), а сервис
  * возвращает `false` и пишет WARN. Тот же контракт при сбое отправки
- * (недоступный SMTP, таймаут, отказ авторизации): вызывающий код никогда не
- * получает исключение, и HTTP-ручка не превращает успешное приглашение в 500.
+ * (недоступный SMTP, таймаут, отказ авторизации): HTTP-ручка не превращает
+ * успешное приглашение в 500.
+ *
+ * **Отправка асинхронная (DESIGN V120 § 3.3).** `queueInvitationAsync` кладёт
+ * задание в BullMQ и возвращает управление сразу; реальную отправку делает
+ * `EmailProcessor` через `sendInvitationAsync`. Поэтому HTTP-запрос не ждёт
+ * SMTP, а недоступный SMTP приводит к повторам задания (3 попытки,
+ * экспоненциальный backoff), а не к потере письма.
  *
  * Транспорт создаётся один раз в конструкторе (nodemailer держит пул
  * соединений), конфигурация читается из `ConfigService` (валидирована
@@ -94,8 +108,13 @@ export class EmailService {
   /**
    * @param config - валидированная конфигурация окружения (SMTP_*,
    *   APP_PUBLIC_URL)
+   * @param queue - очередь `email-invitations` для асинхронной отправки
    */
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    @InjectQueue(EMAIL_INVITATIONS_QUEUE)
+    private readonly queue: Queue<EmailInvitationJobData>,
+  ) {
     this.from =
       readOptionalString(this.config.get<string>('SMTP_FROM')) ??
       DEFAULT_SMTP_FROM;
@@ -160,11 +179,61 @@ export class EmailService {
   }
 
   /**
+   * Ставит письмо-приглашение в очередь `email-invitations` (v1.2.0 S2).
+   *
+   * Возвращает управление сразу после `queue.add`: SMTP вызывается позже
+   * `EmailProcessor`, поэтому HTTP-ручка приглашения не ждёт сеть и не зависит
+   * от доступности почтового сервера. Недоступный SMTP не теряет письмо —
+   * BullMQ повторит задание (`attempts: 3`, exponential backoff 5 с).
+   *
+   * Ошибка Redis (очередь недоступна) не роняет приглашение: приглашение уже в
+   * БД, метод возвращает `false` и пишет ERROR (fallback DESIGN V120 § 3.3).
+   *
+   * @param to - email приглашённого (нормализованный)
+   * @param orgName - название организации для темы и текста
+   * @param inviteLink - абсолютная ссылка на регистрацию с `?invite=`
+   * @returns `true`, если задание поставлено в очередь; `false` — не удалось
+   */
+  async queueInvitationAsync(
+    to: string,
+    orgName: string,
+    inviteLink: string,
+  ): Promise<boolean> {
+    const data: EmailInvitationJobData = { to, orgName, inviteLink };
+
+    try {
+      await this.queue.add(
+        SEND_INVITATION_JOB,
+        data,
+        EMAIL_INVITATION_JOB_OPTIONS,
+      );
+
+      // Название организации в лог не пишем: у личной организации оно
+      // содержит email владельца (PII, RULES 5.9).
+      this.logger.log(
+        `Письмо-приглашение поставлено в очередь ${EMAIL_INVITATIONS_QUEUE}: ${maskEmail(to)}`,
+      );
+
+      return true;
+    } catch (error: unknown) {
+      // Ошибка Redis: приглашение уже создано в БД, письмо не поставлено.
+      this.logger.error(
+        `Не удалось поставить письмо-приглашение в очередь ${EMAIL_INVITATIONS_QUEUE} (${maskEmail(to)}): ${
+          error instanceof Error ? error.message : 'неизвестная ошибка'
+        }`,
+      );
+
+      return false;
+    }
+  }
+
+  /**
    * Отправляет письмо-приглашение в организацию.
    *
-   * Никогда не бросает: сбой SMTP — это `false` + ERROR в лог, а не отказ
-   * HTTP-ручки (приглашение уже в БД, fallback по DESIGN § 3.1). Без
-   * `SMTP_HOST` — `false` + WARN, письмо не формируется вовсе.
+   * Вызывается `EmailProcessor` (воркером очереди), а не HTTP-ручкой: здесь
+   * выполняется реальный SMTP-вызов. Никогда не бросает: сбой SMTP — это
+   * `false` + ERROR в лог; воркер увидит `false`, выбросит ошибку и BullMQ
+   * повторит job. Без `SMTP_HOST` — `false` + WARN, письмо не формируется.
    *
    * @param to - email приглашённого (уже нормализованный вызывающим кодом)
    * @param orgName - название организации для темы и текста
@@ -194,7 +263,7 @@ export class EmailService {
       });
 
       this.logger.log(
-        `Письмо-приглашение отправлено: ${maskEmail(to)} (${orgName})`,
+        `Письмо-приглашение отправлено: ${maskEmail(to)}`,
       );
 
       return true;

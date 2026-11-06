@@ -96,9 +96,9 @@ describe('OrgMembersService (v1.0.0 S5; S1 — письмо; v1.1.0 S2 — уп�
   let insert: ReturnType<typeof vi.fn>;
   let update: ReturnType<typeof vi.fn>;
   let removeRows: ReturnType<typeof vi.fn>;
-  /** Заглушка `EmailService` (v1.1.0 S1): отправка письма и сборка ссылки. */
+  /** Заглушка `EmailService` (v1.2.0 S2): постановка письма в очередь и ссылка. */
   let emailService: {
-    sendInvitationAsync: ReturnType<typeof vi.fn>;
+    queueInvitationAsync: ReturnType<typeof vi.fn>;
     buildInvitationLink: ReturnType<typeof vi.fn>;
   };
   /** Очередь ответов для последовательных `select`-запросов. */
@@ -141,7 +141,7 @@ describe('OrgMembersService (v1.0.0 S5; S1 — письмо; v1.1.0 S2 — уп�
     });
     removeRows = vi.fn(() => chain([]));
     emailService = {
-      sendInvitationAsync: vi.fn(() => Promise.resolve(true)),
+      queueInvitationAsync: vi.fn(() => Promise.resolve(true)),
       buildInvitationLink: vi.fn(
         (invitationId: string) =>
           `http://localhost:3000/login?invite=${invitationId}`,
@@ -283,8 +283,8 @@ describe('OrgMembersService (v1.0.0 S5; S1 — письмо; v1.1.0 S2 — уп�
         role: 'member',
         invitedBy: USER_ID,
         invitedAt: INVITED_AT,
-        // v1.1.0 S1: письмо отправлено (заглушка EmailService вернула true).
-        emailSent: true,
+        // v1.2.0 S2: письмо в очереди, доставка ещё не подтверждена.
+        emailSent: false,
       });
       // Email нормализован, организация — из строки `users` актора.
       expect(insertChain?.values).toHaveBeenCalledWith({
@@ -296,19 +296,20 @@ describe('OrgMembersService (v1.0.0 S5; S1 — письмо; v1.1.0 S2 — уп�
       // Гонка инвайтов разрешается ON CONFLICT DO NOTHING + returning (KI-400).
       expect(insertChain?.onConflictDoNothing).toHaveBeenCalledTimes(1);
       expect(insertChain?.returning).toHaveBeenCalledTimes(1);
-      // v1.1.0 S1: письмо уходит на нормализованный email, с названием
-      // организации из БД и ссылкой по id приглашения.
+      // v1.2.0 S2: письмо ставится в очередь на нормализованный email, с
+      // названием организации из БД и ссылкой по id приглашения; синхронной
+      // отправки в HTTP-пути больше нет.
       expect(emailService.buildInvitationLink).toHaveBeenCalledWith(INVITATION_ID);
-      expect(emailService.sendInvitationAsync).toHaveBeenCalledWith(
+      expect(emailService.queueInvitationAsync).toHaveBeenCalledWith(
         'new@example.com',
         'Acme Org',
         `http://localhost:3000/login?invite=${INVITATION_ID}`,
       );
     });
 
-    it('возвращает 201-подобный ответ с emailSent=false, если SMTP не отправил (v1.1.0 S1)', async () => {
-      // Fallback DESIGN V110 § 3.1: приглашение в БД есть, письма нет.
-      emailService.sendInvitationAsync.mockResolvedValue(false);
+    it('возвращает emailSent=false, если очередь недоступна (Redis), но приглашение создано', async () => {
+      // Fallback DESIGN V120 § 3.3: приглашение в БД есть, письмо не поставлено.
+      emailService.queueInvitationAsync.mockResolvedValue(false);
       mockSelects([{ organizationId: ORG_ID, name: 'Acme Org' }], []);
       mockInsert([
         {
@@ -332,6 +333,7 @@ describe('OrgMembersService (v1.0.0 S5; S1 — письмо; v1.1.0 S2 — уп�
         role: 'viewer',
         emailSent: false,
       });
+      expect(emailService.queueInvitationAsync).toHaveBeenCalledTimes(1);
     });
 
     it('бросает ConflictException (409), если email уже зарегистрирован', async () => {
@@ -348,9 +350,9 @@ describe('OrgMembersService (v1.0.0 S5; S1 — письмо; v1.1.0 S2 — уп�
       expect((error as Error).message).toContain(
         'перенос между организациями не поддерживается',
       );
-      // До INSERT дело не доходит, письмо не отправляется.
+      // До INSERT дело не доходит, письмо не ставится в очередь.
       expect(insert).not.toHaveBeenCalled();
-      expect(emailService.sendInvitationAsync).not.toHaveBeenCalled();
+      expect(emailService.queueInvitationAsync).not.toHaveBeenCalled();
     });
 
     it('бросает ConflictException (409), если приглашение уже выписано (гонка)', async () => {
@@ -362,8 +364,8 @@ describe('OrgMembersService (v1.0.0 S5; S1 — письмо; v1.1.0 S2 — уп�
       await expect(
         service.inviteAsync(USER_ID, { email: 'invite@example.com', role: 'admin' }),
       ).rejects.toThrow(ConflictException);
-      // Письмо на дубль не отправляется.
-      expect(emailService.sendInvitationAsync).not.toHaveBeenCalled();
+      // Письмо на дубль не ставится в очередь.
+      expect(emailService.queueInvitationAsync).not.toHaveBeenCalled();
     });
 
     it('бросает UnauthorizedException, если строки users нет', async () => {
@@ -373,7 +375,7 @@ describe('OrgMembersService (v1.0.0 S5; S1 — письмо; v1.1.0 S2 — уп�
         service.inviteAsync(USER_ID, { email: 'new@example.com', role: 'member' }),
       ).rejects.toThrow(UnauthorizedException);
       expect(insert).not.toHaveBeenCalled();
-      expect(emailService.sendInvitationAsync).not.toHaveBeenCalled();
+      expect(emailService.queueInvitationAsync).not.toHaveBeenCalled();
     });
   });
 

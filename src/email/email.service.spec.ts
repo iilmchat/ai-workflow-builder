@@ -1,6 +1,8 @@
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { Queue } from 'bullmq';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { EmailInvitationJobData } from './email.queue.js';
 import { EmailService } from './email.service.js';
 import {
   buildInvitationHtml,
@@ -52,20 +54,36 @@ function configOf(overrides: Record<string, unknown> = {}): ConfigService {
   } as unknown as ConfigService;
 }
 
-describe('EmailService (v1.1.0 S1)', () => {
+describe('EmailService (v1.1.0 S1; очередь — v1.2.0 S2)', () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
   let logSpy: ReturnType<typeof vi.spyOn>;
+  /** Заглушка очереди `email-invitations` (v1.2.0 S2). */
+  let queue: { add: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     createTransportMock.mockReset();
     sendMailMock.mockReset();
     createTransportMock.mockReturnValue({ sendMail: sendMailMock });
     sendMailMock.mockResolvedValue({ messageId: 'id-1' });
+    queue = { add: vi.fn(() => Promise.resolve({ id: 'job-1' })) };
     warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     logSpy = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
   });
+
+  /**
+   * Создаёт сервис с заглушкой очереди.
+   *
+   * @param config - конфигурация окружения (по умолчанию — настроенный SMTP)
+   * @returns экземпляр `EmailService`
+   */
+  function createService(config: ConfigService = configOf()): EmailService {
+    return new EmailService(
+      config,
+      queue as unknown as Queue<EmailInvitationJobData>,
+    );
+  }
 
   afterEach(() => {
     vi.restoreAllMocks();
@@ -73,7 +91,7 @@ describe('EmailService (v1.1.0 S1)', () => {
 
   describe('без SMTP (fallback DESIGN V110 § 3.1)', () => {
     it('не создаёт транспорт, пишет WARN и возвращает false', async () => {
-      const service = new EmailService(configOf({ SMTP_HOST: undefined }));
+      const service = createService(configOf({ SMTP_HOST: undefined }));
 
       expect(service.isConfigured()).toBe(false);
       expect(createTransportMock).not.toHaveBeenCalled();
@@ -99,7 +117,7 @@ describe('EmailService (v1.1.0 S1)', () => {
       // `validateEnv` возвращает `{ ...config, ...parsed }`, поэтому пустая
       // строка из `.env` остаётся в конфиге, хотя Zod превратил её в undefined.
       // Смоук поймал регресс: `host === ''` создавал транспорт на localhost:587.
-      const service = new EmailService(configOf({ SMTP_HOST: '' }));
+      const service = createService(configOf({ SMTP_HOST: '' }));
 
       expect(service.isConfigured()).toBe(false);
       expect(createTransportMock).not.toHaveBeenCalled();
@@ -112,7 +130,7 @@ describe('EmailService (v1.1.0 S1)', () => {
     });
 
     it('пустые SMTP_FROM/APP_PUBLIC_URL заменяются дефолтами', async () => {
-      const service = new EmailService(
+      const service = createService(
         configOf({ SMTP_FROM: '', APP_PUBLIC_URL: '' }),
       );
 
@@ -134,7 +152,7 @@ describe('EmailService (v1.1.0 S1)', () => {
 
   describe('транспорт', () => {
     it('создаёт SMTP-транспорт с host/port/secure/auth и таймаутами', () => {
-      const service = new EmailService(configOf());
+      const service = createService(configOf());
 
       expect(service.isConfigured()).toBe(true);
       expect(createTransportMock).toHaveBeenCalledTimes(1);
@@ -152,7 +170,7 @@ describe('EmailService (v1.1.0 S1)', () => {
     });
 
     it('без SMTP_USER/SMTP_PASS не передаёт auth (локальный mock-SMTP)', () => {
-      const service = new EmailService(
+      const service = createService(
         configOf({ SMTP_USER: undefined, SMTP_PASS: undefined }),
       );
 
@@ -164,7 +182,7 @@ describe('EmailService (v1.1.0 S1)', () => {
     });
 
     it('уважает SMTP_SECURE=true (implicit TLS, порт 465)', () => {
-      new EmailService(configOf({ SMTP_SECURE: true, SMTP_PORT: 465 }));
+      createService(configOf({ SMTP_SECURE: true, SMTP_PORT: 465 }));
 
       expect(createTransportMock).toHaveBeenCalledWith(
         expect.objectContaining({ port: 465, secure: true }),
@@ -174,7 +192,7 @@ describe('EmailService (v1.1.0 S1)', () => {
 
   describe('sendInvitationAsync', () => {
     it('отправляет письмо с темой, HTML и текстом и возвращает true', async () => {
-      const service = new EmailService(configOf());
+      const service = createService(configOf());
 
       const sent = await service.sendInvitationAsync(
         'alice@example.com',
@@ -207,7 +225,7 @@ describe('EmailService (v1.1.0 S1)', () => {
 
     it('сбой SMTP возвращает false, пишет ERROR и не бросает', async () => {
       sendMailMock.mockRejectedValue(new Error('550 mailbox unavailable'));
-      const service = new EmailService(configOf());
+      const service = createService(configOf());
 
       await expect(
         service.sendInvitationAsync('alice@example.com', 'Acme Org', INVITE_LINK),
@@ -225,7 +243,7 @@ describe('EmailService (v1.1.0 S1)', () => {
 
   describe('buildInvitationLink', () => {
     it('собирает абсолютную ссылку на регистрацию с id приглашения', () => {
-      const service = new EmailService(configOf());
+      const service = createService(configOf());
 
       expect(service.buildInvitationLink('invitation-1')).toBe(
         'https://app.example.com/login?invite=invitation-1',
@@ -233,7 +251,7 @@ describe('EmailService (v1.1.0 S1)', () => {
     });
 
     it('убирает хвостовой слэш из APP_PUBLIC_URL', () => {
-      const service = new EmailService(
+      const service = createService(
         configOf({ APP_PUBLIC_URL: 'https://app.example.com/' }),
       );
 

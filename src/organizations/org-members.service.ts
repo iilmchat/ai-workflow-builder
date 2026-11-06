@@ -123,7 +123,7 @@ export class OrgMembersService {
 
   /**
    * Выписывает приглашение в организацию актора
-   * (`POST /admin/members/invite`) и пытается отправить письмо (v1.1.0 S1).
+   * (`POST /admin/members/invite`) и ставит письмо в очередь (v1.2.0 S2).
    *
    * Порядок проверок:
    * 1. организация актора — из БД, а не из токена (KI-554);
@@ -133,15 +133,17 @@ export class OrgMembersService {
    *    того же email в ту же организацию ловится уникальным индексом, а не 500
    *    от нарушения ограничения в гонке (KI-400). Пустой `returning()` — 409.
    *
-   * **Письмо — best-effort (DESIGN V110 § 3.1).** Приглашение в БД уже создано,
-   * поэтому сбой/отсутствие SMTP не отменяет операцию: `EmailService` ловит
-   * ошибку и возвращает `false`, а результат уезжает в ответ полем `emailSent`.
-   * Запрос ждёт отправку (outbox/очереди в v1.1.0 нет, KI-593), но таймауты
-   * SMTP ограничены в `EmailService`.
+   * **Письмо — best-effort и асинхронное (DESIGN V120 § 3.3).** Приглашение
+   * сначала создаётся в БД, затем задание ставится в BullMQ
+   * (`email-invitations`, 3 попытки, exponential backoff). HTTP-запрос не ждёт
+   * SMTP: отправку делает `EmailProcessor`. Ошибка постановки в Redis не
+   * отменяет приглашение — сервис пишет ERROR, а ответ несёт
+   * `emailSent: false`.
    *
    * @param userId - `sub` access-токена (кто приглашает)
    * @param dto - валидированные email и роль приглашаемого
-   * @returns выписанное приглашение и признак отправки письма
+   * @returns выписанное приглашение; `emailSent` всегда `false` (письмо в
+   *   очереди либо не поставлено — KI-622)
    * @throws UnauthorizedException если пользователь не найден в БД
    * @throws ConflictException если email занят или приглашение уже выписано
    */
@@ -179,9 +181,10 @@ export class OrgMembersService {
       throw new ConflictException(INVITATION_EXISTS_MESSAGE);
     }
 
-    // Письмо не влияет на успех приглашения: `false` — SMTP не настроен или
-    // отказал, приглашение уже в БД (fallback DESIGN § 3.1).
-    const emailSent = await this.emailService.sendInvitationAsync(
+    // Письмо не влияет на успех приглашения: с v1.2.0 S2 оно ставится в
+    // очередь `email-invitations`, а ошибка Redis/постановки лишь логируется
+    // (`queueInvitationAsync` → `false`). Приглашение уже в БД.
+    await this.emailService.queueInvitationAsync(
       invitation.email,
       actor.name,
       this.emailService.buildInvitationLink(invitation.id),
@@ -192,7 +195,9 @@ export class OrgMembersService {
       role: invitation.role,
       invitedBy: invitation.invitedBy,
       invitedAt: invitation.createdAt,
-      emailSent,
+      // С v1.2.0 S2 письмо отправляется асинхронно воркером очереди, поэтому
+      // в HTTP-ответе доставка ещё не подтверждена (KI-622).
+      emailSent: false,
     };
   }
 

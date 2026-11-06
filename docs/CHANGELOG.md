@@ -36,6 +36,23 @@
   `LLM_ROUTER_FALLBACK_MODEL`. Тесты: +26 (router/health/lmstudio), смоук
   18/18 на mock LM Studio и mock облака (local → 500 → fallback →
   ECONNREFUSED → fallback). Ограничения — KI-617..621.
+- **Очередь писем-приглашений с ретраями (v1.2.0 S2, DESIGN V120 § 3.3)**
+  ([отчёт](development/reports/v1.2.0/S2-smtp-retry.md)):
+  `EmailModule` регистрирует очередь BullMQ `email-invitations` (`attempts: 3`,
+  exponential backoff 5000, `removeOnComplete`/`removeOnFail`, prefix/db из
+  `BULLMQ_PREFIX`/`REDIS_QUEUE_DB`). `EmailService.queueInvitationAsync` ставит
+  job `{ to, orgName, inviteLink }` и возвращает управление сразу;
+  `sendInvitationAsync` остаётся реальной SMTP-отправкой и вызывается
+  `EmailProcessor` (`@Processor`, `WorkerHost`), который при `false` бросает
+  ошибку — BullMQ повторяет job. `OrgMembersService.inviteAsync` больше не ждёт
+  SMTP: приглашение создаётся в БД, письмо ставится в очередь, ответ несёт
+  `emailSent: false` (контракт v1.1.0 сохранён; отличать «в очереди» от «не
+  поставлено» API пока не умеет — KI-622). Payload валидируется Zod в воркере,
+  битые данные — `UnrecoverableError`. Env не менялся. Тесты: +12
+  (queue/processor), обновлены org-members/email/controller спеки; смоук 18/18
+  на mock SMTP: 451 → retry через 5 с → 250, и 3 отказа → job failed,
+  приглашение остаётся в БД. Ограничения — KI-622..625. **KI-593** закрыт
+  частично (ретраи есть; статус доставки и resend — KI-622/624).
 - **Отзыв access-токена и защита write-путей (v1.1.0 S5, KI-601/KI-605)**
   ([отчёт](development/reports/v1.1.0/S5-security.md)):
   колонка `users.token_version` (миграция `0018_daffy_triathlon.sql`, DEFAULT 0)
@@ -2477,6 +2494,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 

@@ -75,13 +75,14 @@ export const InviteMemberSchema = z.object({
 export type InviteMemberDto = z.infer<typeof InviteMemberSchema>;
 
 /**
- * Ответ `POST /admin/members/invite` (v1.1.0 S1, DESIGN V110 § 3.1).
+ * Ответ `POST /admin/members/invite` (v1.1.0 S1; очередь — v1.2.0 S2).
  *
- * Совпадает с {@link OrganizationInvitationSummary} и добавляет `emailSent` —
- * результат отправки письма. Приглашение создаётся **всегда** (fallback при
- * ненастроенном/недоступном SMTP, DESIGN § 3.1), поэтому 201 не означает
- * «письмо доставлено»; UI показывает «приглашение создано, но письмо не
- * отправлено», если `emailSent === false`.
+ * Совпадает с {@link OrganizationInvitationSummary} и сохраняет `emailSent` для
+ * обратной совместимости контракта. С v1.2.0 S2 письмо ставится в очередь
+ * `email-invitations` и отправляется воркером асинхронно, поэтому в HTTP-ответе
+ * **всегда** `emailSent: false`: доставка ещё не подтверждена. Поле больше не
+ * отличает «поставлено в очередь» от «не удалось поставить» (KI-622); UI-текст
+ * «письмо не отправлено» до S3 тоже неточен.
  *
  * Интерфейс объявлен «плоским», без `extends`: backend-гейт
  * `api-contract.spec.ts` читает поля интерфейса компилятором TypeScript и
@@ -96,7 +97,11 @@ export interface InviteMemberResponse {
   invitedBy: string;
   /** Дата выписки приглашения (`organization_invitations.created_at`). */
   invitedAt: Date;
-  /** `true`, если SMTP принял письмо; `false` — создано только в БД. */
+  /**
+   * Всегда `false` с v1.2.0 S2: письмо отправляется асинхронно, а API пока не
+   * умеет отличать «в очереди» от «не поставлено» (KI-622). Поле оставлено
+   * ради совместимости с клиентами v1.1.0.
+   */
   emailSent: boolean;
 }
 

@@ -75,13 +75,15 @@ export class OrgMembersController {
    * `POST /admin/members/invite` — приглашение в организацию по email.
    *
    * Тело валидируется `ZodValidationPipe`: мусорный email или роль `owner` —
-   * 400 до обращения к сервису. Ответ — 201 с выписанным приглашением и
-   * признаком `emailSent` (v1.1.0 S1): письмо отправляется best-effort, и 201
-   * не означает, что письмо доставлено (fallback при ненастроенном SMTP).
+   * 400 до обращения к сервису. Ответ — 201 с выписанным приглашением. С
+   * v1.2.0 S2 письмо ставится в очередь `email-invitations` и отправляется
+   * воркером асинхронно, поэтому `emailSent` в ответе всегда `false`:
+   * 201 означает «приглашение создано», а не «письмо доставлено». Ограничение
+   * «в очереди vs не поставлено» — KI-622.
    *
    * @param user - payload access-токена (кто приглашает)
    * @param dto - валидированные `email` и `role` (`admin`/`member`/`viewer`)
-   * @returns выписанное приглашение и признак отправки письма
+   * @returns выписанное приглашение (письмо — в очереди)
    * @throws BadRequestException если тело не проходит `InviteMemberSchema`
    * @throws ForbiddenException если роль приглашающего не `owner`/`admin`
    * @throws ConflictException если email занят или приглашение уже выписано
