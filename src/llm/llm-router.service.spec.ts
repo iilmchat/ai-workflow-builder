@@ -6,6 +6,7 @@ import {
   type ILlmProvider,
   type LlmGenerateOptions,
   type LlmGenerateResult,
+  type ModelInfo,
 } from './llm-provider.interface.js';
 import { LlmHealthService } from './llm-health.service.js';
 import { LlmRegistryService } from './llm-registry.service.js';
@@ -38,6 +39,8 @@ interface StubProviderOptions {
   name: string;
   /** id объявленных моделей. */
   models: string[];
+  /** Дополнительные возможности, общие для всех моделей провайдера. */
+  modelOverrides?: Partial<ModelInfo>;
   /** Локальный ли провайдер. */
   isLocal?: boolean;
   /** Ответ `generateAsync`; по умолчанию — текст `<name> answer`. */
@@ -60,6 +63,7 @@ function stubProvider(options: StubProviderOptions): StubProvider {
       label: id,
       inputModalities: ['text'],
       outputModalities: ['text'],
+      ...options.modelOverrides,
     })),
     isConfigured: true,
     ...(options.isLocal === true ? { isLocal: true } : {}),
@@ -79,6 +83,8 @@ interface RouterSetup {
   local?: ILlmProvider;
   /** Облачный провайдер. */
   cloud?: ILlmProvider;
+  /** Дополнительные облачные провайдеры (ниже приоритетом). */
+  extraClouds?: ILlmProvider[];
   /** Значение `LLM_ROUTER_ENABLED`. */
   enabled?: boolean;
   /** Значение `LLM_ROUTER_FALLBACK_MODEL`. */
@@ -88,44 +94,24 @@ interface RouterSetup {
 }
 
 /**
- * Собирает роутер с фейковым реестром и (опционально) healthcheck'ом.
+ * Собирает роутер с настоящим реестром провайдеров и (опционально)
+ * healthcheck'ом.
+ *
+ * Реестр не подменяется: v1.3 S1 добавила сверку возможностей, и тесты должны
+ * проверять её вместе с реальными `getCapabilities`/`findCompatibleRoute`, а не
+ * с фейковым объектом, который можно случайно рассинхронизировать с сервисом.
  *
  * @param setup - локальный/облачный провайдеры и флаги
- * @returns роутер и шпионы зависимостей
+ * @returns роутер и мок healthcheck'а
  */
 async function createRouter(setup: RouterSetup): Promise<{
   router: LlmRouterService;
-  registry: {
-    resolveByModel: ReturnType<typeof vi.fn>;
-    hasModel: ReturnType<typeof vi.fn>;
-    findLocalProvider: ReturnType<typeof vi.fn>;
-    findCloudProvider: ReturnType<typeof vi.fn>;
-  };
   health: { isAvailableAsync: ReturnType<typeof vi.fn> } | null;
 }> {
-  const providers = [setup.local, setup.cloud].filter(
+  const providers = [setup.local, setup.cloud, ...(setup.extraClouds ?? [])].filter(
     (provider): provider is ILlmProvider => provider !== undefined,
   );
-  const registry = {
-    resolveByModel: vi.fn((modelId: string) => {
-      const provider = providers.find((candidate) =>
-        candidate.models.some((model) => model.id === modelId),
-      );
-
-      if (provider === undefined) {
-        throw new LlmProviderException('registry', `Модель не поддерживается: ${modelId}`);
-      }
-
-      return provider;
-    }),
-    hasModel: vi.fn((modelId: string) =>
-      providers.some((candidate) =>
-        candidate.models.some((model) => model.id === modelId),
-      ),
-    ),
-    findLocalProvider: vi.fn(() => setup.local),
-    findCloudProvider: vi.fn(() => setup.cloud),
-  };
+  const registry = new LlmRegistryService(providers);
   const health =
     setup.health === null
       ? null
@@ -159,7 +145,7 @@ async function createRouter(setup: RouterSetup): Promise<{
     ],
   }).compile();
 
-  return { router: moduleRef.get(LlmRouterService), registry, health };
+  return { router: moduleRef.get(LlmRouterService), health };
 }
 
 describe('LlmRouterService (v1.2 S1)', () => {
@@ -215,8 +201,9 @@ describe('LlmRouterService (v1.2 S1)', () => {
       isLocal: true,
     });
     expect(local.generateAsync).toHaveBeenCalledTimes(1);
-    // Выбранная в графе облачная модель локально не объявлена — уходит
-    // первая локальная (KI-617).
+    // Выбранная в графе облачная модель локально не объявлена — уходит первая
+    // локальная. С v1.3 S1 (KI-617) такая подмена допустима только при
+    // совпадении возможностей: здесь обе модели текстовые.
     expect(local.generateAsync.mock.calls[0][1].model).toBe('qwen-local');
     expect(cloud.generateAsync).not.toHaveBeenCalled();
     expect(health?.isAvailableAsync).toHaveBeenCalledTimes(1);
@@ -315,7 +302,7 @@ describe('LlmRouterService (v1.2 S1)', () => {
     expect(result.text).toBe('anthropic answer');
     expect(cloud.generateAsync.mock.calls[0][1].model).toBe('claude-sonnet-4');
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('не поддерживается'),
+      expect.stringContaining('несовместима'),
     );
   });
 
@@ -373,6 +360,208 @@ describe('LlmRouterService (v1.2 S1)', () => {
     await router.generateAsync('привет', { model: 'gpt-4o-mini' });
 
     expect(cloud.generateAsync.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  describe('сверка возможностей при подмене (v1.3 S1, KI-617)', () => {
+    /** Паспорт vision-модели с большим контекстом. */
+    const VISION: Partial<ModelInfo> = {
+      inputModalities: ['text', 'vision'],
+      supportsTools: true,
+      maxTokens: 128_000,
+    };
+
+    it('vision-модель не уходит в текстовую локальную: используется исходная облачная', async () => {
+      const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const local = stubProvider({
+        name: 'lmstudio',
+        models: ['qwen-text'],
+        isLocal: true,
+      });
+      const cloud = stubProvider({
+        name: 'openai',
+        models: ['gpt-4o'],
+        modelOverrides: VISION,
+      });
+      const { router } = await createRouter({ local, cloud, enabled: true });
+
+      const result = await router.generateAsync('привет', { model: 'gpt-4o' });
+
+      expect(result.isLocal).toBe(false);
+      expect(local.generateAsync).not.toHaveBeenCalled();
+      // KI-617: исходная модель пользователя не теряется — fallback идёт в неё.
+      expect(cloud.generateAsync.mock.calls[0][1].model).toBe('gpt-4o');
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('нет модели, совместимой'),
+      );
+    });
+
+    it('vision-модель и совместимая локальная: вызов идёт локально с подменой модели', async () => {
+      const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const local = stubProvider({
+        name: 'lmstudio',
+        models: ['qwen-vision'],
+        isLocal: true,
+        modelOverrides: VISION,
+        generateAsync: () => Promise.resolve(answer('локальный ответ', 'qwen-vision')),
+      });
+      const cloud = stubProvider({
+        name: 'openai',
+        models: ['gpt-4o'],
+        modelOverrides: VISION,
+      });
+      const { router } = await createRouter({ local, cloud, enabled: true });
+
+      const result = await router.generateAsync('привет', { model: 'gpt-4o' });
+
+      expect(result.isLocal).toBe(true);
+      expect(result.text).toBe('локальный ответ');
+      expect(local.generateAsync.mock.calls[0][1].model).toBe('qwen-vision');
+      expect(cloud.generateAsync).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('не объявлена — использую "qwen-vision"'),
+      );
+    });
+
+    it('fallback-модель несовместима: берётся первая совместимая облачная + WARN', async () => {
+      const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const local = stubProvider({
+        name: 'lmstudio',
+        models: ['qwen-vision'],
+        isLocal: true,
+        modelOverrides: VISION,
+        generateAsync: () =>
+          Promise.reject(new LlmProviderException('lmstudio', 'сервер лёг')),
+      });
+      const cloudText = stubProvider({ name: 'deepseek', models: ['deepseek-chat'] });
+      const cloudVision = stubProvider({
+        name: 'openai',
+        models: ['gpt-4o'],
+        modelOverrides: VISION,
+      });
+      const { router } = await createRouter({
+        local,
+        cloud: cloudText,
+        extraClouds: [cloudVision],
+        enabled: true,
+        fallbackModel: 'deepseek-chat',
+      });
+
+      const result = await router.generateAsync('привет', { model: 'qwen-vision' });
+
+      expect(result.isLocal).toBe(false);
+      expect(cloudText.generateAsync).not.toHaveBeenCalled();
+      expect(cloudVision.generateAsync.mock.calls[0][1].model).toBe('gpt-4o');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('несовместима'));
+      expect(warn.mock.calls.flat().join(' ')).toContain('нет модальности vision');
+    });
+
+    it('совместимой облачной модели нет: LlmProviderException с понятным текстом', async () => {
+      const local = stubProvider({
+        name: 'lmstudio',
+        models: ['qwen-vision'],
+        isLocal: true,
+        modelOverrides: VISION,
+        generateAsync: () =>
+          Promise.reject(new LlmProviderException('lmstudio', 'сервер лёг')),
+      });
+      const cloud = stubProvider({ name: 'deepseek', models: ['deepseek-chat'] });
+      const { router } = await createRouter({
+        local,
+        cloud,
+        enabled: true,
+        fallbackModel: 'deepseek-chat',
+      });
+
+      await expect(
+        router.generateAsync('привет', { model: 'qwen-vision' }),
+      ).rejects.toThrow(/нет облачной модели, совместимой/);
+      expect(cloud.generateAsync).not.toHaveBeenCalled();
+    });
+
+    it('reasoning исходной модели: локальная без reasoning пропускается', async () => {
+      const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const local = stubProvider({
+        name: 'lmstudio',
+        models: ['qwen-text'],
+        isLocal: true,
+      });
+      const cloud = stubProvider({
+        name: 'openai',
+        models: ['reasoning-model'],
+        modelOverrides: { supportsReasoning: true },
+      });
+      const { router } = await createRouter({ local, cloud, enabled: true });
+
+      const result = await router.generateAsync('привет', {
+        model: 'reasoning-model',
+      });
+
+      expect(result.isLocal).toBe(false);
+      expect(local.generateAsync).not.toHaveBeenCalled();
+      expect(cloud.generateAsync.mock.calls[0][1].model).toBe('reasoning-model');
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('нет модели, совместимой'),
+      );
+    });
+
+    it('requiresTools: модель без tool-calling не выбирается, берётся подходящая', async () => {
+      const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const local = stubProvider({
+        name: 'lmstudio',
+        models: ['qwen-no-tools'],
+        isLocal: true,
+        modelOverrides: { supportsTools: false },
+      });
+      const cloudNoTools = stubProvider({
+        name: 'deepseek',
+        models: ['deepseek-reasoner'],
+        modelOverrides: { supportsTools: false },
+      });
+      const cloudTools = stubProvider({
+        name: 'openai',
+        models: ['gpt-4o'],
+        modelOverrides: { supportsTools: true },
+      });
+      const { router } = await createRouter({
+        local,
+        cloud: cloudNoTools,
+        extraClouds: [cloudTools],
+        enabled: true,
+        fallbackModel: 'deepseek-reasoner',
+      });
+
+      await router.generateAsync('привет', {
+        model: 'deepseek-reasoner',
+        requiresTools: true,
+      });
+
+      expect(local.generateAsync).not.toHaveBeenCalled();
+      expect(cloudNoTools.generateAsync).not.toHaveBeenCalled();
+      expect(cloudTools.generateAsync.mock.calls[0][1].model).toBe('gpt-4o');
+      expect(warn.mock.calls.flat().join(' ')).toContain('нет tool-calling');
+    });
+
+    it('контекст кандидата меньше исходного: локальная модель пропускается', async () => {
+      const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const local = stubProvider({
+        name: 'lmstudio',
+        models: ['small-local'],
+        isLocal: true,
+        modelOverrides: { maxTokens: 8_192 },
+      });
+      const cloud = stubProvider({
+        name: 'openai',
+        models: ['gpt-4o'],
+        modelOverrides: { maxTokens: 128_000 },
+      });
+      const { router } = await createRouter({ local, cloud, enabled: true });
+
+      const result = await router.generateAsync('привет', { model: 'gpt-4o' });
+
+      expect(result.isLocal).toBe(false);
+      expect(local.generateAsync).not.toHaveBeenCalled();
+      expect(warn.mock.calls.flat().join(' ')).toContain('контекст');
+    });
   });
 
   describe('isEnabled (v1.2.0 S3, KI-618)', () => {

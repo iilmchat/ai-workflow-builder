@@ -155,12 +155,17 @@ export class AnthropicProvider implements ILlmProvider {
       label: 'Claude Opus 4',
       inputModalities: ['text', 'vision'],
       outputModalities: ['text'],
+      // v1.3 S1 (KI-617): паспорт возможностей для сверки при подмене модели.
+      supportsTools: true,
+      maxTokens: 200_000,
     },
     {
       id: 'claude-sonnet-4-20250514',
       label: 'Claude Sonnet 4',
       inputModalities: ['text', 'vision'],
       outputModalities: ['text'],
+      supportsTools: true,
+      maxTokens: 200_000,
     },
   ];
 

@@ -43,6 +43,15 @@ export interface LlmGenerateOptions {
   promptCache?: boolean;
   /** AbortSignal для отмены/таймаута (RULES 4.19). */
   signal?: AbortSignal;
+  /**
+   * Вызов использует tool-цикл (v1.3 S1, KI-617).
+   *
+   * Агент выставляет `true`: его LLM-шаг подразумевает инструменты, и роутер
+   * не должен подменять модель на ту, которая не умеет tool-calling. Обычные
+   * LLM-узлы флаг не ставят: у них инструментов нет, и требование
+   * `supportsTools` к fallback было бы ложным.
+   */
+  requiresTools?: boolean;
 }
 
 /** Метрики вызова LLM. */
@@ -129,7 +138,7 @@ export const MODEL_MODALITIES: readonly ModelModality[] = [
   'embedding',
 ];
 
-/** Декларация модели: id, label, модальности. */
+/** Декларация модели: id, label, модальности и возможности. */
 export interface ModelInfo {
   /** id для API-вызова (уходит в upstream как есть). */
   readonly id: string;
@@ -152,6 +161,26 @@ export interface ModelInfo {
    * трактуется как `false` (поле не отправляем, чтобы не ловить 400 у прокси).
    */
   readonly supportsReasoning?: boolean;
+  /**
+   * Поддерживает ли модель tool-calling (v1.3 S1, KI-617).
+   *
+   * Нужен роутеру: агентский вызов (`requiresTools: true`) нельзя подменять
+   * моделью без инструментов. Отсутствие значения трактуется как «поддерживает,
+   * если модель принимает текст» ({@link buildModelCapabilities}): в текущей
+   * реализации инструменты агента передаются промптом, поэтому любая
+   * текстовая модель способна вести tool-цикл. Явный `false` — для моделей,
+   * у которых tool-calling заведомо не поддержан.
+   */
+  readonly supportsTools?: boolean;
+  /**
+   * Максимальный размер контекста модели (вход + выход), в токенах
+   * (v1.3 S1, KI-617).
+   *
+   * Не путать с {@link defaultMaxTokens} — это дефолтный лимит **ответа**.
+   * `undefined`/`0` — размер неизвестен; сверка контекста пропускается
+   * (KI-629): требовать от модели недоказуемое нельзя.
+   */
+  readonly maxTokens?: number;
   /**
    * Дефолтный лимит токенов ответа для этой модели (KI-183).
    *

@@ -1,5 +1,12 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
+  buildModelCapabilities,
+  isCapabilityCompatible,
+  type LlmCapabilityRequirements,
+  type LlmCompatibleRoute,
+  type LlmModelCapabilities,
+} from './model-capabilities.js';
+import {
   LlmProviderException,
   type ILlmProvider,
   type ModelModality,
@@ -122,6 +129,74 @@ export class LlmRegistryService {
    */
   hasModel(modelId: string): boolean {
     return this.byModelId.has(modelId);
+  }
+
+  /**
+   * Возвращает нормализованный паспорт модели (v1.3 S1, KI-617).
+   *
+   * Отличие от `resolveByModel`: вопрос «какие возможности у модели» не
+   * является ошибкой, поэтому неизвестная модель даёт `undefined`, а не
+   * исключение. Паспорт заполняется для **всех** моделей реестра
+   * ({@link buildModelCapabilities}): отсутствующие поля получают безопасные
+   * значения по умолчанию, а не остаются `undefined`.
+   *
+   * @param modelId - id модели
+   * @returns паспорт либо `undefined`, если модель не объявлена
+   */
+  getCapabilities(modelId: string): LlmModelCapabilities | undefined {
+    const provider = this.byModelId.get(modelId);
+
+    if (provider === undefined) {
+      return undefined;
+    }
+
+    const model = provider.models.find((candidate) => candidate.id === modelId);
+
+    if (model === undefined) {
+      return undefined;
+    }
+
+    return buildModelCapabilities(provider.name, model);
+  }
+
+  /**
+   * Находит первую модель, совместимую с требованиями (v1.3 S1, KI-617).
+   *
+   * Порядок — приоритет провайдеров и порядок моделей в их каталоге, поэтому
+   * результат детерминирован. Неконфигурированные провайдеры пропускаются:
+   * неподходящая по ключу модель не должна выигрывать у настроенной.
+   *
+   * @param requirements - требования к подмене
+   * @param options.local - искать только локальные (`true`) или только
+   *   облачные (`false`) провайдеры
+   * @returns провайдер и модель либо `undefined`, если совместимых нет
+   */
+  findCompatibleRoute(
+    requirements: LlmCapabilityRequirements,
+    options: { local: boolean },
+  ): LlmCompatibleRoute | undefined {
+    for (const provider of this.providers) {
+      if (!provider.isConfigured) {
+        continue;
+      }
+
+      if ((provider.isLocal === true) !== options.local) {
+        continue;
+      }
+
+      for (const model of provider.models) {
+        if (
+          isCapabilityCompatible(
+            buildModelCapabilities(provider.name, model),
+            requirements,
+          )
+        ) {
+          return { provider, model };
+        }
+      }
+    }
+
+    return undefined;
   }
 
   /**

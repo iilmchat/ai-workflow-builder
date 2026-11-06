@@ -1,6 +1,12 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  buildModelCapabilities,
+  describeCapabilityGaps,
+  isCapabilityCompatible,
+  type LlmCapabilityRequirements,
+} from './model-capabilities.js';
+import {
   LlmProviderException,
   type ILlmProvider,
   type LlmGenerateOptions,
@@ -119,13 +125,20 @@ function toMessage(error: unknown): string {
  *
  * Логика при `LLM_ROUTER_ENABLED=true`:
  * 1. Если сконфигурирован локальный провайдер (LM Studio) и healthcheck не
- *    пометил его недоступным — вызов идёт в него;
+ *    пометил его недоступным — вызов идёт в него, если в локальном каталоге
+ *    есть модель, совместимая с исходной по модальностям/reasoning/tools/
+ *    контексту (v1.3 S1, KI-617);
  * 2. ошибка локального вызова (сеть, 5xx, таймаут, пустой ответ) — WARN и
- *    повтор в облако моделью `LLM_ROUTER_FALLBACK_MODEL`;
- * 3. локального провайдера нет или он помечен `unavailable` — сразу облако.
+ *    повтор в облако. Приоритет замены: исходная облачная модель (если она
+ *    совместима) → `LLM_ROUTER_FALLBACK_MODEL` (если совместима) → первая
+ *    совместимая облачная модель (WARN) → `LlmProviderException` с перечнем
+ *    несовместимостей;
+ * 3. локального провайдера нет, нет совместимой локальной модели или он
+ *    помечен `unavailable` — сразу облако.
  *
  * При `LLM_ROUTER_ENABLED=false` (дефолт) поведение прежнее: провайдер
- * резолвится по id модели, как до v1.2.
+ * резолвится по id модели, как до v1.2; сверка возможностей не выполняется —
+ * пользователь выбрал модель явно, и подмены нет.
  *
  * Здесь же живут семафоры провайдеров (R7.7, KI-067) и span `llm.call`
  * (KI-365): span должен охватывать и попытку, и fallback, а семафор — именно
@@ -236,35 +249,45 @@ export class LlmRouterService {
       return { ...attempt.result, isLocal: provider.isLocal ?? false };
     }
 
+    // v1.3 S1 (KI-617): требования к подмене строятся один раз на вызов — из
+    // паспорта исходной модели и опций. Дальше им проверяются и локальная, и
+    // облачная модели.
+    const requirements = this.buildRequirements(options);
     const local = this.registry.findLocalProvider();
 
     if (local) {
       const available = await this.isLocalAvailableAsync(local);
 
       if (available) {
-        let localModel = options.model;
+        const localModel = this.pickLocalModel(local, options.model, requirements);
 
-        try {
-          localModel = this.pickLocalModel(local, options.model);
+        if (localModel !== null) {
+          try {
+            const attempt = await this.callAsync(
+              local,
+              prompt,
+              options,
+              localModel,
+            );
 
-          const attempt = await this.callAsync(
-            local,
-            prompt,
-            options,
-            localModel,
-          );
+            this.recordSpan(span, local, localModel, attempt);
 
-          this.recordSpan(span, local, localModel, attempt);
+            return { ...attempt.result, isLocal: true };
+          } catch (error: unknown) {
+            // Отмена пользователя — не повод идти в облако: signal общий.
+            if (options.signal?.aborted === true) {
+              throw error;
+            }
 
-          return { ...attempt.result, isLocal: true };
-        } catch (error: unknown) {
-          // Отмена пользователя — не повод идти в облако: signal общий.
-          if (options.signal?.aborted === true) {
-            throw error;
+            this.logger.warn(
+              `LM Studio: вызов модели "${localModel}" не удался (${toMessage(error)}) — fallback в облако`,
+            );
           }
-
+        } else {
+          // KI-617: несовместимую локальную модель даже не пробуем — иначе
+          // vision-узел падал бы на 400 от LM Studio, а не шёл сразу в облако.
           this.logger.warn(
-            `LM Studio: вызов модели "${localModel}" не удался (${toMessage(error)}) — fallback на облачную модель "${this.fallbackModel}"`,
+            `LM Studio: нет модели, совместимой с "${options.model}" (требуется: ${this.describeRequirements(requirements)}); вызов уходит в облако`,
           );
         }
       } else {
@@ -276,7 +299,7 @@ export class LlmRouterService {
       }
     }
 
-    const route = this.resolveCloudRoute(options.model);
+    const route = this.resolveCloudRoute(options.model, requirements);
     const attempt = await this.callAsync(
       route.provider,
       prompt,
@@ -307,81 +330,208 @@ export class LlmRouterService {
   }
 
   /**
-   * Выбирает модель для локального вызова.
+   * Строит требования к подмене из паспорта исходной модели и опций вызова
+   * (v1.3 S1, KI-617).
    *
-   * Если пользователь выбрал модель, которую LM Studio объявил, — она и
-   * уходит. Иначе берётся первая модель локального каталога: id облачных
-   * моделей (`gpt-4o-mini`, `claude-*`) в LM Studio отсутствуют, и отправка
-   * такого id гарантированно вернула бы 400/404. Это осознанная подмена —
-   * см. KI-617.
+   * - модальности: всегда из исходной модели — vision-вызов нельзя уводить в
+   *   текстовую модель (даже если сам узел картинку не передаёт, паспорт
+   *   модели — единственный доступный роутеру признак);
+   * - reasoning: если исходная модель reasoning-ная либо вызов явно просит
+   *   `reasoningEffort` (не `off`);
+   * - tool-calling: только по явному флагу `requiresTools` (его ставит агент);
+   * - контекст: из `maxTokens` исходной модели (`0` — неизвестен).
+   *
+   * @param options - опции вызова
+   * @returns требования, которым обязана удовлетворять модель-замена
+   */
+  private buildRequirements(
+    options: LlmGenerateOptions,
+  ): LlmCapabilityRequirements {
+    const original = this.registry.getCapabilities(options.model);
+    const reasoningRequested =
+      options.reasoningEffort !== undefined &&
+      options.reasoningEffort !== 'off';
+
+    return {
+      inputModalities: original?.inputModalities ?? [],
+      requiresReasoning:
+        original?.supportsReasoning === true || reasoningRequested,
+      requiresTools: options.requiresTools === true,
+      minTokens: original?.maxTokens ?? 0,
+    };
+  }
+
+  /**
+   * Человекочитаемое описание требований для WARN/ошибок (KI-617).
+   *
+   * @param requirements - требования к подмене
+   * @returns строка вида `text+vision, reasoning, tools, контекст ≥ 128000`
+   */
+  private describeRequirements(
+    requirements: LlmCapabilityRequirements,
+  ): string {
+    const parts = [
+      requirements.inputModalities.length > 0
+        ? requirements.inputModalities.join('+')
+        : 'любые модальности',
+    ];
+
+    if (requirements.requiresReasoning) {
+      parts.push('reasoning');
+    }
+
+    if (requirements.requiresTools) {
+      parts.push('tool-calling');
+    }
+
+    if (requirements.minTokens > 0) {
+      parts.push(`контекст ≥ ${requirements.minTokens} токенов`);
+    }
+
+    return parts.join(', ');
+  }
+
+  /**
+   * Выбирает модель для локального вызова с учётом возможностей (KI-617).
+   *
+   * Порядок:
+   * 1. выбранная модель, если LM Studio её объявил **и** она совместима;
+   * 2. первая совместимая локальная модель — с WARN о подмене;
+   * 3. `null`: совместимых нет. Роутер тогда не тратит вызов на заведомо
+   *    неподходящую модель, а сразу уходит в облако.
    *
    * @param local - локальный провайдер
    * @param requestedModel - модель, выбранная в графе/агенте
-   * @returns id модели, которую понимает LM Studio
-   * @throws LlmProviderException если локальный провайдер не объявил моделей
+   * @param requirements - требования к подмене
+   * @returns id модели либо `null`, если совместимой локальной нет
    */
   private pickLocalModel(
     local: ILlmProvider,
     requestedModel: string,
-  ): string {
-    if (local.models.some((model) => model.id === requestedModel)) {
-      return requestedModel;
-    }
+    requirements: LlmCapabilityRequirements,
+  ): string | null {
+    const requested = local.models.find((model) => model.id === requestedModel);
 
-    const first = local.models[0];
-
-    if (first === undefined) {
-      throw new LlmProviderException(
-        'router',
-        `локальный провайдер "${local.name}" не объявил ни одной модели`,
-      );
-    }
-
-    this.logger.debug(
-      `Модель "${requestedModel}" не объявлена LM Studio — использую локальную "${first.id}"`,
-    );
-
-    return first.id;
-  }
-
-  /**
-   * Строит облачный маршрут для fallback.
-   *
-   * Приоритет:
-   * 1. `LLM_ROUTER_FALLBACK_MODEL`, если модель объявлена облачным провайдером
-   *    (локальный не подходит — мы как раз уходим с локального);
-   * 2. первая модель первого облачного провайдера — с WARN, потому что это
-   *    подмена модели из env;
-   * 3. ошибка: облака нет вовсе.
-   *
-   * @param requestedModel - исходная модель (для текста ошибки и лога)
-   * @returns облачный маршрут
-   * @throws LlmProviderException если облачный провайдер не сконфигурирован
-   */
-  private resolveCloudRoute(requestedModel: string): LlmRoute {
-    if (this.registry.hasModel(this.fallbackModel)) {
-      const provider = this.registry.resolveByModel(this.fallbackModel);
-
-      if (provider.isLocal !== true) {
-        return { provider, model: this.fallbackModel };
+    if (requested !== undefined) {
+      if (
+        isCapabilityCompatible(
+          buildModelCapabilities(local.name, requested),
+          requirements,
+        )
+      ) {
+        return requestedModel;
       }
     }
 
-    const provider = this.registry.findCloudProvider();
-    const model = provider?.models[0]?.id;
-
-    if (provider === undefined || model === undefined) {
-      throw new LlmProviderException(
-        'router',
-        `нет облачного провайдера для fallback (запрошена модель "${requestedModel}")`,
-      );
-    }
-
-    this.logger.warn(
-      `Модель fallback "${this.fallbackModel}" не поддерживается — использую "${model}" (${provider.name})`,
+    const compatible = local.models.find((model) =>
+      isCapabilityCompatible(
+        buildModelCapabilities(local.name, model),
+        requirements,
+      ),
     );
 
-    return { provider, model };
+    if (compatible === undefined) {
+      return null;
+    }
+
+    // KI-617: подмена модели локальным каталогом — WARN, а не debug: оператор
+    // должен видеть, что выбрана другая модель, и по каким требованиям.
+    this.logger.warn(
+      `LM Studio: модель "${requestedModel}" ${requested === undefined ? 'не объявлена' : 'не совпадает по возможностям'} — использую "${compatible.id}" (требуется: ${this.describeRequirements(requirements)})`,
+    );
+
+    return compatible.id;
+  }
+
+  /**
+   * Строит облачный маршрут для fallback с учётом возможностей (KI-617).
+   *
+   * Приоритет:
+   * 1. исходная модель пользователя, если она облачная и совместима: подмена
+   *    выбранной модели больше не обязательна (KI-617);
+   * 2. `LLM_ROUTER_FALLBACK_MODEL`, если модель облачная и совместима;
+   * 3. первая совместимая облачная модель — с WARN о подмене;
+   * 4. ошибка с перечнем несовместимостей — тихий успех на неподходящей
+   *    модели недопустим.
+   *
+   * @param requestedModel - исходная модель
+   * @param requirements - требования к подмене
+   * @returns облачный маршрут
+   * @throws LlmProviderException если совместимой облачной модели нет
+   */
+  private resolveCloudRoute(
+    requestedModel: string,
+    requirements: LlmCapabilityRequirements,
+  ): LlmRoute {
+    // 1. Исходная модель, если она облачная и совместима: пользователь выбрал
+    //    её не случайно, и fallback из env — не повод менять выбор.
+    if (this.registry.hasModel(requestedModel)) {
+      const provider = this.registry.resolveByModel(requestedModel);
+      const capabilities = this.registry.getCapabilities(requestedModel);
+
+      if (
+        provider.isLocal !== true &&
+        provider.isConfigured &&
+        capabilities !== undefined &&
+        isCapabilityCompatible(capabilities, requirements)
+      ) {
+        this.logger.debug(
+          `fallback: использую исходную облачную модель "${requestedModel}"`,
+        );
+
+        return { provider, model: requestedModel };
+      }
+    }
+
+    // 2. Модель из env — только если она существует, облачная и совместима.
+    const fallbackProvider = this.registry.hasModel(this.fallbackModel)
+      ? this.registry.resolveByModel(this.fallbackModel)
+      : undefined;
+    const fallbackCapabilities =
+      fallbackProvider === undefined
+        ? undefined
+        : this.registry.getCapabilities(this.fallbackModel);
+    const fallbackGaps =
+      fallbackProvider !== undefined &&
+      fallbackCapabilities !== undefined &&
+      fallbackProvider.isLocal !== true
+        ? describeCapabilityGaps(fallbackCapabilities, requirements)
+        : ['не объявлена или принадлежит локальному провайдеру'];
+
+    if (
+      fallbackProvider !== undefined &&
+      fallbackCapabilities !== undefined &&
+      fallbackProvider.isLocal !== true &&
+      fallbackProvider.isConfigured &&
+      fallbackGaps.length === 0
+    ) {
+      if (this.fallbackModel !== requestedModel) {
+        this.logger.warn(
+          `fallback: использую модель из LLM_ROUTER_FALLBACK_MODEL "${this.fallbackModel}" (${fallbackProvider.name})`,
+        );
+      }
+
+      return { provider: fallbackProvider, model: this.fallbackModel };
+    }
+
+    // 3. Первая совместимая облачная модель.
+    const compatible = this.registry.findCompatibleRoute(requirements, {
+      local: false,
+    });
+
+    if (compatible !== undefined) {
+      this.logger.warn(
+        `Модель fallback "${this.fallbackModel}" несовместима с "${requestedModel}" (${fallbackGaps.join('; ')}) — использую "${compatible.model.id}" (${compatible.provider.name})`,
+      );
+
+      return { provider: compatible.provider, model: compatible.model.id };
+    }
+
+    // 4. Ни одной совместимой модели: ошибка вместо тихой подмены.
+    throw new LlmProviderException(
+      'router',
+      `нет облачной модели, совместимой с "${requestedModel}" (требуется: ${this.describeRequirements(requirements)}); fallback "${this.fallbackModel}": ${fallbackGaps.join('; ')}`,
+    );
   }
 
   /**

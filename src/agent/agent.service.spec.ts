@@ -480,9 +480,12 @@ describe('AgentService.runAgentAsync (R7.4b)', () => {
     expect(result.answer).toBe('20 градусов');
     // workflow_id нужен только vector/memory-инструментам.
     expect(findWorkflowIdByRunAsync).not.toHaveBeenCalled();
-    // maxTokens по умолчанию уходит в каждый вызов (DESIGN § 3.4).
+    // maxTokens по умолчанию уходит в каждый вызов (DESIGN § 3.4), а
+    // requiresTools сообщает роутеру, что подмена на модель без tool-calling
+    // недопустима (v1.3 S1, KI-617).
     expect(generateAsync.mock.calls[0]?.[2]).toEqual({
       maxTokens: AGENT_DEFAULT_MAX_TOKENS_PER_STEP,
+      requiresTools: true,
     });
   });
 

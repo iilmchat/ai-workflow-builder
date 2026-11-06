@@ -92,12 +92,17 @@ const OPENAI_MODELS: readonly ModelInfo[] = [
     label: 'GPT-4o',
     inputModalities: ['text', 'vision'],
     outputModalities: ['text'],
+    // v1.3 S1 (KI-617): паспорт возможностей для сверки при подмене модели.
+    supportsTools: true,
+    maxTokens: 128_000,
   },
   {
     id: 'gpt-4o-mini',
     label: 'GPT-4o mini',
     inputModalities: ['text', 'vision'],
     outputModalities: ['text'],
+    supportsTools: true,
+    maxTokens: 128_000,
   },
 ];
 
@@ -108,24 +113,32 @@ const ROUTERAI_MODELS: readonly ModelInfo[] = [
     label: 'Claude Sonnet 4 (RouterAI)',
     inputModalities: ['text', 'vision'],
     outputModalities: ['text'],
+    supportsTools: true,
+    maxTokens: 200_000,
   },
   {
     id: 'anthropic/claude-opus-4',
     label: 'Claude Opus 4 (RouterAI)',
     inputModalities: ['text', 'vision'],
     outputModalities: ['text'],
+    supportsTools: true,
+    maxTokens: 200_000,
   },
   {
     id: 'openai/gpt-4o',
     label: 'GPT-4o (RouterAI)',
     inputModalities: ['text', 'vision'],
     outputModalities: ['text'],
+    supportsTools: true,
+    maxTokens: 128_000,
   },
   {
     id: 'google/gemini-2.5-pro',
     label: 'Gemini 2.5 Pro (RouterAI)',
     inputModalities: ['text', 'vision'],
     outputModalities: ['text'],
+    supportsTools: true,
+    maxTokens: 1_048_576,
   },
 ];
 
@@ -136,12 +149,18 @@ const DEEPSEEK_MODELS: readonly ModelInfo[] = [
     label: 'DeepSeek V3 (chat)',
     inputModalities: ['text'],
     outputModalities: ['text'],
+    supportsTools: true,
+    maxTokens: 64_000,
   },
   {
     id: 'deepseek-reasoner',
     label: 'DeepSeek R1 (reasoner)',
     inputModalities: ['text'],
     outputModalities: ['text'],
+    // v1.3 S1 (KI-617): API DeepSeek не поддерживает function calling у R1 —
+    // роутер не должен выбирать её fallback'ом для agent-узла.
+    supportsTools: false,
+    maxTokens: 64_000,
   },
 ];
 

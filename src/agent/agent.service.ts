@@ -751,6 +751,9 @@ export class AgentService {
             try {
               response = await this.llm.generateAsync(prompt, node.model, {
                 maxTokens,
+                // v1.3 S1 (KI-617): агентский шаг использует инструменты, и
+                // роутер не должен подменять модель на ту, что их не умеет.
+                requiresTools: true,
               });
               // v1.1.0 S4 (KI-576): успешный шаг. `status` отделяет таймауты и
               // отказы провайдера от нормальных ответов в той же гистограмме.

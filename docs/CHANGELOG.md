@@ -19,6 +19,26 @@
 
 ### Added
 
+- **Сверка возможностей модели при подмене роутером (v1.3.0 S1; KI-617)**
+  ([отчёт](development/reports/v1.3.0/S1-router-model-check.md)):
+  `ModelInfo` получил `supportsTools` и `maxTokens` (контекст), а
+  `LlmRegistryService` — нормализованный паспорт модели
+  (`getCapabilities`) и поиск первой совместимой модели
+  (`findCompatibleRoute`). Новый модуль `model-capabilities.ts` описывает
+  требования подмены (модальности, reasoning, tool-calling, контекст) и
+  причины несовместимости. `LlmRouterService` больше не подменяет модель
+  вслепую: локальная берётся только если совместима, иначе вызов сразу уходит в
+  облако; приоритет fallback — исходная облачная модель пользователя →
+  `LLM_ROUTER_FALLBACK_MODEL` (если совместима) → первая совместимая облачная
+  модель (WARN с причинами) → `LlmProviderException` «нет облачной модели,
+  совместимой…». `LlmGenerateOptions.requiresTools` выставляет агент, чтобы его
+  шаг не уводился в модель без tool-calling. Каталоги Anthropic/OpenAI/
+  RouterAI/DeepSeek пополнены паспортами (`supportsTools`, `maxTokens`).
+  Тесты: **+25** (capabilities 12, router +7, registry +6), backend
+  **1926 passed**; смоук **10/10**: vision + текстовая локальная → исходная
+  облачная `gpt-4o` (LM Studio не вызывался), vision + vision-локальная →
+  локальный вызов, локальный сбой без совместимого облака → `failed` с
+  понятной ошибкой. **KI-617** закрыт. Ограничения — KI-629..631.
 - **Индикатор GPU и `emailQueued` (v1.2.0 S3, DESIGN V120 § 3.4;
   KI-618, KI-622)** ([отчёт](development/reports/v1.2.0/S3-ui-docs.md)):
   `GET /llm/health` отдаёт `{ local: { available, lastCheck }, routerEnabled }`
@@ -2508,6 +2528,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 

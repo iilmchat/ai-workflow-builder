@@ -299,4 +299,113 @@ describe('LlmRegistryService', () => {
     expect(local.listModels()).toEqual([]);
     expect(() => local.resolveByModel('gpt-4o')).toThrow('Модель не поддерживается');
   });
+
+  describe('возможности моделей (v1.3 S1, KI-617)', () => {
+    it('getCapabilities отдаёт заполненный паспорт известной модели', () => {
+      // Модели OpenAI в этом spec'е объявлены вручную без `maxTokens`:
+      // неизвестный контекст нормализуется в 0, а не в undefined.
+      expect(registry.getCapabilities('gpt-4o')).toEqual({
+        id: 'gpt-4o',
+        provider: 'openai',
+        inputModalities: ['text', 'vision'],
+        supportsReasoning: false,
+        supportsTools: true,
+        maxTokens: 0,
+      });
+      expect(registry.getCapabilities('claude-sonnet-4-20250514')).toEqual({
+        id: 'claude-sonnet-4-20250514',
+        provider: 'anthropic',
+        inputModalities: ['text', 'vision'],
+        supportsReasoning: false,
+        supportsTools: true,
+        maxTokens: 200_000,
+      });
+    });
+
+    it('getCapabilities неизвестной модели — undefined, без исключения', () => {
+      expect(registry.getCapabilities('unknown-model')).toBeUndefined();
+      expect(registry.getCapabilities('')).toBeUndefined();
+    });
+
+    it('getCapabilities заполняет возможности и для «бедного» объявления', async () => {
+      const local = await createRegistry([stubProvider('stub', ['plain'])]);
+
+      expect(local.getCapabilities('plain')).toEqual({
+        id: 'plain',
+        provider: 'stub',
+        inputModalities: ['text'],
+        supportsReasoning: false,
+        supportsTools: true,
+        maxTokens: 0,
+      });
+    });
+
+    it('findCompatibleRoute учитывает модальности и область поиска', async () => {
+      const localProvider = stubProvider('lmstudio', ['text-local']);
+      const localProviderWithFlag: ILlmProvider = {
+        ...localProvider,
+        isLocal: true,
+      };
+      const local = await createRegistry([localProviderWithFlag, openai]);
+
+      const visionRequirements = {
+        inputModalities: ['text', 'vision'] as const,
+        requiresReasoning: false,
+        requiresTools: false,
+        minTokens: 0,
+      };
+
+      // Локальная модель текстовая — для vision-требований не подходит.
+      expect(
+        local.findCompatibleRoute(visionRequirements, { local: true }),
+      ).toBeUndefined();
+      // В облаке есть gpt-4o с vision — он и должен быть выбран.
+      expect(
+        local.findCompatibleRoute(visionRequirements, { local: false })?.model.id,
+      ).toBe('gpt-4o');
+    });
+
+    it('findCompatibleRoute пропускает неконфигурированных провайдеров', async () => {
+      const providers = createProviders({ ANTHROPIC_API_KEY: 'sk-ant-test' });
+      const local = await createRegistry([providers.openai, providers.anthropic]);
+
+      const textRequirements = {
+        inputModalities: ['text'] as const,
+        requiresReasoning: false,
+        requiresTools: true,
+        minTokens: 0,
+      };
+      const route = local.findCompatibleRoute(textRequirements, { local: false });
+
+      // OpenAI без ключа не должен выигрывать у сконфигурированного Anthropic.
+      expect(route?.provider.name).toBe('anthropic');
+    });
+
+    it('findCompatibleRoute учитывает tool-calling', async () => {
+      const noTools: ILlmProvider = {
+        ...stubProvider('no-tools', ['no-tools-model']),
+        models: [
+          {
+            id: 'no-tools-model',
+            label: 'no-tools-model',
+            inputModalities: ['text'],
+            outputModalities: ['text'],
+            supportsTools: false,
+          },
+        ],
+      };
+      const local = await createRegistry([noTools, openai]);
+
+      const toolsRequirements = {
+        inputModalities: ['text'] as const,
+        requiresReasoning: false,
+        requiresTools: true,
+        minTokens: 0,
+      };
+
+      expect(
+        local.findCompatibleRoute(toolsRequirements, { local: false })?.model.id,
+      ).toBe('gpt-4o');
+    });
+  });
 });
