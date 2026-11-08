@@ -17,7 +17,7 @@ import {
 import { EXECUTE_RUN_JOB, WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
 import { NodeRunSnapshotMapper } from './node-run-snapshot.mapper.js';
 import type { NodeRunSnapshot } from './dto/index.js';
-import { encodeRunHistoryCursor } from './dto/index.js';
+import { encodeRunHistoryCursor, MAX_COMPARE_DIFF_BYTES } from './dto/index.js';
 import { RunsService } from './runs.service.js';
 import { RUNS_INSTANCE_ID } from './runs.worker-options.js';
 import {
@@ -601,6 +601,220 @@ describe('RunsService', () => {
       expect(updateChain.set).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'cancelled' }),
       );
+    });
+  });
+
+  // v1.4.0 S2 (DESIGN V140 § 3.2): сравнение двух запусков.
+  describe('compareRunsAsync', () => {
+    const RUN_2_ID = '77777777-7777-4777-8777-777777777777';
+    const RUN_2_STARTED_AT = new Date('2024-01-01T00:00:01.000Z');
+    const RUN_2_FINISHED_AT = new Date('2024-01-01T00:00:05.000Z');
+
+    /** Второй запуск в тестах сравнения. */
+    const baseRun2: WorkflowRun = {
+      ...baseRun,
+      id: RUN_2_ID,
+      status: 'failed',
+      startedAt: RUN_2_STARTED_AT,
+      finishedAt: RUN_2_FINISHED_AT,
+    };
+
+    /**
+     * Подменяет `db.select` последовательностью цепочек для сравнения.
+     *
+     * `getRunRowAsync` на каждый запуск делает два `select`: свой и
+     * `EXISTS`-подзапрос доступа (dummy). Затем идёт `select` строк
+     * `node_runs`. Порядок фиксирован, потому что сервис читает запуски
+     * параллельно, но синхронно строит оба запроса до первого `await`.
+     *
+     * @param first - строка первого запуска либо `undefined` (404)
+     * @param second - строка второго запуска либо `undefined`
+     * @param nodeRows - строки `node_runs` для ответа сравнения
+     */
+    function stubCompareSelects(
+      first: WorkflowRun | undefined,
+      second: WorkflowRun | undefined,
+      nodeRows: unknown[],
+    ): void {
+      // На каждый `getRunRowAsync` — три `select`: строка запуска и два
+      // подзапроса в `accessibleWorkflowIdsSubquery` (`EXISTS` участника +
+      // сам подзапрос доступных workflow).
+      const chains = [
+        chain(first === undefined ? [] : [first]),
+        chain([]),
+        chain([]),
+        chain(second === undefined ? [] : [second]),
+        chain([]),
+        chain([]),
+        chain(nodeRows),
+      ];
+      let index = 0;
+
+      db.select.mockImplementation(
+        () => chains[index++] ?? chain([]),
+      );
+    }
+
+    /**
+     * Собирает строку `node_runs` для тестов сравнения.
+     *
+     * @param overrides - поля конкретного узла
+     * @returns строка с дефолтами
+     */
+    function compareNodeRow(overrides: Record<string, unknown>) {
+      return {
+        runId: RUN_ID,
+        nodeId: 'n1',
+        status: 'completed',
+        outputs: { text: 'a' },
+        durationMs: 1000,
+        costUsd: null,
+        costRub: null,
+        ...overrides,
+      };
+    }
+
+    it('сравнивает два запуска: поузловые diff, дельты и суммы', async () => {
+      stubCompareSelects(
+        {
+          ...baseRun,
+          status: 'completed',
+          startedAt: new Date('2024-01-01T00:00:01.000Z'),
+          finishedAt: new Date('2024-01-01T00:00:03.000Z'),
+        },
+        baseRun2,
+        [
+          compareNodeRow({
+            runId: RUN_ID,
+            nodeId: 'n1',
+            outputs: { text: 'hello', tokens: 10 },
+            costUsd: '0.100000',
+          }),
+          compareNodeRow({
+            runId: RUN_2_ID,
+            nodeId: 'n1',
+            outputs: { text: 'bye', tokens: 10 },
+            durationMs: 1500,
+            costUsd: '0.200000',
+            costRub: '12.500000',
+          }),
+          compareNodeRow({
+            runId: RUN_ID,
+            nodeId: 'n2',
+            status: 'failed',
+            outputs: null,
+            durationMs: 500,
+          }),
+          compareNodeRow({
+            runId: RUN_2_ID,
+            nodeId: 'n2',
+            status: 'failed',
+            outputs: null,
+            durationMs: 500,
+          }),
+          compareNodeRow({
+            runId: RUN_2_ID,
+            nodeId: 'n3',
+            status: 'skipped',
+            outputs: null,
+            durationMs: 0,
+          }),
+        ],
+      );
+
+      const result = await service.compareRunsAsync(RUN_ID, RUN_2_ID, ACCESS);
+
+      expect(result.run1.id).toBe(RUN_ID);
+      expect(result.run2.id).toBe(RUN_2_ID);
+      expect(result.run1.durationMs).toBe(2000);
+      expect(result.run2.durationMs).toBe(4000);
+      expect(result.run1.costUsd).toBe(0.1);
+      expect(result.run2.costUsd).toBe(0.2);
+      expect(result.run2.costRub).toBe(12.5);
+
+      // Узлы — объединение и детерминированный порядок по nodeId.
+      expect(result.diffs.nodeDiffs.map((diff) => diff.nodeId)).toEqual([
+        'n1',
+        'n2',
+        'n3',
+      ]);
+
+      const n1 = result.diffs.nodeDiffs[0];
+
+      expect(n1).toMatchObject({
+        status1: 'completed',
+        status2: 'completed',
+        duration1: 1000,
+        duration2: 1500,
+        cost1: 0.1,
+        cost2: 0.2,
+      });
+      // outputs различны — diff содержит оба значения.
+      expect(n1.outputsDiff).toContain('hello');
+      expect(n1.outputsDiff).toContain('bye');
+
+      // Одинаковые outputs/статус — diff не нужен.
+      expect(result.diffs.nodeDiffs[1].outputsDiff).toBeUndefined();
+
+      // Узел был только во втором запуске: левые поля null.
+      expect(result.diffs.nodeDiffs[2]).toMatchObject({
+        status1: null,
+        status2: 'skipped',
+        duration1: null,
+        cost1: null,
+      });
+
+      expect(result.diffs.totalDiff.durationMs).toBe(2000);
+      expect(result.diffs.totalDiff.costUsd).toBeCloseTo(0.1, 6);
+      expect(result.diffs.totalDiff.costRub).toBe(12.5);
+    });
+
+    it('проверяет доступ editor к обоим запускам', async () => {
+      stubCompareSelects(baseRun, baseRun2, []);
+
+      await service.compareRunsAsync(RUN_ID, RUN_2_ID, ACCESS);
+
+      // Оба запуска ищутся тем же подзапросом с ролью editor: viewer/чужой
+      // получит 404, а не outputs.
+      expect(vi.mocked(accessibleWorkflowIdsSubquery)).toHaveBeenCalledWith(
+        expect.anything(),
+        ACCESS,
+        'editor',
+      );
+    });
+
+    it('чужой/несуществующий запуск отдаёт 404 и не читает node_runs', async () => {
+      stubCompareSelects(undefined, baseRun2, []);
+
+      await expect(
+        service.compareRunsAsync(RUN_ID, RUN_2_ID, ACCESS),
+      ).rejects.toThrow(NotFoundException);
+
+      // Седьмой `select` (node_runs) не случился: доступ проверен до чтения.
+      expect(db.select).toHaveBeenCalledTimes(6);
+    });
+
+    it('обрезает outputsDiff до 100 КБ с пометкой', async () => {
+      const huge = 'x'.repeat(200 * 1024);
+
+      stubCompareSelects(baseRun, baseRun2, [
+        compareNodeRow({
+          runId: RUN_ID,
+          outputs: { text: huge },
+        }),
+        compareNodeRow({
+          runId: RUN_2_ID,
+          outputs: { text: `${huge}y` },
+        }),
+      ]);
+
+      const result = await service.compareRunsAsync(RUN_ID, RUN_2_ID, ACCESS);
+      const diff = result.diffs.nodeDiffs[0].outputsDiff ?? '';
+
+      expect(Buffer.byteLength(diff, 'utf8')).toBeLessThanOrEqual(
+        MAX_COMPARE_DIFF_BYTES,
+      );
+      expect(diff).toContain('diff обрезан');
     });
   });
 

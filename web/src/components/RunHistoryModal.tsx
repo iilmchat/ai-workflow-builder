@@ -2,50 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { fetchWorkflowRunsAsync, type ApiRunSummary } from '@/lib/api';
+import { RUN_STATUS_META } from '@/lib/run-status-meta';
 import { setRunIdInUrl } from '@/lib/url-sync';
 import { useWorkflowStore } from '@/stores/workflow';
-import type { RunStatus } from '@/types/run-stream';
+import { RunCompareModal } from './RunCompareModal';
 
 /** Сколько запусков запрашивается на одну страницу истории. */
 const PAGE_SIZE = 20;
-
-/**
- * Внешний вид статуса запуска в истории: иконка, цвет бейджа и ключ подписи.
- *
- * Подписи — общий неймспейс `status.*` (v0.16 S1, KI-545): TopBar, панель
- * результата и история больше не расходятся в формулировках. Цвета —
- * статусные классы того же визуального языка.
- */
-const HISTORY_STATUS_META: Record<
-  RunStatus,
-  { icon: string; className: string; labelKey: string }
-> = {
-  pending: {
-    icon: '⏳',
-    className: 'bg-muted text-muted-foreground',
-    labelKey: 'status.pending',
-  },
-  running: {
-    icon: '🔄',
-    className: 'bg-blue-100 text-blue-700',
-    labelKey: 'status.running',
-  },
-  completed: {
-    icon: '✅',
-    className: 'bg-green-100 text-green-700',
-    labelKey: 'status.completed',
-  },
-  failed: {
-    icon: '❌',
-    className: 'bg-red-100 text-red-700',
-    labelKey: 'status.failed',
-  },
-  cancelled: {
-    icon: '⛔',
-    className: 'bg-muted text-muted-foreground',
-    labelKey: 'status.cancelled',
-  },
-};
 
 /**
  * Форматирует ISO-дату запуска под текущий язык интерфейса.
@@ -170,6 +133,11 @@ export function RunHistoryModal({ workflowId, onClose }: RunHistoryModalProps) {
   // перезапустить по неизменным зависимостям, поэтому retry — отдельное
   // состояние.
   const [reloadKey, setReloadKey] = useState(0);
+  // v1.4.0 S2: выбор двух запусков для сравнения. id, а не объекты: список
+  // может догрузиться/перезагрузиться, а выбор должен пережить это.
+  const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
+  // Пара для открытой модалки сравнения; `null` — модалка закрыта.
+  const [comparePair, setComparePair] = useState<[string, string] | null>(null);
 
   /**
    * Загружает первую страницу истории (или повторяет её после ошибки).
@@ -211,9 +179,11 @@ export function RunHistoryModal({ workflowId, onClose }: RunHistoryModalProps) {
   }, [workflowId, reloadKey]);
 
   // Escape закрывает окно — то же поведение, что у LoadModal/ShareModal.
+  // v1.4.0 S2: если сверху открыта модалка сравнения, Escape принадлежит ей;
+  // иначе закрылись бы обе модалки одним нажатием.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && comparePair === null) {
         onClose();
       }
     };
@@ -221,7 +191,7 @@ export function RunHistoryModal({ workflowId, onClose }: RunHistoryModalProps) {
     window.addEventListener('keydown', onKeyDown);
 
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+  }, [onClose, comparePair]);
 
   /**
    * Есть ли следующая страница.
@@ -305,7 +275,42 @@ export function RunHistoryModal({ workflowId, onClose }: RunHistoryModalProps) {
     setReloadKey((value) => value + 1);
   };
 
+  /**
+   * Переключает выбор запуска для сравнения (v1.4.0 S2).
+   *
+   * Максимум два запуска: третий чекбокс блокируется в разметке
+   * (`disabled`), а здесь — вторая защита от программного вызова. Повторный
+   * клик по выбранному снимает выбор.
+   *
+   * @param runId - uuid запуска
+   */
+  const handleToggleSelection = (runId: string) => {
+    setSelectedRunIds((previous) => {
+      if (previous.includes(runId)) {
+        return previous.filter((id) => id !== runId);
+      }
+
+      return previous.length >= 2 ? previous : [...previous, runId];
+    });
+  };
+
+  /**
+   * Открывает сравнение выбранной пары.
+   *
+   * Порядок выбора задаёт порядок колонок: первый выбранный — `run1`
+   * (левая колонка), второй — `run2`. Это позволяет сравнивать
+   * «эталон → новый» в нужную сторону.
+   */
+  const handleCompare = () => {
+    if (selectedRunIds.length !== 2) {
+      return;
+    }
+
+    setComparePair([selectedRunIds[0], selectedRunIds[1]]);
+  };
+
   return (
+    <>
     <div
       // Модалка — оверлей поверх редактора (канвас, панель результата), но ниже
       // Toast'а: уведомление об ошибке восстановления запуска (z-50) должно
@@ -394,10 +399,28 @@ export function RunHistoryModal({ workflowId, onClose }: RunHistoryModalProps) {
           {!isLoading && error === null && (
             <ul className="flex flex-col">
               {runs.map((run) => {
-                const meta = HISTORY_STATUS_META[run.status];
+                const meta = RUN_STATUS_META[run.status];
 
                 return (
-                  <li key={run.id}>
+                  <li key={run.id} className="flex items-center gap-2">
+                    {/* v1.4.0 S2: чекбокс выбора для сравнения. Стоит рядом с
+                        кнопкой-строкой, а не внутри неё: вложенный `<input>`
+                        в `<button>` — невалидный интерактив и ломает
+                        клавиатурную навигацию. */}
+                    <input
+                      type="checkbox"
+                      data-history-select={run.id}
+                      checked={selectedRunIds.includes(run.id)}
+                      disabled={
+                        selectedRunIds.length >= 2 &&
+                        !selectedRunIds.includes(run.id)
+                      }
+                      onChange={() => handleToggleSelection(run.id)}
+                      aria-label={t('history.select_run', { id: run.id })}
+                      title={t('history.select_run', { id: run.id })}
+                      className="ml-2 size-3.5 shrink-0 cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-40"
+                    />
+
                     {/* Кнопка, а не строка таблицы: вся строка доступна с
                         клавиатуры (Tab + Enter), как карточки в LoadModal. */}
                     <button
@@ -406,7 +429,7 @@ export function RunHistoryModal({ workflowId, onClose }: RunHistoryModalProps) {
                       data-history-status={run.status}
                       onClick={() => handleOpenRun(run)}
                       aria-label={t('history.open_run', { id: run.id })}
-                      className="grid w-full cursor-pointer grid-cols-[110px_1fr_110px_140px] items-center gap-2 rounded-lg px-2 py-2 text-left text-xs hover:bg-muted"
+                      className="grid min-w-0 flex-1 cursor-pointer grid-cols-[110px_1fr_110px_140px] items-center gap-2 rounded-lg px-2 py-2 text-left text-xs hover:bg-muted"
                     >
                       <span
                         className={`inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${meta.className}`}
@@ -456,13 +479,29 @@ export function RunHistoryModal({ workflowId, onClose }: RunHistoryModalProps) {
             рядом с «Загрузка…». */}
         {!isLoading && error === null && (
           <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3">
-            <span
-              className="text-[10px] text-muted-foreground"
-              data-history-loaded={runs.length}
-              data-history-total-counter={total}
-            >
-              {t('history.loaded', { loaded: runs.length, total })}
-            </span>
+            <div className="flex items-center gap-2">
+              <span
+                className="text-[10px] text-muted-foreground"
+                data-history-loaded={runs.length}
+                data-history-total-counter={total}
+              >
+                {t('history.loaded', { loaded: runs.length, total })}
+              </span>
+
+              {/* v1.4.0 S2: сравнение выбранной пары. Кнопка видна всегда, но
+                  disabled, пока не выбраны ровно два запуска — так подсказка
+                  «Сравнить» не исчезает и не прыгает по высоте. */}
+              <button
+                type="button"
+                data-history-compare=""
+                onClick={handleCompare}
+                disabled={selectedRunIds.length !== 2}
+                title={t('history.compare_hint')}
+                className="cursor-pointer rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {t('history.compare')}
+              </button>
+            </div>
 
             {hasMore ? (
               <button
@@ -486,5 +525,14 @@ export function RunHistoryModal({ workflowId, onClose }: RunHistoryModalProps) {
         )}
       </div>
     </div>
+
+    {comparePair !== null && (
+      <RunCompareModal
+        runId1={comparePair[0]}
+        runId2={comparePair[1]}
+        onClose={() => setComparePair(null)}
+      />
+    )}
+    </>
   );
 }

@@ -49,6 +49,9 @@ import {
   McpServerSummarySchema,
   McpToolSummarySchema,
   McpTransportSchema,
+  NodeDiffSchema,
+  RunCompareResponseSchema,
+  RunCompareTotalDiffSchema,
   RunHistoryResponseSchema,
   RunSummarySchema,
   WebSearchProviderInfoSchema,
@@ -120,6 +123,11 @@ const MIRROR_SCHEMAS: Record<string, MirrorSchema> = {
   // v0.11 S12 (DESIGN § 3.4.2): `GET /runs/:id/nodes` отдаёт массив снимков
   // узлов той же Zod-схемой, что и SSE-снимок.
   NodeRunSnapshot: NodeRunSnapshotSchema,
+  // v1.4.0 S2 (DESIGN V140 § 3.2): сравнение двух запусков — ответ и
+  // поузловой diff.
+  RunCompareResponse: RunCompareResponseSchema,
+  NodeDiff: NodeDiffSchema,
+  RunCompareTotalDiff: RunCompareTotalDiffSchema,
   // v1.0.0 S5: участники и приглашения организации (GET /admin/members).
   OrganizationInvitationSummary: OrgInvitationSchema,
   OrganizationMemberSummary: OrgMemberSchema,
@@ -399,6 +407,46 @@ describe('REST-контракт: web-зеркала ↔ docs/development/api-con
     // история не вводит второй набор значений статусов.
     expect([...RunStatusSchema.options].sort()).toEqual(
       contract.enums?.['RunSummary.status'],
+    );
+  });
+
+  it('RunCompareResponse/NodeDiff зеркалят контракт сравнения (v1.4.0 S2)', () => {
+    const contract = readContract();
+    const actual = actualContract();
+
+    // Ответ ручки `GET /runs/:id1/compare/:id2`: два запуска и блок diffs.
+    expect(contract.responses.RunCompareResponse).toEqual([
+      'diffs',
+      'run1',
+      'run2',
+    ]);
+    expect(actual.RunCompareResponse).toEqual(
+      contract.responses.RunCompareResponse,
+    );
+
+    // Поузловой diff: статусы/длительности/стоимости и необязательный
+    // `outputsDiff` (отсутствует, когда outputs совпали).
+    expect(contract.responses.NodeDiff).toEqual([
+      'cost1',
+      'cost2',
+      'duration1',
+      'duration2',
+      'nodeId',
+      'outputsDiff',
+      'status1',
+      'status2',
+    ]);
+    expect(actual.NodeDiff).toEqual(contract.responses.NodeDiff);
+    expect(actual.NodeDiff).toContain('outputsDiff');
+
+    // Суммарные дельты — отдельный вложенный DTO, тоже под field-level гейтом.
+    expect(contract.responses.RunCompareTotalDiff).toEqual([
+      'costRub',
+      'costUsd',
+      'durationMs',
+    ]);
+    expect(actual.RunCompareTotalDiff).toEqual(
+      contract.responses.RunCompareTotalDiff,
     );
   });
 

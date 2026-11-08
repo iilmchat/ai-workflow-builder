@@ -1,7 +1,11 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ru from '@/i18n/ru.json';
-import { fetchWorkflowRunsAsync, type ApiRunSummary } from '@/lib/api';
+import {
+  compareRunsAsync,
+  fetchWorkflowRunsAsync,
+  type ApiRunSummary,
+} from '@/lib/api';
 import { useWorkflowStore } from '@/stores/workflow';
 import { RunHistoryModal } from './RunHistoryModal';
 
@@ -16,7 +20,7 @@ import { RunHistoryModal } from './RunHistoryModal';
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
 
-  return { ...actual, fetchWorkflowRunsAsync: vi.fn() };
+  return { ...actual, fetchWorkflowRunsAsync: vi.fn(), compareRunsAsync: vi.fn() };
 });
 
 /** Сохранённый workflow, чью историю открывает модалка. */
@@ -121,6 +125,7 @@ describe('RunHistoryModal (v0.14 S2; keyset — v0.16 S1)', () => {
 
   afterEach(() => {
     vi.mocked(fetchWorkflowRunsAsync).mockReset();
+    vi.mocked(compareRunsAsync).mockReset();
     vi.restoreAllMocks();
   });
 
@@ -420,5 +425,62 @@ describe('RunHistoryModal (v0.14 S2; keyset — v0.16 S1)', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+
+  it('выбирает два запуска и открывает сравнение (v1.4.0 S2)', async () => {
+    stubPages({
+      runs: [COMPLETED_RUN, FAILED_RUN, PENDING_RUN],
+      nextCursor: null,
+      total: 3,
+    });
+    vi.mocked(compareRunsAsync).mockResolvedValue({
+      run1: COMPLETED_RUN,
+      run2: FAILED_RUN,
+      diffs: {
+        nodeDiffs: [],
+        totalDiff: { durationMs: 1500, costUsd: -0.012345, costRub: 25.5 },
+      },
+    });
+
+    const { container } = renderHistory();
+
+    await screen.findByText('Завершён');
+
+    const compareButton = container.querySelector(
+      '[data-history-compare]',
+    ) as HTMLButtonElement;
+
+    expect(compareButton).toBeDisabled();
+
+    fireEvent.click(
+      container.querySelector(
+        `[data-history-select="${COMPLETED_RUN.id}"]`,
+      ) as HTMLElement,
+    );
+    fireEvent.click(
+      container.querySelector(
+        `[data-history-select="${FAILED_RUN.id}"]`,
+      ) as HTMLElement,
+    );
+
+    expect(compareButton).not.toBeDisabled();
+    // Третий чекбокс блокируется, пока не снят один из выбранных.
+    expect(
+      container.querySelector(
+        `[data-history-select="${PENDING_RUN.id}"]`,
+      ),
+    ).toBeDisabled();
+
+    fireEvent.click(compareButton);
+
+    expect(
+      await screen.findByRole('dialog', {
+        name: ru['compare.title'],
+      }),
+    ).toBeInTheDocument();
+    expect(vi.mocked(compareRunsAsync)).toHaveBeenCalledWith(
+      COMPLETED_RUN.id,
+      FAILED_RUN.id,
+    );
   });
 });

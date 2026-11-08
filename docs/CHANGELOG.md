@@ -29,12 +29,25 @@
   `RunsProcessor` закрывает отменённый запуск `cancelled` без retry;
   кнопка «Отменить» в `TopBar` (`running`), SSE `run_completed` со статусом
   `cancelled`. Новые ограничения — KI-635..637.
+- **Сравнение запусков (v1.4.0 S2, DESIGN V140 § 3.2)**
+  ([отчёт](development/reports/v1.4.0/S2-compare.md)): `GET
+  /runs/:id1/compare/:id2` (JWT, владелец/`editor` для обоих запусков);
+  `RunsService.compareRunsAsync` — объединение `node_runs` по `nodeId`,
+  статусы/длительности/стоимости, diff outputs `{ changed, onlyRun1,
+  onlyRun2 }` с лимитом 100 КБ, суммарные дельты `durationMs`/`costUsd`/
+  `costRub`; контракт `RunCompareResponse`/`NodeDiff`/
+  `RunCompareTotalDiff` в `api-contract.json`; `RunCompareModal` (side-by-side
+  таблица, подсветка красный/зелёный), чекбоксы выбора двух запусков и
+  кнопка «Сравнить» в `RunHistoryModal`. Новые ограничения — KI-638..640.
 
 ### Documented
 
 - **KI-635, KI-636, KI-637:** cooperative cancel, отсутствие
   `run_completed` для отменённого `pending`, недоступность отмены
   `pending` из UI.
+- **KI-638, KI-639, KI-640:** рублёвая стоимость media-узла не видна в
+  поузловом diff, лимит 100 КБ на один diff (не на весь ответ), лишний
+  `cursor` в `run1/run2`.
 
 ## [1.2.0] — 2026-11-06
 
@@ -93,6 +106,14 @@
 ### Documented
 
 - **KI-635..637:** Отмена не прерывает уже выполняющийся узел (cooperative cancel), отмена pending не публикует SSE, UI не отменяет pending.
+
+### Added
+
+- **History Comparison (v1.4.0 S2):** `GET /runs/:id1/compare/:id2` (сравнение двух запусков, editor). `RunCompareModal` — side-by-side таблица с diff outputs, длительности и стоимости. Чекбоксы выбора двух запусков в `RunHistoryModal`.
+
+### Documented
+
+- **KI-638..640:** Стоимость media-узла только в USD (в diff), лимит 100 КБ на один diff, `cursor` в ответе сравнения.
 ## [1.3.0] — 2026-11-06
 
 ### Added
@@ -2647,6 +2668,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 

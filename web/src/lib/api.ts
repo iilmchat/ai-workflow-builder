@@ -11,6 +11,7 @@ import {
 import {
   RunStatusSchema,
   NodeRunSnapshotSchema,
+  NodeRunStatusSchema,
   type NodeRunSnapshot,
 } from '@/types/run-stream';
 // Циклический импорт `api -> auth-api -> api` безопасен: `refreshAsync`
@@ -191,6 +192,65 @@ export const RunHistoryResponseSchema = z.object({
 
 /** История запусков workflow в терминах API. */
 export type ApiRunHistoryResponse = z.infer<typeof RunHistoryResponseSchema>;
+
+/**
+ * Различие одного узла между двумя запусками
+ * (`GET /runs/:id1/compare/:id2`, v1.4.0 S2).
+ *
+ * Зеркало backend `NodeDiff` (`src/runs/dto/run-compare.dto.ts`); паритет
+ * состава полей проверяет `api-contract.spec.ts`. `status1`/`status2` —
+ * статусы узла (`NodeRunStatus`, включая `skipped`), `null` — узла в запуске
+ * не было. `outputsDiff` — готовая JSON-строка diff, уже обрезанная backend'ом
+ * до 100 КБ с пометкой в конце.
+ */
+export const NodeDiffSchema = z.object({
+  nodeId: z.string(),
+  status1: NodeRunStatusSchema.nullable(),
+  status2: NodeRunStatusSchema.nullable(),
+  outputsDiff: z.string().optional(),
+  duration1: z.number().int().nullable(),
+  duration2: z.number().int().nullable(),
+  cost1: z.number().nullable(),
+  cost2: z.number().nullable(),
+});
+
+/** Поузловое различие запусков в терминах API. */
+export type ApiNodeDiff = z.infer<typeof NodeDiffSchema>;
+
+/**
+ * Суммарная разница запусков (`run2 − run1`, v1.4.0 S2).
+ *
+ * `durationMs` — `null`, если хотя бы один запуск не завершён. `costUsd` и
+ * `costRub` — независимые дельты: валюты не смешиваются (RULES 4.23).
+ */
+export const RunCompareTotalDiffSchema = z.object({
+  durationMs: z.number().int().nullable(),
+  costUsd: z.number(),
+  costRub: z.number(),
+});
+
+/** Суммарная разница запусков в терминах API. */
+export type ApiRunCompareTotalDiff = z.infer<
+  typeof RunCompareTotalDiffSchema
+>;
+
+/**
+ * Ответ `GET /runs/:id1/compare/:id2` (v1.4.0 S2, DESIGN V140 § 3.2).
+ *
+ * `run1`/`run2` — та же проекция, что у истории запусков (`RunSummarySchema`),
+ * поэтому UI переиспользует форматирование даты/длительности/стоимости.
+ */
+export const RunCompareResponseSchema = z.object({
+  run1: RunSummarySchema,
+  run2: RunSummarySchema,
+  diffs: z.object({
+    nodeDiffs: z.array(NodeDiffSchema),
+    totalDiff: RunCompareTotalDiffSchema,
+  }),
+});
+
+/** Сравнение двух запусков в терминах API. */
+export type ApiRunCompareResponse = z.infer<typeof RunCompareResponseSchema>;
 
 /**
  * Аннотации MCP-инструмента для UI-бейджей (`RO`, `DESTR`, `IDEM`).
@@ -836,6 +896,32 @@ export async function fetchWorkflowRunsAsync(
   );
 
   return RunHistoryResponseSchema.parse(data);
+}
+
+/**
+ * Сравнивает два запуска workflow (`GET /runs/:id1/compare/:id2`,
+ * v1.4.0 S2, DESIGN V140 § 3.2).
+ *
+ * Доступ проверяется backend'ом для **обоих** запусков с ролью `editor`:
+ * чужой/несуществующий даёт 404, `viewer` — тоже 404 (KI-202). Ответ содержит
+ * оба запуска в проекции истории и поузловые различия; `outputsDiff` уже
+ * обрезан до 100 КБ на узле.
+ *
+ * @param runId1 - uuid первого запуска (левая колонка)
+ * @param runId2 - uuid второго запуска (правая колонка)
+ * @returns сравнение запусков
+ * @throws ApiError при 404 (чужой/несуществующий), сетевой ошибке или
+ *   неожиданном формате ответа
+ */
+export async function compareRunsAsync(
+  runId1: string,
+  runId2: string,
+): Promise<ApiRunCompareResponse> {
+  const data = await requestAsync<unknown>(
+    `/runs/${encodeURIComponent(runId1)}/compare/${encodeURIComponent(runId2)}`,
+  );
+
+  return RunCompareResponseSchema.parse(data);
 }
 
 /**

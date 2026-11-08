@@ -31,7 +31,12 @@ import {
   type RunHistoryResponse,
 } from './dto/index.js';
 import type { RunBudgetResponse } from './dto/run-budget.dto.js';
-import { RunsService, type CancelRunResponse, type RunResponse } from './runs.service.js';
+import {
+  RunsService,
+  type CancelRunResponse,
+  type RunResponse,
+} from './runs.service.js';
+import type { RunCompareResponse } from './dto/index.js';
 import { RunsStreamService } from './runs-stream.service.js';
 
 /** Zod-схема path-параметра `:id`. */
@@ -41,6 +46,22 @@ const RunIdParamSchema = z.object({
 
 /** Валидированный path-параметр `:id`. */
 type RunIdParamDto = z.infer<typeof RunIdParamSchema>;
+
+/**
+ * Zod-схема path-параметров сравнения запусков
+ * (`GET /runs/:id1/compare/:id2`, v1.4.0 S2).
+ *
+ * Оба параметра — uuid запусков. Схема отдельная, а не два `RunIdParamSchema`:
+ * в ошибке 400 должно быть понятно, какой именно идентификатор некорректен
+ * (`id1`/`id2`), а не обезличенный `id`.
+ */
+const CompareRunsParamSchema = z.object({
+  id1: z.uuid('id1 должен быть валидным UUID'),
+  id2: z.uuid('id2 должен быть валидным UUID'),
+});
+
+/** Валидированные path-параметры сравнения запусков. */
+type CompareRunsParamDto = z.infer<typeof CompareRunsParamSchema>;
 
 /**
  * Zod-схема path-параметра `:id` истории запусков workflow
@@ -121,6 +142,38 @@ export class RunsController {
     @CurrentUser() user: JwtPayload,
   ): Promise<CancelRunResponse> {
     return this.runsService.cancelRunAsync(params.id, toWorkflowAccess(user));
+  }
+
+  /**
+   * `GET /runs/:id1/compare/:id2` — сравнение двух запусков (v1.4.0 S2,
+   * DESIGN V140 § 3.2).
+   *
+   * Отдаёт оба запуска в лёгкой проекции истории и поузловые различия:
+   * статусы, длительности, стоимости (USD) и diff outputs. Доступ проверяется
+   * для **обоих** запусков с ролью `editor`; чужой/несуществующий — 404
+   * (KI-202). `Cache-Control: no-store` — данные авторизованные.
+   *
+   * `outputsDiff` ограничен 100 КБ на узел; обрезка помечается в конце строки
+   * (DESIGN § 7). Ручка не меняет состояние — только читает.
+   *
+   * @param params - path-параметры `id1`/`id2` (uuid запусков)
+   * @param user - пользователь и его организация из access-токена
+   * @returns запуски и различия (`nodeDiffs`, `totalDiff`)
+   * @throws NotFoundException если хотя бы один запуск не найден, чужой,
+   *   другой организации или доступен только `viewer`
+   */
+  @Get(':id1/compare/:id2')
+  @Header('Cache-Control', 'no-store')
+  async compare(
+    @Param(ZodValidationPipe.create(CompareRunsParamSchema))
+    params: CompareRunsParamDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<RunCompareResponse> {
+    return this.runsService.compareRunsAsync(
+      params.id1,
+      params.id2,
+      toWorkflowAccess(user),
+    );
   }
 
   /**

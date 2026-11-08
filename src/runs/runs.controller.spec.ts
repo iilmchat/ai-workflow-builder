@@ -90,6 +90,7 @@ describe('RunsController', () => {
   let service: {
     createRunAsync: ReturnType<typeof vi.fn>;
     cancelRunAsync: ReturnType<typeof vi.fn>;
+    compareRunsAsync: ReturnType<typeof vi.fn>;
     getRunAsync: ReturnType<typeof vi.fn>;
     getRunRowAsync: ReturnType<typeof vi.fn>;
     listNodeRunsAsync: ReturnType<typeof vi.fn>;
@@ -110,6 +111,17 @@ describe('RunsController', () => {
       createRunAsync: vi.fn(() => Promise.resolve(runResponse)),
       // v1.4.0 S1: отмена запуска.
       cancelRunAsync: vi.fn(() => Promise.resolve({ status: 'cancelled' })),
+      // v1.4.0 S2: сравнение двух запусков.
+      compareRunsAsync: vi.fn(() =>
+        Promise.resolve({
+          run1: historyResponse.runs[0],
+          run2: historyResponse.runs[0],
+          diffs: {
+            nodeDiffs: [],
+            totalDiff: { durationMs: 0, costUsd: 0, costRub: 0 },
+          },
+        }),
+      ),
       getRunAsync: vi.fn(() => Promise.resolve(runResponse)),
       // KI-450: ручка бюджета проверяет существование строкой запуска, не
       // читая `node_runs` (поллинг после каждого узла).
@@ -293,6 +305,61 @@ describe('RunsController', () => {
         .expect(401);
 
       expect(service.cancelRunAsync).not.toHaveBeenCalled();
+    });
+  });
+
+  // v1.4.0 S2 (DESIGN V140 § 3.2): GET /runs/:id1/compare/:id2.
+  describe('compare', () => {
+    /** Второй запуск для path-параметра. */
+    const RUN_2_ID = '77777777-7777-4777-8777-777777777777';
+
+    it('GET /runs/:id1/compare/:id2 отвечает 200 и передаёт access', async () => {
+      const response = await request(app.getHttpServer())
+        .get(`/runs/${RUN_ID}/compare/${RUN_2_ID}`)
+        .expect(200)
+        .expect('Cache-Control', 'no-store');
+
+      expect(service.compareRunsAsync).toHaveBeenCalledWith(
+        RUN_ID,
+        RUN_2_ID,
+        ACCESS,
+      );
+      expect(response.body.diffs.totalDiff).toEqual({
+        durationMs: 0,
+        costUsd: 0,
+        costRub: 0,
+      });
+    });
+
+    it('GET /runs/:id1/compare/:id2 чужого запуска отвечает 404', async () => {
+      service.compareRunsAsync.mockRejectedValue(
+        new NotFoundException('Запуск не найден'),
+      );
+
+      await request(app.getHttpServer())
+        .get(`/runs/${RUN_ID}/compare/${RUN_2_ID}`)
+        .expect(404);
+    });
+
+    it('GET /runs/:id1/compare/:id2 с невалидным uuid отвечает 400', async () => {
+      await request(app.getHttpServer())
+        .get(`/runs/not-a-uuid/compare/${RUN_2_ID}`)
+        .expect(400);
+      await request(app.getHttpServer())
+        .get(`/runs/${RUN_ID}/compare/not-a-uuid`)
+        .expect(400);
+
+      expect(service.compareRunsAsync).not.toHaveBeenCalled();
+    });
+
+    it('GET /runs/:id1/compare/:id2 отвечает 401 без токена', async () => {
+      authDisabled = false;
+
+      await request(app.getHttpServer())
+        .get(`/runs/${RUN_ID}/compare/${RUN_2_ID}`)
+        .expect(401);
+
+      expect(service.compareRunsAsync).not.toHaveBeenCalled();
     });
   });
 

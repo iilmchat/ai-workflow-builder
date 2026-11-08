@@ -9,18 +9,22 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import type { JobType, Queue } from 'bullmq';
-import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
+import { isDeepStrictEqual } from 'node:util';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   nodeRuns,
   workflowRuns,
   workflows,
   TERMINAL_WORKFLOW_RUN_STATUSES,
+  type NodeRunStatus,
   type RunStatus,
   type WorkflowRun,
 } from '../db/schema.js';
 import type {
+  NodeDiff,
   NodeRunSnapshot,
+  RunCompareResponse,
   RunHistoryCursor,
   RunHistoryResponse,
   RunSummary,
@@ -28,6 +32,7 @@ import type {
 import type { CreateRunDto, ExecuteRunJobDto } from './dto/index.js';
 import {
   encodeRunHistoryCursor,
+  MAX_COMPARE_DIFF_BYTES,
   MAX_RUN_HISTORY_LIMIT,
 } from './dto/index.js';
 import {
@@ -117,6 +122,30 @@ interface RunCostRow {
   /** `sum(node_runs.cost_usd)` строкой. */
   costUsd: string | null;
   /** `sum(node_runs.cost_rub)` строкой. */
+  costRub: string | null;
+}
+
+/**
+ * Строка `node_runs`, нужная сравнению запусков (v1.4.0 S2).
+ *
+ * Проекция узкая: `outputs` для diff, `status`/`duration_ms`/стоимости для
+ * таблицы. `snapshot`/`inputs`/`logs` не читаются — сравнение не должно
+ * тянуть мегабайты логов.
+ */
+interface CompareNodeRow {
+  /** uuid запуска, к которому относится строка. */
+  runId: string;
+  /** `id` узла внутри snapshot. */
+  nodeId: string;
+  /** Статус выполнения узла. */
+  status: NodeRunStatus;
+  /** Выходы узла (JSONB) либо `null`, если узел ещё не завершался. */
+  outputs: Record<string, unknown> | null;
+  /** Длительность узла, мс; `null` — узел не завершён. */
+  durationMs: number | null;
+  /** Стоимость узла в USD строкой (RULES 4.23). */
+  costUsd: string | null;
+  /** Стоимость узла в рублях строкой. */
   costRub: string | null;
 }
 
@@ -543,6 +572,134 @@ export class RunsService {
   }
 
   /**
+   * Сравнивает два запуска workflow (`GET /runs/:id1/compare/:id2`,
+   * v1.4.0 S2, DESIGN V140 § 3.2).
+   *
+   * **Права.** Сравнение — операция чтения, но запуски содержат outputs,
+   * поэтому доступ проверяется для **обоих** запусков с ролью `editor`
+   * (R7.6, как у истории и отмены). Чужой/несуществующий запуск неотличим от
+   * отсутствующего — 404 (KI-202), без раскрытия факта существования.
+   *
+   * **Что сравнивается.** Объединение `node_runs` обоих запусков по `nodeId`:
+   * - `status1`/`status2` — статусы узла (`completed`/`failed`/`skipped`/…);
+   * - `duration1`/`duration2` — `node_runs.duration_ms`;
+   * - `cost1`/`cost2` — `node_runs.cost_usd` (USD; рублёвые суммы media — в
+   *   `totalDiff.costRub`, RULES 4.23);
+   * - `outputsDiff` — `{ changed, onlyRun1, onlyRun2 }` в JSON, только если
+   *   выходы различаются. Строка обрезается до
+   *   {@link MAX_COMPARE_DIFF_BYTES} (100 КБ) с пометкой в конце.
+   *
+   * `run1`/`run2` — проекция {@link RunSummary}; суммы считаются по тем же
+   * `node_runs`, что и diff, поэтому отдельного агрегата не требуется.
+   *
+   * @param id1 - uuid первого запуска (левая колонка UI)
+   * @param id2 - uuid второго запуска (правая колонка UI)
+   * @param access - пользователь и его организация из access-токена
+   * @returns запуски и поузловые/суммарные различия
+   * @throws NotFoundException если хотя бы один запуск не найден, чужой,
+   *   принадлежит другой организации или доступен только `viewer`
+   */
+  async compareRunsAsync(
+    id1: string,
+    id2: string,
+    access: WorkflowAccess,
+  ): Promise<RunCompareResponse> {
+    // Запуски независимы — читаем параллельно (RULES 4.17). Каждый вызов
+    // проверяет доступ `editor`: сравнение отдаёт outputs, поэтому `viewer`
+    // не должен получать даже косвенную информацию о содержимом.
+    const [run1, run2] = await Promise.all([
+      this.getRunRowAsync(id1, access, 'editor'),
+      this.getRunRowAsync(id2, access, 'editor'),
+    ]);
+
+    const rows = await this.db
+      .select({
+        runId: nodeRuns.runId,
+        nodeId: nodeRuns.nodeId,
+        status: nodeRuns.status,
+        outputs: nodeRuns.outputs,
+        durationMs: nodeRuns.durationMs,
+        costUsd: nodeRuns.costUsd,
+        costRub: nodeRuns.costRub,
+      })
+      .from(nodeRuns)
+      .where(inArray(nodeRuns.runId, [id1, id2]))
+      // Детерминированный порядок таблицы: diff двух запусков не должен
+      // «прыгать» между запросами из-за порядка строк в БД.
+      .orderBy(asc(nodeRuns.nodeId));
+
+    const run1Rows = new Map<string, CompareNodeRow>();
+    const run2Rows = new Map<string, CompareNodeRow>();
+
+    for (const row of rows) {
+      const target = row.runId === id1 ? run1Rows : run2Rows;
+      target.set(row.nodeId, row);
+    }
+
+    // Объединение узлов, а не пересечение: узел, который был только в одном
+    // запуске (граф изменился/запуск остановился раньше), — тоже различие.
+    const nodeIds = [...new Set(rows.map((row) => row.nodeId))].sort((a, b) =>
+      a.localeCompare(b),
+    );
+    const nodeDiffs = nodeIds.map((nodeId) =>
+      buildNodeDiff(nodeId, run1Rows.get(nodeId), run2Rows.get(nodeId)),
+    );
+
+    const cost1 = sumNodeCost(Array.from(run1Rows.values()), 'costUsd');
+    const costRub1 = sumNodeCost(Array.from(run1Rows.values()), 'costRub');
+    const cost2 = sumNodeCost(Array.from(run2Rows.values()), 'costUsd');
+    const costRub2 = sumNodeCost(Array.from(run2Rows.values()), 'costRub');
+
+    const summary1 = toRunSummary(
+      {
+        id: run1.id,
+        status: run1.status,
+        createdAt: run1.createdAt,
+        startedAt: run1.startedAt,
+        finishedAt: run1.finishedAt,
+      },
+      {
+        runId: run1.id,
+        costUsd: String(cost1),
+        costRub: String(costRub1),
+      },
+    );
+    const summary2 = toRunSummary(
+      {
+        id: run2.id,
+        status: run2.status,
+        createdAt: run2.createdAt,
+        startedAt: run2.startedAt,
+        finishedAt: run2.finishedAt,
+      },
+      {
+        runId: run2.id,
+        costUsd: String(cost2),
+        costRub: String(costRub2),
+      },
+    );
+
+    return {
+      run1: summary1,
+      run2: summary2,
+      diffs: {
+        nodeDiffs,
+        totalDiff: {
+          // null, если хотя бы один запуск ещё не завершён: вычитать
+          // «неизвестно» из числа нельзя (в отличие от стоимости, которая
+          // всегда агрегируется по существующим node_runs).
+          durationMs:
+            summary1.durationMs === null || summary2.durationMs === null
+              ? null
+              : summary2.durationMs - summary1.durationMs,
+          costUsd: cost2 - cost1,
+          costRub: costRub2 - costRub1,
+        },
+      },
+    };
+  }
+
+  /**
    * Возвращает строку `workflow_runs` целиком — без проекции в публичный ответ.
    *
    * Нужна SSE-снимку (KI-347) и `GET /runs/:id/nodes`: первый отдаёт `error`
@@ -683,6 +840,151 @@ export class RunsService {
       error: run.error,
     };
   }
+}
+
+/**
+ * Маркер обрезанного `outputsDiff` (v1.4.0 S2).
+ *
+ * Пишется в конец строки: клиент видит, что diff неполный, а не думает, что
+ * outputs закончились. Входит в лимит {@link MAX_COMPARE_DIFF_BYTES}.
+ */
+const DIFF_TRUNCATED_MARKER = '\n… [diff обрезан: лимит 100 КБ]';
+
+/**
+ * Проверяет, что значение из JSONB — обычный объект.
+ *
+ * `node_runs.outputs` в схеме типизирован объектом, но исторические/битые
+ * строки могут содержать массив или скаляр; сравнение приводит их к `{}`,
+ * чтобы не падать на `Object.keys(null)`.
+ *
+ * @param value - значение из JSONB
+ * @returns `true`, если значение можно читать как `Record<string, unknown>`
+ */
+function isPlainOutputs(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Собирает diff выходов одного узла (v1.4.0 S2).
+ *
+ * Формат `{ changed, onlyRun1, onlyRun2 }` вместо полной копии обоих outputs:
+ * так строка короче и пользователь сразу видит, **что** изменилось, а не
+ * ищет различие в двух JSON-полотнах. Ключи сортируются — diff стабилен между
+ * запросами.
+ *
+ * @param outputs1 - outputs узла в первом запуске либо `null`
+ * @param outputs2 - outputs узла во втором запуске либо `null`
+ * @returns JSON-строка diff либо `undefined`, если выходы совпали
+ */
+function buildOutputsDiff(
+  outputs1: Record<string, unknown> | null,
+  outputs2: Record<string, unknown> | null,
+): string | undefined {
+  const left = isPlainOutputs(outputs1) ? outputs1 : {};
+  const right = isPlainOutputs(outputs2) ? outputs2 : {};
+
+  if (isDeepStrictEqual(left, right)) {
+    return undefined;
+  }
+
+  const changed: Record<string, { run1: unknown; run2: unknown }> = {};
+  const onlyRun1: Record<string, unknown> = {};
+  const onlyRun2: Record<string, unknown> = {};
+
+  for (const key of [...new Set([...Object.keys(left), ...Object.keys(right)])].sort()) {
+    const inLeft = Object.hasOwn(left, key);
+    const inRight = Object.hasOwn(right, key);
+
+    if (inLeft && inRight) {
+      if (!isDeepStrictEqual(left[key], right[key])) {
+        changed[key] = { run1: left[key], run2: right[key] };
+      }
+    } else if (inLeft) {
+      onlyRun1[key] = left[key];
+    } else {
+      onlyRun2[key] = right[key];
+    }
+  }
+
+  return truncateDiff(
+    JSON.stringify({ changed, onlyRun1, onlyRun2 }, null, 2),
+  );
+}
+
+/**
+ * Обрезает diff до 100 КБ, сохраняя маркер целиком (v1.4.0 S2).
+ *
+ * Режется по **границе code unit строки** с бинарным поиском, а не по срезу
+ * `Buffer`: так итоговый размер не превышает лимит даже для кириллицы и
+ * эмодзи (у них разная длина в байтах и code units). Маркер входит в лимит —
+ * иначе ответ был бы на несколько десятков байт больше заявленного.
+ *
+ * @param text - полная JSON-строка diff
+ * @returns исходная строка либо обрезанная с {@link DIFF_TRUNCATED_MARKER}
+ */
+function truncateDiff(text: string): string {
+  if (Buffer.byteLength(text, 'utf8') <= MAX_COMPARE_DIFF_BYTES) {
+    return text;
+  }
+
+  const markerBytes = Buffer.byteLength(DIFF_TRUNCATED_MARKER, 'utf8');
+  const budget = MAX_COMPARE_DIFF_BYTES - markerBytes;
+  let low = 0;
+  let high = text.length;
+
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+
+    if (Buffer.byteLength(text.slice(0, middle), 'utf8') <= budget) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+
+  return `${text.slice(0, low)}${DIFF_TRUNCATED_MARKER}`;
+}
+
+/**
+ * Собирает различие одного узла между запусками.
+ *
+ * @param nodeId - `id` узла
+ * @param row1 - строка `node_runs` первого запуска либо `undefined`
+ * @param row2 - строка `node_runs` второго запуска либо `undefined`
+ * @returns поузловое различие для ответа API
+ */
+function buildNodeDiff(
+  nodeId: string,
+  row1: CompareNodeRow | undefined,
+  row2: CompareNodeRow | undefined,
+): NodeDiff {
+  return {
+    nodeId,
+    status1: row1?.status ?? null,
+    status2: row2?.status ?? null,
+    outputsDiff: buildOutputsDiff(row1?.outputs ?? null, row2?.outputs ?? null),
+    duration1: row1?.durationMs ?? null,
+    duration2: row2?.durationMs ?? null,
+    cost1: row1 === undefined ? null : toAmount(row1.costUsd),
+    cost2: row2 === undefined ? null : toAmount(row2.costUsd),
+  };
+}
+
+/**
+ * Суммирует стоимость узлов запуска в указанной валюте.
+ *
+ * `node_runs.cost_usd`/`cost_rub` — `numeric`, Drizzle отдаёт их строкой
+ * (RULES 4.23); `toAmount` приводит к числу и гасит `null` в `0`.
+ *
+ * @param rows - строки `node_runs` одного запуска
+ * @param field - колонка валюты (`costUsd`/`costRub`)
+ * @returns сумма в валюте колонки
+ */
+function sumNodeCost(
+  rows: readonly CompareNodeRow[],
+  field: 'costUsd' | 'costRub',
+): number {
+  return rows.reduce((sum, row) => sum + toAmount(row[field]), 0);
 }
 
 /**

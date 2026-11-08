@@ -100,6 +100,14 @@ const RUNS_SERVICE_PATH = join(SPEC_DIR, '..', 'runs.service.ts');
  */
 const RUN_HISTORY_DTO_PATH = join(SPEC_DIR, 'run-history.dto.ts');
 
+/**
+ * Файл с `RunCompareResponse`/`NodeDiff` (`GET /runs/:id1/compare/:id2`,
+ * v1.4.0 S2).
+ *
+ * Оба DTO — TS-интерфейсы; поля читаются компилятором, как у `RunResponse`.
+ */
+const RUN_COMPARE_DTO_PATH = join(SPEC_DIR, 'run-compare.dto.ts');
+
 /** Файл с `ShareTokenDto` и `SharedWorkflow` (`/workflow/:id/share`, `/workflow/share/:token`). */
 const SHARE_DTO_PATH = join(SPEC_DIR, '..', '..', 'workflow', 'dto', 'share-workflow.dto.ts');
 
@@ -229,6 +237,26 @@ const DTO_SOURCES: Record<string, DtoSource> = {
     kind: 'interface',
     path: RUN_HISTORY_DTO_PATH,
     label: 'src/runs/dto/run-history.dto.ts',
+  },
+  // v1.4.0 S2 (DESIGN V140 § 3.2): сравнение двух запусков — ответ и
+  // поузловой diff. Оба DTO — TS-интерфейсы, поэтому поля читаются
+  // компилятором TypeScript.
+  RunCompareResponse: {
+    kind: 'interface',
+    path: RUN_COMPARE_DTO_PATH,
+    label: 'src/runs/dto/run-compare.dto.ts',
+  },
+  NodeDiff: {
+    kind: 'interface',
+    path: RUN_COMPARE_DTO_PATH,
+    label: 'src/runs/dto/run-compare.dto.ts',
+  },
+  // Суммарные дельты — отдельный вложенный DTO: поля `durationMs`/`costUsd`/
+  // `costRub` гейтятся так же, как остальные ответы.
+  RunCompareTotalDiff: {
+    kind: 'interface',
+    path: RUN_COMPARE_DTO_PATH,
+    label: 'src/runs/dto/run-compare.dto.ts',
   },
   // R7.1 (KI-048): бюджет запуска — отдельный REST-ответ, зеркало в web —
   // `ApiRunBudgetSchema` (`web/src/lib/api.ts`).
@@ -1055,5 +1083,41 @@ describe('REST-контракт: backend DTO ↔ docs/development/api-contract.j
     // иначе гейт молча потребовал бы зеркала всех LLM-ответов.
     expect(Object.keys(contract.responses)).not.toContain('LlmModelInfo');
     expect(Object.keys(contract.responses)).not.toContain('MediaModelInfo');
+  });
+
+  it('RunCompareResponse/NodeDiff описаны и совпадают с DTO (v1.4.0 S2)', async () => {
+    const contract = await readContractAsync();
+    const actual = await actualContractAsync();
+
+    // Ответ сравнения: два запуска в проекции истории и блок diffs.
+    expect(contract.responses.RunCompareResponse).toEqual([
+      'diffs',
+      'run1',
+      'run2',
+    ]);
+    // Поузловой diff: `outputsDiff` необязателен на уровне значения, но поле
+    // обязано присутствовать в контракте — иначе UI не увидит diff outputs.
+    expect(contract.responses.NodeDiff).toEqual([
+      'cost1',
+      'cost2',
+      'duration1',
+      'duration2',
+      'nodeId',
+      'outputsDiff',
+      'status1',
+      'status2',
+    ]);
+    expect(actual.RunCompareResponse).toEqual(
+      contract.responses.RunCompareResponse,
+    );
+    expect(actual.NodeDiff).toEqual(contract.responses.NodeDiff);
+    expect(contract.responses.RunCompareTotalDiff).toEqual([
+      'costRub',
+      'costUsd',
+      'durationMs',
+    ]);
+    expect(actual.RunCompareTotalDiff).toEqual(
+      contract.responses.RunCompareTotalDiff,
+    );
   });
 });
