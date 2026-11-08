@@ -6,14 +6,16 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
-import type { Queue } from 'bullmq';
+import type { JobType, Queue } from 'bullmq';
 import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   nodeRuns,
   workflowRuns,
   workflows,
+  TERMINAL_WORKFLOW_RUN_STATUSES,
   type RunStatus,
   type WorkflowRun,
 } from '../db/schema.js';
@@ -60,6 +62,18 @@ export interface RunResponse {
   createdAt: Date;
   /** Текст ошибки запуска (`workflow_runs.error`); `null` — ошибки не было. */
   error: string | null;
+}
+
+/**
+ * Ответ `POST /runs/:id/cancel` (v1.4.0 S1, DESIGN V140 § 3.1).
+ *
+ * Отдельный минимальный DTO, а не `RunResponse`: ручка не отдаёт строку
+ * запуска (в ней нет ничего полезного клиенту — `cancelled_at` и так станет
+ * известен из SSE/`GET /runs/:id`), а сообщает только факт отмены.
+ */
+export interface CancelRunResponse {
+  /** Итоговый статус отменённого запуска. */
+  status: 'cancelled';
 }
 
 /**
@@ -179,10 +193,19 @@ export class RunsService {
     try {
       // KI-387: маркер инстанса в payload. Воркер чужого инстанса пропустит
       // задание, даже если оба процесса смотрят в одну очередь Redis.
-      await this.queue.add(EXECUTE_RUN_JOB, {
-        runId: run.id,
-        instanceId: RUNS_INSTANCE_ID,
-      });
+      //
+      // v1.4.0 S1: `jobId` = uuid запуска. Это даёт отмене прямую адресацию
+      // задания (`queue.getJob(runId)`), не перебирая всю очередь. UUID
+      // безопасен как jobId (BullMQ запрещает только `:`), а повторная
+      // постановка того же запуска невозможна — uuid уникален.
+      await this.queue.add(
+        EXECUTE_RUN_JOB,
+        {
+          runId: run.id,
+          instanceId: RUNS_INSTANCE_ID,
+        },
+        { jobId: run.id },
+      );
     } catch (error: unknown) {
       const reason = error instanceof Error ? error.message : String(error);
 
@@ -224,6 +247,113 @@ export class RunsService {
     const run = await this.getRunRowAsync(id, access);
 
     return this.toRunResponse(run);
+  }
+
+  /**
+   * Отменяет запуск workflow (`POST /runs/:id/cancel`, v1.4.0 S1).
+   *
+   * **Права.** Отменить может владелец workflow или участник с ролью `editor`
+   * (R7.6 — та же роль, что у запуска). Viewer и запуск чужой организации
+   * неотличимы от несуществующего — 404, чтобы не раскрывать факт
+   * существования (KI-202). Проверка выполняется **до** любых записей:
+   * `getRunRowAsync` с `minimumRole = 'editor'` уже отфильтровал чужое.
+   *
+   * **Семантика по статусам.**
+   * - `pending` — BullMQ ещё не взял задание: запуск сразу становится
+   *   `cancelled`, `cancelled_at`/`finished_at` = now(), а задание удаляется из
+   *   очереди. Движок его не увидит вовсе.
+   * - `running` — прерывать процесс из HTTP-запроса нельзя: движок живёт в
+   *   worker'е. Поэтому ставится только `cancelled_at`, а
+   *   `ExecutionEngineService` замечает флаг перед следующим уровнем/узлом,
+   *   бросает `RunCancelledException`, и `RunsProcessor` закрывает запуск
+   *   `cancelled` (событие `run_completed` со статусом `cancelled`).
+   * - `completed`/`failed`/`cancelled` — терминальные: 409 Conflict. Отменять
+   *   завершённый запуск нечем, а 409 честнее 200, который ничего не сделал.
+   *
+   * **Гонка `pending → running`.** UPDATE ограничен условием
+   * `status = <прочитанный>`, поэтому строка не будет перезаписана, если
+   * worker успел сменить статус между SELECT и UPDATE. Если `pending`-ветка
+   * проиграла гонку, метод перечитывает строку и обрабатывает её как
+   * `running`. Окончательный арбитр — флаг `cancelled_at`: движок проверяет
+   * его независимо от того, кто выиграл гонку.
+   *
+   * @param id - uuid запуска
+   * @param access - пользователь и его организация из access-токена
+   * @returns `{ status: 'cancelled' }`
+   * @throws NotFoundException если запуск не найден, чужой, другой организации
+   *   или пользователь — только `viewer`
+   * @throws ConflictException если запуск уже терминальный
+   */
+  async cancelRunAsync(
+    id: string,
+    access: WorkflowAccess,
+  ): Promise<CancelRunResponse> {
+    const run = await this.getRunRowAsync(id, access, 'editor');
+
+    if (isTerminalRunStatus(run.status)) {
+      throw new ConflictException(
+        `Запуск ${id} уже завершён (status=${run.status}) — отмена невозможна`,
+      );
+    }
+
+    if (run.status === 'pending') {
+      const cancelledAt = new Date();
+
+      // Условие `status = 'pending'` — защита от гонки с воркером: если он
+      // уже перевёл запуск в `running`, этот UPDATE не тронет строку, и ниже
+      // сработает ветка running.
+      const cancelledPending = await this.db
+        .update(workflowRuns)
+        .set({
+          status: 'cancelled',
+          cancelledAt,
+          finishedAt: cancelledAt,
+        })
+        .where(and(eq(workflowRuns.id, id), eq(workflowRuns.status, 'pending')))
+        .returning({ id: workflowRuns.id });
+
+      if (cancelledPending.length > 0) {
+        // v1.4.0 S1: pending-задание ещё лежит в Redis — удаляем его, чтобы
+        // worker не начал выполнение уже отменённого запуска. Сбой удаления
+        // не отменяет отмену: статус уже `cancelled`, а движок дополнительно
+        // проверит флаг.
+        await this.removeQueuedJobAsync(id);
+
+        this.logger.log(`Запуск ${id} отменён до старта (pending)`);
+
+        return { status: 'cancelled' };
+      }
+
+      const current = await this.getRunRowAsync(id, access, 'editor');
+
+      if (isTerminalRunStatus(current.status)) {
+        throw new ConflictException(
+          `Запуск ${id} уже завершён (status=${current.status}) — отмена невозможна`,
+        );
+      }
+    }
+
+    // running (штатная ветка либо проигранная гонка из pending): ставим
+    // только флаг. Статус и событие — за движком и RunsProcessor.
+    const cancelledRunning = await this.db
+      .update(workflowRuns)
+      .set({ cancelledAt: new Date() })
+      .where(and(eq(workflowRuns.id, id), eq(workflowRuns.status, 'running')))
+      .returning({ id: workflowRuns.id });
+
+    if (cancelledRunning.length === 0) {
+      // Запуск успел завершиться между SELECT и UPDATE: отменять нечего.
+      // Честный 409 вместо 200, который ничего не сделал.
+      const current = await this.getRunRowAsync(id, access, 'editor');
+
+      throw new ConflictException(
+        `Запуск ${id} уже завершён (status=${current.status}) — отмена невозможна`,
+      );
+    }
+
+    this.logger.log(`Запуск ${id}: запрошена отмена во время выполнения`);
+
+    return { status: 'cancelled' };
   }
 
   /**
@@ -428,11 +558,17 @@ export class RunsService {
    * @param id - uuid запуска
    * @param access - пользователь и его организация из access-токена
    *   (необязательный: без него фильтр доступа не применяется)
+   * @param minimumRole - минимальная роль участника workflow (v1.4.0 S1):
+   *   чтение — `viewer` (дефолт), отмена запуска — `editor`
    * @returns строка таблицы `workflow_runs`
    * @throws NotFoundException если запуск не найден, принадлежит другому
    *   пользователю или другой организации
    */
-  async getRunRowAsync(id: string, access?: WorkflowAccess): Promise<WorkflowRun> {
+  async getRunRowAsync(
+    id: string,
+    access?: WorkflowAccess,
+    minimumRole: 'viewer' | 'editor' = 'viewer',
+  ): Promise<WorkflowRun> {
     const [run] = await this.db
       .select()
       .from(workflowRuns)
@@ -449,7 +585,7 @@ export class RunsService {
               // не проходит фильтр.
               inArray(
                 workflowRuns.workflowId,
-                accessibleWorkflowIdsSubquery(this.db, access),
+                accessibleWorkflowIdsSubquery(this.db, access, minimumRole),
               ),
             ),
       )
@@ -460,6 +596,51 @@ export class RunsService {
     }
 
     return run;
+  }
+
+  /**
+   * Удаляет задание запуска из BullMQ «по возможности» (v1.4.0 S1).
+   *
+   * Сначала используется прямой адрес: с v1.4.0 `queue.add` ставит
+   * `jobId = run.id`. Для заданий, поставленных до обновления (у них
+   * сгенерированный BullMQ id), выполняется запасной поиск по payload
+   * `data.runId` среди ожидающих/отложенных заданий — иначе отмена
+   * `pending`-запуска после деплоя не убрала бы старое задание.
+   *
+   * Сбой Redis **не отменяет отмену**: статус уже `cancelled`, а движок
+   * проверит `cancelled_at` перед первым уровнем и всё равно остановится
+   * (RULES 4.18 — ошибку не проглатываем, а логируем).
+   *
+   * @param runId - uuid запуска, чьё задание нужно удалить
+   * @returns промис без значения
+   */
+  private async removeQueuedJobAsync(runId: string): Promise<void> {
+    try {
+      const job = await this.queue.getJob(runId);
+
+      if (job !== null && job !== undefined) {
+        await job.remove();
+
+        return;
+      }
+
+      // Запасной путь для заданий без кастомного jobId (поставлены до
+      // v1.4.0). Перебираются только состояния, из которых задание ещё не
+      // начало выполняться.
+      const pendingStates: JobType[] = ['waiting', 'delayed', 'prioritized'];
+      const jobs = await this.queue.getJobs(pendingStates);
+      const match = jobs.find((candidate) => candidate.data?.runId === runId);
+
+      if (match !== undefined) {
+        await match.remove();
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      this.logger.error(
+        `Не удалось удалить задание запуска ${runId} из очереди: ${message}`,
+      );
+    }
   }
 
   /**
@@ -502,6 +683,20 @@ export class RunsService {
       error: run.error,
     };
   }
+}
+
+/**
+ * Проверяет, что запуск уже завершён и отменять нечего (v1.4.0 S1).
+ *
+ * Единственный источник списка — {@link TERMINAL_WORKFLOW_RUN_STATUSES}: если
+ * добавят новый финальный статус, `cancelRunAsync` получит 409 без правки
+ * метода.
+ *
+ * @param status - статус запуска из `workflow_runs.status`
+ * @returns `true` для `completed`, `failed` и `cancelled`
+ */
+function isTerminalRunStatus(status: RunStatus): boolean {
+  return TERMINAL_WORKFLOW_RUN_STATUSES.some((terminal) => terminal === status);
 }
 
 /**

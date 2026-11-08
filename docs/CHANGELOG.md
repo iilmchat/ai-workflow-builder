@@ -17,6 +17,25 @@
 ---
 ## [Unreleased]
 
+### Added
+
+- **Отмена запуска (v1.4.0 S1, DESIGN V140 § 3.1)**
+  ([отчёт](development/reports/v1.4.0/S1-cancel.md)): миграция
+  `0019_plain_kang.sql` — `workflow_runs.cancelled_at`; `POST
+  /runs/:id/cancel` (JWT, владелец/`editor`); `RunsService.cancelRunAsync`
+  (pending → `cancelled` + удаление job, running → только `cancelled_at`,
+  терминальные → 409, чужие → 404); `RunCancelledException` и проверки
+  `cancelled_at` перед каждым уровнем/узлом в `ExecutionEngineService`;
+  `RunsProcessor` закрывает отменённый запуск `cancelled` без retry;
+  кнопка «Отменить» в `TopBar` (`running`), SSE `run_completed` со статусом
+  `cancelled`. Новые ограничения — KI-635..637.
+
+### Documented
+
+- **KI-635, KI-636, KI-637:** cooperative cancel, отсутствие
+  `run_completed` для отменённого `pending`, недоступность отмены
+  `pending` из UI.
+
 ## [1.2.0] — 2026-11-06
 
 **Minor-релиз: LLM Router & SMTP Retry (GPU Integration).**
@@ -66,6 +85,14 @@
 
 - **KI-592..616.**
 
+
+### Added
+
+- **Cancel Run (v1.4.0 S1):** `POST /runs/:id/cancel` (JWT, owner/editor). Миграция `0019_plain_kang.sql` (`cancelled_at`). Движок проверяет флаг перед каждым уровнем/узлом, бросает `RunCancelledException` (non-retryable). SSE `run_completed` принимает `status: 'cancelled'`. UI: кнопка «Отменить» в TopBar при `running`.
+
+### Documented
+
+- **KI-635..637:** Отмена не прерывает уже выполняющийся узел (cooperative cancel), отмена pending не публикует SSE, UI не отменяет pending.
 ## [1.3.0] — 2026-11-06
 
 ### Added
@@ -2620,6 +2647,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 

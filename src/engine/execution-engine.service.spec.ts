@@ -42,7 +42,7 @@ import {
   type SubWorkflowAccess,
   type SubWorkflowRecord,
 } from './node-executors.js';
-import { RetryableNodeException, VectorDisabledException } from './errors.js';
+import { RetryableNodeException, RunCancelledException, VectorDisabledException } from './errors.js';
 
 /** Стабильный uuid запуска. */
 const RUN_ID = '22222222-2222-4222-8222-222222222222';
@@ -64,6 +64,8 @@ interface FakeRun {
   error: string | null;
   startedAt: Date | null;
   finishedAt: Date | null;
+  /** v1.4.0 S1: флаг отмены, который читает движок. */
+  cancelledAt: Date | null;
 }
 
 /** Результат выполнения узла в моке исполнителя (выходы и метрики, KI-038). */
@@ -188,6 +190,8 @@ function createFakeDb(runId: string) {
     error: null,
     startedAt: null,
     finishedAt: null,
+    // v1.4.0 S1: по умолчанию запуск не отменён.
+    cancelledAt: null,
   };
   const rows: FakeNodeRun[] = [];
   /** Payload'ы UPDATE workflow_runs — для проверки сброса полей (KI-040). */
@@ -276,10 +280,18 @@ function createFakeDb(runId: string) {
       }),
     }),
     select: (_fields: unknown) => ({
-      from: (_table: unknown) => ({
+      from: (table: unknown) => ({
         where: (condition: unknown) => ({
           limit: async (): Promise<unknown[]> => {
             const pairs = wherePairs(condition);
+
+            // v1.4.0 S1: движок читает строку запуска (статус и флаг отмены)
+            // в `markRunRunningAsync`/`assertRunNotCancelledAsync`.
+            if (table === workflowRuns) {
+              return pairs.get('id') === run.id
+                ? [{ status: run.status, cancelledAt: run.cancelledAt }]
+                : [];
+            }
 
             // Матчим только по тем колонкам, что есть в условии: executor
             // ищет строку либо по (run_id, node_id, status) для inputs, либо
@@ -3205,6 +3217,70 @@ describe('ExecutionEngineService', () => {
       ]);
       expect(rowOf('sub-1')?.status).toBe('failed');
       expect(fake.run.status).toBe('failed');
+    });
+  });
+
+  // v1.4.0 S1 (DESIGN V140 § 3.1): движок останавливается по флагу отмены.
+  describe('отмена запуска (v1.4.0 S1)', () => {
+    it('не выполняет ни одного узла, если cancelled_at уже выставлен', async () => {
+      fake.run.cancelledAt = new Date('2026-11-08T12:00:00.000Z');
+
+      await expect(
+        service.executeAsync(RUN_ID, {
+          nodes: [node('A', 'text')],
+          edges: [],
+        }),
+      ).rejects.toBeInstanceOf(RunCancelledException);
+
+      // Флаг проверяется до первого узла — строка node_runs не появляется.
+      expect(fake.rows).toEqual([]);
+      expect(fake.runUpdates).toEqual([]);
+    });
+
+    it('останавливается перед следующим уровнем, если отменён во время узла', async () => {
+      const executed: string[] = [];
+
+      spyRunNode((current) => {
+        executed.push(current.id);
+        // Пользователь отменил запуск, пока выполнялся узел A.
+        fake.run.cancelledAt = new Date('2026-11-08T12:00:01.000Z');
+
+        return Promise.resolve({
+          kind: 'plain',
+          outputs: { text: current.id },
+          metrics: null,
+        });
+      });
+
+      const graph: GraphDto = {
+        nodes: [node('A', 'text'), node('B', 'text')],
+        edges: [edge('e1', 'A', 'B', 'text', 'text')],
+      };
+
+      await expect(service.executeAsync(RUN_ID, graph)).rejects.toBeInstanceOf(
+        RunCancelledException,
+      );
+
+      // Узел A успел выполниться, узел B следующего уровня — уже нет.
+      expect(executed).toEqual(['A']);
+      expect(fake.rows.map((row) => row.nodeId)).toEqual(['A']);
+      // Движок не закрывает запуск `failed` — это делает RunsProcessor
+      // статусом `cancelled`.
+      expect(fake.run.status).toBe('running');
+    });
+
+    it('не перезаписывает статус cancelled в markRunRunningAsync', async () => {
+      // Отменённый pending-запуск: job всё-таки доставлен worker'у.
+      fake.run.status = 'cancelled';
+      fake.run.cancelledAt = new Date('2026-11-08T12:00:00.000Z');
+
+      await expect(
+        service.executeAsync(RUN_ID, { nodes: [node('A', 'text')], edges: [] }),
+      ).rejects.toBeInstanceOf(RunCancelledException);
+
+      expect(fake.run.status).toBe('cancelled');
+      expect(fake.runUpdates).toEqual([]);
+      expect(fake.rows).toEqual([]);
     });
   });
 });

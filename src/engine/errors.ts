@@ -51,6 +51,54 @@ export function isRetryableNodeError(error: unknown): error is RetryableNodeExce
 }
 
 /**
+ * Ошибка: запуск отменён пользователем (v1.4.0 S1, DESIGN V140 § 3.1).
+ *
+ * Бросается движком, когда перед очередным уровнем или узлом обнаружен
+ * `workflow_runs.cancelled_at IS NOT NULL`. Наследуется от `Error`, а не от
+ * Nest `HttpException`: исключение рождается в BullMQ-worker'е, а не в
+ * HTTP-запросе.
+ *
+ * **Non-retryable.** У класса нет маркера `retryable: true` и нет
+ * `provider`, поэтому {@link isRetryableNodeError},
+ * `isRetryableProviderError` и цикл повторов узла его не повторяют. Это
+ * важно: отмена — решение пользователя, а не временный сбой провайдера;
+ * повторный запуск графа после отмены недопустим.
+ *
+ * `RunsProcessor` ловит это исключение отдельной веткой, помечает запуск
+ * `cancelled` и публикует `run_completed` со статусом `cancelled`; job при
+ * этом считается успешно обработанным и BullMQ не делает retry.
+ */
+export class RunCancelledException extends Error {
+  /** uuid отменённого запуска (для логов и текста ошибки). */
+  readonly runId: string;
+
+  /**
+   * Явный маркер «повторять нельзя». `false` (а не отсутствие поля) —
+   * контракт для структурных guard'ов и читаемости в отладке.
+   */
+  readonly retryable = false;
+
+  /**
+   * @param runId - uuid запуска, который был отменён
+   */
+  constructor(runId: string) {
+    super(`Запуск ${runId} отменён пользователем`);
+    this.name = 'RunCancelledException';
+    this.runId = runId;
+  }
+}
+
+/**
+ * Проверяет, что ошибка означает отмену запуска.
+ *
+ * @param error - значение из `catch`
+ * @returns `true`, если запуск остановлен по флагу `cancelled_at`
+ */
+export function isRunCancelledError(error: unknown): error is RunCancelledException {
+  return error instanceof RunCancelledException;
+}
+
+/**
  * Ошибка: vector/memory-узлы выключены конфигурацией (`PGVECTOR_ENABLED=false`).
  *
  * Отдельный класс, а не `NodeDataValidationException`: это не битые данные

@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+  cancelRunAsync,
   fetchLlmHealthAsync,
   fetchWorkflowRunsAsync,
   type LlmHealthResponse,
@@ -36,6 +37,8 @@ vi.mock('@/lib/api', async (importOriginal) => {
         routerEnabled: true,
       }),
     ),
+    // v1.4.0 S1: отмена запуска из шапки.
+    cancelRunAsync: vi.fn(() => Promise.resolve({ status: 'cancelled' })),
   };
 });
 
@@ -236,6 +239,73 @@ describe('TopBar — единый статус с номером попытки 
     expect(badge?.textContent ?? '').toContain(
       'Выполняется (попытка 2/3)',
     );
+  });
+});
+
+describe('TopBar — отмена запуска (v1.4.0 S1)', () => {
+  /** uuid активного запуска в тестах отмены. */
+  const RUN_ID = '33333333-3333-4333-8333-333333333333';
+
+  afterEach(() => {
+    useWorkflowStore.setState({ runStatus: null, runId: null });
+    vi.mocked(cancelRunAsync).mockClear();
+    vi.mocked(cancelRunAsync).mockResolvedValue({ status: 'cancelled' });
+  });
+
+  it('кнопка видна только при running и вызывает POST /runs/:id/cancel', async () => {
+    useWorkflowStore.setState({ runStatus: 'running', runId: RUN_ID });
+
+    const { container } = renderTopBar();
+    const button = container.querySelector(
+      '[data-topbar-cancel-run]',
+    ) as HTMLButtonElement | null;
+
+    expect(button).not.toBeNull();
+    expect(button).toHaveTextContent(ru['topbar.cancel_run']);
+
+    fireEvent.click(button as HTMLButtonElement);
+
+    await waitFor(() =>
+      expect(vi.mocked(cancelRunAsync)).toHaveBeenCalledWith(RUN_ID),
+    );
+    // После принятого запроса запуск ещё `running` (движок остановится на
+    // следующем уровне/узле), поэтому кнопка показывает «Отмена...».
+    await waitFor(() =>
+      expect(button).toHaveTextContent(ru['topbar.cancel_run.cancelling']),
+    );
+  });
+
+  it('кнопки нет при pending, completed и без запуска', () => {
+    for (const status of ['pending', 'completed', 'failed', 'cancelled'] as const) {
+      useWorkflowStore.setState({ runStatus: status, runId: RUN_ID });
+
+      const { container, unmount } = renderTopBar();
+
+      expect(
+        container.querySelector('[data-topbar-cancel-run]'),
+        `кнопка не должна показываться при status=${status}`,
+      ).toBeNull();
+
+      unmount();
+    }
+  });
+
+  it('ошибка отмены снимает «Отмена...» и показывает уведомление', async () => {
+    useWorkflowStore.setState({ runStatus: 'running', runId: RUN_ID });
+    vi.mocked(cancelRunAsync).mockRejectedValue(new Error('409'));
+
+    const { container } = renderTopBar();
+    const button = container.querySelector(
+      '[data-topbar-cancel-run]',
+    ) as HTMLButtonElement;
+
+    fireEvent.click(button);
+
+    await waitFor(() =>
+      expect(useWorkflowStore.getState().notice?.kind).toBe('error'),
+    );
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveTextContent(ru['topbar.cancel_run']);
   });
 });
 

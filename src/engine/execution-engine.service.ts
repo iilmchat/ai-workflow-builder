@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import { randomInt } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { isDeepStrictEqual } from 'node:util';
@@ -55,8 +55,10 @@ import { WebSearchRegistryService } from '../web-search/web-search.registry.js';
 import type { GraphDto, NodeDto } from './dto/index.js';
 import { EngineService, type ExecutionPlanDto } from './engine.service.js';
 import {
+  RunCancelledException,
   VectorDisabledException,
   isRetryableNodeError,
+  isRunCancelledError,
 } from './errors.js';
 import {
   UnsupportedNodeTypeException,
@@ -634,6 +636,15 @@ export class ExecutionEngineService {
         startedAt: new Date().toISOString(),
       });
     } catch (error: unknown) {
+      // v1.4.0 S1: отмена — не «провал планирования». Её нельзя закрывать
+      // статусом `failed`/публиковать как ошибку: финальный `cancelled` и
+      // событие `run_completed` пишет RunsProcessor, поймав это исключение.
+      if (isRunCancelledError(error)) {
+        this.runLease.stop(runId);
+
+        throw error;
+      }
+
       // KI-037: запуск не должен остаться в 'pending'. Планирование падает до
       // простановки любого статуса, поэтому закрываем запуск явно.
       // v0.11 S9: ошибка могла произойти уже после `startAsync` — гасим
@@ -703,6 +714,11 @@ export class ExecutionEngineService {
     const subContext = await this.createSubWorkflowContextAsync(runId, graph);
 
     for (const [levelIndex, level] of plan.levels.entries()) {
+      // v1.4.0 S1 (DESIGN V140 § 3.1): перед каждым уровнем — проверка флага
+      // отмены. `cancelled_at` ставит `POST /runs/:id/cancel`, движок живёт в
+      // другом процессе и узнаёт об отмене только из БД.
+      await this.assertRunNotCancelledAsync(runId);
+
       // KI-288: узлы с упавшим (или пропущенным) предшественником НЕ
       // выполняются — они сразу закрываются статусом `skipped`. Раньше (после
       // KI-287) такой узел получал `null` во входах и падал сам, выглядя как
@@ -730,6 +746,19 @@ export class ExecutionEngineService {
           this.executeNodeAsync(runId, nodeId, graph, plan, subContext),
         ),
       );
+
+      // v1.4.0 S1: отмена могла прийти, пока узлы уровня выполнялись. Узел,
+      // который увидел флаг, бросает `RunCancelledException`; это не падение
+      // узла, а сигнал остановить весь запуск — прекращаем обход до записи
+      // итога `failed`, иначе отмена превратилась бы в ошибку графа.
+      const cancellation = results.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === 'rejected' && isRunCancelledError(result.reason),
+      );
+
+      if (cancellation !== undefined) {
+        throw cancellation.reason;
+      }
 
       // KI-287: падения фиксируются по каждому уровню отдельно — цикл по
       // `plan.levels` НЕ прерывается. Узлы следующих уровней, не зависящие от
@@ -1027,6 +1056,12 @@ export class ExecutionEngineService {
     if (!node) {
       throw new Error(`Узел ${nodeId} не найден в графе`);
     }
+
+    // v1.4.0 S1 (DESIGN V140 § 3.1): перед каждым узлом — та же проверка
+    // флага, что и перед уровнем. Узел может идти минуты (LLM/media), а
+    // отмена приходит асинхронно из HTTP-запроса; проверка на входе в узел
+    // гарантирует, что новый платный вызов не начнётся после отмены.
+    await this.assertRunNotCancelledAsync(runId);
 
     // v1.0.0 S4 (DESIGN V100 § 3.4): длительность узла — в Prometheus. Замер
     // один на вызов `executeNodeAsync` (включая reuse, KI-046) и не учитывает
@@ -1878,6 +1913,11 @@ export class ExecutionEngineService {
     const predecessors = this.buildPredecessorMap(subPlan);
 
     for (const [levelIndex, level] of subPlan.levels.entries()) {
+      // v1.4.0 S1: подграф — часть того же запуска, поэтому отмена действует
+      // и на его уровни. Без этой проверки `sub_workflow` продолжал бы
+      // выполнять десятки узлов после отмены корневого запуска.
+      await this.assertRunNotCancelledAsync(runId);
+
       // KI-337/KI-288: узлы подграфа с упавшим предшественником закрываются
       // `skipped` — с тем же текстом ошибки и тем же событием `node_skipped`,
       // что и в корневом графе (контракт UI не меняется).
@@ -1903,6 +1943,18 @@ export class ExecutionEngineService {
           this.executeNodeAsync(runId, subNodeId, prefixed, subPlan, branchContext),
         ),
       );
+
+      // v1.4.0 S1: отмена внутри подграфа — не падение его узла. Немедленно
+      // поднимаем сигнал наверх, чтобы корневой цикл тоже остановился, а
+      // RunningProcessor закрыл запуск `cancelled`, а не `failed`.
+      const subCancellation = results.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === 'rejected' && isRunCancelledError(result.reason),
+      );
+
+      if (subCancellation !== undefined) {
+        throw subCancellation.reason;
+      }
 
       // Падение не прерывает обход уровней подграфа (KI-287/KI-337): узлы того
       // же уровня уже отработали (`allSettled`, RULES 4.16), а независимые
@@ -2002,6 +2054,30 @@ export class ExecutionEngineService {
    */
   private async markRunRunningAsync(runId: string): Promise<void> {
     try {
+      // v1.4.0 S1: запуск, отменённый до старта задания, нельзя переводить в
+      // `running` — иначе отмена «проиграет» гонку с worker'ом и UI снова
+      // покажет активный запуск. Проверка отдельным SELECT, а не только
+      // условием UPDATE: пустой UPDATE неотличим от «строки нет», а нам нужен
+      // явный `RunCancelledException` для RunsProcessor.
+      const [current] = await this.db
+        .select({
+          status: workflowRuns.status,
+          cancelledAt: workflowRuns.cancelledAt,
+        })
+        .from(workflowRuns)
+        .where(eq(workflowRuns.id, runId))
+        .limit(1);
+
+      if (current === undefined) {
+        throw new InternalServerErrorException(
+          `Запуск ${runId} не найден при переводе в running`,
+        );
+      }
+
+      if (current.status === 'cancelled' || current.cancelledAt !== null) {
+        throw new RunCancelledException(runId);
+      }
+
       await this.db.transaction(async (tx) => {
         await tx
           .update(workflowRuns)
@@ -2012,13 +2088,56 @@ export class ExecutionEngineService {
             error: null,
             finishedAt: null,
           })
-          .where(eq(workflowRuns.id, runId));
+          // Условие — второй рубеж против гонки: между SELECT и UPDATE отмена
+          // могла выставить `cancelled_at`/`cancelled`. `ne` для status и
+          // `isNull` для флага не дают перезаписать отменённый запуск.
+          .where(
+            and(
+              eq(workflowRuns.id, runId),
+              ne(workflowRuns.status, 'cancelled'),
+              isNull(workflowRuns.cancelledAt),
+            ),
+          );
       });
     } catch (error: unknown) {
+      if (isRunCancelledError(error)) {
+        throw error;
+      }
+
       throw new InternalServerErrorException(
         `Не удалось перевести запуск ${runId} в статус running: ${toMessage(error)}`,
         { cause: error },
       );
+    }
+  }
+
+  /**
+   * Бросает {@link RunCancelledException}, если запуск помечен отменённым
+   * (v1.4.0 S1, DESIGN V140 § 3.1).
+   *
+   * Вызывается перед каждым уровнем плана и каждым узлом. Флаг — колонка
+   * `workflow_runs.cancelled_at`, а не статус: при отмене `running`-запуска
+   * статус намеренно остаётся `running` до остановки движка (иначе UI потерял
+   * бы связь с выполняющимся процессом), и единственный признак отмены —
+   * это поле.
+   *
+   * Пропавшая строка запуска не считается отменой: её отсутствие проявится
+   * на первом же UPDATE/INSERT узла, а притворяться «отменённым» здесь значило
+   * бы скрыть реальную ошибку данных.
+   *
+   * @param runId - uuid запуска
+   * @returns промис без значения
+   * @throws RunCancelledException если `cancelled_at IS NOT NULL`
+   */
+  private async assertRunNotCancelledAsync(runId: string): Promise<void> {
+    const [row] = await this.db
+      .select({ cancelledAt: workflowRuns.cancelledAt })
+      .from(workflowRuns)
+      .where(eq(workflowRuns.id, runId))
+      .limit(1);
+
+    if (row?.cancelledAt !== null && row?.cancelledAt !== undefined) {
+      throw new RunCancelledException(runId);
     }
   }
 

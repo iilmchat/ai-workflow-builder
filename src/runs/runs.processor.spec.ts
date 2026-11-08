@@ -3,8 +3,9 @@ import { Test } from '@nestjs/testing';
 import type { Job } from 'bullmq';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { workflowRuns } from '../db/schema.js';
-import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import type { ExecuteRunJobDto, RunEventDto } from './dto/index.js';
+import { RunCancelledException } from '../engine/errors.js';
+import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import { RunEventsService } from './run-events.service.js';
 import { RunsProcessor } from './runs.processor.js';
 import {
@@ -381,6 +382,27 @@ describe('RunsProcessor', () => {
     executor.executeAsync.mockRejectedValue(failure);
 
     await expect(processor.process(job({ runId: RUN_ID }))).rejects.toBe(failure);
+  });
+
+  it('v1.4.0 S1: RunCancelledException закрывает запуск cancelled без retry', async () => {
+    executor.executeAsync.mockRejectedValue(new RunCancelledException(RUN_ID));
+
+    // Job не пробрасывает исключение: BullMQ не должен повторять отменённый
+    // граф (иначе после отмены запуск снова начал бы выполнение).
+    await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
+
+    expect(db.update).toHaveBeenCalledWith(workflowRuns);
+    expect(updateChain.set).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'cancelled' }),
+    );
+    expect(publishedEvent('run_completed')).toEqual(
+      expect.objectContaining({
+        status: 'cancelled',
+        attemptsMade: 0,
+        attempts: 3,
+        final: true,
+      }),
+    );
   });
 
   it('отклоняет задание с невалидным payload', async () => {

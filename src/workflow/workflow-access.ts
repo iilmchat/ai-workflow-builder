@@ -217,17 +217,27 @@ export function workflowOwnerFilter(
  * `organization_id` не даёт получить запуск workflow другой организации даже
  * при знании его uuid.
  *
+ * `minimumRole` (v1.4.0 S1): отмена запуска — право `editor`, поэтому
+ * `RunsService.cancelRunAsync` запрашивает подзапрос с этой ролью; для чтения
+ * запусков/SSE остаётся дефолтный `viewer`.
+ *
  * @param db - соединение Drizzle
  * @param access - пользователь и его организация из access-токена
+ * @param minimumRole - минимальная роль участника (по умолчанию `viewer`)
  * @returns подзапрос `SELECT id FROM workflows WHERE ...` для `inArray`
  */
 export function accessibleWorkflowIdsSubquery(
   db: Database,
   access: WorkflowAccess,
+  minimumRole: WorkflowAccessRole = 'viewer',
 ): SQLWrapper {
   const tenant = eq(workflows.organizationId, access.orgId);
   const owner = eq(workflows.userId, access.userId);
-  const collaborator = collaboratorExistsCondition(db, access.userId, 'viewer');
+  const collaborator = collaboratorExistsCondition(
+    db,
+    access.userId,
+    minimumRole,
+  );
 
   return db
     .select({ id: workflows.id })

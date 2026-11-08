@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { workflowRuns, type RunStatus } from '../db/schema.js';
 import { GraphSnapshotSchema, type GraphSnapshotDto } from '../engine/dto/index.js';
+import { isRunCancelledError } from '../engine/errors.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
 import { ExecuteRunJobSchema, type ExecuteRunJobDto } from './dto/index.js';
 import { RunEventsService } from './run-events.service.js';
@@ -224,6 +225,27 @@ export class RunsProcessor extends WorkerHost {
         final: true,
       });
     } catch (error: unknown) {
+      // v1.4.0 S1 (DESIGN V140 § 3.1): отмена — не провал job'а. Движок
+      // остановился по флагу `cancelled_at`, поэтому:
+      // 1) закрываем запуск `cancelled` (а не `failed` — пользователь не
+      //    ошибся, он отменил);
+      // 2) публикуем `run_completed` со статусом `cancelled`, `final: true`;
+      // 3) НЕ пробрасываем исключение — job считается обработанным, BullMQ
+      //    не делает retry и не переигрывает отменённый граф.
+      if (isRunCancelledError(error)) {
+        this.logger.log(`Запуск ${runId} отменён — выполнение остановлено`);
+
+        await this.markRunCancelledAsync(runId);
+        await this.publishRunCompletedAsync(runId, {
+          status: 'cancelled',
+          attemptsMade,
+          attempts,
+          final: true,
+        });
+
+        return;
+      }
+
       // Проброс исключения означает провал job'а: BullMQ сделает retry, если
       // попытки остались. Публикуем итог попытки и пробрасываем дальше — стек
       // не гасим (RULES 1.7).
@@ -254,7 +276,8 @@ export class RunsProcessor extends WorkerHost {
   private async publishRunCompletedAsync(
     runId: string,
     completion: {
-      status: 'completed' | 'failed';
+      /** v1.4.0 S1: `cancelled` — штатный финал отменённого запуска. */
+      status: 'completed' | 'failed' | 'cancelled';
       attemptsMade: number;
       attempts: number | null;
       final: boolean;
@@ -315,6 +338,41 @@ export class RunsProcessor extends WorkerHost {
       .limit(1);
 
     return run ?? null;
+  }
+
+  /**
+   * Закрывает запуск статусом `cancelled` (v1.4.0 S1).
+   *
+   * `cancelled_at` обычно уже выставлен `POST /runs/:id/cancel`; `COALESCE`
+   * сохраняет первое (пользовательское) время отмены и заполняет его, если
+   * движок остановился по флагу, пришедшему иным путём. `finished_at` — время
+   * фактической остановки.
+   *
+   * Сбой UPDATE только логируется: наружу пробрасывать нечего (отмена —
+   * штатный сценарий, а не ошибка), а исходная ошибка не должна подменяться
+   * (RULES 4.18).
+   *
+   * @param runId - uuid запуска
+   * @returns промис без значения
+   */
+  private async markRunCancelledAsync(runId: string): Promise<void> {
+    try {
+      await this.db
+        .update(workflowRuns)
+        .set({
+          status: 'cancelled',
+          cancelledAt: sql`coalesce(${workflowRuns.cancelledAt}, now())`,
+          finishedAt: new Date(),
+          // Отмена — не ошибка: причина падения прошлой попытки не должна
+          // висеть на отменённом запуске.
+          error: null,
+        })
+        .where(eq(workflowRuns.id, runId));
+    } catch (error: unknown) {
+      this.logger.error(
+        `Не удалось пометить запуск ${runId} как cancelled: ${toMessage(error)}`,
+      );
+    }
   }
 
   /**

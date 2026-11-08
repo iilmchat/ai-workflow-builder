@@ -134,6 +134,13 @@
       "when": 1793829508528,
       "tag": "0018_daffy_triathlon",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794156310911,
+      "tag": "0019_plain_kang",
+      "breakpoints": true
     }
   ]
 }

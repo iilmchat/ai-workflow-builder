@@ -31,7 +31,7 @@ import {
   type RunHistoryResponse,
 } from './dto/index.js';
 import type { RunBudgetResponse } from './dto/run-budget.dto.js';
-import { RunsService, type RunResponse } from './runs.service.js';
+import { RunsService, type CancelRunResponse, type RunResponse } from './runs.service.js';
 import { RunsStreamService } from './runs-stream.service.js';
 
 /** Zod-схема path-параметра `:id`. */
@@ -95,6 +95,32 @@ export class RunsController {
     // v1.0.0 S2: orgId из токена обязателен — сервис фильтрует workflow ещё
     // и по организации арендатора, поэтому собираем access общим хелпером.
     return this.runsService.createRunAsync(dto, toWorkflowAccess(user));
+  }
+
+  /**
+   * `POST /runs/:id/cancel` — отмена запуска (v1.4.0 S1, DESIGN V140 § 3.1).
+   *
+   * Ручка закрыта `JwtAuthGuard`; `RunsService.cancelRunAsync` проверяет, что
+   * пользователь — владелец workflow или участник с ролью `editor`, и
+   * возвращает 404 на чужой/несуществующий запуск. Ответ — `200
+   * { status: 'cancelled' }`: отмена `pending`-запуска завершается сразу,
+   * отмена `running` — кооперативная (движок остановится перед следующим
+   * уровнем/узлом, финал придёт событием `run_completed`).
+   *
+   * @param params - path-параметр `id` (uuid запуска)
+   * @param user - пользователь и его организация из access-токена
+   * @returns `{ status: 'cancelled' }`
+   * @throws NotFoundException если запуск не найден, чужой, другой организации
+   *   или пользователь — только `viewer`
+   * @throws ConflictException если запуск уже `completed`/`failed`/`cancelled`
+   */
+  @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
+  async cancel(
+    @Param(ZodValidationPipe.create(RunIdParamSchema)) params: RunIdParamDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<CancelRunResponse> {
+    return this.runsService.cancelRunAsync(params.id, toWorkflowAccess(user));
   }
 
   /**

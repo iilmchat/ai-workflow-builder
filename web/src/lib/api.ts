@@ -734,6 +734,46 @@ export async function fetchRunAsync(runId: string): Promise<ApiRun> {
 }
 
 /**
+ * Ответ `POST /runs/:id/cancel` (v1.4.0 S1, DESIGN V140 § 3.1).
+ *
+ * Ручка не отдаёт строку запуска: клиенту достаточно факта отмены, а новый
+ * статус придёт событием `run_completed` (`status: 'cancelled'`) в SSE-потоке.
+ * Схема — зеркало backend `CancelRunResponse` (`src/runs/runs.service.ts`);
+ * `status` — литерал, чтобы расхождение контракта ловилось Zod'ом (RULES 1.17).
+ */
+export const CancelRunResponseSchema = z.object({
+  status: z.literal('cancelled'),
+});
+
+/** Ответ `POST /runs/:id/cancel`. */
+export type CancelRunResponse = z.infer<typeof CancelRunResponseSchema>;
+
+/**
+ * Отменяет запуск workflow (`POST /runs/:id/cancel`, v1.4.0 S1).
+ *
+ * Для `running`-запуска отмена кооперативная: backend выставляет
+ * `workflow_runs.cancelled_at`, движок останавливается перед следующим
+ * уровнем/узлом, а финальный статус приходит в SSE-событии `run_completed`
+ * (`status: 'cancelled'`). Поэтому UI не должен считать запуск завершённым
+ * сразу после ответа этой функции.
+ *
+ * @param runId - uuid запуска
+ * @returns `{ status: 'cancelled' }` — отмена принята
+ * @throws ApiError при 404 (чужой/несуществующий запуск), 409 (уже
+ *   терминальный), сетевой ошибке или неожиданном формате ответа
+ */
+export async function cancelRunAsync(
+  runId: string,
+): Promise<CancelRunResponse> {
+  const data = await requestAsync<unknown>(
+    `/runs/${encodeURIComponent(runId)}/cancel`,
+    { method: 'POST' },
+  );
+
+  return CancelRunResponseSchema.parse(data);
+}
+
+/**
  * Возвращает историю узлов запуска (`GET /runs/:id/nodes`, v0.11 S12, KI-077).
  *
  * Ответ — массив `NodeRunSnapshot` в **той же** форме, что приходит в

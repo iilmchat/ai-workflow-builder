@@ -1,5 +1,5 @@
 import { jwtAuthDbProvider } from '../../test/helpers/jwt-auth-db.stub.js';
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import type { INestApplication, MessageEvent } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -89,6 +89,7 @@ describe('RunsController', () => {
   let controller: RunsController;
   let service: {
     createRunAsync: ReturnType<typeof vi.fn>;
+    cancelRunAsync: ReturnType<typeof vi.fn>;
     getRunAsync: ReturnType<typeof vi.fn>;
     getRunRowAsync: ReturnType<typeof vi.fn>;
     listNodeRunsAsync: ReturnType<typeof vi.fn>;
@@ -107,6 +108,8 @@ describe('RunsController', () => {
     authDisabled = true;
     service = {
       createRunAsync: vi.fn(() => Promise.resolve(runResponse)),
+      // v1.4.0 S1: отмена запуска.
+      cancelRunAsync: vi.fn(() => Promise.resolve({ status: 'cancelled' })),
       getRunAsync: vi.fn(() => Promise.resolve(runResponse)),
       // KI-450: ручка бюджета проверяет существование строкой запуска, не
       // читая `node_runs` (поллинг после каждого узла).
@@ -240,6 +243,56 @@ describe('RunsController', () => {
         { workflowId: WORKFLOW_ID },
         { userId: DEMO_USER_ID, orgId: DEMO_ORG_ID },
       );
+    });
+  });
+
+  // v1.4.0 S1 (DESIGN V140 § 3.1): POST /runs/:id/cancel.
+  describe('cancel', () => {
+    it('POST /runs/:id/cancel отвечает 200 { status: cancelled } и передаёт access', async () => {
+      const response = await request(app.getHttpServer())
+        .post(`/runs/${RUN_ID}/cancel`)
+        .expect(200);
+
+      expect(service.cancelRunAsync).toHaveBeenCalledWith(RUN_ID, ACCESS);
+      expect(response.body).toEqual({ status: 'cancelled' });
+    });
+
+    it('POST /runs/:id/cancel чужого/несуществующего запуска отвечает 404', async () => {
+      service.cancelRunAsync.mockRejectedValue(
+        new NotFoundException('Запуск не найден'),
+      );
+
+      await request(app.getHttpServer())
+        .post(`/runs/${RUN_ID}/cancel`)
+        .expect(404);
+    });
+
+    it('POST /runs/:id/cancel терминального запуска отвечает 409', async () => {
+      service.cancelRunAsync.mockRejectedValue(
+        new ConflictException('Запуск уже завершён'),
+      );
+
+      await request(app.getHttpServer())
+        .post(`/runs/${RUN_ID}/cancel`)
+        .expect(409);
+    });
+
+    it('POST /runs/:id/cancel отвечает 400 на невалидный uuid', async () => {
+      await request(app.getHttpServer())
+        .post('/runs/not-a-uuid/cancel')
+        .expect(400);
+
+      expect(service.cancelRunAsync).not.toHaveBeenCalled();
+    });
+
+    it('POST /runs/:id/cancel отвечает 401 без токена при AUTH_DISABLED=false', async () => {
+      authDisabled = false;
+
+      await request(app.getHttpServer())
+        .post(`/runs/${RUN_ID}/cancel`)
+        .expect(401);
+
+      expect(service.cancelRunAsync).not.toHaveBeenCalled();
     });
   });
 

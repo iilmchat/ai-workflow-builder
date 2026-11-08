@@ -1,5 +1,9 @@
 import { getQueueToken } from '@nestjs/bullmq';
-import { InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Queue } from 'bullmq';
 import { DRIZZLE, type Database } from '../db/db.module.js';
@@ -87,6 +91,8 @@ const baseRun: WorkflowRun = {
   finishedAt: null,
   // v0.11 S1 (KI-066): nullable-колонка аренды; в старых строках — null.
   leaseExpiresAt: null,
+  // v1.4.0 S1: запуск не отменён.
+  cancelledAt: null,
 };
 
 /**
@@ -190,7 +196,11 @@ describe('RunsService', () => {
   let insertChain: ReturnType<typeof chain>;
   let updateChain: ReturnType<typeof chain>;
   let db: Record<string, ReturnType<typeof vi.fn>>;
-  let queue: { add: ReturnType<typeof vi.fn> };
+  let queue: {
+    add: ReturnType<typeof vi.fn>;
+    getJob: ReturnType<typeof vi.fn>;
+    getJobs: ReturnType<typeof vi.fn>;
+  };
   let snapshotMapper: { listAsync: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
@@ -209,7 +219,12 @@ describe('RunsService', () => {
       update: vi.fn(() => updateChain),
     };
 
-    queue = { add: vi.fn(() => Promise.resolve({ id: 'job-1' })) };
+    queue = {
+      add: vi.fn(() => Promise.resolve({ id: 'job-1' })),
+      // v1.4.0 S1: отмена pending-запуска удаляет задание из очереди.
+      getJob: vi.fn(() => Promise.resolve(null)),
+      getJobs: vi.fn(() => Promise.resolve([])),
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -259,10 +274,15 @@ describe('RunsService', () => {
       expect(insertChain.returning).toHaveBeenCalled();
       // KI-387: в payload едет маркер инстанса, чтобы чужой воркер пропустил
       // задание на общем Redis.
-      expect(queue.add).toHaveBeenCalledWith(EXECUTE_RUN_JOB, {
-        runId: RUN_ID,
-        instanceId: RUNS_INSTANCE_ID,
-      });
+      // v1.4.0 S1: jobId = uuid запуска — по нему cancel находит задание.
+      expect(queue.add).toHaveBeenCalledWith(
+        EXECUTE_RUN_JOB,
+        {
+          runId: RUN_ID,
+          instanceId: RUNS_INSTANCE_ID,
+        },
+        { jobId: RUN_ID },
+      );
       expect(result).toEqual({
         id: RUN_ID,
         workflowId: WORKFLOW_ID,
@@ -456,6 +476,7 @@ describe('RunsService', () => {
       expect(vi.mocked(accessibleWorkflowIdsSubquery)).toHaveBeenCalledWith(
         expect.anything(),
         ACCESS,
+        'viewer',
       );
       // И organization_id действительно оказался в SQL-условии подзапроса.
       const conditions = whereConditions(selectChain);
@@ -480,6 +501,105 @@ describe('RunsService', () => {
       expect(vi.mocked(accessibleWorkflowIdsSubquery)).toHaveBeenCalledWith(
         expect.anything(),
         foreignAccess,
+        'viewer',
+      );
+    });
+  });
+
+  // v1.4.0 S1 (DESIGN V140 § 3.1): отмена запуска из UI/API.
+  describe('cancelRunAsync', () => {
+    /** Задание BullMQ, которое вернёт `queue.getJob` в pending-ветке. */
+    const queuedJob = { remove: vi.fn(() => Promise.resolve()) };
+
+    it('pending: ставит cancelled/cancelled_at/finished_at и удаляет job', async () => {
+      selectChain.limit.mockImplementation(() => [baseRun]);
+      queue.getJob.mockResolvedValue(queuedJob);
+
+      const result = await service.cancelRunAsync(RUN_ID, ACCESS);
+
+      expect(result).toEqual({ status: 'cancelled' });
+      expect(updateChain.set).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'cancelled',
+          cancelledAt: expect.any(Date),
+          finishedAt: expect.any(Date),
+        }),
+      );
+      // pending-задание ещё не выполнялось — его нужно убрать из Redis.
+      expect(queue.getJob).toHaveBeenCalledWith(RUN_ID);
+      expect(queuedJob.remove).toHaveBeenCalled();
+    });
+
+    it('running: ставит только cancelled_at, статус оставляет движку', async () => {
+      selectChain.limit.mockImplementation(() => [
+        { ...baseRun, status: 'running' as const },
+      ]);
+
+      const result = await service.cancelRunAsync(RUN_ID, ACCESS);
+      const updateValues = updateChain.set.mock.calls[0][0] as Record<
+        string,
+        unknown
+      >;
+
+      expect(result).toEqual({ status: 'cancelled' });
+      expect(updateValues.cancelledAt).toBeInstanceOf(Date);
+      // Статус `running` не меняется: финал `cancelled` пишет RunsProcessor,
+      // когда движок остановится на флаге.
+      expect(updateValues).not.toHaveProperty('status');
+      expect(queue.getJob).not.toHaveBeenCalled();
+    });
+
+    it.each(['completed', 'failed', 'cancelled'] as const)(
+      'терминальный запуск (%s) отдаёт 409 и не меняет строку',
+      async (status) => {
+        selectChain.limit.mockImplementation(() => [
+          { ...baseRun, status, finishedAt: STARTED_AT },
+        ]);
+
+        await expect(service.cancelRunAsync(RUN_ID, ACCESS)).rejects.toThrow(
+          ConflictException,
+        );
+
+        expect(db.update).not.toHaveBeenCalled();
+        expect(queue.getJob).not.toHaveBeenCalled();
+      },
+    );
+
+    it('чужой/несуществующий запуск отдаёт 404 и не трогает очередь', async () => {
+      selectChain.limit.mockImplementation(() => []);
+
+      await expect(service.cancelRunAsync(RUN_ID, ACCESS)).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expect(db.update).not.toHaveBeenCalled();
+      expect(queue.getJob).not.toHaveBeenCalled();
+    });
+
+    it('проверяет доступ с ролью editor (viewer не отменяет)', async () => {
+      selectChain.limit.mockImplementation(() => [baseRun]);
+
+      await service.cancelRunAsync(RUN_ID, ACCESS);
+
+      // viewer получает пустую выборку → 404; здесь проверяется, что сервис
+      // действительно запрашивает минимум `editor`, а не `viewer`.
+      expect(vi.mocked(accessibleWorkflowIdsSubquery)).toHaveBeenCalledWith(
+        expect.anything(),
+        ACCESS,
+        'editor',
+      );
+    });
+
+    it('сбой удаления задания не отменяет отмену (статус уже cancelled)', async () => {
+      selectChain.limit.mockImplementation(() => [baseRun]);
+      queue.getJob.mockRejectedValue(new Error('Redis недоступен'));
+
+      await expect(service.cancelRunAsync(RUN_ID, ACCESS)).resolves.toEqual({
+        status: 'cancelled',
+      });
+
+      expect(updateChain.set).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'cancelled' }),
       );
     });
   });
@@ -508,6 +628,7 @@ describe('RunsService', () => {
       expect(vi.mocked(accessibleWorkflowIdsSubquery)).toHaveBeenCalledWith(
         expect.anything(),
         ACCESS,
+        'viewer',
       );
       expect(snapshotMapper.listAsync).toHaveBeenCalledWith(
         RUN_ID,

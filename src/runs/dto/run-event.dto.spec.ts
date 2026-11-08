@@ -48,6 +48,16 @@ describe('RunEventSchema', () => {
         final: false,
         finishedAt: ISO_NOW,
       },
+      // v1.4.0 S1: отмена — тоже финальный статус и приходит тем же событием.
+      {
+        type: 'run_completed',
+        runId: RUN_ID,
+        status: 'cancelled',
+        attemptsMade: 0,
+        attempts: 3,
+        final: true,
+        finishedAt: ISO_NOW,
+      },
     ];
 
     for (const event of events) {

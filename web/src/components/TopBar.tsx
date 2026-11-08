@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import i18n, { setLanguage, type Language } from '@/i18n';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import { useTheme } from '@/hooks/use-theme';
-import { fetchLlmHealthAsync } from '@/lib/api';
+import { fetchLlmHealthAsync, cancelRunAsync } from '@/lib/api';
 import { APP_VERSION } from '@/lib/app-version';
 import { logoutAsync } from '@/lib/auth-api';
 import { exportFileNameOf, triggerDownload } from '@/lib/download-blob';
@@ -144,6 +144,11 @@ export function TopBar() {
   // R6.6.2: скрытый `<input type="file">`. Клик по кнопке «Импорт» открывает
   // системный выбор файла, сам input в интерфейсе не виден.
   const importInputRef = useRef<HTMLInputElement>(null);
+  // v1.4.0 S1 (DESIGN V140 § 3.1): отмена запуска. Локальное состояние, как у
+  // остальных действий шапки: после ответа API запуск ещё некоторое время
+  // остаётся `running` (движок замечает флаг перед следующим уровнем/узлом),
+  // поэтому кнопка показывает «Отмена...» до прихода `run_completed`.
+  const [isCancelling, setIsCancelling] = useState(false);
   // v1.2.0 S3 (DESIGN V120 § 3.4): доступен ли локальный LLM-бэкенд (GPU).
   // Исходное значение — `false`: до первого ответа healthcheck'а о GPU ничего
   // не известно, и индикатор не должен обещать online.
@@ -267,6 +272,15 @@ export function TopBar() {
   // R7.1 (KI-048): бюджет текущего запуска (прогресс-бар ниже).
   const runBudget = useWorkflowStore((state) => state.runBudget);
   const runId = useWorkflowStore((state) => state.runId);
+
+  // v1.4.0 S1: «Отмена...» живёт только пока запуск активен. Как только SSE
+  // принёс финал (в т.ч. `cancelled`), кнопка исчезает, и состояние сброса
+  // больше не нужно — иначе следующий запуск показал бы «Отмена...» сразу.
+  useEffect(() => {
+    if (runStatus !== 'running') {
+      setIsCancelling(false);
+    }
+  }, [runStatus]);
 
   const isBusy = isSaving || isLoading;
   const isRunActive = runStatus !== null && ACTIVE_RUN_STATUSES.has(runStatus);
@@ -546,6 +560,38 @@ export function TopBar() {
     }
 
     await startRunAsync(workflowId);
+  };
+
+  /**
+   * Отменяет текущий запуск (v1.4.0 S1, DESIGN V140 § 3.1).
+   *
+   * Запрос только **просит** отмену: для `running`-запуска backend ставит
+   * флаг `cancelled_at`, движок останавливается перед следующим уровнем или
+   * узлом, а финальный статус приходит SSE-событием `run_completed`
+   * (`status: 'cancelled'`). Поэтому после успешного ответа состояние
+   * `isCancelling` не сбрасывается — кнопка продолжает показывать
+   * «Отмена...», пока поток не сообщит финал.
+   *
+   * Ошибка (409 — запуск уже завершился, 404 — чужой/удалён) снимает
+   * «Отмена...» и показывается уведомлением: иначе кнопка врала бы о
+   * процессе.
+   */
+  const handleCancelRun = async () => {
+    if (runId === null || isCancelling) {
+      return;
+    }
+
+    setIsCancelling(true);
+
+    try {
+      await cancelRunAsync(runId);
+    } catch (caught) {
+      setIsCancelling(false);
+      setNotice({
+        kind: 'error',
+        text: t('topbar.cancel_run.error', { reason: reasonOf(caught) }),
+      });
+    }
   };
 
   /**
@@ -844,6 +890,32 @@ export function TopBar() {
             >
               <span aria-hidden="true">👥</span>
               {t('topbar.team')}
+            </button>
+          )}
+
+          {/* v1.4.0 S1 (DESIGN V140 § 3.1): отмена запуска. Кнопка видна
+              только при `runStatus === 'running'`: отменять `pending` из UI
+              нечего (запуск ещё не начался и так завершится сам), а
+              терминальные статусы отменять нельзя (API вернёт 409).
+              `data-topbar-cancel-run` — контракт для смоука/тестов. */}
+          {runStatus === 'running' && !isViewer && runId !== null && (
+            <button
+              type="button"
+              data-topbar-cancel-run=""
+              onClick={() => void handleCancelRun()}
+              disabled={isCancelling}
+              aria-label={t(
+                isCancelling ? 'topbar.cancel_run.cancelling' : 'topbar.cancel_run',
+              )}
+              title={t(
+                isCancelling ? 'topbar.cancel_run.cancelling' : 'topbar.cancel_run',
+              )}
+              className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isCancelling ? <Spinner /> : <span aria-hidden="true">⏹</span>}
+              {t(
+                isCancelling ? 'topbar.cancel_run.cancelling' : 'topbar.cancel_run',
+              )}
             </button>
           )}
 

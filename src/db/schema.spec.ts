@@ -118,12 +118,16 @@ describe('Drizzle schema (KI-014, KI-015)', () => {
     // Единственный список статусов живёт здесь; DTO импортируют его, а не
     // выводят заново. `satisfies readonly RunStatus[]` в схеме проверяет
     // вложенность на компиляции, тест — то же множество на рантайме.
-    expect(TERMINAL_WORKFLOW_RUN_STATUSES).toEqual(['completed', 'failed']);
+    expect(TERMINAL_WORKFLOW_RUN_STATUSES).toEqual([
+      'completed',
+      'failed',
+      'cancelled',
+    ]);
     expect(WORKFLOW_RUN_STATUSES).toEqual(
       expect.arrayContaining([...TERMINAL_WORKFLOW_RUN_STATUSES]),
     );
     expectTypeOf<(typeof TERMINAL_WORKFLOW_RUN_STATUSES)[number]>().toEqualTypeOf<
-      'completed' | 'failed'
+      'completed' | 'failed' | 'cancelled'
     >();
   });
 });

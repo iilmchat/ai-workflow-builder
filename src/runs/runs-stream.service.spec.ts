@@ -49,6 +49,8 @@ const runRow: WorkflowRun = {
   finishedAt: null,
   // v0.11 S1 (KI-066): аренда запуска; в тестовом снимке не используется.
   leaseExpiresAt: null,
+  // v1.4.0 S1: в снимке отмены нет; колонка нужна для типизации WorkflowRun.
+  cancelledAt: null,
 };
 
 /**

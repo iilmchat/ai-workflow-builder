@@ -178,11 +178,14 @@ export const RunEventSchema = z.discriminatedUnion('type', [
     /** ISO-время пропуска на backend (поле `skippedAt`). */
     skippedAt: z.string(),
   }),
-  /** Запуск завершён — успешно или с ошибкой. */
+  /** Запуск завершён — успешно, с ошибкой или отменён (v1.4.0 S1). */
   z.object({
     type: z.literal('run_completed'),
     runId: z.string(),
-    status: z.enum(['completed', 'failed']),
+    // `cancelled` (v1.4.0 S1) — финальный статус отменённого запуска; приходит
+    // тем же событием, что `completed`/`failed`, чтобы UI закрыл поток и
+    // показал «Отменён» без отдельного канала.
+    status: z.enum(['completed', 'failed', 'cancelled']),
     /** Сколько попыток уже завершил BullMQ (KI-059). */
     attemptsMade: z.number().int(),
     /** Лимит попыток job'а (`null` — неизвестен). */

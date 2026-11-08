@@ -39,14 +39,14 @@ export type RunStatus = (typeof WORKFLOW_RUN_STATUSES)[number];
  * Финальные статусы запуска — подмножество {@link WORKFLOW_RUN_STATUSES} (KI-353).
  *
  * С этими статусами публикуется событие `run_completed` (`RunEventSchema`):
- * запуск закрывается либо успешно, либо с ошибкой. `satisfies readonly
- * RunStatus[]` — компиляторная гарантия, что список не выйдет за пределы канона
- * статусов запуска, а локальный литерал в `run-event.dto.ts` не заводится
- * (RULES 4.15).
+ * запуск закрывается успешно, с ошибкой или отменой пользователем. `cancelled`
+ * добавлен в v1.4.0 S1: отмена — финальное состояние запуска, и SSE-клиент
+ * должен узнать о ней тем же событием, что и о `completed`/`failed`.
  */
 export const TERMINAL_WORKFLOW_RUN_STATUSES = [
   'completed',
   'failed',
+  'cancelled',
 ] as const satisfies readonly RunStatus[];
 
 /**
@@ -582,6 +582,17 @@ export const workflowRuns = pgTable('workflow_runs', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   startedAt: timestamp('started_at', { withTimezone: true }).defaultNow(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
+  /**
+   * Момент отмены запуска (v1.4.0 S1, DESIGN V140 § 3.1).
+   *
+   * `NULL` — запуск не отменяли. Поле ставится `POST /runs/:id/cancel` и
+   * служит **флагом для движка**: `ExecutionEngineService` проверяет
+   * `cancelled_at IS NOT NULL` перед каждым уровнем и каждым узлом и
+   * останавливает выполнение. Для `pending`-запуска отмена сразу переводит
+   * `status` в `cancelled`; для `running` — только выставляет это поле, а
+   * финальный статус пишет `RunsProcessor` после остановки движка.
+   */
+  cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
   /**
    * Срок аренды запуска (v0.11 S1, DESIGN § 3.3.1, KI-066).
    *
