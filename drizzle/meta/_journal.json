@@ -141,6 +141,13 @@
       "when": 1794156310911,
       "tag": "0019_plain_kang",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1794161160175,
+      "tag": "0020_overrated_steve_rogers",
+      "breakpoints": true
     }
   ]
 }

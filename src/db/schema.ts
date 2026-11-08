@@ -263,6 +263,74 @@ export type OrganizationInvitation = typeof organizationInvitations.$inferSelect
 export type NewOrganizationInvitation = typeof organizationInvitations.$inferInsert;
 
 /**
+ * Статусы строки `email_outbox` (v1.4.0 S3, KI-623).
+ *
+ * `pending` — письмо создано и ждёт воркера (в том числе между повторами
+ * BullMQ); `sent` — SMTP принял письмо; `failed` — попытки исчерпаны или
+ * задание не удалось поставить в очередь. Терминальные статусы — `sent` и
+ * `failed`: повторная отправка возможна только вручную (KI-624).
+ */
+export const EMAIL_OUTBOX_STATUSES = ['pending', 'sent', 'failed'] as const;
+
+/** Статус строки `email_outbox`. */
+export type EmailOutboxStatus = (typeof EMAIL_OUTBOX_STATUSES)[number];
+
+/**
+ * email_outbox — исходящие письма-приглашения, ожидающие отправки (v1.4.0 S3,
+ * KI-623).
+ *
+ * Зачем отдельная таблица, если есть BullMQ: payload задания в Redis — это
+ * сериализованный снимок, который живёт там до `removeOnComplete`/`removeOnFail`
+ * (сутки/неделю). Email приглашённого, название организации (у личной
+ * организации — email владельца) и ссылка-приглашение являются PII и
+ * одноразовым секретом, поэтому в Redis остаётся только `outboxId` — uuid
+ * строки этой таблицы. Сам payload хранится в БД, где уже лежат приглашения,
+ * и доступен воркеру после рестарта.
+ *
+ * `org_name` и `invite_link` — снимок на момент постановки: письмо должно
+ * уйти с теми данными, которые видел приглашающий, даже если организацию
+ * переименовали или ссылку пересобрали позже. `attempts` увеличивает воркер
+ * перед каждой попыткой SMTP, `status` отражает доставку.
+ *
+ * Индекс `(status, created_at)` обслуживает будущую очистку/повторную
+ * постановку (`WHERE status = 'failed' ORDER BY created_at`), которой пока нет
+ * (KI-641). CHECK на статус продублирован в БД: Zod валидирует только payload
+ * задания, а прямые записи/повреждённые данные — нет (RULES 1.17).
+ */
+export const emailOutbox = pgTable(
+  'email_outbox',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    // `to` — зарезервированное слово в SQL? Нет, но Drizzle сам квотирует
+    // имена; колонка остаётся `to`, как в контракте payload.
+    to: text('to').notNull(),
+    orgName: text('org_name').notNull(),
+    inviteLink: text('invite_link').notNull(),
+    status: text('status')
+      .notNull()
+      .default('pending')
+      .$type<EmailOutboxStatus>(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    // Сколько раз воркер пытался отправить письмо (0 — попыток не было).
+    attempts: integer('attempts').notNull().default(0),
+  },
+  (table) => [
+    index('email_outbox_status_created_idx').on(table.status, table.createdAt),
+    check(
+      'email_outbox_status_check',
+      sql`${table.status} in ('pending', 'sent', 'failed')`,
+    ),
+  ],
+);
+
+/** Строка таблицы `email_outbox`. */
+export type EmailOutboxRow = typeof emailOutbox.$inferSelect;
+/** Значения для INSERT в `email_outbox`. */
+export type NewEmailOutboxRow = typeof emailOutbox.$inferInsert;
+
+/**
  * audit_logs — журнал действий пользователей (v1.0.0 S3, DESIGN V100 § 3.2).
  *
  * Пишется `AuditInterceptor` после успешных мутирующих HTTP-запросов

@@ -3,17 +3,21 @@ import { getTableConfig, PgTimestamp, type PgTable } from 'drizzle-orm/pg-core';
 import { expectTypeOf } from 'vitest';
 import type { EdgeDto, GraphSnapshotDto, NodeDto } from '../engine/dto/index.js';
 import {
+  EMAIL_OUTBOX_STATUSES,
   NODE_RUN_STATUSES,
   TERMINAL_WORKFLOW_RUN_STATUSES,
   USER_ROLES,
   WORKFLOW_RUN_STATUSES,
   auditLogs,
+  emailOutbox,
   nodeRuns,
   organizations,
   users,
   workflowRuns,
   workflows,
   type AuditLog,
+  type EmailOutboxRow,
+  type EmailOutboxStatus,
   type NewAuditLog,
   type NewOrganization,
   type NewUser,
@@ -357,5 +361,48 @@ describe('Роли и журнал аудита (v1.0.0 S3)', () => {
     expectTypeOf<AuditLog['resourceId']>().toEqualTypeOf<string | null>();
     expectTypeOf<AuditLog['metadata']>().toEqualTypeOf<Record<string, unknown>>();
     expectTypeOf<NewAuditLog['action']>().toEqualTypeOf<string>();
+  });
+
+  it('KI-623: email_outbox хранит payload письма и статус доставки', () => {
+    const columns = getTableColumns(emailOutbox);
+
+    expect(getTableName(emailOutbox)).toBe('email_outbox');
+    expect(EMAIL_OUTBOX_STATUSES).toEqual(['pending', 'sent', 'failed']);
+
+    expect(columns.id.name).toBe('id');
+    expect(columns.id.columnType).toBe('PgUUID');
+    expect(columns.id.hasDefault).toBe(true);
+
+    // PII и ссылка-приглашение — в БД, а не в Redis (KI-623).
+    for (const column of [columns.to, columns.orgName, columns.inviteLink]) {
+      expect(column.columnType).toBe('PgText');
+      expect(column.notNull).toBe(true);
+      expect(column.hasDefault).toBe(false);
+    }
+
+    expect(columns.to.name).toBe('to');
+    expect(columns.orgName.name).toBe('org_name');
+    expect(columns.inviteLink.name).toBe('invite_link');
+
+    // Новая строка — pending, попыток ещё не было.
+    expect(columns.status.name).toBe('status');
+    expect(columns.status.notNull).toBe(true);
+    expect(columns.status.hasDefault).toBe(true);
+    expect(columns.status.default).toBe('pending');
+    expect(columns.attempts.name).toBe('attempts');
+    expect(columns.attempts.columnType).toBe('PgInteger');
+    expect(columns.attempts.notNull).toBe(true);
+    expect(columns.attempts.default).toBe(0);
+
+    expect(columns.createdAt.name).toBe('created_at');
+    expect(columns.createdAt.notNull).toBe(true);
+    expect(columns.createdAt.hasDefault).toBe(true);
+
+    expectTypeOf<EmailOutboxStatus>().toEqualTypeOf<
+      'pending' | 'sent' | 'failed'
+    >();
+    expectTypeOf<EmailOutboxRow['status']>().toEqualTypeOf<EmailOutboxStatus>();
+    expectTypeOf<EmailOutboxRow['attempts']>().toEqualTypeOf<number>();
+    expectTypeOf<EmailOutboxRow['createdAt']>().toEqualTypeOf<Date>();
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import i18n, { setLanguage, type Language } from '@/i18n';
@@ -37,6 +37,24 @@ function Spinner() {
       aria-hidden="true"
     />
   );
+}
+
+/**
+ * Подпись второстепенной кнопки шапки (KI-628).
+ *
+ * До 1760 px подпись скрыта, остаётся только иконка — иначе суммарная ширина
+ * действий (Save/Run/Share/профиль плюс файловые операции) превышала бы
+ * контейнер, и сжималась бы колонка имени workflow. Порог выше 1440 px, потому
+ * что копирайт и индикатор GPU уже занимают место на 1440 px: с подписями
+ * группа действий не влезает, а без них — помещается. `data-*`-атрибуты и
+ * доступные имена (`aria-label`/`title`) остаются у самих кнопок, поэтому
+ * иконка без текста не теряет смысла для скринридера и CDP-смоука.
+ *
+ * @param props - текст подписи
+ * @returns `span`, видимый только на широких экранах
+ */
+function ActionLabel({ children }: { children: ReactNode }) {
+  return <span className="hidden min-[1760px]:inline">{children}</span>;
 }
 
 /** Статусы, при которых запуск уже идёт и повторный запуск запрещён. */
@@ -613,7 +631,7 @@ export function TopBar() {
 
   return (
     <>
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-4">
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-2 sm:px-4">
         {/* v0.10 S2: фирменный логотип слева от названия проекта. Высота
             фиксирована (24 px), ширина — по пропорциям исходника; тема
             переключает светлый/тёмный SVG. */}
@@ -628,7 +646,8 @@ export function TopBar() {
             зелёная при `available: true`, серая — offline (ошибка запроса,
             `available: false` или ответ ещё не пришёл). Текст дублирует цвет
             словами — состояние читается без цветового зрения, `data-gpu-status`
-            — контракт для CDP-смоука. */}
+            — контракт для CDP-смоука. KI-628: подпись скрыта до 1440 px, точка
+            остаётся (полное состояние — в `title`). */}
         <span
           data-gpu-status={isGpuOnline ? 'online' : 'offline'}
           title={t(isGpuOnline ? 'topbar.gpu.online' : 'topbar.gpu.offline')}
@@ -640,21 +659,26 @@ export function TopBar() {
               isGpuOnline ? 'bg-green-500' : 'bg-slate-400'
             }`}
           />
-          {t(isGpuOnline ? 'topbar.gpu.online' : 'topbar.gpu.offline')}
+          <span className="hidden min-[1440px]:inline">
+            {t(isGpuOnline ? 'topbar.gpu.online' : 'topbar.gpu.offline')}
+          </span>
         </span>
 
         {/* KI-446: имя workflow и копирайт с версией — одна колонка.
             Строка версии стоит под именем, а не у правого края: там действия
             (Save/Run/Share/профиль), и на 1280 px она вытеснила бы кнопки.
-            `data-app-version` — контракт для CDP-смоука (RULES 1.12). */}
-        <div className="flex min-w-0 flex-col">
+            `data-app-version` — контракт для CDP-смоука (RULES 1.12).
+            KI-628: поле имени не даёт колонке схлопнуться (`shrink-0`), а
+            копирайт скрыт до 1440 px и обрезается `truncate` — иначе он
+            переносился по одной букве. */}
+        <div className="flex min-w-0 shrink-0 flex-col">
           <input
             value={name}
             onChange={handleNameChange}
             placeholder={t('topbar.name.placeholder')}
             aria-label={t('topbar.name.placeholder')}
             // nodrag: единое правило для всех input внутри редактора.
-            className="nodrag w-64 rounded-lg border border-transparent px-2 py-1 text-sm font-medium text-foreground outline-none hover:border-border focus:border-primary focus:ring-1 focus:ring-primary"
+            className="nodrag w-32 rounded-lg border border-transparent px-2 py-1 text-sm font-medium text-foreground outline-none hover:border-border focus:border-primary focus:ring-1 focus:ring-primary sm:w-48 lg:w-56 xl:w-64"
           />
 
           <span
@@ -662,7 +686,7 @@ export function TopBar() {
             // Полная форма копирайта (с названием продукта) — в тултипе:
             // в шапке она не влезает, а RULES 1.12 требует её целиком.
             title={t('topbar.copyright.full', { version: APP_VERSION })}
-            className="px-2 text-[10px] leading-none text-muted-foreground"
+            className="hidden max-w-full truncate whitespace-nowrap px-2 text-[10px] leading-none text-muted-foreground min-[1440px]:block"
           >
             {t('topbar.copyright', { version: APP_VERSION })}
           </span>
@@ -676,13 +700,18 @@ export function TopBar() {
               runError ??
               (runHasMoreAttempts ? t('topbar.retry_hint') : undefined)
             }
-            className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${RUN_STATUS_STYLE[runStatus].className}`}
+            className={`max-w-40 truncate rounded-full px-2.5 py-1 text-[11px] font-medium ${RUN_STATUS_STYLE[runStatus].className}`}
           >
             {runLabel}
           </span>
         )}
 
-        <div className="ml-auto flex items-center gap-2">
+        {/* KI-628: действия — отдельная прокручиваемая группа. `min-w-0`
+            разрешает ей сжиматься, `[&>*]:shrink-0` не даёт кнопкам
+            сплющиваться вместе с подписями, а `overflow-x-auto` со скрытым
+            скроллбаром — аварийный запас для очень узких окон: страница и
+            поле имени не переполняются, даже если все действия не влезли. */}
+        <div className="ml-auto flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0">
           {/* R7.1 (KI-048): бюджет запуска. Показывается только при активном
               запуске, цифры — те же, что проверяет предохранитель на backend
               (`GET /runs/:id/budget`). `data-run-budget` — точка для смоука. */}
@@ -774,7 +803,7 @@ export function TopBar() {
             className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
           >
             <span aria-hidden="true">📄</span>
-            {t('topbar.new')}
+            <ActionLabel>{t('topbar.new')}</ActionLabel>
           </button>
 
           <button
@@ -785,7 +814,7 @@ export function TopBar() {
             className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isLoading ? <Spinner /> : <span aria-hidden="true">📂</span>}
-            {t('topbar.load')}
+            <ActionLabel>{t('topbar.load')}</ActionLabel>
           </button>
 
           {/* KI-397: viewer не может сохранять — кнопка не показывается
@@ -810,7 +839,7 @@ export function TopBar() {
             <span
               data-dirty-indicator={isDirty ? 'dirty' : 'saved'}
               title={isDirty ? t('topbar.dirty') : t('topbar.saved')}
-              className="rounded-full bg-muted px-2 py-1 text-[11px] font-medium text-muted-foreground"
+              className="hidden rounded-full bg-muted px-2 py-1 text-[11px] font-medium text-muted-foreground min-[1440px]:inline-block"
             >
               {isDirty ? t('topbar.dirty') : t('topbar.saved')}
             </span>
@@ -839,7 +868,7 @@ export function TopBar() {
             className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isFileBusy ? <Spinner /> : <span aria-hidden="true">📥</span>}
-            {t('topbar.export')}
+            <ActionLabel>{t('topbar.export')}</ActionLabel>
           </button>
 
           <button
@@ -852,7 +881,7 @@ export function TopBar() {
             className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isFileBusy ? <Spinner /> : <span aria-hidden="true">📤</span>}
-            {t('topbar.import')}
+            <ActionLabel>{t('topbar.import')}</ActionLabel>
           </button>
 
           {/* v0.14 S2 (DESIGN V014 § 3.2): история запусков. Доступна только для
@@ -870,7 +899,7 @@ export function TopBar() {
               className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span aria-hidden="true">🕒</span>
-              {t('topbar.history')}
+              <ActionLabel>{t('topbar.history')}</ActionLabel>
             </button>
           )}
 
@@ -889,7 +918,7 @@ export function TopBar() {
               className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
             >
               <span aria-hidden="true">👥</span>
-              {t('topbar.team')}
+              <ActionLabel>{t('topbar.team')}</ActionLabel>
             </button>
           )}
 
@@ -946,7 +975,7 @@ export function TopBar() {
             className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span aria-hidden="true">🔗</span>
-            {t('share.title')}
+            <ActionLabel>{t('share.title')}</ActionLabel>
           </button>
 
           {user !== null && (

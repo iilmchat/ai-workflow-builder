@@ -367,8 +367,7 @@ const HEALTH_OFFLINE: LlmHealthResponse = {
   routerEnabled: true,
 };
 
-describe('TopBar — индикатор GPU (v1.2.0 S3)', () => {
-  afterEach(() => {
+describe('TopBar — индикатор GPU (v1.2.0 S3)', () => {  afterEach(() => {
     vi.useRealTimers();
     vi.mocked(fetchLlmHealthAsync).mockReset();
     vi.mocked(fetchLlmHealthAsync).mockResolvedValue(HEALTH_ONLINE);
@@ -481,3 +480,94 @@ describe('TopBar — индикатор GPU (v1.2.0 S3)', () => {
   });
 });
 
+
+describe('TopBar — адаптивность шапки (v1.4.0 S3, KI-628)', () => {
+  /** Сохранённый workflow: включает кнопки истории/экспорта. */
+  const WORKFLOW_ID = '44444444-4444-4444-8444-444444444444';
+
+  /** Пользователь с сессией: включает кнопки команды и профиля. */
+  const USER = {
+    id: '55555555-5555-4555-8555-555555555555',
+    email: 'adaptive@example.com',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    organizationId: '66666666-6666-4666-8666-666666666666',
+    role: 'member' as const,
+  };
+
+  afterEach(() => {
+    useWorkflowStore.setState({ currentWorkflowId: null, accessRole: null });
+    useAuthStore.setState({ user: null, accessToken: null, status: 'guest' });
+  });
+
+  /**
+   * Рендерит шапку в состоянии «всё доступно»: сохранённый workflow и сессия.
+   *
+   * @returns результат `render` и контейнер
+   */
+  function renderFullTopBar() {
+    useWorkflowStore.setState({ currentWorkflowId: WORKFLOW_ID });
+    useAuthStore.getState().setSession(USER, 'access-token');
+
+    return renderTopBar();
+  }
+
+  it('копирайт скрыт до 1440 px и не переносится по буквам', () => {
+    const { container } = renderFullTopBar();
+    const line = container.querySelector('[data-app-version]');
+
+    // jsdom не применяет media queries, поэтому проверяется контракт классов:
+    // `hidden` — до 1440 px, `truncate` — без переноса по одной букве.
+    expect(line).toHaveClass('hidden');
+    expect(line).toHaveClass('min-[1440px]:block');
+    expect(line).toHaveClass('truncate');
+    expect(line).toHaveClass('whitespace-nowrap');
+    // data-атрибут и полный копирайт в тултипе не потеряны (RULES 1.12).
+    expect(line).toHaveAttribute('data-app-version', APP_VERSION);
+  });
+
+  it('подписи второстепенных кнопок скрыты до 1760 px, иконки остаются', () => {
+    const { container } = renderFullTopBar();
+    const selectors = [
+      '[data-topbar-new]',
+      '[data-topbar-load]',
+      '[data-topbar-export]',
+      '[data-topbar-import]',
+      '[data-topbar-history]',
+      '[data-topbar-team]',
+      '[data-share-button]',
+    ];
+
+    for (const selector of selectors) {
+      const button = container.querySelector(selector);
+
+      expect(button, `кнопка ${selector} должна быть в DOM`).not.toBeNull();
+
+      const label = Array.from(button?.querySelectorAll('span') ?? []).find(
+        (element) => !element.hasAttribute('aria-hidden'),
+      );
+
+      expect(label, `у ${selector} должна быть подпись`).not.toBeUndefined();
+      expect(label).toHaveClass('hidden');
+      expect(label).toHaveClass('min-[1760px]:inline');
+      // Иконка остаётся видимой: кнопка не исчезает на узком экране.
+      expect(button?.querySelector('[aria-hidden="true"]')).not.toBeNull();
+    }
+  });
+
+  it('поле имени не сжимается, а группа действий имеет аварийную прокрутку', () => {
+    const { container } = renderFullTopBar();
+    const input = screen.getByPlaceholderText(ru['topbar.name.placeholder']);
+    const header = container.querySelector('header');
+    const actions = header?.lastElementChild;
+
+    // Ширина поля адаптивная, но колонка не схлопывается: `shrink-0`.
+    expect(input).toHaveClass('w-32');
+    expect(input).toHaveClass('xl:w-64');
+    expect(input.parentElement).toHaveClass('shrink-0');
+    // Группа действий может сузиться, а её кнопки — нет; при нехватке места
+    // прокручивается сама группа, а не вся страница.
+    expect(actions).toHaveClass('min-w-0');
+    expect(actions).toHaveClass('overflow-x-auto');
+    expect(actions).toHaveClass('[&>*]:shrink-0');
+  });
+});

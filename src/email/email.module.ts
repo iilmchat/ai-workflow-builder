@@ -2,6 +2,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EmailProcessor } from './email.processor.js';
+import { EmailOutboxService } from './email-outbox.service.js';
 import {
   createEmailQueueOptions,
   EMAIL_INVITATIONS_QUEUE,
@@ -19,6 +20,9 @@ import { EmailService } from './email.service.js';
  * `EmailProcessor`: `EmailService.queueInvitationAsync` ставит задание,
  * воркер выполняет реальный SMTP-вызов. `BullModule.forRootAsync` объявлен в
  * `AppModule` и глобален, поэтому здесь достаточно `registerQueueAsync`.
+ *
+ * С v1.4.0 S3 (KI-623) в модуле также живёт `EmailOutboxService`: payload
+ * письма хранится в таблице `email_outbox`, а в Redis уходит только его id.
  */
 @Module({
   imports: [
@@ -29,7 +33,7 @@ import { EmailService } from './email.service.js';
       useFactory: createEmailQueueOptions,
     }),
   ],
-  providers: [EmailService, EmailProcessor],
+  providers: [EmailService, EmailOutboxService, EmailProcessor],
   exports: [EmailService],
 })
 export class EmailModule {}

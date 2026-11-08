@@ -39,9 +39,40 @@
   `RunCompareTotalDiff` в `api-contract.json`; `RunCompareModal` (side-by-side
   таблица, подсветка красный/зелёный), чекбоксы выбора двух запусков и
   кнопка «Сравнить» в `RunHistoryModal`. Новые ограничения — KI-638..640.
+- **UX Polish (v1.4.0 S3, DESIGN V140 § 3.3)**
+  ([отчёт](development/reports/v1.4.0/S3-ux-polish.md)): адаптивный TopBar
+  (копирайт — до 1440 px, подписи New/Load/Export/Import/History/Team/Share —
+  до 1760 px, колонка имени `shrink-0`, прокручиваемая группа действий);
+  внеочередной healthcheck LM Studio каждые 5 с при `unavailable` с возвратом
+  к обычным 30 с после восстановления; таблица `email_outbox` (миграция
+  `0020`) — payload письма-приглашения в БД, в Redis только `outboxId`,
+  воркер читает payload из БД и обновляет `status`/`attempts`.
+
+### Changed
+
+- **Payload email-очереди (v1.4.0 S3, KI-623):** вместо
+  `{ to, orgName, inviteLink }` в Redis уходит `{ outboxId }`;
+  `EmailProcessor` читает email/организацию/ссылку из `email_outbox`.
+- **`LLM_HEALTH_RECOVERY_PING_DELAY_MS` → `LLM_HEALTH_UNAVAILABLE_RETRY_MS`**
+  (5 с): пинг теперь выполняется **пока** провайдер `unavailable`, а не после
+  перехода в `available`; после успеха обычный интервал перезапускается.
+
+### Fixed
+
+- **KI-623:** PII и ссылка-приглашение больше не хранятся в Redis — payload
+  перенесён в `email_outbox`.
+- **KI-628:** TopBar не переполняется на 1440/1280 px; поле имени не
+  обрезается, копирайт не переносится по буквам.
+- **KI-632:** восстановление LM Studio обнаруживается внеочередным пингом
+  через 5 с, а не на очередном 30-секундном тике.
 
 ### Documented
 
+- **KI-624:** возвращён в `Documented` — ручки повторной отправки в коде нет,
+  статус `Fixed` был выставлен ошибочно.
+- **KI-641, KI-642, KI-643, KI-644, KI-645:** retention/повтор outbox,
+  прокрутка действий TopBar на <1280 px, нетранзакционный outbox, plaintext
+  `invite_link` в БД, возможный дубль письма при сбое `markSentAsync`.
 - **KI-635, KI-636, KI-637:** cooperative cancel, отсутствие
   `run_completed` для отменённого `pending`, недоступность отмены
   `pending` из UI.
@@ -114,6 +145,30 @@
 ### Documented
 
 - **KI-638..640:** Стоимость media-узла только в USD (в diff), лимит 100 КБ на один diff, `cursor` в ответе сравнения.
+
+## [1.4.0] — 2026-11-08
+
+**Minor-релиз: Run Control (Cancel) & History Comparison.**
+
+### Added
+
+- **Cancel Run (S1, KI-628):** `POST /runs/:id/cancel`. Флаг `cancelled_at` в БД. Движок проверяет перед каждым уровнем/узлом (`RunCancelledException`). SSE `run_completed` принимает `cancelled`. UI: кнопка «Отменить» в TopBar.
+- **History Comparison (S2):** `GET /runs/:id1/compare/:id2`. `RunCompareModal` — side-by-side diff (outputs, длительность, стоимость).
+- **UX Polish (S3):** Адаптивный TopBar (KI-628). Быстрое восстановление LM Studio (пинг каждые 5 с при `unavailable`, KI-632). Email Outbox — PII перенесены из Redis в БД (KI-623).
+
+### Changed
+
+- **Email Queue:** Payload в Redis теперь содержит только `{ outboxId }`. Все данные (email, orgName, inviteLink) — в таблице `email_outbox`.
+
+### Fixed
+
+- **KI-623:** PII в Redis (Outbox).
+- **KI-628:** TopBar переполнение.
+- **KI-632:** Быстрое обнаружение восстановления LM Studio.
+
+### Documented
+
+- **KI-635..645:** Cooperative cancel, отмена pending, UI для pending, стоимость media в diff, лимит diff, `cursor` в сравнении, retention outbox, TopBar на <1280px, транзакционность outbox, plaintext invite link, at-least-once доставка.
 ## [1.3.0] — 2026-11-06
 
 ### Added
@@ -2668,6 +2723,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 

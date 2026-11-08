@@ -20,21 +20,24 @@ export const LLM_HEALTH_INTERVAL_MS = 30_000;
 export const LLM_HEALTH_FAILURE_THRESHOLD = 3;
 
 /**
- * Задержка внеочередной проверки после восстановления провайдера (мс),
- * v1.3.0 S2, KI-621.
+ * Период внеочередных проверок, пока провайдер `unavailable` (мс),
+ * v1.4.0 S3, KI-632.
  *
- * Когда пинг после серии неудач снова успешен, провайдер уже возвращён в
- * роутинг, но очередного тика {@link LLM_HEALTH_INTERVAL_MS} (до 30 с) ждать
- * не нужно: внеочередной пинг через 5 с быстро подтверждает, что связь
- * стабильна, и не оставляет UI/оператора в неопределённости на полминуты.
+ * Пока LM Studio выключен, обычный тик {@link LLM_HEALTH_INTERVAL_MS} (30 с)
+ * обнаружил бы восстановление слишком поздно: всё это окно вызовы уходили бы
+ * в облако, хотя локальный сервер уже поднялся. Поэтому при переходе в
+ * `unavailable` сервис переключается на короткий пинг каждые 5 с.
  *
- * 5 с — компромисс: заметно меньше периода обычной проверки (не растягивает
- * подтверждение), но и не серия мгновенных пингов, которая нагружала бы LM
- * Studio сразу после загрузки модели. Значение — константа, а не env: как и
- * {@link LLM_HEALTH_INTERVAL_MS}, это параметр протокола проверки, а не
- * операторская настройка.
+ * 5 с — компромисс: достаточно быстро, чтобы UI/роутер почти сразу увидели
+ * восстановление, но не серия мгновенных пингов, которая нагружала бы LM
+ * Studio во время загрузки модели. Первый успешный пинг возвращает
+ * `available` и обычный 30-секундный ритм — внеочередные проверки после этого
+ * не планируются (KI-632, в отличие от KI-621).
+ *
+ * Значение — константа, а не env: как и {@link LLM_HEALTH_INTERVAL_MS}, это
+ * параметр протокола проверки, а не операторская настройка.
  */
-export const LLM_HEALTH_RECOVERY_PING_DELAY_MS = 5_000;
+export const LLM_HEALTH_UNAVAILABLE_RETRY_MS = 5_000;
 
 /** Статус локального LLM-бэкенда (v1.2 S1). */
 export type LlmHealthStatus =
@@ -54,18 +57,18 @@ export type LlmHealthStatus =
  * пытаться использовать GPU — вызовы сразу уходят в облако. Успешная проверка
  * возвращает провайдера в роутинг.
  *
- * После восстановления (переход `unavailable` → `available`) сервис не ждёт
- * очередного тика, а через {@link LLM_HEALTH_RECOVERY_PING_DELAY_MS} выполняет
- * внеочередной пинг (KI-621). Бесконечного цикла здесь нет: планирование
- * срабатывает только на самом переходе из `unavailable`, а внеочередной пинг
- * такого перехода не порождает — успех оставляет статус `available` (перехода
- * нет), неудача лишь увеличивает счётчик подряд идущих неудач, а статус
- * остаётся `available` до достижения порога.
+ * Пока провайдер `unavailable`, обычного 30-секундного тика недостаточно:
+ * восстановление обнаруживалось бы слишком поздно. Поэтому в этом состоянии
+ * сервис пингует каждые {@link LLM_HEALTH_UNAVAILABLE_RETRY_MS} (5 с). Первый
+ * успех возвращает `available`, снимает внеочередной таймер и перезапускает
+ * обычный интервал — следующий пинг будет ровно через
+ * {@link LLM_HEALTH_INTERVAL_MS} (30 с), и бесконечного 5-секундного цикла
+ * после восстановления нет (KI-621, KI-632).
  *
- * Таймер создаётся через `setInterval` и **не удерживает процесс живым**
- * (`unref()`): healthcheck — фоновая задача, и приложение должно завершаться,
- * даже если интервал ещё не сработал (RULES 4.12). Оба таймера — интервал и
- * отложенный внеочередной пинг — снимаются в `onModuleDestroy`.
+ * Таймеры создаются через `setInterval`/`setTimeout` и **не удерживают процесс
+ * живым** (`unref()`): healthcheck — фоновая задача, и приложение должно
+ * завершаться, даже если интервал ещё не сработал (RULES 4.12). Оба таймера —
+ * интервал и внеочередной пинг — снимаются в `onModuleDestroy`.
  *
  * Статус намеренно in-memory: healthcheck — свойство процесса, который
  * вызывает LM Studio. При нескольких backend-инстансах каждый проверяет сервер
@@ -94,13 +97,13 @@ export class LlmHealthService implements OnModuleInit, OnModuleDestroy {
   private timer: NodeJS.Timeout | null = null;
 
   /**
-   * Таймер внеочередной проверки после восстановления (KI-621); `null` — пинг
-   * не запланирован.
+   * Таймер внеочередной проверки, пока статус `unavailable` (KI-621, KI-632);
+   * `null` — пинг не запланирован.
    *
    * Отдельно от {@link timer}: периодический интервал продолжает идти, а этот
    * таймер живёт только до ближайшего внеочередного пинга (или до `stop()`).
    */
-  private recoveryTimer: NodeJS.Timeout | null = null;
+  private unavailableTimer: NodeJS.Timeout | null = null;
 
   /**
    * Проверка «в полёте»: параллельные вызовы `isAvailableAsync` при статусе
@@ -163,19 +166,15 @@ export class LlmHealthService implements OnModuleInit, OnModuleDestroy {
     }
 
     void this.checkAsync();
-    this.timer = setInterval(() => {
-      void this.checkAsync();
-    }, LLM_HEALTH_INTERVAL_MS);
-    // Healthcheck не должен удерживать event loop живым (RULES 4.12).
-    this.timer.unref();
+    this.startInterval();
   }
 
   /**
    * Останавливает периодическую проверку и снимает таймеры (идемпотентно).
    *
    * Вместе с интервалом снимается и запланированный внеочередной пинг
-   * (KI-621): после `stop()` сервис не должен выполнять фоновых проверок до
-   * следующего `start()`.
+   * (KI-621/KI-632): после `stop()` сервис не должен выполнять фоновых
+   * проверок до следующего `start()`.
    */
   stop(): void {
     if (this.timer !== null) {
@@ -183,10 +182,26 @@ export class LlmHealthService implements OnModuleInit, OnModuleDestroy {
       this.timer = null;
     }
 
-    if (this.recoveryTimer !== null) {
-      clearTimeout(this.recoveryTimer);
-      this.recoveryTimer = null;
+    if (this.unavailableTimer !== null) {
+      clearTimeout(this.unavailableTimer);
+      this.unavailableTimer = null;
     }
+  }
+
+  /**
+   * Создаёт обычный интервал проверок (30 с) и не удерживает им event loop.
+   *
+   * Вынесено отдельным методом, потому что после восстановления интервал
+   * перезапускается: следующий обычный пинг должен быть через
+   * {@link LLM_HEALTH_INTERVAL_MS} от момента успеха, а не от старта процесса
+   * (KI-632).
+   */
+  private startInterval(): void {
+    this.timer = setInterval(() => {
+      void this.checkAsync();
+    }, LLM_HEALTH_INTERVAL_MS);
+    // Healthcheck не должен удерживать event loop живым (RULES 4.12).
+    this.timer.unref();
   }
 
   /**
@@ -284,9 +299,16 @@ export class LlmHealthService implements OnModuleInit, OnModuleDestroy {
         this.logger.log(
           'LM Studio снова доступен — локальный провайдер возвращён в роутинг',
         );
-        // Не ждём очередного тика: через 5 с подтверждаем, что связь стабильна
-        // (KI-621).
-        this.scheduleRecoveryPing();
+      }
+
+      // Внеочередные 5-секундные проверки нужны только пока провайдер
+      // недоступен. После успеха снимаем их и перезапускаем обычный интервал:
+      // следующий пинг — ровно через 30 с, бесконечного цикла нет (KI-632).
+      this.clearUnavailableTimer();
+
+      if (wasUnavailable && this.timer !== null) {
+        clearInterval(this.timer);
+        this.startInterval();
       }
 
       return;
@@ -303,29 +325,49 @@ export class LlmHealthService implements OnModuleInit, OnModuleDestroy {
         `LM Studio недоступен ${this.consecutiveFailures} проверки подряд — локальный провайдер исключён из роутинга до восстановления`,
       );
     }
+
+    // Пока статус `unavailable`, проверяем чаще обычного тика — иначе
+    // восстановление замечалось бы с задержкой до 30 с. Повторное планирование
+    // после неудачного внеочередного пинга и есть цикл «до восстановления»;
+    // успех его снимает (см. ветку выше).
+    if (this.status === 'unavailable') {
+      this.scheduleUnavailableRetry();
+    }
   }
 
   /**
    * Планирует внеочередной пинг через
-   * {@link LLM_HEALTH_RECOVERY_PING_DELAY_MS} после восстановления провайдера
-   * (KI-621).
+   * {@link LLM_HEALTH_UNAVAILABLE_RETRY_MS}, пока провайдер `unavailable`
+   * (KI-621, KI-632).
    *
    * Планирует только при активном мониторинге (`this.timer !== null`): без
    * периодического healthcheck внеочередная проверка бессмысленна, а в тестах
    * и при ручных вызовах `checkAsync` не должна порождать «висящие» таймеры.
-   * Если пинг уже запланирован, повторный вызов игнорируется — один переход
-   * `unavailable` → `available` даёт ровно один внеочередной пинг.
+   * Если пинг уже запланирован, повторный вызов игнорируется — один статус
+   * `unavailable` даёт не больше одного таймера за раз.
    */
-  private scheduleRecoveryPing(): void {
-    if (this.timer === null || this.recoveryTimer !== null) {
+  private scheduleUnavailableRetry(): void {
+    if (this.timer === null || this.unavailableTimer !== null) {
       return;
     }
 
-    this.recoveryTimer = setTimeout(() => {
-      this.recoveryTimer = null;
+    this.unavailableTimer = setTimeout(() => {
+      // Сбрасываем поле до проверки: неудачный пинг в `applyResult` снова
+      // запланирует следующий, а успешный — снимет цикл.
+      this.unavailableTimer = null;
       void this.checkAsync();
-    }, LLM_HEALTH_RECOVERY_PING_DELAY_MS);
+    }, LLM_HEALTH_UNAVAILABLE_RETRY_MS);
     // Внеочередной пинг не должен удерживать event loop живым (RULES 4.12).
-    this.recoveryTimer.unref();
+    this.unavailableTimer.unref();
+  }
+
+  /** Снимает запланированный внеочередной пинг, если он есть. */
+  private clearUnavailableTimer(): void {
+    if (this.unavailableTimer === null) {
+      return;
+    }
+
+    clearTimeout(this.unavailableTimer);
+    this.unavailableTimer = null;
   }
 }

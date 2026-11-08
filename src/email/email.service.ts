@@ -14,6 +14,7 @@ import {
   SEND_INVITATION_JOB,
   type EmailInvitationJobData,
 } from './email.queue.js';
+import { EmailOutboxService } from './email-outbox.service.js';
 
 /** Порт SMTP по умолчанию (STARTTLS). */
 const DEFAULT_SMTP_PORT = 587;
@@ -87,6 +88,11 @@ function maskEmail(email: string): string {
  * SMTP, а недоступный SMTP приводит к повторам задания (3 попытки,
  * экспоненциальный backoff), а не к потере письма.
  *
+ * **Payload — в БД (v1.4.0 S3, KI-623).** В Redis уходит только `outboxId`
+ * строки `email_outbox`: email, название организации и ссылка-приглашение
+ * хранятся в БД. `EmailOutboxService` пишет снимок до постановки задания;
+ * `EmailProcessor` читает его и обновляет статус.
+ *
  * Транспорт создаётся один раз в конструкторе (nodemailer держит пул
  * соединений), конфигурация читается из `ConfigService` (валидирована
  * `SmtpEnvSchema`). Пароль `SMTP_PASS` в логи не попадает (RULES 5.3), email
@@ -109,11 +115,13 @@ export class EmailService {
    * @param config - валидированная конфигурация окружения (SMTP_*,
    *   APP_PUBLIC_URL)
    * @param queue - очередь `email-invitations` для асинхронной отправки
+   * @param outbox - хранилище payload писем (v1.4.0 S3, KI-623)
    */
   constructor(
     private readonly config: ConfigService,
     @InjectQueue(EMAIL_INVITATIONS_QUEUE)
     private readonly queue: Queue<EmailInvitationJobData>,
+    private readonly outbox: EmailOutboxService,
   ) {
     this.from =
       readOptionalString(this.config.get<string>('SMTP_FROM')) ??
@@ -179,15 +187,19 @@ export class EmailService {
   }
 
   /**
-   * Ставит письмо-приглашение в очередь `email-invitations` (v1.2.0 S2).
+   * Сохраняет письмо в `email_outbox` и ставит задание в очередь
+   * `email-invitations` (v1.2.0 S2; outbox — v1.4.0 S3, KI-623).
    *
    * Возвращает управление сразу после `queue.add`: SMTP вызывается позже
    * `EmailProcessor`, поэтому HTTP-ручка приглашения не ждёт сеть и не зависит
    * от доступности почтового сервера. Недоступный SMTP не теряет письмо —
    * BullMQ повторит задание (`attempts: 3`, exponential backoff 5 с).
    *
-   * Ошибка Redis (очередь недоступна) не роняет приглашение: приглашение уже в
-   * БД, метод возвращает `false` и пишет ERROR (fallback DESIGN V120 § 3.3).
+   * Сначала INSERT в `email_outbox`, затем `queue.add` с одним `outboxId`.
+   * Ошибка БД или Redis не роняет приглашение: приглашение уже в БД, метод
+   * возвращает `false` и пишет ERROR (fallback DESIGN V120 § 3.3). Строка,
+   * для которой не удалось поставить задание, помечается `failed`, чтобы её
+   * было видно при разборе (повторная постановка — KI-624).
    *
    * @param to - email приглашённого (нормализованный)
    * @param orgName - название организации для темы и текста
@@ -199,24 +211,49 @@ export class EmailService {
     orgName: string,
     inviteLink: string,
   ): Promise<boolean> {
-    const data: EmailInvitationJobData = { to, orgName, inviteLink };
+    let outboxId: string;
+
+    try {
+      outboxId = await this.outbox.createAsync(to, orgName, inviteLink);
+    } catch (error: unknown) {
+      // Название организации в лог не пишем: у личной организации оно
+      // содержит email владельца (PII, RULES 5.9).
+      this.logger.error(
+        `Не удалось сохранить письмо-приглашение в email_outbox (${maskEmail(to)}): ${
+          error instanceof Error ? error.message : 'неизвестная ошибка'
+        }`,
+      );
+
+      return false;
+    }
 
     try {
       await this.queue.add(
         SEND_INVITATION_JOB,
-        data,
+        { outboxId },
         EMAIL_INVITATION_JOB_OPTIONS,
       );
 
       // Название организации в лог не пишем: у личной организации оно
       // содержит email владельца (PII, RULES 5.9).
       this.logger.log(
-        `Письмо-приглашение поставлено в очередь ${EMAIL_INVITATIONS_QUEUE}: ${maskEmail(to)}`,
+        `Письмо-приглашение поставлено в очередь ${EMAIL_INVITATIONS_QUEUE}: ${maskEmail(to)} (outbox ${outboxId})`,
       );
 
       return true;
     } catch (error: unknown) {
       // Ошибка Redis: приглашение уже создано в БД, письмо не поставлено.
+      // Строку outbox помечаем failed, иначе она навсегда останется pending.
+      try {
+        await this.outbox.markFailedAsync(outboxId);
+      } catch (markError: unknown) {
+        this.logger.error(
+          `Не удалось пометить email_outbox ${outboxId} как failed: ${
+            markError instanceof Error ? markError.message : 'неизвестная ошибка'
+          }`,
+        );
+      }
+
       this.logger.error(
         `Не удалось поставить письмо-приглашение в очередь ${EMAIL_INVITATIONS_QUEUE} (${maskEmail(to)}): ${
           error instanceof Error ? error.message : 'неизвестная ошибка'

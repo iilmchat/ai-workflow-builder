@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Queue } from 'bullmq';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { EmailOutboxService } from './email-outbox.service.js';
 import type { EmailInvitationJobData } from './email.queue.js';
 import { EmailService } from './email.service.js';
 import {
@@ -60,6 +61,11 @@ describe('EmailService (v1.1.0 S1; очередь — v1.2.0 S2)', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
   /** Заглушка очереди `email-invitations` (v1.2.0 S2). */
   let queue: { add: ReturnType<typeof vi.fn> };
+  /** Заглушка outbox (v1.4.0 S3, KI-623). */
+  let outbox: {
+    createAsync: ReturnType<typeof vi.fn>;
+    markFailedAsync: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     createTransportMock.mockReset();
@@ -67,6 +73,10 @@ describe('EmailService (v1.1.0 S1; очередь — v1.2.0 S2)', () => {
     createTransportMock.mockReturnValue({ sendMail: sendMailMock });
     sendMailMock.mockResolvedValue({ messageId: 'id-1' });
     queue = { add: vi.fn(() => Promise.resolve({ id: 'job-1' })) };
+    outbox = {
+      createAsync: vi.fn(() => Promise.resolve('outbox-1')),
+      markFailedAsync: vi.fn(() => Promise.resolve()),
+    };
     warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     logSpy = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
@@ -82,6 +92,7 @@ describe('EmailService (v1.1.0 S1; очередь — v1.2.0 S2)', () => {
     return new EmailService(
       config,
       queue as unknown as Queue<EmailInvitationJobData>,
+      outbox as unknown as EmailOutboxService,
     );
   }
 
