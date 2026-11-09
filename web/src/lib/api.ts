@@ -1068,7 +1068,8 @@ export async function fetchMcpServersAsync(): Promise<McpServersResponse> {
  *
  * Тот же список, что CHECK-констрейнт `device_tokens_platform_check` в БД и
  * `RegisterDeviceTokenSchema` на backend: web — для браузерных push (в S3 не
- * регистрируется, но домен общий), android/ios — нативные FCM/APNs.
+ * регистрируется, но домен общий), android — RuStore Push (S4-B), ios — APNs
+ * (появится вместе с iOS-сборкой).
  */
 export const DeviceTokenPlatformSchema = z.enum(['android', 'ios', 'web']);
 
@@ -1078,10 +1079,10 @@ export type DeviceTokenPlatform = z.infer<typeof DeviceTokenPlatformSchema>;
 /**
  * Тело `POST /notifications/register` (v1.5.0 S3, DESIGN V150 § 3.3).
  *
- * `token` — FCM/APNs-токен устройства (`registration`-событие плагина),
- * `platform` — домен из {@link DeviceTokenPlatformSchema}. Схема валидирует
- * тело на клиенте до отправки: пустой токен или чужая платформа — ошибка в
- * консоли, а не 400 от сервера (RULES 1.17).
+ * `token` — push-токен устройства (RuStore Push на Android, `getToken()`
+ * нативного SDK), `platform` — домен из {@link DeviceTokenPlatformSchema}.
+ * Схема валидирует тело на клиенте до отправки: пустой токен или чужая
+ * платформа — ошибка в консоли, а не 400 от сервера (RULES 1.17).
  */
 export const RegisterDeviceTokenSchema = z.object({
   token: z.string().min(1),
@@ -1094,13 +1095,14 @@ export type RegisterDeviceTokenDto = z.infer<typeof RegisterDeviceTokenSchema>;
 /**
  * Регистрирует push-токен устройства на бэкенде (v1.5.0 S3).
  *
- * Вызывается из `usePushNotifications` по событию `registration`. Backend
+ * Вызывается из `usePushNotifications` после получения токена
+ * (`RuStorePushClient.getToken` на Android). Backend
  * делает upsert по `token` (`ON CONFLICT (token) DO UPDATE`), поэтому
  * повторная отправка того же токена безопасна: строка обновит владельца, а не
  * создаст дубль. Ответ `{ ok: true }` не разбирается — важен сам факт 2xx;
  * текст ошибки несёт `ApiError` (`requestAsync`).
  *
- * @param token - FCM/APNs-токен устройства
+ * @param token - push-токен устройства (RuStore Push)
  * @param platform - платформа устройства (`android`/`ios`/`web`)
  * @throws ZodError если токен пустой или платформа вне домена
  * @throws ApiError при сетевой ошибке или не-2xx статусе

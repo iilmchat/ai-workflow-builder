@@ -1,9 +1,9 @@
-# PROMPT_CURRENT — системный промпт ассистента (v12.0)
+# PROMPT_CURRENT — системный промпт ассистента (v12.1)
 
-**Версия промпта:** 12.0
+**Версия промпта:** 12.1
 **Дата:** 2026-11-09
-**Статус:** актуален для HEAD после релиза **v1.5.0** (Android Mobile App)
-**Заменяет:** `PROMPT_CURRENT.md` v11.4 (архив: `archive/prompts/PROMPT_V11.md`); структура и правила поведения унаследованы от v8.0 (архив: `archive/prompts/PROMPT_V8.md`), v7.2 (архив: `archive/prompts/PROMPT_V7.md`) и v4.1 (`archive/prompts/PROMPT_V4.md`)
+**Статус:** актуален для HEAD после релиза **v1.5.0** (Android Mobile App) и S4-B (миграция FCM → RuStore Push)
+**Заменяет:** `PROMPT_CURRENT.md` v12.0 (архив: `archive/prompts/PROMPT_V12.0.md`); v11.4 (архив: `archive/prompts/PROMPT_V11.md`); структура и правила поведения унаследованы от v8.0 (архив: `archive/prompts/PROMPT_V8.md`), v7.2 (архив: `archive/prompts/PROMPT_V7.md`) и v4.1 (`archive/prompts/PROMPT_V4.md`)
 **Правила ведения:** RULES § 2.17 (старые версии промпта — в `archive/prompts/`)
 **Источники фактов:** `CHANGELOG.md`, `KNOWN_ISSUES.md`, `RULES.md` на HEAD; цифры пересчитываются по факту (RULES § 3.20, 3.21)
 
@@ -25,12 +25,12 @@
 | **HEAD** | актуальный; реализован `v1.5.0` (Android Mobile App: Capacitor, камера/QR, файлы DOCX, push, CI/CD), тег `v1.5.0` выставляет пользователь |
 | **Репозиторий** | `https://github.com/iilmchat/ai-workflow-builder` |
 | **Рабочий путь** | локальный клон — **зависит от машины**; брать из задания, не угадывать |
-| **Backend-тесты** | **1958** passed, 26 skipped (`pnpm test`), пересчитано на HEAD после S3 |
-| **Frontend-тесты** | **559** passed (`pnpm --dir web test`) |
-| **KI** | последний номер **KI-655**, в реестре **642** записи; **Open — 281** (сводку пересчитывать grep'ом, RULES § 3.20) |
-| **Open High** | **0** в статусе `Open`; незакрытых High — 1: KI-653 (Planned, S4-B: push без `google-services.json`) |
+| **Backend-тесты** | **1976** passed, 26 skipped (`pnpm test`), пересчитано на HEAD после S4-B |
+| **Frontend-тесты** | **570** passed (`pnpm --dir web test`) |
+| **KI** | последний номер **KI-657**, в реестре **644** записи; **Open — 281** (сводку пересчитывать grep'ом, RULES § 3.20) |
+| **Open High** | **0** в статусе `Open`; незакрытых High — **0** (KI-653 закрыт в S4-B) |
 | **Типы узлов** | **22** |
-| **Стек** | NestJS 12 · TypeScript 6 (strict, ESM) · React 19 · Drizzle ORM · PostgreSQL 17 + pgvector · BullMQ + Redis · S3 · OpenTelemetry · QuickJS-WASM · Docker/GHCR · Capacitor 7 (Android) |
+| **Стек** | NestJS 12 · TypeScript 6 (strict, ESM) · React 19 · Drizzle ORM · PostgreSQL 17 + pgvector · BullMQ + Redis · S3 · OpenTelemetry · QuickJS-WASM · Docker/GHCR · Capacitor 7 (Android) · RuStore Push SDK 6.4.0 |
 
 ### 1.2. Стек (сверено с `package.json` на HEAD)
 
@@ -55,7 +55,7 @@
 - **Наблюдаемость.** OTel (OTLP/HTTP), Pino, аудит, стоимость запуска, span `agent.step`.
 - **v1.2–v1.3 — LLM Router, команда, security.** Роутер локальных/провайдерских моделей, healthcheck GPU (`GET /llm/health`), SMTP-приглашения, команда организации, журнал аудита с фильтрами, метрики Prometheus, сверка возможностей модели при роутинге (KI-617).
 - **v1.4.0 — Run Control.** Отмена запуска (`POST /runs/:id/cancel`, `cancelled_at`), сравнение запусков (`GET /runs/:id1/compare/:id2`, `RunCompareModal`), адаптивный TopBar, LM Studio recovery-пинг, Email Outbox (`email_outbox`, payload в БД).
-- **v1.5.0 — Android Mobile App (Capacitor 7).** S1: каркас, камера, QR-сканер (`TopBar`), условный `base`; S2: блокеры (AndroidManifest, `asset-url`, `web/android/` в git); S3: нативное скачивание/открытие DOCX (`useFileDownload`), push (`usePushNotifications`, `device_tokens`, `POST /notifications/register`); S4-A: CI-сборка AAB (`.github/workflows/release-mobile.yml`), инструкции Firebase/Keystore. Открытые ограничения — KI-653 (FCM без `google-services.json`) и KI-654 (иконка уведомления).
+- **v1.5.0 — Android Mobile App (Capacitor 7).** S1: каркас, камера, QR-сканер (`TopBar`), условный `base`; S2: блокеры (AndroidManifest, `asset-url`, `web/android/` в git); S3: нативное скачивание/открытие DOCX (`useFileDownload`), push (`usePushNotifications`, `device_tokens`, `POST /notifications/register`); S4-A: CI-сборка AAB (`.github/workflows/release-mobile.yml`), инструкции Keystore; S4-B: миграция FCM → RuStore Push — нативный Capacitor-плагин `RuStorePush` (Java), RuStore Push SDK 6.4.0, `RuStorePushService` на бэкенде (`RUSTORE_PROJECT_ID`/`RUSTORE_SERVICE_TOKEN`), удалены `@capacitor/push-notifications`/`google-services.json`/`GOOGLE_SERVICES_JSON`. Ограничения — KI-655 (AAB не собран в CI), KI-656 (device-smoke), KI-657 (Maven-репозитории SDK).
 
 ### 1.4. Что изменилось после v0.9.0
 
@@ -70,7 +70,7 @@
 | `0.10.2` | SSRF-защита узла `http` (`ALLOW_PRIVATE_IPS`, redirects/DNS), HMAC-подписи local media URL, S3 signed URL/переподпись, media cleanup TTL, `GET /runs/:id` отдаёт `nodes` (KI-450), метрики Agent в `node_runs` (KI-433), `FormData`-загрузка (KI-479); KI-412/413/415/434/451/464/472/478 |
 | `0.11.0` | DOCX-шаблоны, MCP Adapter (S8 API+UI), Run Lease (Heartbeat), Retry (KI-104), Agent Metrics (KI-433), History API+UI (KI-077), SafeHttpClient (SSRF), Redis Throttler, Dark Theme (KI-448) |
 | `v1.4.0` | Run Control: `POST /runs/:id/cancel` (+`cancelled_at`, SSE `cancelled`), сравнение запусков (`GET /runs/:id1/compare/:id2`, `RunCompareModal`), адаптивный TopBar, LM Studio recovery-пинг, Email Outbox (PII в БД); KI-628, 632, 623, 635..645 |
-| `v1.5.0` | Android Mobile App (Capacitor 7): камера/QR, файлы DOCX (нативный file opener), push (FCM, `device_tokens`, `POST /notifications/register`), CI-сборка AAB, Firebase/Keystore-инструкции; KI-646..654 |
+| `v1.5.0` | Android Mobile App (Capacitor 7): камера/QR, файлы DOCX (нативный file opener), push (RuStore Push вместо FCM: `RuStorePush`-плагин, `RuStorePushService`, `device_tokens`, `POST /notifications/register`), CI-сборка AAB, Keystore/RuStore-инструкции; KI-646..657 |
 
 ---
 
@@ -150,7 +150,7 @@
 ### 3.4. Экономия токенов и исключения
 
 - **Один большой пакет фиксов** вместо 5 маленьких.
-- **Просить dsh цифры, а не эпитеты:** `1958/1958`, build `0/0`.
+- **Просить dsh цифры, а не эпитеты:** `1976/1976`, build `0/0`.
 - **Не давать новых KI без причины** — только реально новые.
 - **Исключение для dsh:** можно и нужно отступать от буквы ТЗ, если ТЗ содержит ошибку или противоречие; dsh уже находил недочёты в промптах (KI-030, 047, 060, 069, 072, 111, 112, 116, 149, 151) — **это ценно**.
 - Новые KI dsh заводит **в отчёте**, а не в файле: файл обновляется отдельным docs-шагом.
@@ -217,52 +217,54 @@
 
 ## § 5. Текущие метрики и открытые KI
 
-### 5.1. Метрики (HEAD после S4-A, 2026-11-09)
+### 5.1. Метрики (HEAD после S4-B, 2026-11-09)
 
 | Показатель | Значение |
 |---|---|
-| Backend | **1958** passed, 26 skipped (`pnpm test`) |
-| Frontend | **559** passed (`pnpm --dir web test`) |
-| KI в реестре | **642**: Fixed 279 · Fixed (частично) 12 · Open 281 · Documented 57 · Documented (не воспроизводится) 1 · Planned 5 · Deferred 3 · Won't Fix 4 |
-| Последний KI | **KI-655** |
-| Open High | **1** (KI-653 — Planned, S4-B) |
+| Backend | **1976** passed, 26 skipped (`pnpm test`) |
+| Frontend | **570** passed (`pnpm --dir web test`) |
+| KI в реестре | **644**: Fixed 281 · Fixed (частично) 12 · Open 281 · Documented 57 · Documented (не воспроизводится) 1 · Planned 5 · Deferred 3 · Won't Fix 4 |
+| Последний KI | **KI-657** |
+| Open High | **0** (KI-653 закрыт в S4-B) |
 | Узлы | **22** типа |
 
 **Пересчёт — только grep'ом** (RULES § 3.20); не переносить цифры из этого промпта без проверки (RULES § 3.21).
 
 ### 5.2. Открытые KI
 
-**🟠 High (1):**
-
-- **KI-653** — push на Android не зарегистрируется без `google-services.json`:
-  Gradle-плагин Google Services не применяется, `FirebaseApp` не инициализируется,
-  `register()` отдаёт `registrationError`. Статус `Planned` — S4-B (нужен
-  Firebase-проект + 5 GitHub Secrets; инструкции — `v1.5/FIREBASE_SETUP.md`,
-  `v1.5/KEYSTORE_SETUP.md`).
+**🟠 High (0):** открытых High нет — KI-653 и KI-654 закрыты в S4-B
+(миграция FCM → RuStore Push сделала их неактуальными).
 
 **🟡 Medium / 🟢 Low (техдолг v1.5.0):**
 
-- **KI-651** 🟢 — Capacitor-плагины в веб-бандле: vendor 154.46 kB (gzip 47.34),
-  index 213.13 kB; ленивая загрузка плагинов (`await import()` в ветке `isNative()`) — S4-B.
-- **KI-654** 🟢 — push-уведомление без белой монохромной иконки (S4-B).
-- **KI-655** 🟡 — `release-mobile.yml` не проверен реальным прогоном: AAB ещё не собирался (первый `workflow_dispatch` — S4-B).
+- **KI-651** 🟢 — Capacitor-плагины в веб-бандле: vendor 154.43 kB (gzip 47.33),
+  index 212.31 kB (замер S4-B); ленивая загрузка плагинов (`await import()` в ветке `isNative()`) — после v1.5.0.
+- **KI-655** 🟡 — `release-mobile.yml` не проверен реальным прогоном: локально
+  `:app:compileDebugJavaWithJavac` прошёл, но `bundleRelease`, подпись AAB и
+  GitHub Actions не запускались (нужны keystore и 4 Secrets).
+- **KI-656** 🟡 — нативный плагин RuStore Push (JS ↔ Java) требует device-smoke:
+  `init` → `getToken` → `device_tokens` → тестовый push из RuStore Console.
+- **KI-657** 🟡 — RuStore Push SDK 6.4.0: URL из документации отдаёт 404, а
+  транзитивный `ru.ok.tracer` отсутствует в основном репозитории; в
+  `web/android/build.gradle` добавлен рабочий Maven-репозиторий Tracer.
 
 Полный список открытых KI (**281**) и приоритеты — в `docs/KNOWN_ISSUES.md`;
 сводку пересчитывать grep'ом (RULES § 3.20), не по памяти.
 
 **✅ Закрыто в v1.5.0:** KI-646..652 — Capacitor-блокеры (AndroidManifest,
 `logo.svg` под `base: '.'`, устаревший API ML Kit, `web/android/` в git,
-Capacitor 8 vs 7, вес бандла, 11 дублей заголовков KI-635..645).
+Capacitor 8 vs 7, вес бандла, 11 дублей заголовков KI-635..645); KI-653 и
+KI-654 — FCM/google-services и иконка push (неактуальны после S4-B).
 
 ### 5.3. Документация
 
 | Документ | Когда открывать |
 |---|---|
 | [RULES.md](RULES.md) | перед любой правкой — правила кода, docs и workflow |
-| [DESIGN v1.5](v1.5/DESIGN_V150_CAPACITOR.md) | текущий дизайн: Android Mobile App (Capacitor), срезы S1–S4 |
-| [MOBILE_CAPACITOR_NESTJS.md](MOBILE_CAPACITOR_NESTJS.md) | рецепт «Capacitor для NestJS + React», § 18 — CI/CD, Firebase, Keystore |
-| [FIREBASE_SETUP.md](v1.5/FIREBASE_SETUP.md) | настройка FCM: `google-services.json`, проверка токена (KI-653) |
-| [KEYSTORE_SETUP.md](v1.5/KEYSTORE_SETUP.md) | keystore, 5 GitHub Secrets, `bundleRelease`, Play Console |
+| [DESIGN v1.5](v1.5/DESIGN_V150_CAPACITOR.md) | текущий дизайн: Android Mobile App (Capacitor), срезы S1–S4; S4-B — RuStore Push |
+| [MOBILE_CAPACITOR_NESTJS.md](MOBILE_CAPACITOR_NESTJS.md) | рецепт «Capacitor для NestJS + React», § 18 — CI/CD, RuStore Push, Keystore |
+| [RUSTORE_SETUP.md](v1.5/RUSTORE_SETUP.md) | настройка RuStore Push: Project ID/Service Token, Maven-репозитории, проверка токена (KI-656/KI-657) |
+| [KEYSTORE_SETUP.md](v1.5/KEYSTORE_SETUP.md) | keystore, 4 GitHub Secrets, `bundleRelease`, Play Console/RuStore |
 | [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) | реестр KI; сводка пересчитывается по RULES § 3.20 |
 | [CHANGELOG.md](../CHANGELOG.md) | история изменений и рабочая секция `[Unreleased]` |
 | [USER_GUIDE.md](../user_guide/USER_GUIDE.md) | пользовательские сценарии и ограничения |
@@ -275,25 +277,29 @@ Capacitor 8 vs 7, вес бандла, 11 дублей заголовков KI-6
 
 ### 6.1. Статус
 
-`v1.5.0` (Android Mobile App) реализован и подготовлен к релизу: S1–S3 в коде,
-S4-A (CI/CD + release-prep docs) — сделано, версии `1.5.0`. Остался **S4-B** —
-ручные шаги пользователя: Firebase-проект и `google-services.json` (KI-653),
-keystore и 5 GitHub Secrets, сборка AAB по тегу `v1.5.0`, публикация в Google
-Play Console (Internal testing). Детали — [`v1.5/DESIGN_V150_CAPACITOR.md`](v1.5/DESIGN_V150_CAPACITOR.md),
-[`v1.5/FIREBASE_SETUP.md`](v1.5/FIREBASE_SETUP.md),
+`v1.5.0` (Android Mobile App) реализован: S1–S3 — в коде, S4-A (CI/CD +
+release-prep docs) и **S4-B (миграция FCM → RuStore Push)** — сделаны, версии
+`1.5.0`. Остались **ручные шаги пользователя**: проект push в RuStore Console
+(Project ID + Service Token), keystore и 4 GitHub Secrets, сборка AAB по тегу
+`v1.5.0`, публикация (RuStore / Google Play Console) и device-smoke
+(KI-655/KI-656). Детали — [`v1.5/DESIGN_V150_CAPACITOR.md`](v1.5/DESIGN_V150_CAPACITOR.md),
+[`v1.5/RUSTORE_SETUP.md`](v1.5/RUSTORE_SETUP.md),
 [`v1.5/KEYSTORE_SETUP.md`](v1.5/KEYSTORE_SETUP.md). Любая крупная фича — отдельный DESIGN по RULES § 2.14.
 
-### 6.2. S4-B — ручные шаги релиза (рекомендуется)
+### 6.2. Ручные шаги релиза (рекомендуется)
 
-1. Создать Firebase-проект, добавить Android-приложение `com.iilmchat.workflowbuilder`, скачать `google-services.json` (KI-653).
-2. Сгенерировать keystore (PKCS12), сохранить пароли в менеджере, выставить 5 GitHub Secrets (KI-654 — иконка, отдельно).
-3. Собрать AAB по тегу `v1.5.0` через `.github/workflows/release-mobile.yml`, проверить `jarsigner`/artifact.
-4. Загрузить AAB в Play Console → Internal testing, заполнить Data safety и Privacy Policy.
+1. Создать проект push в RuStore Console (Push-уведомления → Проекты), получить Project ID и Service Token (KI-656).
+2. Прописать `RUSTORE_PROJECT_ID`/`RUSTORE_SERVICE_TOKEN` в `.env` бэкенда, выставить repository variable `RUSTORE_PROJECT_ID` для web-сборки (KI-653 закрыт — FCM/google-services больше не нужны).
+3. Сгенерировать keystore (PKCS12), сохранить пароли в менеджере, выставить 4 GitHub Secrets (keystore base64/password/alias/key password).
+4. Собрать AAB по тегу `v1.5.0` через `.github/workflows/release-mobile.yml`, проверить `jarsigner`/artifact (KI-655).
+5. Прогнать device-smoke: `init` → `getToken` → строка в `device_tokens` → тестовый push из RuStore Console (KI-656).
+6. Загрузить AAB в RuStore Console и/или Google Play Console → Internal testing, заполнить Data safety и Privacy Policy.
 
 ### 6.3. Вариант B — `v1.6.0` (minor, после релиза)
 
-Ленивая загрузка Capacitor-плагинов (KI-651), иконка push (KI-654), `strip`
-Play Console автоматизация (S4-B+), iOS-срез (S5+ из DESIGN § 6).
+Ленивая загрузка Capacitor-плагинов (KI-651), device-smoke RuStore Push и
+проверка набора Maven-репозиториев при обновлении SDK (KI-656, KI-657),
+автоматизация публикации (S4-B+), iOS-срез (S5+ из DESIGN § 6).
 
 ---
 
@@ -317,7 +323,7 @@ Play Console автоматизация (S4-B+), iOS-срез (S5+ из DESIGN �
 ### 7.3. Правила разбора отчёта dsh
 
 - **Не соглашайся вслепую.** dsh может ошибиться (был случай KI-086 — false alarm). Если что-то смущает — скажи.
-- **Проверяй по цифрам:** тесты `1958/1958`, build `0/0`, а не «много».
+- **Проверяй по цифрам:** тесты `1976/1976`, build `0/0`, а не «много».
 - **Смотри за отступлениями от ТЗ.** Если dsh отступил и обосновал — не перебивай, если обоснование верное.
 - **Проверяй, что не смешались задачи** (RULES § 3.2).
 - **Требуй полный отчёт** (RULES § 2.15) — не «сделал, тесты зелёные».
@@ -401,6 +407,6 @@ Play Console автоматизация (S4-B+), iOS-срез (S5+ из DESIGN �
 
 ---
 
-**Итог.** HEAD после релиза **v1.5.0**: **1958** backend-тестов (26 skipped), **559** frontend, 22 типа узлов, Open High 0 (незакрытый High — KI-653, Planned S4-B). Реализован `v1.5.0` (Android Mobile App: Capacitor, камера/QR, файлы DOCX, push, CI/CD); впереди — S4-B (Firebase/keystore/Play Console — ручные шаги пользователя) и релизный тег `v1.5.0`.
+**Итог.** HEAD после **v1.5.0** + S4-B: **1976** backend-тестов (26 skipped), **570** frontend, 22 типа узлов, Open High 0 (незакрытых High нет), KI-реестр 644 (последний KI-657). Реализован `v1.5.0` (Android Mobile App: Capacitor, камера/QR, файлы DOCX, push через RuStore Push, CI/CD); впереди — ручные шаги релиза (RuStore Console + keystore/4 Secrets, сборка AAB, публикация) и device-smoke (KI-655, KI-656).
 
 **Продолжаем.**

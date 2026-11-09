@@ -764,8 +764,8 @@ export const nodeRuns = pgTable(
  * Платформы устройств для push-токенов (v1.5.0 S3, DESIGN V150 § 3 S3).
  *
  * Единый источник значений для CHECK-ограничения `device_tokens_platform_check`
- * и Zod-схемы `POST /notifications/register`: FCM-токен приходит с Android или
- * iOS, web-push — из браузера. Список закрытый: неизвестная платформа означает
+ * и Zod-схемы `POST /notifications/register`: на Android токен выдаёт RuStore
+ * Push SDK (S4-B), на iOS — APNs, web-push — из браузера. Список закрытый: неизвестная платформа означает
  * ошибку клиента, а не новый режим доставки, поэтому валидируется и на границе
  * API, и в БД (RULES 1.17).
  */
@@ -777,7 +777,7 @@ export type DeviceTokenPlatform = (typeof DEVICE_TOKEN_PLATFORMS)[number];
 /**
  * device_tokens — push-токены устройств пользователя (v1.5.0 S3, миграция 0021).
  *
- * Токен FCM уникален **глобально**, а не в рамках пользователя: одно и то же
+ * Токен провайдера уникален **глобально**, а не в рамках пользователя: одно и то же
  * устройство может войти другим аккаунтом, и тогда строка должна переехать к
  * новому владельцу, а не задвоиться. Поэтому `UNIQUE (token)` работает как
  * ключ UPSERT'а: `INSERT ... ON CONFLICT (token) DO UPDATE SET user_id,

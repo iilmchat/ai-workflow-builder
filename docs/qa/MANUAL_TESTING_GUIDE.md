@@ -1,7 +1,7 @@
 # Гайд по ручному тестированию — IIChatTools AI Workflow Builder
 
 **Файл:** `docs/qa/MANUAL_TESTING_GUIDE.md`
-**Версия документа:** 1.6 (2026-11-09)
+**Версия документа:** 1.7 (2026-11-09)
 **Версия продукта:** 1.5.0
 **Область:** ручная проверка релиза v1.5.0 — Auth, Canvas UI, Engine,
 LLM/Media, Vector/Agent, Share/Access, S3/Storage, Edge Cases, Web Search /
@@ -2347,19 +2347,26 @@ health-ответа на одной стороне гейт падает (KI-627
 браузере и открытие файла системным просмотрщиком в приложении, ошибку
 скачивания, регистрацию push-токена (`POST /notifications/register`, таблица
 `device_tokens`) и CI-workflow `.github/workflows/release-mobile.yml`.
-Требования — DESIGN v1.5 § 3 (S1–S4), отчёты v1.5.0 S1/S3; KI-646..651 в
-S1–S2, KI-653 (push без Firebase), KI-654 (иконка уведомления).
+Требования — DESIGN v1.5 § 3 (S1–S4), отчёты v1.5.0 S1/S3/S4-B; KI-646..651 — S1–S2;
+KI-653 (push без `google-services.json`) и KI-654 (иконка уведомления) закрыты в
+S4-B как неактуальные после миграции на RuStore Push; KI-656 — нативный плагин
+RuStore Push требует device-smoke.
 
-> **Границы релиза.** iOS и публикация в Play Console — вне v1.5 (S4-B).
-> Push-уведомления требуют `google-services.json` в сборке (KI-653): без файла
-> регистрация токена не произойдёт — это ожидаемо, а не баг. Иконка
-> уведомления системная (KI-654). `MOBILE-10` проверяет **наличие и триггеры**
-> workflow, а не запуск сборки AAB.
+> **Границы релиза.** iOS и публикация в магазинах — вне v1.5 (S4-B: ручные шаги
+> пользователя). Push-уведомления доставляются через **RuStore**: нужны
+> устройство с установленным RuStore, приложение, добавленное в RuStore Console
+> (отпечаток подписи установленной сборки совпадает с консолью), и настроенный
+> проект push. На устройстве/эмуляторе без RuStore push ожидаемо не
+> приходят — это ограничение канала, а не баг. `MOBILE-10` проверяет
+> **наличие и триггеры** workflow, а не запуск сборки AAB.
 >
-> **Как получить сборку для кейсов.** `CAPACITOR=1 pnpm --dir web build` →
-> `pnpm --dir web exec cap sync android` → установка APK/AAB (debug-сборка
-> допустима, кроме `MOBILE-09` — там нужен Firebase). Backend в приложении
-> обязан быть по HTTPS (`cleartext: false` в `web/capacitor.config.ts`).
+> **Как получить сборку для кейсов.** `CAPACITOR=1 VITE_RUSTORE_PROJECT_ID=<projectId>
+> pnpm --dir web build` → `pnpm --dir web exec cap sync android` → установка
+> APK/AAB (debug-сборка допустима, кроме `MOBILE-09` — там нужен release,
+> подписанный ключом с отпечатком, добавленным в проект push RuStore Console).
+> Backend в приложении обязан быть по HTTPS (`cleartext: false` в
+> `web/capacitor.config.ts`). Настройка канала —
+> [RUSTORE_SETUP](../development/v1.5/RUSTORE_SETUP.md).
 
 #### MOBILE-01 — Приложение открывается без белого экрана
 **Приоритет:** P1 · **Тип:** smoke
@@ -2496,19 +2503,24 @@ DOCX»; способ оборвать доступ к файлу (выключи
 - После восстановления сети повторный клик открывает файл, строка ошибки
   исчезает (правило «до/после», RULES 4.33).
 
-#### MOBILE-09 — Push: разрешение и `POST /notifications/register`
+#### MOBILE-09 — Push: разрешение, push-токен RuStore и `POST /notifications/register`
 **Приоритет:** P2
-**Предусловие:** сборка приложения **с** `google-services.json` (Firebase
-настроен по [FIREBASE_SETUP](../development/v1.5/FIREBASE_SETUP.md)); на
-устройстве есть Google Play Services; backend на HEAD (модуль `notifications`,
-миграция `0021`); пользователь вошёл. Если Firebase не настроен — ожидаемый
-результат фиксируется по KI-653 (см. ниже).
+**Предусловие:** release-сборка приложения, подписанная ключом, отпечаток
+которого добавлен в проект push RuStore Console (настройка —
+[RUSTORE_SETUP](../development/v1.5/RUSTORE_SETUP.md)); на устройстве
+установлен RuStore; backend на HEAD (модуль `notifications`, миграция `0021`);
+пользователь вошёл. Для серверной отправки на бэкенде заданы
+`RUSTORE_PROJECT_ID` и `RUSTORE_SERVICE_TOKEN`. Если проект push не настроен —
+ожидаемый результат фиксируется по ограничениям ниже (это не баг приёмки).
 **Шаги:**
 1. Войти в приложение и дождаться системного диалога разрешения уведомлений.
-2. Разрешить уведомления, дождаться события `registration` в `adb logcat`.
+2. Разрешить уведомления, дождаться в `adb logcat` push-токена RuStore
+   (`[push] token = ...`).
 3. Проверить `POST /notifications/register` (лог backend / прокси) и строку в
    таблице `device_tokens`.
-4. Выйти и войти снова, не переустанавливая приложение.
+4. Отправить тестовый push из RuStore Console (Push-уведомления → Проекты →
+   Тестовые уведомления: push-токен из шага 2, заголовок и текст).
+5. Выйти и войти снова, не переустанавливая приложение.
 **Ожидаемый результат:**
 - Диалог появляется **после** подтверждённой сессии (не на экране входа); при
   разрешении уходит `POST /notifications/register` с `{ token, platform:
@@ -2516,11 +2528,14 @@ DOCX»; способ оборвать доступ к файлу (выключи
 - В `device_tokens` одна строка на устройство (`ON CONFLICT (token) DO UPDATE`);
   `user_id` и `organization_id` — из БД, попытка с чужим токеном заменяет
   владельца.
+- Тестовый push из RuStore Console приходит в течение нескольких секунд; в
+  `logcat` нет ошибок инициализации плагина `RuStorePush`.
 - Повторный вход не дублирует строку и не повторяет запрос (guard
   идемпотентности); при отказе в разрешении запросов нет, в консоли WARN,
   приложение работает как обычно.
-- Без `google-services.json` событие `registration` не приходит, запроса нет —
-  это KI-653 (Planned, S4), не баг ручной приёмки.
+- Без RuStore на устройстве или без совпадения подписи push-токен не выдаётся —
+  это ограничение канала RuStore (KI-653 закрыт миграцией; device-smoke
+  нативного плагина — KI-656), а не баг ручной приёмки.
 
 #### MOBILE-10 — Наличие и триггеры `.github/workflows/release-mobile.yml`
 **Приоритет:** P3
@@ -2530,20 +2545,24 @@ DOCX»; способ оборвать доступ к файлу (выключи
 1. Открыть `.github/workflows/release-mobile.yml` (или Actions → «Release
    Mobile (Android)»).
 2. Проверить триггеры: `push` по тегу `v*` и `workflow_dispatch`.
-3. Сверить шаги job `build-android`: `CAPACITOR=1 pnpm --dir web build`,
-   `cap sync android`, decode keystore, restore `google-services.json`,
-   `bundleRelease`, verify (подпись + разрешения), upload artifact, cleanup.
+3. Сверить шаги job `build-android`: `CAPACITOR=1 pnpm --dir web build` (с
+   `VITE_RUSTORE_PROJECT_ID` из repository variable `RUSTORE_PROJECT_ID`),
+   `cap sync android`, decode keystore, `bundleRelease`, verify (подпись +
+   разрешения), upload artifact, cleanup.
 4. Проверить, что значения секретов не зашиты в файл.
 **Ожидаемый результат:**
 - Триггеры и шаги на месте, соответствуют DESIGN v1.5 § 3 (S4) и
   [KEYSTORE_SETUP](../development/v1.5/KEYSTORE_SETUP.md); в файле только
-  ссылки `${{ secrets.* }}`, без значений.
+  ссылки `${{ secrets.* }}` / `${{ vars.* }}`, без значений.
+- Секретов сборки — 4 (keystore); Project ID RuStore передаётся переменной
+  (`vars.RUSTORE_PROJECT_ID`), а не секретом; шага restore
+  `google-services.json` больше нет.
 - Без секретов job падает с `::error::…secret is not set` и ссылкой на
   инструкцию, а не собирает молча нерабочий AAB.
-- `git check-ignore -v web/android/app/google-services.json
-  web/android/app/release.keystore` показывает правила из `web/android/.gitignore`
-  — секреты не попадут в коммит.
-- AAB в этом кейсе не собираем и в Play Console не публикуем (S4-B).
+- `git check-ignore -v web/android/app/release.keystore` показывает правило из
+  `web/android/.gitignore` — keystore не попадёт в коммит.
+- AAB в этом кейсе не собираем и в магазин не публикуем (S4-B — ручные шаги
+  пользователя).
 
 ---
 
@@ -2598,15 +2617,20 @@ DOCX»; способ оборвать доступ к файлу (выключи
     причину (`invalid-docx`, 413, 403) видно только в ответе API/логах.
 21. **iOS-приложения нет** — v1.5.0 выпускается только для Android; версия для
     iOS — S5+ (DESIGN v1.5 § 6). Веб-версия от мобильной работы не менялась.
-22. **Публикация в Google Play не входит в v1.5.0** — CI собирает и проверяет
-    подписанный AAB, а загрузка в Play Console (Internal testing) и rollout —
-    S4-B. Поэтому кейсов на установку из Play в блоке нет.
-23. **Push в приложении без `google-services.json` не регистрируется**
-    (KI-653): сборка без Firebase ожидаемо не получает токен, `POST
-    /notifications/register` не вызывается. Файл не коммитится
-    (`web/android/.gitignore`) и в CI создаётся из секрета.
-24. **Иконка push-уведомления системная** (KI-654): своей монохромной иконки
-    нет, в статусбаре уведомление может выглядеть белым квадратом/пятном.
+22. **Публикация в магазинах (RuStore / Google Play) не входит в v1.5.0** — CI
+    собирает и проверяет подписанный AAB, а загрузка в консоль магазина и
+    rollout — S4-B (ручные шаги пользователя). Поэтому кейсов на установку из
+    магазина в блоке нет.
+23. **Push доставляется только через RuStore** (S4-B): нужны устройство с
+    установленным RuStore, приложение, добавленное в RuStore Console, и проект
+    push с совпадающим отпечатком подписи установленной сборки. На устройстве
+    без RuStore push ожидаемо не приходят; на Android 13+ без разрешения
+    `POST_NOTIFICATIONS` уведомления не показываются, хотя токен регистрируется.
+    Нативный плагин RuStore Push написан вручную — device-smoke в KI-656.
+24. **Настройка push — на стороне оператора** (S4-B): без `RUSTORE_PROJECT_ID`
+    и `RUSTORE_SERVICE_TOKEN` в окружении backend уведомления не отправляются
+    (WARN в логе, 0 доставленных); регистрация токенов устройств при этом
+    работает.
 
 ---
 
@@ -2647,13 +2671,16 @@ DOCX»; способ оборвать доступ к файлу (выключи
 - [ ] `pnpm --dir web test` — все зелёные (v1.5.0: **559 passed**, 62 файла).
 - [ ] `CAPACITOR=1 pnpm --dir web build` — 0 errors, 0 warnings (сборка с
       `base: './'` для WebView, регрессия KI-647).
+- [ ] `CAPACITOR=1 VITE_RUSTORE_PROJECT_ID=<projectId> pnpm --dir web build` —
+      Project ID RuStore попадает в бандл (S4-B); без него push-токен на
+      устройстве не выдаётся.
 - [ ] `pnpm --dir web exec cap sync android` — плагины Capacitor 7.x
       синхронизируются без ошибок (`cap doctor` про Capacitor 8 — KI-650).
-- [ ] `git check-ignore -v web/android/app/google-services.json
-      web/android/app/release.keystore` — оба секрета игнорируются
-      (`web/android/.gitignore`), в коммит не попадут.
+- [ ] `git check-ignore -v web/android/app/release.keystore` — keystore
+      игнорируется (`web/android/.gitignore`), в коммит не попадёт; файла
+      `google-services.json` в сборке больше нет (S4-B).
 - [ ] `.github/workflows/release-mobile.yml` — триггеры `v*`/`workflow_dispatch`
-      на месте; AAB собирается, но в Play Console не публикуется (S4-B).
+      на месте; AAB собирается, но в магазин не публикуется (S4-B).
 - [ ] `pnpm test:parity` — зелёный при доступной БД (RULES § 3.19).
 - [ ] `docker compose -f docker-compose.prod.yml config --quiet` — без ошибок.
 - [ ] В браузере нет ошибок в консоли на основном пути (вход → граф → запуск →
@@ -2700,5 +2727,6 @@ DOCX»; способ оборвать доступ к файлу (выключи
 | 2026-10-19 | 1.4 | v0.11.1: MEDIA-03 — 4 операции (хромакей скрыт, KI-418); OpenAI Images `upscale`/`bg_removal` через multipart `/images/edits` (KI-380); метрики 1439/419 |
 | 2026-11-06 | 1.5 | v1.3.0: +9 кейсов блока V1.3 (auth `/llm/health` 401/200, `AUTH_DISABLED=true`, GPU-индикатор, восстановление LM Studio и внеочередной пинг, сверка возможностей роутера, приглашения по email, роли команды и отзыв токена, паритет health-контракта, публичность `/llm/models`), итого 148; обновлены область/источники, приёмка и метрики (1935/500); блоки 13–16 перенумерованы в 14–17 |
 | 2026-11-09 | 1.6 | v1.5.0: +10 кейсов блока V1.4–V1.5 (`MOBILE-01..10`: запуск приложения без белого экрана, кнопка QR только в native, QR с uuid и с share-ссылкой, отмена сканирования, DOCX в браузере и нативное открытие системным просмотрщиком, ошибка скачивания под ссылкой, разрешение и `POST /notifications/register`, наличие workflow `release-mobile.yml`), итого 158; обновлены область/источники, § 1.4 (ручка `notifications`), § 1.5 (селекторы), приёмка (+ mobile-пункты и `git check-ignore` для секретов), ограничения (iOS, Play rollout — S4-B, KI-653/KI-654) и метрики (1958/559); разделы 14–17 перенумерованы в 15–18 |
+| 2026-11-09 | 1.7 | v1.5.0 S4-B: push переведён с Firebase/FCM на RuStore Push — обновлены блок V1.4–V1.5 (границы релиза, способ сборки), `MOBILE-09` (push-токен RuStore, тестовый push из консоли, разрешение `POST_NOTIFICATIONS`), `MOBILE-10` (4 секрета keystore, `vars.RUSTORE_PROJECT_ID`, без `google-services.json`), § 15 (п. 22–24) и чек-лист приёмки; KI-653/KI-654 закрыты, заведён KI-656; число кейсов — 158 (не менялось), метрики тестов не пересчитывались |
 
 **Конец документа.**

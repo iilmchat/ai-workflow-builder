@@ -110,7 +110,7 @@
 
 | Версия | Документ | Статус | О чём |
 |---|---|---|---|
-| v1.5 | [DESIGN_V150_CAPACITOR.md](development/v1.5/DESIGN_V150_CAPACITOR.md) | Released (v1.5.0) | Android Mobile App (Capacitor 7): каркас + камера/QR, файлы DOCX/PDF, push-уведомления, CI/CD; гайды [FIREBASE_SETUP](development/v1.5/FIREBASE_SETUP.md) и [KEYSTORE_SETUP](development/v1.5/KEYSTORE_SETUP.md) |
+| v1.5 | [DESIGN_V150_CAPACITOR.md](development/v1.5/DESIGN_V150_CAPACITOR.md) | Released (v1.5.0) | Android Mobile App (Capacitor 7): каркас + камера/QR, файлы DOCX/PDF, push-уведомления (RuStore Push, S4-B), CI/CD; гайды [RUSTORE_SETUP](development/v1.5/RUSTORE_SETUP.md) и [KEYSTORE_SETUP](development/v1.5/KEYSTORE_SETUP.md) |
 | v1.4 | — (DESIGN не заводился) | Released (v1.4.0) | точечные срезы без DESIGN: S1 — Cancel Run, S2 — сравнение запусков, S3 — UX polish (адаптивный TopBar, восстановление LM Studio, Email Outbox); см. [отчёты](development/reports/v1.4.0/) |
 | v1.3 | — (DESIGN не заводился) | Released (v1.3.0) | точечные срезы без DESIGN: S1 — сверка возможностей моделей, S2 — auth/паритет health, S3 — release prep; см. [отчёты](development/reports/v1.3.0/) |
 | v1.2 | [DESIGN_V120_FEATURES.md](development/v1.2/DESIGN_V120_FEATURES.md) | Released (v1.2.0) | LLM Router, healthcheck GPU, SMTP Retry (BullMQ), UI-индикатор |
@@ -152,10 +152,10 @@
 | Показатель | Значение |
 |---|---|
 | Версия продукта | **v1.5.0** |
-| Backend-тесты | **1958** (26 skipped, 130 файлов — 126 passed + 4 skipped) |
-| Frontend-тесты | **559** (62 файла) |
+| Backend-тесты | **1976** (26 skipped, 131 файл — 127 passed + 4 skipped) |
+| Frontend-тесты | **570** (63 файла) |
 | Типов узлов | **22** |
-| KI-реестр | **KI-655** — последний номер; всего **642** записи; Open **281** |
+| KI-реестр | **KI-657** — последний номер; всего **644** записи; Open **281** |
 | Открытых High KI | **0** |
 | Языки интерфейса | RU / EN |
 | Стек | NestJS 12 · React 19 · PostgreSQL 17 + pgvector · S3 · OTel · Docker/GHCR |
@@ -186,7 +186,7 @@ docs/
     ├── api-contract.json          ← REST-контракт
     ├── sse-contract.json          ← SSE-контракт
     ├── v0.7/ … v0.11/ v1.0/ … v1.4/  ← DESIGN-документы прошлых версий
-    ├── v1.5/                      ← DESIGN_V150_CAPACITOR, FIREBASE_SETUP, KEYSTORE_SETUP
+    ├── v1.5/                      ← DESIGN_V150_CAPACITOR, RUSTORE_SETUP, KEYSTORE_SETUP
     └── archive/prompts/           ← архив промптов
 ```
 

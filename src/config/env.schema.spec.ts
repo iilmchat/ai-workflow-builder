@@ -6,6 +6,7 @@ import {
   NetworkSafetyEnvSchema,
   NodeRetryEnvSchema,
   RunLeaseEnvSchema,
+  RuStorePushEnvSchema,
   SmtpEnvSchema,
   ThrottlerEnvSchema,
   VectorEnvSchema,
@@ -957,5 +958,47 @@ describe('LLM Router env (v1.2 S1, DESIGN V120 § 3.1)', () => {
       LlmRouterEnvSchema.parse({ LLM_ROUTER_FALLBACK_MODEL: '  gpt-4o  ' })
         .LLM_ROUTER_FALLBACK_MODEL,
     ).toBe('gpt-4o');
+  });
+});
+
+describe('RuStore Push env (S4-B)', () => {
+  it('обе переменные опциональны: без них отправка выключена, приложение поднимается', () => {
+    expect(RuStorePushEnvSchema.parse({})).toEqual({});
+
+    const parsed = EnvSchema.parse(baseEnv);
+
+    expect(parsed.RUSTORE_PROJECT_ID).toBeUndefined();
+    expect(parsed.RUSTORE_SERVICE_TOKEN).toBeUndefined();
+  });
+
+  it('пустые строки — «не заданы» (KI-084), значения тримятся', () => {
+    const empty = RuStorePushEnvSchema.parse({
+      RUSTORE_PROJECT_ID: '',
+      RUSTORE_SERVICE_TOKEN: '',
+    });
+
+    expect(empty.RUSTORE_PROJECT_ID).toBeUndefined();
+    expect(empty.RUSTORE_SERVICE_TOKEN).toBeUndefined();
+
+    const filled = RuStorePushEnvSchema.parse({
+      RUSTORE_PROJECT_ID: '  project-42  ',
+      RUSTORE_SERVICE_TOKEN: ' service-token ',
+    });
+
+    expect(filled).toEqual({
+      RUSTORE_PROJECT_ID: 'project-42',
+      RUSTORE_SERVICE_TOKEN: 'service-token',
+    });
+  });
+
+  it('переменные попадают в общее окружение EnvSchema', () => {
+    const parsed = EnvSchema.parse({
+      ...baseEnv,
+      RUSTORE_PROJECT_ID: 'project-42',
+      RUSTORE_SERVICE_TOKEN: 'service-token',
+    });
+
+    expect(parsed.RUSTORE_PROJECT_ID).toBe('project-42');
+    expect(parsed.RUSTORE_SERVICE_TOKEN).toBe('service-token');
   });
 });

@@ -63,12 +63,6 @@ release.keystore
 .externalNativeBuild
 .cxx/
 
-# Google Services (e.g. APIs or Firebase)
-# Секрет Firebase: файл привязан к проекту и не коммитится (v1.5.0 S4-A).
-# В CI создаётся из секрета GOOGLE_SERVICES_JSON и удаляется в Cleanup secrets.
-# Инструкция: docs/development/v1.5/FIREBASE_SETUP.md.
-google-services.json
-
 # Freeline
 freeline.py
 freeline/

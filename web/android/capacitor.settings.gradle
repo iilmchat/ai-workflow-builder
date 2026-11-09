@@ -13,6 +13,3 @@ project(':capacitor-camera').projectDir = new File('../node_modules/.pnpm/@capac
 
 include ':capacitor-filesystem'
 project(':capacitor-filesystem').projectDir = new File('../node_modules/.pnpm/@capacitor+filesystem@7.1.9_@capacitor+core@7.6.10/node_modules/@capacitor/filesystem/android')
-
-include ':capacitor-push-notifications'
-project(':capacitor-push-notifications').projectDir = new File('../node_modules/.pnpm/@capacitor+push-notifications@7.0.7_@capacitor+core@7.6.10/node_modules/@capacitor/push-notifications/android')

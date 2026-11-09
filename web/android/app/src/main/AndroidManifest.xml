@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Android 13+ (API 33): без runtime-разрешения POST_NOTIFICATIONS
+         RuStore Push SDK получит токен, но уведомления не покажет.
+         Запрос делает RuStorePushPlugin.init (v1.5.0 S4-B). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -32,6 +37,19 @@
             </intent-filter>
 
         </activity>
+
+        <!-- Приём push-сообщений RuStore Push SDK (v1.5.0 S4-B).
+             action — официальный контракт SDK: по нему RuStore находит наш
+             сервис. exported=true обязателен (вызов из другого приложения),
+             ExportedService подавлен намеренно. -->
+        <service
+            android:name=".RuStorePushMessagingService"
+            android:exported="true"
+            tools:ignore="ExportedService">
+            <intent-filter>
+                <action android:name="ru.rustore.sdk.pushclient.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"

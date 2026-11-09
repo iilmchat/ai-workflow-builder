@@ -975,6 +975,42 @@ export const LlmRouterEnvSchema = z.object({
 export type LlmRouterEnv = z.infer<typeof LlmRouterEnvSchema>;
 
 /**
+ * Zod-схема RuStore Push (S4-B, миграция FCM → RuStore Push).
+ *
+ * Обе переменные **опциональны**: без них приложение поднимается и регистрация
+ * push-токенов (`DeviceTokensService.upsertAsync`) работает как раньше, но
+ * отправка уведомлений выключена — `RuStorePushService.isConfigured()` вернёт
+ * `false`, а `DeviceTokensService.sendToUserAsync` напишет WARN и вернёт 0
+ * доставленных (fallback, тот же контракт, что у SMTP).
+ *
+ * `RUSTORE_PROJECT_ID` — идентификатор проекта в консоли RuStore; он не секрет
+ * и попадает прямо в URL запроса. `RUSTORE_SERVICE_TOKEN` — сервисный токен
+ * (секрет, RULES 5.1): уходит только в заголовке `Authorization: Bearer` и не
+ * должен попадать в логи (RULES 5.3).
+ */
+export const RuStorePushEnvSchema = z.object({
+  /**
+   * Project ID RuStore (не секрет): часть URL
+   * `/v1/projects/{projectId}/messages:send`.
+   */
+  RUSTORE_PROJECT_ID: z.preprocess(
+    emptyToUndefined,
+    z.string().trim().min(1).optional(),
+  ),
+  /**
+   * Сервисный токен RuStore (секрет, RULES 5.1, 5.3): заголовок
+   * `Authorization: Bearer <token>`. В логи и сообщения ошибок не попадает.
+   */
+  RUSTORE_SERVICE_TOKEN: z.preprocess(
+    emptyToUndefined,
+    z.string().trim().min(1).optional(),
+  ),
+});
+
+/** Валидированные настройки RuStore Push (S4-B). */
+export type RuStorePushEnv = z.infer<typeof RuStorePushEnvSchema>;
+
+/**
  * Zod-схема переменных окружения, обязательных для запуска приложения.
  *
  * Проверяется ровно один раз при инициализации `ConfigModule` (fail-fast):
@@ -1217,6 +1253,9 @@ export const EnvSchema = z.object({
   ...SmtpEnvSchema.shape,
   // v1.2 S1: роутер LLM «локальный LM Studio → облако» (DESIGN V120 § 3.1).
   ...LlmRouterEnvSchema.shape,
+  // S4-B: RuStore Push (миграция FCM → RuStore Push); опционален, без него
+  // отправка выключена, регистрация токенов работает.
+  ...RuStorePushEnvSchema.shape,
 })
   /**
    * Fail-fast: отказ старта при `AUTH_DISABLED=true` в production.

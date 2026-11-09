@@ -8,7 +8,6 @@ buildscript {
     }
     dependencies {
         classpath 'com.android.tools.build:gradle:8.7.2'
-        classpath 'com.google.gms:google-services:4.4.2'
 
         // NOTE: Do not place your application dependencies here; they belong
         // in the individual module build.gradle files
@@ -21,6 +20,34 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+
+        // RuStore Push SDK 6.4.0 (v1.5.0 S4-B).
+        //
+        // Первым — актуальный официальный Maven-репозиторий RuStore: на
+        // 2026-11-09 он единственный рабочий (POM/AAR pushclient 6.4.0
+        // отдаются с HTTP 200; docs RuStore 7.5.0 рекомендуют перейти сюда).
+        maven {
+            url = uri("https://nexus-external.rustore.ru/repository/maven-rustore-exposed/")
+        }
+
+        // Публичный Maven-репозиторий Tracer: pushclient 6.4.0 тянет
+        // ru.ok.tracer:tracer-lite-crash-report:0.4.6 (compile-scope в
+        // push-core 6.4.0), а в maven-rustore-exposed этого артефакта нет —
+        // без репозитория Gradle падает на :app:checkDebugAarMetadata
+        // («Could not find ru.ok.tracer:tracer-lite-crash-report:0.4.6»).
+        // Адрес взят из публичного Nexus REST API RuStore (2026-11-09);
+        // документация Tracer всё ещё ссылается на умерший artifactory-URL.
+        maven {
+            url = uri("https://nexus-external.rustore.ru/repository/maven-tracer-public-exposed")
+        }
+
+        // Последним — URL из ТЗ S4-B и документации RuStore 6.4.0. На
+        // 2026-11-09 он отдаёт 404 (и корень, и путь к pushclient-6.4.0.pom),
+        // поэтому оставлен только для совместимости с ТЗ: Gradle при 404
+        // просто переходит к следующему репозиторию, сборку это не ломает.
+        maven {
+            url = uri("https://artifactory-external.vkpartner.ru/artifactory/maven")
+        }
     }
 }
 

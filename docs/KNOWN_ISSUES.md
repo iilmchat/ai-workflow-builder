@@ -10328,7 +10328,7 @@ MediaModelInfo, engine-DTO
   KI-635..640 — записи v1.4.0, по заданию S2 их не трогали.
 
 ### KI-653 — Push на Android не зарегистрируется без `google-services.json`
-- **Приоритет:** 🟠 High | **Статус:** Planned | **Запланировано:** v1.5.0 (S4) | **Обнаружено:** 2026-11-09
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Исправлено в:** v1.5.0 (S4-B) | **Обнаружено:** 2026-11-09
 - **Файлы:** `web/android/build.gradle:48-53`, `web/android/app/`,
   `web/src/hooks/usePushNotifications.ts`, `docs/development/MOBILE_CAPACITOR_NESTJS.md`
 - **Описание:** `@capacitor/push-notifications` работает поверх Firebase Cloud
@@ -10341,58 +10341,122 @@ MediaModelInfo, engine-DTO
   (хук → API → `device_tokens`) на реальном Android остаётся непроверенной.
   В S3 файл намеренно не создавался: это артефакт Firebase-проекта (не код и не
   секрет репозитория), его подготовка — шаг S4.
-- **Решение:** в S4 создать Firebase-проект, положить `google-services.json` в
-  `web/android/app/`, убедиться, что плагин Google Services применяется при
-  сборке, и снять реальный FCM-токен на устройстве (проверка: строка в
-  `device_tokens` + `adb logcat` без `registrationError`).
-- **Связанные:** KI-646, KI-654.
+- **Решение:** неактуально после миграции на RuStore Push (S4-B): FCM и
+  `google-services.json` больше не используются — токен на устройстве выдаёт
+  RuStore Push SDK (нативный плагин `RuStorePush`), а отправляет бэкенд через
+  `RuStorePushService` (`RUSTORE_PROJECT_ID`, `RUSTORE_SERVICE_TOKEN`).
+  Настройка — [`v1.5/RUSTORE_SETUP.md`](development/v1.5/RUSTORE_SETUP.md);
+  отчёт — [S4-B-rustore-push.md](development/reports/v1.5.0/S4-B-rustore-push.md).
+- **Связанные:** KI-646, KI-654, KI-656.
 
 ### KI-654 — Push-уведомление на Android рисуется без иконки (белый квадрат)
-- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-09
+- **Приоритет:** 🟢 Low | **Статус:** Fixed | **Исправлено в:** v1.5.0 (S4-B) | **Обнаружено:** 2026-11-09
 - **Файлы:** `web/android/app/src/main/AndroidManifest.xml`
 - **Описание:** README `@capacitor/push-notifications` требует meta-data
   `com.google.firebase.messaging.default_notification_icon` с белой монохромной
   иконкой. Без него Android берёт иконку приложения: в статусбаре получается
   белое пятно/квадрат (в S2 манифест трогали только под камеру и ML Kit, в S3 по
   условию задачи не менялся). Функционально push работает, страдает только вид.
-- **Решение:** в S4 добавить `@mipmap/ic_push` (генерируется в Android Studio) и
-  meta-data в `<application>`; проверить на устройстве реальным уведомлением.
-- **Связанные:** KI-653.
+- **Решение:** неактуально после миграции на RuStore Push (S4-B): meta-data
+  `com.google.firebase.messaging.default_notification_icon` (FCM) больше не
+  используется. RuStore Push SDK рисует уведомление со своей системной иконкой;
+  при необходимости её переопределяют meta-data
+  `ru.rustore.sdk.pushclient.default_notification_icon`. См.
+  [`v1.5/RUSTORE_SETUP.md`](development/v1.5/RUSTORE_SETUP.md) и отчёт
+  [S4-B-rustore-push.md](development/reports/v1.5.0/S4-B-rustore-push.md).
+- **Связанные:** KI-653, KI-656.
 
 ### KI-655 — `release-mobile.yml` не проверен реальным прогоном: AAB ещё не собирался
-- **Приоритет:** 🟡 Medium | **Статус:** Planned | **Запланировано:** v1.5.0 (S4-B) | **Обнаружено:** 2026-11-09
+- **Приоритет:** 🟡 Medium | **Статус:** Planned | **Запланировано:** после v1.5.0 (первый `workflow_dispatch`) | **Обнаружено:** 2026-11-09
 - **Файлы:** `.github/workflows/release-mobile.yml`, `web/android/app/build.gradle`
 - **Описание:** workflow добавлен в S4-A и провалидирован только статически
-  (YAML-структура, шаги и shell-скрипты просмотрены; локально в сессии нет JDK и
-  Android SDK, а GitHub Secrets — keystore и `google-services.json` — по условию
-  задачи не создаются). Первый реальный прогон (`cap sync`, скачивание SDK
-  platforms/build-tools, Gradle 8.11.1 + AGP 8.7.2, `bundleRelease` с
-  inject-подписью) случится только в S4-B после ручных шагов пользователя.
-  Риски: несовместимость версий Java/AGP, поведение
-  `-Pandroid.injected.signing.*`, время сборки. В самом workflow есть защиты:
-  `jarsigner -verify` и проверка разрешений merged-манифеста падают явно, а не
-  дают «зелёный» job без подписи.
-- **Решение:** в S4-B после добавления 5 Secrets прогнать `workflow_dispatch`,
+  (YAML-структура, шаги и shell-скрипты просмотрены; GitHub Secrets — keystore —
+  по условию задачи не создаются). В S4-B локально проверен Android-пайплайн до
+  компиляции: JDK 21 и Android SDK 35 на машине есть, `cap sync` проходит, а
+  `:app:compileDebugJavaWithJavac` — **BUILD SUCCESSFUL** (2 мин 3 с, 87 задач;
+  merged-манифест содержит `POST_NOTIFICATIONS`, `RuStorePushMessagingService`
+  и SDK-провайдер). Не проверены собственно `bundleRelease` с inject-подписью
+  (`-Pandroid.injected.signing.*`), `jarsigner -verify`, скачивание artifact и
+  прогон GitHub Actions: для этого нужны keystore и 4 GitHub Secrets. Риски
+  остаются те же: поведение inject-подписи и время полной сборки AAB. В S4-B из
+  workflow удалены шаги `google-services.json`, секретов сборки — 4 (keystore);
+  реальный `workflow_dispatch` по-прежнему не выполнялся.
+- **Решение:** после добавления секретов keystore (4) прогнать `workflow_dispatch`,
   проверить `BUILD SUCCESSFUL`, `jar verified`, скачиваемость artifact
   `app-release-aab`, зафиксировать размер AAB и время сборки в отчёте S4-B.
 - **Связанные:** KI-653, KI-654.
 
+## v1.5.0 — RuStore Push вместо FCM (S4-B, 2026-11-09)
+
+Источник записей — отчёт
+[`docs/development/reports/v1.5.0/S4-B-rustore-push.md`](development/reports/v1.5.0/S4-B-rustore-push.md);
+настройка RuStore Push — [`v1.5/RUSTORE_SETUP.md`](development/v1.5/RUSTORE_SETUP.md).
+KI-653 и KI-654 закрыты как неактуальные после миграции (FCM и
+`google-services.json` удалены), новые риски ручной нативной интеграции —
+KI-656, ограничение Maven-репозиториев SDK — KI-657.
+
+### KI-656 — Нативный плагин RuStore Push написан вручную и не проверен на устройстве
+- **Приоритет:** 🟡 Medium | **Статус:** Planned | **Запланировано:** после v1.5.0 (device-smoke, S4-B+) | **Обнаружено:** 2026-11-09
+- **Файлы:** `web/android/app/src/main/`, `web/src/hooks/usePushNotifications.ts`,
+  `web/android/build.gradle`, `src/notifications/rustore-push.service.ts`
+- **Описание:** готового Capacitor-плагина для RuStore Push нет: нативный мост
+  `RuStorePush` (Java: `RuStorePushClient.init(projectId)` / `getToken()`) и
+  регистрация сервиса `RuStorePushMessagingService` в `AndroidManifest.xml`
+  написаны вручную в S4-B. Это код на стыке JS ↔ Java, который не проверяется
+  unit-тестами и CI: токен выдаёт только RuStore на реальном устройстве, а
+  доставка дополнительно требует проекта в RuStore Console, совпадения отпечатка
+  подписи и разрешения `POST_NOTIFICATIONS` (Android 13+). До device-smoke
+  цепочка «плагин → токен → `POST /notifications/register` → тестовый push»
+  остаётся непроверенной на реальном железе. Java-компиляция
+  (`:app:compileDebugJavaWithJavac`) в S4-B прошла — проверяется только сборка
+  кода, но не работа SDK в рантайме.
+- **Решение:** прогнать smoke на устройстве с RuStore: `init(projectId)` →
+  `getToken()` → строка в `device_tokens` → тестовый push из RuStore Console
+  (Push-уведомления → Проекты → Тестовые уведомления); зафиксировать результат в
+  отчёте [S4-B-rustore-push.md](development/reports/v1.5.0/S4-B-rustore-push.md),
+  шаги — [`v1.5/RUSTORE_SETUP.md`](development/v1.5/RUSTORE_SETUP.md).
+- **Связанные:** KI-653, KI-654.
+
+### KI-657 — RuStore Push SDK 6.4.0 не резолвится из «документационного» Maven-репозитория
+
+- **Приоритет:** 🟡 Medium | **Статус:** Documented | **Обнаружено:** 2026-11-09
+- **Файлы:** `web/android/build.gradle`, `docs/development/v1.5/RUSTORE_SETUP.md`
+- **Описание:** URL из документации RuStore Push SDK 6.4.0
+  (`https://artifactory-external.vkpartner.ru/artifactory/maven`) на 2026-11-09
+  отдаёт HTTP 404. Актуальный `nexus-external.rustore.ru/repository/
+  maven-rustore-exposed` содержит сам `ru.rustore.sdk:pushclient:6.4.0`, но не
+  содержит транзитивную `ru.ok.tracer:tracer-lite-crash-report:0.4.6`
+  (`compile`-scope в `push-core-6.4.0.pom`): первая локальная сборка падала на
+  `:app:checkDebugAarMetadata` с `Could not find
+  ru.ok.tracer:tracer-lite-crash-report:0.4.6`. То есть «просто добавь
+  зависимость по документации» не воспроизводится.
+- **Решение:** в `web/android/build.gradle` объявлены три репозитория:
+  `maven-rustore-exposed` (SDK), `maven-tracer-public-exposed` (найден через
+  публичный Nexus REST API RuStore; содержит tracer 0.4.6) и artifactory-URL из
+  документации (оставлен для совместимости — 404 не ломает сборку, Gradle
+  переходит к следующему). Проверено `:app:compileDebugJavaWithJavac` —
+  BUILD SUCCESSFUL. При обновлении версии SDK набор репозиториев нужно
+  перепроверить; в `RUSTORE_SETUP.md` добавлен раздел про Maven-репозитории.
+- **Связанные:** KI-655, KI-656.
+
 ## Сводка по статусам
 
-**Пересчитано grep'ом на 2026-11-09 (v1.5.0 S4-A, RULES 3.20):** на HEAD после
-S3 было 641 вхождение; в S4-A заведён KI-655 (Planned — S4-B). Всего **642**
-вхождения `### KI-`, **642** строки статуса, **уникальных номеров — 642**: все
-три цифры сходятся (прежние KI-653/KI-654 заведены в S3).
+**Пересчитано grep'ом на 2026-11-09 (v1.5.0 S4-B, RULES 3.20):** после S4-A было
+642 вхождения; в S4-B KI-653 и KI-654 переведены в `Fixed` (неактуальны после
+миграции на RuStore Push), заведены KI-656 (Planned — device-smoke) и KI-657
+(Documented — Maven-репозитории RuStore SDK). Всего **644**
+вхождения `### KI-`, **644** строки статуса, **уникальных номеров — 644**: все
+три цифры сходятся.
 
-Проверка RULES 3.20: (1) вхождений `### KI-` = 642, строк статуса = 642
+Проверка RULES 3.20: (1) вхождений `### KI-` = 644, строк статуса = 644
 (легенда `### KI-001` имеет строку статуса, поэтому входит в оба счётчика и
-«минус 1» не применяется); (2) сумма статусов в таблице ниже = 642.
-По базовым статусам: Fixed 291 (279 + 12 «частично»), Open 281, Documented 58
+«минус 1» не применяется); (2) сумма статусов в таблице ниже = 644.
+По базовым статусам: Fixed 293 (281 + 12 «частично»), Open 281, Documented 58
 (57 + 1 «не воспроизводится»), Planned 5, Deferred 3, Won't Fix 4, In Progress 0.
 
 | Статус | Количество |
 |---|---:|
-| Fixed | 279 |
+| Fixed | 281 |
 | Fixed (частично) | 12 |
 | Open | 281 |
 | Documented | 57 |
@@ -10400,8 +10464,8 @@ S3 было 641 вхождение; в S4-A заведён KI-655 (Planned — S
 | Planned | 5 |
 | Deferred | 3 |
 | Won't Fix | 4 |
-| **Итого** | **642** |
+| **Итого** | **644** |
 
-Сумма по статусам = числу вхождений `### KI-` = 642; уникальных номеров — 642
+Сумма по статусам = числу вхождений `### KI-` = 644; уникальных номеров — 644
 (RULES 3.20, KI-652).
 

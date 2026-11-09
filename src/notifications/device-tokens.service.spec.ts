@@ -1,15 +1,26 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { Logger, UnauthorizedException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { deviceTokens, users } from '../db/schema.js';
 import { DeviceTokensService } from './device-tokens.service.js';
+import { RuStorePushException, RuStorePushService } from './rustore-push.service.js';
 
 /** Стабильные идентификаторы тестовых данных. */
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const ORG_ID = '22222222-2222-4222-8222-222222222222';
 const FCM_TOKEN = 'fcm-device-token-abc123';
+
+/** Android-токены пользователя (RuStore Push — только Android). */
+const ANDROID_TOKENS = ['android-token-1', 'android-token-2'] as const;
+
+/** Заголовок и текст уведомления для `sendToUserAsync`. */
+const PUSH_TITLE = 'Новый запуск workflow';
+const PUSH_BODY = 'Запуск завершился успешно';
+
+/** Дополнительные data-поля уведомления. */
+const PUSH_DATA: Record<string, string> = { orderId: '42' };
 
 /** Методы цепочки `select(...)` (`DeviceTokensService.resolveOrganizationIdAsync`). */
 const SELECT_METHODS = ['from', 'where', 'limit'] as const;
@@ -71,10 +82,15 @@ function sqlParams(condition: unknown): unknown[] {
   return new PgDialect().sqlToQuery(condition as SQL).params;
 }
 
-describe('DeviceTokensService (v1.5.0 S3)', () => {
+describe('DeviceTokensService (v1.5.0 S3; отправка — S4-B)', () => {
   let service: DeviceTokensService;
   let select: ReturnType<typeof vi.fn>;
   let insert: ReturnType<typeof vi.fn>;
+  /** Заглушка отправки через RuStore Push (S4-B). */
+  let ruStorePush: {
+    isConfigured: ReturnType<typeof vi.fn>;
+    sendAsync: ReturnType<typeof vi.fn>;
+  };
   /** Очередь ответов для `select`-запросов. */
   let selectResults: unknown[][];
   /** Все созданные `select`-цепочки: по ним проверяются FROM/WHERE/LIMIT. */
@@ -99,6 +115,10 @@ describe('DeviceTokensService (v1.5.0 S3)', () => {
 
       return created;
     });
+    ruStorePush = {
+      isConfigured: vi.fn(() => true),
+      sendAsync: vi.fn(() => Promise.resolve()),
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -107,6 +127,7 @@ describe('DeviceTokensService (v1.5.0 S3)', () => {
           provide: DRIZZLE,
           useValue: { select, insert } as unknown as Database,
         },
+        { provide: RuStorePushService, useValue: ruStorePush },
       ],
     }).compile();
 
@@ -194,6 +215,99 @@ describe('DeviceTokensService (v1.5.0 S3)', () => {
       );
       // UPSERT не выполняется: без организации токен привязывать некуда.
       expect(insert).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('sendToUserAsync (S4-B)', () => {
+    it('отправляет на каждый android-токен и возвращает число доставленных', async () => {
+      selectResults.push(ANDROID_TOKENS.map((token) => ({ token })));
+
+      await expect(
+        service.sendToUserAsync(USER_ID, PUSH_TITLE, PUSH_BODY, PUSH_DATA),
+      ).resolves.toBe(ANDROID_TOKENS.length);
+
+      // Один SELECT: только токены, только этот пользователь, только Android.
+      expect(select).toHaveBeenCalledTimes(1);
+      expect(select).toHaveBeenCalledWith({ token: deviceTokens.token });
+
+      const selectChain = selectChains[0];
+
+      expect(selectChain?.from).toHaveBeenCalledWith(deviceTokens);
+      expect(sqlParams(selectChain?.where.mock.calls[0]?.[0])).toEqual(
+        expect.arrayContaining([USER_ID, 'android']),
+      );
+      // Один запрос RuStore на каждый токен, параллельно (RULES 4.17).
+      expect(ruStorePush.sendAsync).toHaveBeenCalledTimes(
+        ANDROID_TOKENS.length,
+      );
+      expect(ruStorePush.sendAsync).toHaveBeenNthCalledWith(
+        1,
+        ANDROID_TOKENS[0],
+        PUSH_TITLE,
+        PUSH_BODY,
+        PUSH_DATA,
+      );
+      expect(ruStorePush.sendAsync).toHaveBeenNthCalledWith(
+        2,
+        ANDROID_TOKENS[1],
+        PUSH_TITLE,
+        PUSH_BODY,
+        PUSH_DATA,
+      );
+    });
+
+    it('0 токенов — 0 доставленных и ни одного вызова RuStore', async () => {
+      selectResults.push([]);
+
+      await expect(
+        service.sendToUserAsync(USER_ID, PUSH_TITLE, PUSH_BODY),
+      ).resolves.toBe(0);
+
+      expect(ruStorePush.sendAsync).not.toHaveBeenCalled();
+    });
+
+    it('RuStore не настроен — WARN и 0 без SELECT и без отправки', async () => {
+      ruStorePush.isConfigured.mockReturnValue(false);
+      const warn = vi
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+
+      await expect(
+        service.sendToUserAsync(USER_ID, PUSH_TITLE, PUSH_BODY),
+      ).resolves.toBe(0);
+
+      expect(ruStorePush.isConfigured).toHaveBeenCalledTimes(1);
+      expect(select).not.toHaveBeenCalled();
+      expect(ruStorePush.sendAsync).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('RuStore Push не настроен'),
+      );
+    });
+
+    it('отказ одного устройства не роняет остальные (Promise.allSettled)', async () => {
+      selectResults.push(ANDROID_TOKENS.map((token) => ({ token })));
+      ruStorePush.sendAsync
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(
+          new RuStorePushException('RuStore API ответил HTTP 500'),
+        );
+      const warn = vi
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+
+      await expect(
+        service.sendToUserAsync(USER_ID, PUSH_TITLE, PUSH_BODY),
+      ).resolves.toBe(1);
+
+      expect(ruStorePush.sendAsync).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledTimes(1);
+
+      // Полный токен устройства в лог не попадает (RULES 5.3, 5.9).
+      const logged = warn.mock.calls.flat().join(' ');
+
+      for (const token of ANDROID_TOKENS) {
+        expect(logged).not.toContain(token);
+      }
     });
   });
 });

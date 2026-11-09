@@ -2,8 +2,8 @@
 
 [![CI](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml/badge.svg)](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](docs/CHANGELOG.md)
-[![Backend tests](https://img.shields.io/badge/backend_tests-1958-brightgreen.svg)](docs/development/RELEASES.md)
-[![Frontend tests](https://img.shields.io/badge/frontend_tests-559-brightgreen.svg)](docs/development/RELEASES.md)
+[![Backend tests](https://img.shields.io/badge/backend_tests-1976-brightgreen.svg)](docs/development/RELEASES.md)
+[![Frontend tests](https://img.shields.io/badge/frontend_tests-570-brightgreen.svg)](docs/development/RELEASES.md)
 [![License](https://img.shields.io/badge/license-proprietary-lightgrey.svg)](#лицензия)
 
 > **Визуальный конструктор AI-сценариев.** Собирайте LLM-, медиа- и агентные
@@ -269,16 +269,22 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
   Google Docs, PDF-viewer). В браузере — прежнее скачивание по `<a download>`;
   ошибка сохранения/открытия показывается строкой под ссылкой
   (`[data-document-gen-download-error]`).
-- **Push (v1.5.0 S3):** после входа приложение спрашивает разрешение и на
-  событие `registration` отправляет FCM-токен в
+- **Push (v1.5.0 S3, переведён на RuStore в S4-B):** после входа приложение
+  инициализирует RuStore Push SDK (`RuStorePush` — нативный Capacitor-плагин,
+  `web/src/lib/rustore-push.ts`), запрашивает `POST_NOTIFICATIONS` (Android 13+),
+  получает токен через `getToken()` и отправляет его в
   `POST /notifications/register` (JWT; upsert в `device_tokens`, миграция
-  `0021`, `orgId` читается из БД). Отправка push с сервера — S4-B.
-- **CI/CD и релиз (v1.5.0 S4-A):** [`.github/workflows/release-mobile.yml`](.github/workflows/release-mobile.yml)
+  `0021`, `orgId` читается из БД). Backend отправляет push через
+  `RuStorePushService` (`POST https://vkpns.rustore.ru/v1/projects/<id>/messages:send`);
+  без `RUSTORE_PROJECT_ID`/`RUSTORE_SERVICE_TOKEN` отправка выключена (WARN).
+- **CI/CD и релиз (v1.5.0 S4-A, RuStore в S4-B):** [`.github/workflows/release-mobile.yml`](.github/workflows/release-mobile.yml)
   — подписанный AAB по тегу `v*` или вручную (`workflow_dispatch`), проверка
-  подписи (`jarsigner`) и разрешений в merged-манифесте, артефакт на 30 дней,
-  очистка секретов. Пять секретов репозитория: `ANDROID_KEYSTORE_BASE64`,
-  `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`,
-  `GOOGLE_SERVICES_JSON`. Публикация в Play Console — S4-B.
+  подписи (`jarsigner`) и разрешений в merged-манифесте (включая
+  `POST_NOTIFICATIONS`), артефакт на 30 дней, очистка секретов. Четыре секрета
+  репозитория: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+  `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`; Project ID RuStore передаётся
+  repository variable `RUSTORE_PROJECT_ID` → `VITE_RUSTORE_PROJECT_ID`.
+  Публикация — по инструкции [`KEYSTORE_SETUP.md`](docs/development/v1.5/KEYSTORE_SETUP.md).
 
 Локальная сборка (backend в приложении должен быть по **HTTPS**:
 `cleartext: false` в `web/capacitor.config.ts`):
@@ -296,13 +302,14 @@ pnpm --dir web exec cap sync android
 
 Документация: [DESIGN v1.5](docs/development/v1.5/DESIGN_V150_CAPACITOR.md),
 рецепт [MOBILE_CAPACITOR_NESTJS.md](docs/development/MOBILE_CAPACITOR_NESTJS.md),
-[FIREBASE_SETUP.md](docs/development/v1.5/FIREBASE_SETUP.md),
+[RUSTORE_SETUP.md](docs/development/v1.5/RUSTORE_SETUP.md),
 [KEYSTORE_SETUP.md](docs/development/v1.5/KEYSTORE_SETUP.md).
 
-Ограничения: **iOS** — вне v1.5 (S5+); push не заработает без
-`google-services.json` (KI-653, Planned — S4); уведомление рисуется без
-собственной иконки (KI-654); для DOCX нужно приложение-просмотрщик на
-устройстве.
+Ограничения: **iOS** — вне v1.5 (S5+); push работает на Android-устройстве с
+RuStore, приложение должно быть добавлено в RuStore Console (push-проект,
+совпадение подписи) — нативный плагин написан вручную и проверен только
+статически (KI-656, [RUSTORE_SETUP.md](docs/development/v1.5/RUSTORE_SETUP.md));
+для DOCX нужно приложение-просмотрщик на устройстве.
 
 ---
 
@@ -316,7 +323,7 @@ pnpm --dir web exec cap sync android
 | **Очереди** | BullMQ 6, Redis 6 (ioredis) |
 | **AI / медиа** | Anthropic, OpenAI, RouterAI, GPTunnel, DeepSeek, Yandex AI Studio, LM Studio; CreativeLab, Replicate, FAL, OpenAI Images |
 | **Хранилище** | S3-совместимое (AWS SDK v3), локальная файловая система |
-| **Mobile** | Capacitor 7 (Android): Camera, ML Kit Barcode Scanning, Filesystem + File Opener, Push Notifications (FCM) |
+| **Mobile** | Capacitor 7 (Android): Camera, ML Kit Barcode Scanning, Filesystem + File Opener, Push Notifications (RuStore Push SDK 6.4.0, нативный плагин `RuStorePush`) |
 | **Инфраструктура** | Docker Compose, QuickJS-WASM sandbox, **OpenTelemetry**, SSE |
 | **Качество** | Vitest 4, Testing Library, jsdom, oxlint, Husky + lint-staged |
 
@@ -406,12 +413,12 @@ backend должен быть запущен первым.
 | Показатель | Значение |
 |---|---|
 | Версия | **v1.5.0** |
-| Backend-тесты | **1958** (26 skipped, 130 файлов) |
-| Frontend-тесты | **559** (62 файла) |
+| Backend-тесты | **1976** (26 skipped, 131 файл: 127 passed + 4 skipped) |
+| Frontend-тесты | **570** (63 файла) |
 | Типов узлов | **22** |
-| KI-реестр | **KI-655** — последний номер; всего **642** записи; Open **281**, Open High **0** |
+| KI-реестр | **KI-657** — последний номер; всего **644** записи; Open **281**, Open High **0** |
 | CI | GitHub Actions: build, typecheck, migrations, tests (backend + web) |
-| Mobile | Android (Capacitor 7): подписанный AAB в `release-mobile.yml`, публикация — S4-B |
+| Mobile | Android (Capacitor 7): подписанный AAB в `release-mobile.yml`; push — RuStore Push SDK 6.4.0 (S4-B); публикация — ручные шаги пользователя |
 | Docker | multi-stage образ + `docker-compose.prod.yml`, публикация в GHCR |
 
 ---

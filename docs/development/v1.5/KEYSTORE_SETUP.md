@@ -1,8 +1,8 @@
 # Keystore Setup — подпись Android-приложения
 
 **Файл:** `docs/development/v1.5/KEYSTORE_SETUP.md`
-**Для:** v1.5.0+ (сборка AAB для Google Play).
-**Связанные:** `.github/workflows/release-mobile.yml`, DESIGN v1.5 § S4.
+**Для:** v1.5.0+ (сборка подписанного AAB для магазина приложений — RuStore / Google Play).
+**Связанные:** `.github/workflows/release-mobile.yml`, `v1.5/RUSTORE_SETUP.md` (push), DESIGN v1.5 § S4.
 
 ---
 
@@ -12,6 +12,11 @@ Google Play принимает только **подписанный** AAB. Бе
 `bundleRelease` упадёт. **Крайне важно:** потеря keystore = невозможность
 обновить приложение в Google Play для тех, кто уже установил (нужен новый
 package name).
+
+Подпись нужна не только магазину: push через RuStore доставляется только тогда,
+когда отпечаток подписи **установленного** приложения совпадает с отпечатком,
+указанным в RuStore Console (см. `v1.5/RUSTORE_SETUP.md`). Поэтому keystore —
+часть конфигурации push, а не только релизного пайплайна.
 
 **Никогда не коммить keystore в git.** Он в `web/android/.gitignore`.
 
@@ -68,11 +73,20 @@ repository secret:
 | `ANDROID_KEYSTORE_PASSWORD` | пароль keystore (шаг 1) |
 | `ANDROID_KEY_ALIAS` | `ai-workflow-builder` |
 | `ANDROID_KEY_PASSWORD` | пароль ключа (обычно = пароль keystore) |
-| `GOOGLE_SERVICES_JSON` | содержимое `google-services.json` (см. FIREBASE_SETUP.md) |
 
 **Проверка:**
-- Secrets → должно быть 5 записей.
+- Secrets → должно быть **4** записи (keystore).
 - Repository secrets доступны всем workflow.
+
+**Отдельно — Project ID RuStore (не секрет).** Для push-уведомлений web-сборке
+нужен Project ID из RuStore Console, но это **переменная**, а не секрет:
+GitHub → Settings → Secrets and variables → Actions → **Variables** → New
+repository variable `RUSTORE_PROJECT_ID`. Workflow передаёт её в сборку как
+`VITE_RUSTORE_PROJECT_ID` (значение попадает в JS-бандл). Как получить Project
+ID и Service Token — `v1.5/RUSTORE_SETUP.md`.
+
+Секрета `GOOGLE_SERVICES_JSON` больше **нет**: после миграции на RuStore Push
+файл `google-services.json` в сборке не используется.
 
 ## Шаг 4. Собрать AAB локально (проверка перед CI)
 
@@ -120,11 +134,18 @@ GitHub Actions запустит `.github/workflows/release-mobile.yml`. Artifact
 **После первого Rollout в Internal testing** — приложение можно установить по
 ссылке, добавить тестировщиков.
 
+> **RuStore.** Тот же подписанный AAB/APK загружается в RuStore Console
+> (консоль разработчика → приложение → загрузка сборки → модерация). Отпечаток
+> подписи, указанный в проекте push (Push-уведомления → Проекты), должен
+> совпадать с подписью загруженной сборки, иначе push не доставится — см.
+> `v1.5/RUSTORE_SETUP.md`.
+
 ## Бэкап
 
 **Обязательно** сохрани keystore и пароли в 1Password/Bitwarden. Если
 потеряешь:
-- AAB с новым ключом → Google Play **не примет** (signature mismatch).
+- AAB с новым ключом → магазин **не примет** (signature mismatch), а push
+  перестанет доходить до установленных приложений.
 - Пользователи с прошлой установкой не смогут обновиться.
 
 ## Troubleshooting
@@ -135,3 +156,4 @@ GitHub Actions запустит `.github/workflows/release-mobile.yml`. Artifact
 | `Failed to read key from store` | Неверный пароль или алиас |
 | `AAB rejected by Google` | Проверь `targetSdkVersion` (34+), signature, Data safety |
 | CI падает `keystore not found` | `ANDROID_KEYSTORE_BASE64` не задан или битый base64 |
+| Push не приходит на устройство, хотя токен зарегистрирован | Подпись установленной сборки ≠ отпечаток в RuStore Console: собрать релиз тем же ключом или создать проект push под фактическую подпись (`v1.5/RUSTORE_SETUP.md`) |

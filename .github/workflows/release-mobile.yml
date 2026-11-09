@@ -1,16 +1,23 @@
 name: Release Mobile (Android)
 
-# Сборка подписанного AAB для Google Play (v1.5.0 S4-A, DESIGN V150 § 3 S4).
+# Сборка подписанного AAB для публикации в магазине приложений (RuStore /
+# Google Play; v1.5.0 S4-A, push переведён на RuStore в S4-B, DESIGN V150 § 3 S4).
 #
 # Запускается:
 # - по тегу `v*` — релизная сборка (v1.5.0 и далее);
 # - вручную (`workflow_dispatch`) — проверка пайплайна без выставления тега.
 #
-# Секреты (5): ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
-# ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD, GOOGLE_SERVICES_JSON.
+# Секреты (4): ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
+# ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD.
 # Без них job падает с понятной ошибкой (`::error::`), а не собирает молча
-# нерабочий AAB. Инструкции: docs/development/v1.5/KEYSTORE_SETUP.md и
-# docs/development/v1.5/FIREBASE_SETUP.md.
+# нерабочий AAB. Инструкция: docs/development/v1.5/KEYSTORE_SETUP.md.
+#
+# Push (S4-B): Project ID приложения из RuStore Console приходит из
+# repository variable `RUSTORE_PROJECT_ID` (НЕ секрет: VITE_* инлайнятся в
+# JS-бандл) и попадает в сборку как VITE_RUSTORE_PROJECT_ID. Если переменная
+# не задана, приложение собирается, но push выключены (клиент пишет WARN и не
+# инициализирует RuStore Push SDK). Инструкция:
+# docs/development/v1.5/RUSTORE_SETUP.md.
 on:
   push:
     tags:
@@ -50,10 +57,13 @@ jobs:
       # CAPACITOR=1 → `base: './'` в vite.config.ts. Без этого WebView не
       # найдёт ассеты: `/assets/...` уйдёт в корень `https://localhost`
       # (регрессия KI-647 — белый экран на устройстве).
+      # VITE_RUSTORE_PROJECT_ID — Project ID из RuStore Console (repository
+      # variable, не секрет). Пустое значение = push выключены (WARN в клиенте).
       - name: Build web (Capacitor mode)
         run: pnpm --dir web build
         env:
           CAPACITOR: '1'
+          VITE_RUSTORE_PROJECT_ID: ${{ vars.RUSTORE_PROJECT_ID }}
 
       # Обязательно ПОСЛЕ Capacitor-сборки: `cap sync` копирует текущий
       # `web/dist` в `android/app/src/main/assets/public`.
@@ -86,17 +96,6 @@ jobs:
           printf '%s' "$KEYSTORE_BASE64" | base64 -d > web/android/app/release.keystore
           test -s web/android/app/release.keystore
 
-      - name: Restore google-services.json
-        env:
-          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
-        run: |
-          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
-            echo "::error::GOOGLE_SERVICES_JSON secret is not set — см. docs/development/v1.5/FIREBASE_SETUP.md"
-            exit 1
-          fi
-          printf '%s' "$GOOGLE_SERVICES_JSON" > web/android/app/google-services.json
-          test -s web/android/app/google-services.json
-
       # Подпись — через inject-свойства AGP: build.gradle проектный не правим,
       # секреты приходят из env. Абсолютный путь к keystore обязателен:
       # relative-путь в injected signing резолвится от каталога модуля.
@@ -120,7 +119,8 @@ jobs:
       # 1) файл существует и не пуст;
       # 2) AAB реально подписан (jarsigner из JDK) — ловит регрессию, когда
       #    inject-подпись не применилась и AGP собрал unsigned bundle;
-      # 3) в merged-манифесте есть разрешения v1.5.0 (KI-646: камера/ML Kit).
+      # 3) в merged-манифесте есть разрешения v1.5.0 (KI-646: камера/ML Kit;
+      #    S4-B: POST_NOTIFICATIONS для RuStore Push).
       - name: Verify AAB (signed + permissions)
         run: |
           AAB=web/android/app/build/outputs/bundle/release/app-release.aab
@@ -140,7 +140,7 @@ jobs:
             exit 0
           fi
           echo "Merged manifest: $MANIFEST"
-          for PERM in android.permission.INTERNET android.permission.CAMERA android.permission.READ_MEDIA_IMAGES; do
+          for PERM in android.permission.INTERNET android.permission.CAMERA android.permission.READ_MEDIA_IMAGES android.permission.POST_NOTIFICATIONS; do
             if grep -q "$PERM" "$MANIFEST"; then
               echo "OK: $PERM"
             else
@@ -161,4 +161,4 @@ jobs:
       - name: Cleanup secrets
         if: always()
         run: |
-          rm -f web/android/app/release.keystore web/android/app/google-services.json
+          rm -f web/android/app/release.keystore

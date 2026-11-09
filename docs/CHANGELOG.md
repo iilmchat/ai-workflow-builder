@@ -17,6 +17,82 @@
 ---
 ## [Unreleased]
 
+### Added
+
+- **RuStore Push вместо FCM (v1.5.0 S4-B)**
+  ([отчёт](development/reports/v1.5.0/S4-B-rustore-push.md)): доставка
+  push-уведомлений переведена с Firebase Cloud Messaging на RuStore Push.
+  **Backend:** `src/notifications/rustore-push.service.ts` — `RuStorePushService`
+  (`sendAsync(token, title, body, data?)`, `isConfigured()`), отправка
+  `POST https://vkpns.rustore.ru/v1/projects/<projectId>/messages:send` с
+  `Authorization: Bearer <serviceToken>`; `DeviceTokensService.sendToUserAsync`
+  — fan-out по всем android-токенам пользователя (`Promise.allSettled`).
+  Env: `RUSTORE_PROJECT_ID` (не секрет) и `RUSTORE_SERVICE_TOKEN` (секрет);
+  обе опциональны — без них приложение поднимается, а отправка пишет WARN и
+  возвращает 0 доставленных. **Android:** RuStore Push SDK 6.4.0
+  (`ru.rustore.sdk:pushclient`; Maven-репозитории RuStore
+  `nexus-external.rustore.ru/.../maven-rustore-exposed` и
+  `.../maven-tracer-public-exposed` для транзитивного `ru.ok.tracer`;
+  URL из документации `artifactory-external.vkpartner.ru/artifactory/maven`
+  на 2026-11-09 отдаёт 404 — оставлен для совместимости, KI-657) и нативный
+  Capacitor-плагин `RuStorePush` (`init(projectId)` / `getToken()`); `web`-сборка
+  получает Project ID через `VITE_RUSTORE_PROJECT_ID` (GitHub Actions repository
+  **variable**, не секрет). Java-плагин и сервис скомпилированы локально:
+  `:app:compileDebugJavaWithJavac` — BUILD SUCCESSFUL (2 мин 3 с), merged-манифест
+  содержит `POST_NOTIFICATIONS`, `RuStorePushMessagingService` и SDK-провайдер.
+  Инструкция —
+  [`RUSTORE_SETUP.md`](development/v1.5/RUSTORE_SETUP.md).
+
+### Changed
+
+- **Регистрация push-токена (v1.5.0 S4-B):** `usePushNotifications` работает
+  через нативный плагин `RuStorePush`, а не через `@capacitor/push-notifications`;
+  контракт `POST /notifications/register` (`{ token, platform }`, upsert в
+  `device_tokens`) не изменился.
+- **CI mobile (v1.5.0 S4-B):** `.github/workflows/release-mobile.yml` больше не
+  восстанавливает `google-services.json`; `Cleanup secrets` удаляет только
+  keystore; web-сборка получает `VITE_RUSTORE_PROJECT_ID` из
+  `vars.RUSTORE_PROJECT_ID`; секретов сборки — 4 (keystore), переменная
+  Project ID — отдельно.
+- **Docs (v1.5.0 S4-B):** `v1.5/FIREBASE_SETUP.md` заменён на
+  `v1.5/RUSTORE_SETUP.md`; обновлены `KEYSTORE_SETUP.md` (4 секрета +
+  `VITE_RUSTORE_PROJECT_ID` как variable), `MOBILE_CAPACITOR_NESTJS.md` (§ 11
+  push, § 18 CI/CD), DESIGN v1.5 (статус и риски S4-B), `USER_GUIDE.md` и
+  `MANUAL_TESTING_GUIDE.md` (push/ограничения/`MOBILE-09`), `docs/README.md`.
+
+### Removed
+
+- **FCM/Firebase (v1.5.0 S4-B):** `@capacitor/push-notifications` вместе с
+  `google-services.json`-цепочкой, Gradle-плагин `com.google.gms:google-services`,
+  файл `web/android/app/google-services.json` из сборочного сценария, GitHub
+  Secret `GOOGLE_SERVICES_JSON`, документ
+  `docs/development/v1.5/FIREBASE_SETUP.md` (заменён на `RUSTORE_SETUP.md`).
+
+### Fixed
+
+- **KI-653 (Fixed):** push на Android больше не зависит от
+  `google-services.json` — неактуально после миграции на RuStore Push (S4-B).
+- **KI-654 (Fixed):** FCM-meta-data иконки уведомления больше не используется —
+  неактуально после миграции на RuStore Push (S4-B).
+
+### Documented
+
+- **KI-656 (Medium, Planned):** нативный плагин RuStore Push написан вручную
+  (JS ↔ Java) и требует тестирования на устройстве с RuStore — отчёт
+  [S4-B-rustore-push.md](development/reports/v1.5.0/S4-B-rustore-push.md),
+  инструкция [`RUSTORE_SETUP.md`](development/v1.5/RUSTORE_SETUP.md).
+- **KI-657 (Medium, Documented):** RuStore Push SDK 6.4.0 не резолвится из
+  Maven-URL, указанного в документации (`artifactory-external.vkpartner.ru` —
+  404), а транзитивный `ru.ok.tracer:tracer-lite-crash-report:0.4.6` отсутствует
+  в `maven-rustore-exposed`; в `web/android/build.gradle` добавлен рабочий
+  репозиторий `maven-tracer-public-exposed`, сборка проверена.
+- **RuStore Push: настройка и ограничения (v1.5.0 S4-B):** Project ID и Service
+  Token выдаются в RuStore Console (Push-уведомления → Проекты); push доходит
+  только на устройство с RuStore, если приложение добавлено в RuStore Console и
+  отпечаток подписи установленной сборки совпадает с консолью; на Android 13+
+  нужно разрешение `POST_NOTIFICATIONS`; тестовая отправка — из консоли
+  (Тестовые уведомления).
+
 ## [1.5.0] — 2026-11-09
 
 **Minor-релиз: Android Mobile App (Capacitor).**

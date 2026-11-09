@@ -23,9 +23,9 @@ import { DeviceTokensService } from './device-tokens.service.js';
  * (KI-472).
  *
  * Сейчас контроллер отдаёт одну ручку — `POST /notifications/register`:
- * native-клиент (Capacitor) после `PushNotifications.register()` присылает
- * FCM/APNs-токен. Отправка push появится позже (S5+), поэтому сервис только
- * сохраняет токен.
+ * native-клиент (Capacitor) после получения токена из RuStore Push SDK (S4-B)
+ * присылает push-токен. Сама отправка — `DeviceTokensService.sendToUserAsync`
+ * / `RuStorePushService` (S4-B); контроллер только сохраняет токен.
  *
  * **Организация — из БД, а не из токена (KI-554).** Контроллер передаёт сервису
  * только `user.sub`, а `organization_id` сервис читает из строки `users`.

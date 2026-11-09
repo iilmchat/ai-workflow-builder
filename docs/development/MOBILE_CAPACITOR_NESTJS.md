@@ -1,6 +1,6 @@
 # Capacitor для NestJS + React (Vite) — переиспользуемая инструкция
 
-**Версия:** 1.0 (2026-11-09)
+**Версия:** 1.1 (2026-11-09)
 **Статус:** Production-ready рецепт
 **Применимо к:** любой проект с NestJS-бэкендом и React (Vite) фронтендом, где нужен Android-клиент.
 **Связанные:** `MOBILE_IOS.md` (в разработке), `DESIGN_V150_CAPACITOR.md` (пример применения в ai-workflow-builder).
@@ -135,7 +135,7 @@
         android:maxSdkVersion="28" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
-**Правило:** запрашивай только те права, которые реально используешь. Push на Android не требует permission в манифесте (FCM сам).
+**Правило:** запрашивай только те права, которые реально используешь. Push-плагин на Android (RuStore Push SDK) сам объявляет `POST_NOTIFICATIONS` в манифесте, но на Android 13+ приложение обязано запросить это разрешение в рантайме — без него уведомления не показываются.
 
 ---
 
@@ -284,14 +284,80 @@
 
 ---
 
-## 11. Шаг 8. Push notifications
+## 11. Шаг 8. Push notifications (RuStore Push)
 
-**Установка:**
+Российский магазин RuStore даёт собственный push-канал, не требующий Google Play
+Services (FCM на устройствах без них не работает). Доставка идёт через
+дистрибьютора — приложение **RuStore**, установленное на устройстве.
 
-    pnpm add @capacitor/push-notifications
-    pnpm exec cap sync android
+**Нативная часть (Android).** Готового Capacitor-плагина нет — мост пишется
+вручную. В `web/android/`:
 
-**Backend (NestJS) — эндпоинт для токена:**
+    // build.gradle (allprojects repositories)
+    maven { url = uri("https://nexus-external.rustore.ru/repository/maven-rustore-exposed/") }
+
+    // app/build.gradle
+    implementation("ru.rustore.sdk:pushclient:6.4.0")
+
+> Официальный Maven-репозиторий RuStore — `nexus-external.rustore.ru` (так в
+> актуальной документации SDK). Прежний адрес
+> `artifactory-external.vkpartner.ru/artifactory/maven` в 2026-11 отдаёт 404 —
+> при старте нового проекта сверь URL с документацией RuStore.
+
+В `AndroidManifest.xml` объявляется сервис, расширяющий `RuStoreMessagingService`
+(в ai-workflow-builder — `RuStorePushMessagingService`):
+
+    <service
+        android:name=".RuStorePushMessagingService"
+        android:exported="true">
+      <intent-filter>
+        <action android:name="ru.rustore.sdk.pushclient.MESSAGING_EVENT" />
+      </intent-filter>
+    </service>
+
+Иконку/цвет уведомления (опционально) задают meta-data
+`ru.rustore.sdk.pushclient.default_notification_icon` /
+`…default_notification_color`.
+
+Нативный Capacitor-плагин `RuStorePush` — тонкий мост на JS:
+
+    // Capacitor-плагин: инициализация проекта и получение push-токена
+    RuStorePushClient.init(application = this, projectId = "<projectId>")
+    RuStorePushClient.getToken()   // → push-токен для бэкенда
+
+В ai-workflow-builder нативная часть — `RuStorePushPlugin.java` /
+`RuStorePushMessagingService.java` в
+`web/android/app/src/main/java/com/iilmchat/workflowbuilder/`, JS-обёртка —
+`web/src/lib/rustore-push.ts` (`initRuStorePushAsync`, `getRuStoreTokenAsync`).
+
+**Frontend — хук (пример):**
+
+    import { registerPlugin } from '@capacitor/core';
+    import { isNative } from '@/lib/platform';
+
+    interface RuStorePushPlugin {
+      init(options: { projectId: string }): Promise<void>;
+      getToken(): Promise<{ token: string | null }>;
+    }
+
+    const RuStorePush = registerPlugin<RuStorePushPlugin>('RuStorePush');
+
+    export async function initPushNotificationsAsync(projectId: string): Promise<void> {
+      if (!isNative()) return;
+
+      // 1. инициализация SDK: projectId из RuStore Console (не секрет);
+      //    плагин сам запрашивает POST_NOTIFICATIONS на Android 13+
+      await RuStorePush.init({ projectId });
+
+      // 2. push-токен → бэкенд (upsert по токену — повторная регистрация безопасна)
+      const { token } = await RuStorePush.getToken();
+      if (token) await sendTokenToBackend(token);
+    }
+
+*Точные имена методов/полей — в `web/src/hooks/usePushNotifications.ts` и
+нативной части `web/android/app/src/main/`; выше — форма контракта.*
+
+**Backend (NestJS) — эндпоинт для токена** (не меняется с S3):
 
     // src/notifications/notifications.controller.ts
     @Controller('notifications')
@@ -309,46 +375,22 @@
       }
     }
 
-**Frontend — хук:**
+**Backend — отправка через RuStore Push API:**
 
-    import { PushNotifications } from '@capacitor/push-notifications';
-    import { isNative } from '@/lib/platform';
+    // src/notifications/rustore-push.service.ts
+    // sendAsync(token, title, body, data?):
+    //   POST https://vkpns.rustore.ru/v1/projects/<projectId>/messages:send
+    //   Authorization: Bearer <serviceToken>
+    //   { message: { token, notification: { title, body }, data? } }
 
-    export async function initPushNotifications(
-      sendTokenToBackend: (token: string) => Promise<void>,
-    ): Promise<void> {
-      if (!isNative()) return;
+Env бэкенда: `RUSTORE_PROJECT_ID` (Project ID, **не** секрет) и
+`RUSTORE_SERVICE_TOKEN` (сервисный токен, **секрет** — только `.env`/secret
+manager). Без них приложение поднимается, но отправка выключена (WARN и 0
+доставленных). Один запрос — один токен; для всех устройств пользователя
+используй `Promise.allSettled` (RULES 4.16). Токен храни в `device_tokens`
+(user_id, organization_id, token, platform, created_at).
 
-      const perm = await PushNotifications.requestPermissions();
-      if (perm.receive !== 'granted') {
-        console.warn('[push] разрешение отклонено');
-        return;
-      }
-
-      await PushNotifications.register();
-
-      PushNotifications.addListener('registration', async (t) => {
-        await sendTokenToBackend(t.value);
-      });
-
-      PushNotifications.addListener('registrationError', (err) => {
-        console.error('[push] ошибка регистрации', err);
-      });
-
-      PushNotifications.addListener('pushNotificationReceived', (n) => {
-        console.log('[push] получено', n.title, n.body);
-      });
-
-      PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
-        // клик по уведомлению — здесь можно перейти на экран
-      });
-    }
-
-**Backend — отправка через FCM:**
-
-    pnpm add firebase-admin
-
-Используй `firebase-admin/messaging` для отправки. Токен храни в `device_tokens` (user_id, token, platform, created_at).
+**Полная настройка:** `docs/development/v1.5/RUSTORE_SETUP.md`.
 
 ---
 
@@ -380,6 +422,8 @@
             run: pnpm --dir web install --frozen-lockfile
 
           - name: Build web
+            env:
+              VITE_RUSTORE_PROJECT_ID: ${{ vars.RUSTORE_PROJECT_ID }}
             run: pnpm --dir web build
 
           - name: Sync Capacitor
@@ -416,6 +460,9 @@
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
+**Переменная (не секрет):** `RUSTORE_PROJECT_ID` — Project ID из RuStore Console;
+workflow передаёт её в web-сборку как `VITE_RUSTORE_PROJECT_ID` (§ 11).
+
 **Генерация keystore** (один раз, локально):
 
     keytool -genkey -v -keystore release.keystore -alias myapp \
@@ -443,6 +490,11 @@
 - **Data safety declaration** — заполни, какие данные собираешь.
 - **Target SDK 34+** (с августа 2025 — 35+).
 - Подпись приложения через Play App Signing.
+
+**RuStore (российский магазин).** Альтернатива Google Play: RuStore Console →
+загрузка подписанного AAB/APK → модерация → публикация. Для push через RuStore
+отпечаток подписи сборки должен совпадать с указанным в проекте push
+(`docs/development/v1.5/RUSTORE_SETUP.md`).
 
 ---
 
@@ -477,7 +529,8 @@
 | `ERR_FILE_NOT_FOUND` | Проверь `webDir` в `capacitor.config.ts` |
 | Камера не работает | Проверь `AndroidManifest.xml` + разрешения в рантайме |
 | QR-сканер не работает на эмуляторе | Нужен Google Play Services (используй реальное устройство) |
-| Push-токен не приходит | Проверь `google-services.json` в `web/android/app/` |
+| Push-токен не приходит | RuStore установлен на устройстве и разрешён в фоне; проект push создан в RuStore Console; подпись и package name сборки совпадают с консолью; `VITE_RUSTORE_PROJECT_ID` задан при сборке (§ 11) |
+| `PERMISSION_DENIED` / `INVALID_ARGUMENT` / `NOT_FOUND` от RuStore API | Неверный сервисный токен / параметры сообщения / чужой push-токен — таблица ошибок в `docs/development/v1.5/RUSTORE_SETUP.md` |
 | File Opener не открывает файл | Проверь MIME-type (DOCX ≠ text/plain) |
 | `cap sync` падает | `pnpm exec cap doctor` — покажет проблемы |
 | AAB не принимается Google | Проверь `targetSdkVersion` (34+), подпись, Data safety |
@@ -499,6 +552,7 @@
 - [ ] `AndroidManifest.xml` — только нужные разрешения
 - [ ] Условный рендеринг в компонентах (`isNative()`)
 - [ ] CI/CD workflow + keystore в GitHub Secrets
+- [ ] Push через RuStore: проект в RuStore Console, `RUSTORE_PROJECT_ID` (variable) для web-сборки, `RUSTORE_SERVICE_TOKEN` — в env бэкенда (§ 11)
 - [ ] Store listing + Privacy Policy + Data safety
 - [ ] (опционально) Capgo для live-updates
 
@@ -516,25 +570,25 @@
 
 ---
 
-## 18. CI/CD: NestJS + Firebase + Keystore
+## 18. CI/CD: NestJS + RuStore Push + Keystore
 
 Для NestJS + Capacitor проекта CI/CD состоит из 3 независимых пайплайнов:
 
 1. **Backend/Web** (GitHub Actions — уже есть): `pnpm test`, `pnpm --dir web test`, деплой Docker.
-2. **Mobile (Android)**: сборка AAB, публикация в Play Console.
-3. **Firebase**: `google-services.json` в Secrets, инъекция при сборке.
+2. **Mobile (Android)**: сборка AAB, публикация в магазин приложений (RuStore / Google Play).
+3. **RuStore Push**: проект push в RuStore Console + repository variable `RUSTORE_PROJECT_ID` для web-сборки; сервисный токен — секрет бэкенда, в мобильную сборку не попадает.
 
 ### Мобильный workflow (`.github/workflows/release-mobile.yml`)
 
 Ключевые моменты:
-- `CAPACITOR=1 pnpm --dir web build` — обязательно, иначе `base: '/'` сломает WebView.
+- `CAPACITOR=1 pnpm --dir web build` — обязательно, иначе `base: '/'` сломает WebView; в `env` шага сборки — `VITE_RUSTORE_PROJECT_ID: ${{ vars.RUSTORE_PROJECT_ID }}`.
 - `cap sync android` **после** Capacitor-сборки.
-- `google-services.json` и `release.keystore` инжектятся из Secrets в `web/android/app/`.
-- `Cleanup secrets` в `if: always()` — файлы удаляются даже при падении.
+- `release.keystore` инжектится из Secrets в `web/android/app/`.
+- `Cleanup secrets` в `if: always()` — файлы удаляются даже при падении (удаляется только keystore: `google-services.json` больше не нужен).
 - Проверка AAB: `jarsigner -verify` (AAB — jar/zip, `aapt dump permissions` с ним **не работает**) + грепы `CAMERA`/`INTERNET` по **merged** `AndroidManifest.xml`.
 - `pnpm/action-setup@v4` без `with: version` — версия берётся из `packageManager` (RULES 6.10).
 
-### Secrets (5 штук)
+### Secrets (4 штуки) и переменная
 
 | Secret | Откуда |
 |---|---|
@@ -542,22 +596,32 @@
 | `ANDROID_KEYSTORE_PASSWORD` | пароль keystore |
 | `ANDROID_KEY_ALIAS` | алиас ключа |
 | `ANDROID_KEY_PASSWORD` | пароль ключа |
-| `GOOGLE_SERVICES_JSON` | `google-services.json` из Firebase Console |
+
+| Переменная (Actions → Variables, **не** secret) | Откуда |
+|---|---|
+| `RUSTORE_PROJECT_ID` | RuStore Console → Push-уведомления → Проекты → «ID проекта»; в сборку уходит как `VITE_RUSTORE_PROJECT_ID` |
+
+Настройка RuStore Push (проект в консоли, Service Token, тестовый push,
+troubleshooting) — `docs/development/v1.5/RUSTORE_SETUP.md`. Keystore и его
+секреты — `docs/development/v1.5/KEYSTORE_SETUP.md`.
 
 ### Порядок деплоя
 
-1. `CAPACITOR=1 pnpm --dir web build` → `web/dist/` с `./assets/`.
+1. `CAPACITOR=1 VITE_RUSTORE_PROJECT_ID=<projectId> pnpm --dir web build` → `web/dist/` с `./assets/`.
 2. `cap sync android` → копирует `dist` в `android/app/src/main/assets/public`.
 3. `gradlew bundleRelease` → AAB, подписанный keystore.
-4. Upload в Play Console → Review → Rollout.
+4. Upload в магазин приложений (RuStore Console / Play Console) → Review → Rollout.
+5. Загрузить push-проект в RuStore Console и проверить доставку тестовым push.
 
 ### Что НЕ делать
 
-- НЕ коммить `google-services.json` и `keystore` в git (`.gitignore`).
+- НЕ коммить `keystore` в git (`.gitignore`).
+- НЕ коммить `RUSTORE_SERVICE_TOKEN` и не передавать его в мобильную сборку: это секрет бэкенда.
+- НЕ хардкодить `RUSTORE_PROJECT_ID` в код — только через `vars.RUSTORE_PROJECT_ID`/env.
 - НЕ собирать AAB без `CAPACITOR=1` — белый экран.
-- НЕ терять keystore — нельзя обновить приложение.
+- НЕ терять keystore — нельзя обновить приложение, а push перестанет доходить до установленных сборок.
 
-**Полные инструкции:** `docs/development/v1.5/FIREBASE_SETUP.md`,
+**Полные инструкции:** `docs/development/v1.5/RUSTORE_SETUP.md`,
 `docs/development/v1.5/KEYSTORE_SETUP.md`.
 
 ---
@@ -565,6 +629,8 @@
 ## Связанные документы
 
 - `docs/development/v1.5/DESIGN_V150_CAPACITOR.md` — применение в ai-workflow-builder.
+- `docs/development/v1.5/RUSTORE_SETUP.md` — настройка RuStore Push (Project ID, Service Token, тестовый push).
+- `docs/development/v1.5/KEYSTORE_SETUP.md` — keystore и секреты сборки.
 - `docs/development/RULES.md` — правила проекта.
 - Capacitor Docs: https://capacitorjs.com/docs
 - Capacitor ML Kit Barcode: https://github.com/capawesome-team/capacitor-mlkit
@@ -572,4 +638,4 @@
 
 ---
 
-**Версия:** 1.0 · **Дата:** 2026-11-09 · **Автор:** команда ai-workflow-builder
+**Версия:** 1.1 · **Дата:** 2026-11-09 · **Автор:** команда ai-workflow-builder
