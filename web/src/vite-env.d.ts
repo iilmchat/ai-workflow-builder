@@ -17,4 +17,16 @@ interface ImportMetaEnv {
    * push в нативном приложении выключены (см. `@/lib/rustore-push`).
    */
   readonly VITE_RUSTORE_PROJECT_ID?: string;
+
+  /**
+   * Публичный HTTPS-URL backend для нативной сборки (v1.5.0 S5-B, KI-658).
+   *
+   * В браузере не используется (запросы идут на текущий origin и
+   * проксируются Vite). В native-сборке без значения приложение не
+   * авторизуется: `getApiBase()` пишет `console.error` и оставляет пустую
+   * базу — запросы уходят в `https://localhost` (см. `@/lib/api-base`).
+   *
+   * Пример: `https://api.example.com` (без `/api` и без завершающего слэша).
+   */
+  readonly VITE_API_BASE?: string;
 }

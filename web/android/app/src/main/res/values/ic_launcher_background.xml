@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- v1.5.0 S5-B (KI-662): фон адаптивной иконки совпадает с фоном
+         брендовой иконки (`assets/rustore/icon-1024x1024.png`), чтобы
+         foreground без прозрачности сливался с подложкой. -->
+    <color name="ic_launcher_background">#FEF3E7</color>
 </resources>

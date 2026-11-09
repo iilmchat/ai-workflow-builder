@@ -21,6 +21,17 @@ async function bootstrap() {
   };
   httpAdapter.set('trust proxy', configService.get<boolean>('TRUST_PROXY') ?? false);
 
+  // Capacitor: WebView грузится с https://localhost, CORS должен принимать этот origin.
+  //
+  // В браузере запросы идут на тот же origin (dev — через Vite-proxy), поэтому
+  // CORS не участвует. В native-сборке origin — `https://localhost` (Android)
+  // или `capacitor://localhost` (iOS), и без заголовков
+  // `Access-Control-Allow-Origin` браузерный `fetch` внутри WebView блокирует
+  // ответ ещё до чтения тела (KI-658). `origin: true` отражает `Origin`
+  // запроса, а не отвечает `*`: это совместимо с `Authorization: Bearer`
+  // (auth не полагается на cookie-CORS-обмен) и не шире, чем нужно MVP.
+  app.enableCors({ origin: true });
+
   // Refresh-токен приходит httpOnly-cookie (R6.1b): без парсера
   // `req.cookies` пуст, и POST /auth/refresh всегда отвечал бы 401.
   app.use(cookieParser());

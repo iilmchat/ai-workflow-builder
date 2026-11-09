@@ -107,7 +107,9 @@ describe('web-search env (v0.10 S1, v0.15 S3)', () => {
 
 describe('WorkerEnvSchema (KI-065, KI-032)', () => {
   it('применяет дефолты, когда переменные не заданы', () => {
-    expect(WorkerEnvSchema.parse({})).toEqual({
+    // v1.5.0 S5-B (KI-659): в схеме появились push-флаги, поэтому проверка —
+    // через `toMatchObject`: добавление нового поля не должно ломать тест.
+    expect(WorkerEnvSchema.parse({})).toMatchObject({
       WORKFLOW_RUNS_CONCURRENCY: 5,
       WORKFLOW_RUNS_LOCK_DURATION_MS: 300_000,
       WORKFLOW_RUNS_MAX_STALLED_COUNT: 2,
@@ -115,6 +117,9 @@ describe('WorkerEnvSchema (KI-065, KI-032)', () => {
       // KI-387: изоляция очередей между инстансами.
       BULLMQ_PREFIX: 'workflow-runs',
       REDIS_QUEUE_DB: 0,
+      // KI-659: push включён, успешные запуски — без уведомления.
+      PUSH_ON_RUN_COMPLETE: true,
+      PUSH_ON_RUN_COMPLETE_SUCCESS: false,
     });
   });
 
@@ -126,7 +131,7 @@ describe('WorkerEnvSchema (KI-065, KI-032)', () => {
       WORKFLOW_RUNS_STALE_THRESHOLD_MS: '120000',
     });
 
-    expect(parsed).toEqual({
+    expect(parsed).toMatchObject({
       WORKFLOW_RUNS_CONCURRENCY: 12,
       WORKFLOW_RUNS_LOCK_DURATION_MS: 60_000,
       WORKFLOW_RUNS_MAX_STALLED_COUNT: 0,
@@ -1000,5 +1005,37 @@ describe('RuStore Push env (S4-B)', () => {
 
     expect(parsed.RUSTORE_PROJECT_ID).toBe('project-42');
     expect(parsed.RUSTORE_SERVICE_TOKEN).toBe('service-token');
+  });
+});
+
+describe('Push о завершении запуска (v1.5.0 S5-B, KI-659)', () => {
+  it('дефолты: push включён, успешные запуски — без уведомления', () => {
+    const parsed = WorkerEnvSchema.parse({});
+
+    expect(parsed.PUSH_ON_RUN_COMPLETE).toBe(true);
+    expect(parsed.PUSH_ON_RUN_COMPLETE_SUCCESS).toBe(false);
+  });
+
+  it("строго разбирает 'true'/'false' и отвергает мусор (RULES 4.35)", () => {
+    expect(
+      WorkerEnvSchema.parse({ PUSH_ON_RUN_COMPLETE: 'false' })
+        .PUSH_ON_RUN_COMPLETE,
+    ).toBe(false);
+    expect(
+      WorkerEnvSchema.parse({ PUSH_ON_RUN_COMPLETE: 'true' })
+        .PUSH_ON_RUN_COMPLETE,
+    ).toBe(true);
+    expect(
+      WorkerEnvSchema.parse({ PUSH_ON_RUN_COMPLETE_SUCCESS: 'true' })
+        .PUSH_ON_RUN_COMPLETE_SUCCESS,
+    ).toBe(true);
+
+    // `'garbage'` не должен молча включать/выключать флаг.
+    expect(
+      WorkerEnvSchema.safeParse({ PUSH_ON_RUN_COMPLETE: 'garbage' }).success,
+    ).toBe(false);
+    expect(
+      WorkerEnvSchema.safeParse({ PUSH_ON_RUN_COMPLETE_SUCCESS: '1' }).success,
+    ).toBe(false);
   });
 });

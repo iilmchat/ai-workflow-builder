@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api-base';
 import { refreshSessionAsync } from '@/lib/api';
 import { parseSseEvents } from '@/lib/sse-parser';
 import { getAccessToken } from '@/stores/auth';
@@ -227,8 +228,9 @@ async function ensureOkAsync(response: Response): Promise<Response> {
 /**
  * Выполняет запрос потока с Bearer-заголовком.
  *
- * URL относительный: в dev его проксирует Vite, в prod — тот же origin
- * (`API_BASE` в `lib/api.ts` — пустая строка).
+ * URL строится через `apiUrl`: в браузере база пустая и путь относительный
+ * (dev проксирует Vite, prod — тот же origin), в нативной сборке добавляется
+ * `VITE_API_BASE` (KI-658) — иначе SSE уходил бы в `https://localhost`.
  *
  * @param runId - uuid запуска
  * @param token - access-токен либо `null`, если сессии нет
@@ -246,7 +248,11 @@ async function fetchStreamAsync(
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  return fetch(`/runs/${runId}/stream`, { headers, signal, cache: 'no-store' });
+  return fetch(apiUrl(`/runs/${runId}/stream`), {
+    headers,
+    signal,
+    cache: 'no-store',
+  });
 }
 
 /**

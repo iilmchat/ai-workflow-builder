@@ -17,9 +17,7 @@ import {
 // Циклический импорт `api -> auth-api -> api` безопасен: `refreshAsync`
 // вызывается в рантайме, а не на этапе оценки модулей.
 import { refreshAsync } from './auth-api';
-
-/** База API: пустая строка — запросы идут на dev-сервер и проксируются Vite. */
-const API_BASE = '';
+import { apiUrl } from './api-base';
 
 /** Схема узла в том виде, в каком он приходит из backend. */
 export const ApiNodeSchema = z.object({
@@ -487,7 +485,7 @@ async function runRefreshAsync(): Promise<boolean> {
 /**
  * Отправляет запрос: подставляет access-токен из стора.
  *
- * @param url - путь относительно API_BASE
+ * @param url - путь относительно базы API (см. {@link apiUrl})
  * @param options - опции fetch
  * @param forceToken - перезаписать уже переданный `Authorization` (повтор
  *   после refresh обязан идти с новым токеном)
@@ -521,7 +519,7 @@ async function sendAsync(
   }
 
   try {
-    return await fetch(`${API_BASE}${url}`, { ...options, headers });
+    return await fetch(apiUrl(url), { ...options, headers });
   } catch {
     // fetch падает только на сетевых ошибках и CORS: backend недоступен.
     throw new ApiError(
@@ -566,7 +564,7 @@ async function parseResponseAsync<T>(response: Response): Promise<T> {
  * refresh-cookie и повторяет запрос с новым токеном. Если refresh не удался,
  * стор переходит в `guest`, а наверх уходит исходная 401.
  *
- * @param url - путь относительно API_BASE
+ * @param url - путь относительно базы API (см. {@link apiUrl})
  * @param options - опции fetch
  * @returns разобранный ответ
  * @throws ApiError при сетевой ошибке, не-2xx статусе или пустом ответе там,

@@ -16,6 +16,9 @@ import { LlmModule } from '../llm/llm.module.js';
 import { MediaModule } from '../media/media.module.js';
 // v0.11 S7: MCP-клиент и адаптер инструментов для AgentService.
 import { McpModule } from '../mcp/mcp.module.js';
+// v1.5.0 S5-B (KI-659): RunsProcessor отправляет push о финале запуска —
+// DeviceTokensService экспортируется NotificationsModule.
+import { NotificationsModule } from '../notifications/notifications.module.js';
 // R7.5 (KI-364): QuickJsRunnerService для режима `sandbox` узла condition.
 import { SandboxModule } from '../sandbox/sandbox.module.js';
 import { VectorStoreService } from '../vector/vector-store.service.js';
@@ -73,6 +76,8 @@ import { RUNS_QUEUE_DB, RUNS_QUEUE_PREFIX } from './runs.worker-options.js';
     FilesystemModule,
     // v0.11 S7: MCP-клиент и McpToolAdapter для AgentService.
     McpModule,
+    // v1.5.0 S5-B (KI-659): push о завершении запуска (RunsProcessor).
+    NotificationsModule,
     // R6.7 (KI-200): ExecutionEngineService загружает подграфы узлов
     // sub_workflow через WorkflowService (проверка владельца — 404).
     WorkflowModule,

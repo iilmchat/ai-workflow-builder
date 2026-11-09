@@ -10439,33 +10439,194 @@ KI-656, ограничение Maven-репозиториев SDK — KI-657.
   перепроверить; в `RUSTORE_SETUP.md` добавлен раздел про Maven-репозитории.
 - **Связанные:** KI-655, KI-656.
 
+### KI-658 — `API_BASE = ''`: release-AAB не доходит до backend
+- **Приоритет:** 🔴 High | **Статус:** Fixed | **Обнаружено:** 2026-11-09 (S5-A) | **Исправлено в:** v1.5.0 (S5-B)
+- **Файлы:** `web/src/lib/api-base.ts` (новый), `web/src/lib/api.ts`,
+  `web/src/lib/run-stream.ts`, `web/src/hooks/useFileDownload.ts`,
+  `web/src/lib/media-source.ts`, `web/src/vite-env.d.ts`, `src/main.ts`,
+  `.github/workflows/release-mobile.yml`, `docs/development/v1.5/RUSTORE_SETUP.md`
+- **Описание:** `web/src/lib/api.ts` собирал URL как `'' + path`, поэтому в
+  release-AAB WebView грузится с `https://localhost` (Capacitor Android), и
+  запросы `/workflow`, `/runs/...` уходили в сам WebView (404/connection
+  refused) — вход на устройстве был невозможен. Та же проблема была у SSE
+  (`run-stream.ts`), нативного скачивания DOCX/PDF (`fetch('/media/file/...')`)
+  и у `<img src="/media/file/...">` в media-узлах. CORS на backend не был
+  включён вовсе: `src/main.ts` не вызывал `enableCors`.
+- **Fix:** `getApiBase()` читает `VITE_API_BASE` только в native-сборке
+  (`isNative()`), нормализует завершающие слэши; в браузере возвращает пустую
+  строку (Vite-proxy/same-origin). `apiUrl()`/`resolveApiUrl()` применены в
+  `requestAsync`, SSE, скачивании файлов и `resolveMediaSource`. Пустой
+  `VITE_API_BASE` в native — `console.error`
+  `[api] VITE_API_BASE не задан в native-сборке…` и пустая база (fail-visible,
+  без краша). `src/main.ts` — `app.enableCors({ origin: true })` с комментарием
+  про `https://localhost`. CI передаёт `VITE_API_BASE: ${{ vars.VITE_API_BASE }}`
+  в шаг web-сборки; добавлены тесты `api-base.spec.ts` и интеграционный тест
+  `requestAsync`. Документация — `RUSTORE_SETUP.md` § «Backend origin».
+- **Остаточное ограничение:** refresh-cookie (`SameSite=Strict`) не
+  отправляется из WebView на другой origin — см. KI-664.
+- **Связанные:** KI-664, отчёт
+  [S5-B-release-finalization.md](development/reports/v1.5.0/S5-B-release-finalization.md).
+
+### KI-659 — `sendToUserAsync` не вызывался: push не отправлялся
+- **Приоритет:** 🔴 High | **Статус:** Fixed | **Обнаружено:** 2026-11-09 (S5-A) | **Исправлено в:** v1.5.0 (S5-B)
+- **Файлы:** `src/runs/runs.processor.ts`, `src/runs/runs.module.ts`,
+  `src/config/env.schema.ts`, `src/runs/runs.processor.push.spec.ts` (новый),
+  `src/runs/runs.processor.spec.ts`, `src/config/env.schema.spec.ts`,
+  `.env.example`, `docs/development/v1.5/RUSTORE_SETUP.md`
+- **Описание:** `DeviceTokensService.sendToUserAsync` был реализован (S3/S4-B),
+  но ни одно событие его не вызывало: пользователь регистрировал токен, а
+  уведомление о завершении запуска не инициировалось. Push-канал существовал
+  только на бумаге.
+- **Fix:** `RunsProcessor.notifyRunFinishedAsync` вызывается после **финального**
+  `run_completed`: `failed` — по умолчанию, `completed` — при
+  `PUSH_ON_RUN_COMPLETE_SUCCESS=true`; `cancelled` — без push; промежуточный
+  `failed` с retry не уведомляет. Общий выключатель `PUSH_ON_RUN_COMPLETE`
+  (default `true`). Флаги — строгие boolean в `WorkerEnvSchema` (RULES 4.35),
+  читаются через `ConfigService` (RULES 4.6). Владелец и имя workflow берутся
+  JOIN'ом `workflow_runs → workflows` (в `workflow_runs` нет `user_id`), текст —
+  «Запуск завершён» / «Запуск упал», body «Запуск «<имя>» …», data
+  `{ runId, workflowId }`; PII в тело не попадает (RULES 5.9). Отправка
+  fire-and-forget: ошибка RuStore логируется, но не меняет исход запуска и не
+  отменяет `run_completed`. `NotificationsModule` добавлен в `imports`
+  `RunsModule`.
+- **Связанные:** KI-656, отчёт
+  [S5-B-release-finalization.md](development/reports/v1.5.0/S5-B-release-finalization.md).
+
+### KI-660 — QR-сканер зависит от Google Play Services
+- **Приоритет:** 🔴 High | **Статус:** Documented | **Обнаружено:** 2026-11-09 (S5-A)
+- **Файлы:** `web/src/hooks/useQrScanner.ts`,
+  `docs/development/v1.5/RUSTORE_PUBLISH.md`
+- **Описание:** `BarcodeScanner.scan()` из `@capacitor-mlkit/barcode-scanning`
+  на Android требует модуль **Google Barcode Scanner** из Google Play Services
+  (`isGoogleBarcodeScannerModuleAvailable`). На устройствах без GMS (значимая
+  доля аудитории RuStore) QR не работает, а сам сканер — полноэкранный UI
+  Google (риск по п. 6.6 правил RuStore).
+- **Решение (S5-B, только документирование):** ограничение зафиксировано в
+  `RUSTORE_PUBLISH.md` § 2.2 (описание) и в «Известных ограничениях
+  альфа-тестирования» (B-7). **Ограничение v1.5.0:** QR работает на устройствах
+  с Google Play Services; на устройствах без GMS кнопка «Сканировать QR»
+  недоступна (молча, см. KI-665). Замена на bundled ML Kit
+  (`startScan` + bundled-модель) или `@capacitor-community/barcode-scanner` —
+  S6+.
+- **Связанные:** KI-665, KI-646, отчёт
+  [S5-B-release-finalization.md](development/reports/v1.5.0/S5-B-release-finalization.md).
+
+### KI-661 — Нет удаления аккаунта и согласия на обработку ПД
+- **Приоритет:** 🟠 Medium | **Статус:** Open | **Обнаружено:** 2026-11-09 (S5-A) | **Запланировано:** S6
+- **Файлы:** `web/src/components/auth/LoginPage.tsx`, `src/auth/**`,
+  `web/src/pages/**`
+- **Описание:** в приложении нет экрана/пункта удаления аккаунта, а в форме
+  регистрации — чекбокса согласия на обработку персональных данных и ссылки на
+  политику конфиденциальности. Это нарушает п. 5.4 правил RuStore (удаление
+  аккаунта внутри приложения) и ФЗ-152 (согласие). **KI-661 не входит в S5-B**:
+  нужен отдельный срез S6 (серверная ручка удаления/обезличивания + UI +
+  юридический документ). Блокер публикации RuStore п. 5.4 — B-3 в
+  `RUSTORE_PUBLISH.md`.
+- **Решение:** S6: `DELETE /auth/account`/обезличивание, удаление сценариев,
+  файлов, медиа и push-токенов; чекбокс согласия на регистрации; политика
+  конфиденциальности с URL.
+- **Связанные:** B-3, KI-658.
+
+### KI-662 — Иконки лаунчера — дефолтные Capacitor
+- **Приоритет:** 🟠 Medium | **Статус:** Fixed | **Обнаружено:** 2026-11-09 (S5-A) | **Исправлено в:** v1.5.0 (S5-B)
+- **Файлы:** `web/resources/icon.png` (новый),
+  `web/android/app/src/main/res/mipmap-*/ic_launcher*.png`,
+  `web/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher*.xml`,
+  `web/android/app/src/main/res/values/ic_launcher_background.xml`,
+  `web/android/app/src/main/res/drawable*/splash.png`
+- **Описание:** в `mipmap-*` лежали стандартные иконки шаблона Capacitor (синяя
+  «X»), а карточка RuStore использует брендовый
+  `assets/rustore/icon-512x512.png`. Модерация (п. 6.6) требует совпадения
+  иконки в карточке и на устройстве.
+- **Fix:** `npx @capacitor/assets@4.0.0 generate --android` из `web/` с
+  `web/resources/icon.png` (копия `icon-1024x1024.png`, фон `#FEF3E7`):
+  перегенерированы `ic_launcher.png`/`ic_launcher_round.png`/`ic_launcher_foreground.png`
+  для mdpi…xxxhdpi (+ldpi), splash-экраны; adaptive-icon XML приведён к
+  `@color/ic_launcher_background` + `@mipmap/ic_launcher_foreground`, цвет
+  `#FEF3E7`. Те же PNG, что в карточке, визуально совпадают.
+- **Связанные:** отчёт
+  [S5-B-release-finalization.md](development/reports/v1.5.0/S5-B-release-finalization.md).
+
+### KI-663 — Лишние разрешения `READ_MEDIA_IMAGES`/`READ_EXTERNAL_STORAGE`
+- **Приоритет:** 🟡 Low | **Статус:** Fixed | **Обнаружено:** 2026-11-09 (S5-A) | **Исправлено в:** v1.5.0 (S5-B)
+- **Файлы:** `web/android/app/src/main/AndroidManifest.xml`,
+  `.github/workflows/release-mobile.yml`,
+  `docs/development/v1.5/RUSTORE_SETUP.md`
+- **Описание:** манифест объявлял `READ_MEDIA_IMAGES` и
+  `READ_EXTERNAL_STORAGE (maxSdkVersion=32)`, хотя `@capacitor/camera`
+  используется только с `CameraSource.Camera` (`MediaStore.ACTION_IMAGE_CAPTURE`,
+  разрешений не требует), а `CameraSource.Photos`/`saveToGallery` не
+  вызываются. Лишнее чувствительное разрешение — расширенная проверка RuStore
+  (п. 5.3).
+- **Fix:** оба разрешения удалены из манифеста (комментарий с обоснованием) —
+  merged-манифест чист; CI шаг `Verify AAB (signed + permissions)` теперь
+  падает, если `READ_MEDIA_IMAGES`, `READ_EXTERNAL_STORAGE` или
+  `WRITE_EXTERNAL_STORAGE` появятся в merged-манифесте. Оставлены `INTERNET`,
+  `CAMERA`, `POST_NOTIFICATIONS`; `uses-feature camera required=false`.
+  Разрешения описаны таблицей в `RUSTORE_SETUP.md` § «Разрешения».
+- **Связанные:** KI-646, отчёт
+  [S5-B-release-finalization.md](development/reports/v1.5.0/S5-B-release-finalization.md).
+
+### KI-664 — Refresh-cookie не отправляется из Capacitor WebView
+- **Приоритет:** 🟠 Medium | **Статус:** Open | **Обнаружено:** 2026-11-09 (S5-B) | **Запланировано:** S6+
+- **Файлы:** `src/auth/auth.cookie.ts`, `src/main.ts`,
+  `web/src/lib/api.ts`, `web/src/lib/auth-api.ts`
+- **Описание:** refresh-токен ставится httpOnly-cookie с `SameSite=Strict`
+  (`src/auth/auth.cookie.ts`), а в native-сборке сайты разные:
+  WebView (`https://localhost`) → backend (`https://api.example.com`).
+  Cross-site cookie со `SameSite=Strict` не отправляется, а `fetch` с
+  `credentials: 'same-origin'` (default) не передаёт cookie на другой origin.
+  Поэтому `POST /auth/refresh` из приложения не восстановит сессию: после
+  истечения access-токена (`JWT_EXPIRES_IN`, в примере 24h) пользователю нужен
+  повторный вход. Вход и API-запросы в пределах жизни access-токена работают
+  (auth — `Authorization: Bearer`), альфа-тестирование это не блокирует.
+- **Решение:** S6+: либо `SameSite=None; Secure` + `enableCors({ origin: true,
+  credentials: true })` и `credentials: 'include'` в клиенте, либо отдавать
+  refresh-токен в теле и хранить в защищённом хранилище натива. Вариант с
+  cookie требует проверки CSRF и точного allowlist origin'ов.
+- **Связанные:** KI-658, отчёт
+  [S5-B-release-finalization.md](development/reports/v1.5.0/S5-B-release-finalization.md).
+
+### KI-665 — QR без GMS: кнопка молча ничего не делает
+- **Приоритет:** 🟡 Low | **Статус:** Open | **Обнаружено:** 2026-11-09 (S5-B) | **Запланировано:** S6+
+- **Файлы:** `web/src/hooks/useQrScanner.ts`, `web/src/components/TopBar.tsx`
+- **Описание:** при отсутствии Google Play Services `scanQr()` пишет
+  `console.warn('[qr] сканер недоступен…')` и возвращает `null`, а `TopBar`
+  трактует `null` как отмену сканирования — пользователь не видит ни ошибки, ни
+  объяснения, кнопка выглядит «сломанной». Документировано в
+  `RUSTORE_PUBLISH.md` как ограничение, но UI-сообщения нет.
+- **Решение:** S6+: заменить плагин на bundled ML Kit (тогда ограничение уйдёт)
+  либо добавить тост «QR-сканер недоступен на этом устройстве» при `available:
+  false`. Минимальный UI-фикс можно сделать отдельно, не дожидаясь S6.
+- **Связанные:** KI-660.
+
 ## Сводка по статусам
 
-**Пересчитано grep'ом на 2026-11-09 (v1.5.0 S4-B, RULES 3.20):** после S4-A было
-642 вхождения; в S4-B KI-653 и KI-654 переведены в `Fixed` (неактуальны после
-миграции на RuStore Push), заведены KI-656 (Planned — device-smoke) и KI-657
-(Documented — Maven-репозитории RuStore SDK). Всего **644**
-вхождения `### KI-`, **644** строки статуса, **уникальных номеров — 644**: все
-три цифры сходятся.
+**Пересчитано grep'ом на 2026-11-09 (v1.5.0 S5-B, RULES 3.20):** после S4-B было
+644 вхождения. В S5-B заведены KI-658, KI-659, KI-660, KI-661, KI-662, KI-663
+(были перечислены только в отчёте S5-A, в реестр не попадали) и новые KI-664,
+KI-665. KI-658/659/662/663 — `Fixed`, KI-660 — `Documented`, KI-661/664/665 —
+`Open`. Всего **652** вхождения `### KI-`, **652** строки статуса,
+**уникальных номеров — 652**: все три цифры сходятся.
 
-Проверка RULES 3.20: (1) вхождений `### KI-` = 644, строк статуса = 644
+Проверка RULES 3.20: (1) вхождений `### KI-` = 652, строк статуса = 652
 (легенда `### KI-001` имеет строку статуса, поэтому входит в оба счётчика и
-«минус 1» не применяется); (2) сумма статусов в таблице ниже = 644.
-По базовым статусам: Fixed 293 (281 + 12 «частично»), Open 281, Documented 58
-(57 + 1 «не воспроизводится»), Planned 5, Deferred 3, Won't Fix 4, In Progress 0.
+«минус 1» не применяется); (2) сумма статусов в таблице ниже = 652.
+По базовым статусам: Fixed 297 (285 + 12 «частично»), Open 284, Documented 59
+(58 + 1 «не воспроизводится»), Planned 5, Deferred 3, Won't Fix 4, In Progress 0.
 
 | Статус | Количество |
 |---|---:|
-| Fixed | 281 |
+| Fixed | 285 |
 | Fixed (частично) | 12 |
-| Open | 281 |
-| Documented | 57 |
+| Open | 284 |
+| Documented | 58 |
 | Documented (не воспроизводится) | 1 |
 | Planned | 5 |
 | Deferred | 3 |
 | Won't Fix | 4 |
-| **Итого** | **644** |
+| **Итого** | **652** |
 
-Сумма по статусам = числу вхождений `### KI-` = 644; уникальных номеров — 644
+Сумма по статусам = числу вхождений `### KI-` = 652; уникальных номеров — 652
 (RULES 3.20, KI-652).
 

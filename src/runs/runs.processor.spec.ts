@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import type { Job } from 'bullmq';
 import { DRIZZLE, type Database } from '../db/db.module.js';
@@ -6,6 +7,7 @@ import { workflowRuns } from '../db/schema.js';
 import type { ExecuteRunJobDto, RunEventDto } from './dto/index.js';
 import { RunCancelledException } from '../engine/errors.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
+import { DeviceTokensService } from '../notifications/device-tokens.service.js';
 import { RunEventsService } from './run-events.service.js';
 import { RunsProcessor } from './runs.processor.js';
 import {
@@ -47,7 +49,7 @@ function chain(resolveWith: unknown): Record<string, ReturnType<typeof vi.fn>> {
     },
   });
 
-  for (const method of ['from', 'where', 'limit', 'values', 'set']) {
+  for (const method of ['from', 'innerJoin', 'where', 'limit', 'values', 'set']) {
     link[method] = vi.fn(() => proxy);
   }
 
@@ -87,9 +89,18 @@ describe('RunsProcessor', () => {
   beforeEach(async () => {
     selectChain = chain([{ status: 'pending', snapshot }]);
     updateChain = chain([{ id: RUN_ID }]);
+    // v1.5.0 S5-B (KI-659): второй SELECT процессора — поиск владельца для
+    // push. Здесь push выключен, поэтому цепочка пустая; сценарии отправки —
+    // в `runs.processor.push.spec.ts`.
+    const pushChain = chain([]);
+    let selectCalls = 0;
 
     db = {
-      select: vi.fn(() => selectChain),
+      select: vi.fn(() => {
+        selectCalls += 1;
+
+        return selectCalls === 1 ? selectChain : pushChain;
+      }),
       update: vi.fn(() => updateChain),
     };
 
@@ -113,6 +124,14 @@ describe('RunsProcessor', () => {
         { provide: DRIZZLE, useValue: db as unknown as Database },
         { provide: ExecutionEngineService, useValue: executor },
         { provide: RunEventsService, useValue: events },
+        {
+          provide: DeviceTokensService,
+          useValue: { sendToUserAsync: vi.fn(() => Promise.resolve(0)) },
+        },
+        {
+          provide: ConfigService,
+          useValue: { get: vi.fn(() => false) },
+        },
       ],
     }).compile();
 

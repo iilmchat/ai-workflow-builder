@@ -19,6 +19,20 @@
 
 ### Added
 
+- **Release finalization: API-origin, push-триггер, иконки, разрешения
+  (v1.5.0 S5-B)**
+  ([отчёт](development/reports/v1.5.0/S5-B-release-finalization.md)):
+  `web/src/lib/api-base.ts` — `getApiBase()`/`apiUrl()`/`resolveApiUrl()`
+  (в native-сборке читают `VITE_API_BASE`, в браузере возвращают пустую базу),
+  применены в `requestAsync`, SSE (`run-stream.ts`), нативном скачивании
+  документов и media-узлах; `VITE_API_BASE` передаётся в `release-mobile.yml`
+  из repository variable. `RunsProcessor.notifyRunFinishedAsync` — push о
+  финале запуска: `failed` по умолчанию, `completed` при
+  `PUSH_ON_RUN_COMPLETE_SUCCESS=true`; env `PUSH_ON_RUN_COMPLETE` и
+  `PUSH_ON_RUN_COMPLETE_SUCCESS` (строгий boolean). Брендовые иконки лаунчера,
+  adaptive icon и splash сгенерированы `@capacitor/assets` из
+  `assets/rustore/icon-1024x1024.png`. Тесты: `web/src/lib/api-base.spec.ts`,
+  `src/runs/runs.processor.push.spec.ts`.
 - **RuStore Push вместо FCM (v1.5.0 S4-B)**
   ([отчёт](development/reports/v1.5.0/S4-B-rustore-push.md)): доставка
   push-уведомлений переведена с Firebase Cloud Messaging на RuStore Push.
@@ -45,6 +59,21 @@
 
 ### Changed
 
+- **CORS для Capacitor (v1.5.0 S5-B):** `src/main.ts` включает
+  `app.enableCors({ origin: true })` — WebView грузится с `https://localhost`
+  (Android) / `capacitor://localhost` (iOS), а auth остаётся на
+  `Authorization: Bearer`, без cookie-CORS-обмена (KI-658).
+- **CI mobile (v1.5.0 S5-B):** `.github/workflows/release-mobile.yml` передаёт
+  `VITE_API_BASE: ${{ vars.VITE_API_BASE }}` в web-сборку и проверяет, что в
+  merged-манифесте нет `READ_MEDIA_IMAGES`/`READ_EXTERNAL_STORAGE`/
+  `WRITE_EXTERNAL_STORAGE` (KI-663).
+- **Иконки и splash (v1.5.0 S5-B, KI-662):** `mipmap-*` и adaptive-icon
+  перегенерированы из брендового логотипа; `ic_launcher.xml`/
+  `ic_launcher_round.xml` ссылаются на `@color/ic_launcher_background`
+  (`#FEF3E7`) и `@mipmap/ic_launcher_foreground`; splash-экраны — брендовые.
+- **Полное описание RuStore (v1.5.0 S5-B, KI-660):** добавлено ограничение
+  «QR работает на устройствах с Google Play Services»; длина — 3358/4000
+  символов (было 3181), Release Notes — 461 символ.
 - **Регистрация push-токена (v1.5.0 S4-B):** `usePushNotifications` работает
   через нативный плагин `RuStorePush`, а не через `@capacitor/push-notifications`;
   контракт `POST /notifications/register` (`{ token, platform }`, upsert в
@@ -62,6 +91,10 @@
 
 ### Removed
 
+- **Storage-разрешения (v1.5.0 S5-B, KI-663):** `READ_MEDIA_IMAGES` и
+  `READ_EXTERNAL_STORAGE` удалены из `AndroidManifest.xml`: камера используется
+  только через `CameraSource.Camera`, галерея (`CameraSource.Photos`) и
+  сохранение фото в общий storage не вызываются.
 - **FCM/Firebase (v1.5.0 S4-B):** `@capacitor/push-notifications` вместе с
   `google-services.json`-цепочкой, Gradle-плагин `com.google.gms:google-services`,
   файл `web/android/app/google-services.json` из сборочного сценария, GitHub
@@ -70,6 +103,17 @@
 
 ### Fixed
 
+- **KI-658 (Fixed):** release-AAB доходит до backend — `VITE_API_BASE` в
+  native-сборке, `getApiBase()`/`apiUrl()`/`resolveApiUrl()`, CORS
+  `origin: true`, SSE/файлы/media; docs — `RUSTORE_SETUP.md` § «Backend
+  origin» (S5-B).
+- **KI-659 (Fixed):** push о завершении запуска инициируется из
+  `RunsProcessor` после финального `run_completed`; ошибка отправки не ломает
+  запуск (S5-B).
+- **KI-662 (Fixed):** иконки лаунчера и adaptive icon — брендовые, совпадают с
+  иконкой карточки RuStore (S5-B).
+- **KI-663 (Fixed):** лишние storage-разрешения удалены; CI проверяет их
+  отсутствие в merged-манифесте (S5-B).
 - **KI-653 (Fixed):** push на Android больше не зависит от
   `google-services.json` — неактуально после миграции на RuStore Push (S4-B).
 - **KI-654 (Fixed):** FCM-meta-data иконки уведомления больше не используется —
@@ -77,6 +121,19 @@
 
 ### Documented
 
+- **KI-660 (Documented):** QR-сканер зависит от Google Play Services; на
+  устройствах без GMS кнопка «Сканировать QR» недоступна. Ограничение
+  зафиксировано в `RUSTORE_PUBLISH.md` (§ 2.2 и «Известные ограничения
+  альфа-тестирования»); замена на bundled ML Kit — S6+.
+- **KI-661 (Open, вне S5-B):** удаление аккаунта внутри приложения и согласие
+  на обработку ПД не реализованы — блокер публикации RuStore п. 5.4, отдельный
+  срез S6.
+- **KI-664 (Open):** refresh-cookie (`SameSite=Strict`) не отправляется из
+  Capacitor WebView на другой origin; сессия живёт до истечения access-токена
+  (24 ч в примере), затем нужен повторный вход. План — S6+.
+- **KI-665 (Open):** при отсутствии GMS `scanQr()` возвращает `null` без
+  пользовательского сообщения — кнопка выглядит сломанной; UI-фикс или bundled
+  ML Kit — S6+.
 - **KI-656 (Medium, Planned):** нативный плагин RuStore Push написан вручную
   (JS ↔ Java) и требует тестирования на устройстве с RuStore — отчёт
   [S4-B-rustore-push.md](development/reports/v1.5.0/S4-B-rustore-push.md),

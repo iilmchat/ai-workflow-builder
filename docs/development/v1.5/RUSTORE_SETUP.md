@@ -3,8 +3,10 @@
 **Файл:** `docs/development/v1.5/RUSTORE_SETUP.md`
 **Для:** v1.5.0+ (миграция FCM → RuStore Push, S4-B).
 **Заменяет:** `docs/development/v1.5/FIREBASE_SETUP.md` (удалён).
-**Связанные:** KI-656, DESIGN v1.5 § S4-B, `KEYSTORE_SETUP.md`,
-отчёт `docs/development/reports/v1.5.0/S4-B-rustore-push.md`.
+**Связанные:** KI-656, KI-658, KI-659, KI-663, DESIGN v1.5 § S4-B,
+`KEYSTORE_SETUP.md`, отчёты
+`docs/development/reports/v1.5.0/S4-B-rustore-push.md` и
+`docs/development/reports/v1.5.0/S5-B-release-finalization.md`.
 
 ---
 
@@ -125,27 +127,31 @@ DeviceTokensService.sendToUserAsync(...)        — все токены поль
 
 ---
 
-## Шаг 3. GitHub Actions: переменная для web-сборки
+## Шаг 3. GitHub Actions: переменные для web-сборки
 
-Project ID нужен не только бэкенду, но и приложению: нативный плагин
-`RuStorePush` инициализируется в web-слое значением из окружения сборки.
+Приложению нужны **две** переменные сборки: Project ID для RuStore Push и
+origin backend для API-запросов.
 
 1. GitHub → репозиторий → **Settings → Secrets and variables → Actions →
    Variables** → **New repository variable**:
-   - Name: `RUSTORE_PROJECT_ID`
-   - Value: ID проекта из консоли.
-2. Workflow `.github/workflows/release-mobile.yml` передаёт эту переменную в
-   web-сборку как **`VITE_RUSTORE_PROJECT_ID`**:
+   - `RUSTORE_PROJECT_ID` — ID проекта push из консоли (см. Шаг 1);
+   - `VITE_API_BASE` — публичный HTTPS-URL backend **без `/api`**, например
+     `https://api.example.com` (подробно — раздел
+     «[Backend origin для release-сборки](#backend-origin-для-release-сборки-ki-658)»).
+2. Workflow `.github/workflows/release-mobile.yml` передаёт обе переменные в
+   web-сборку:
    ```text
    VITE_RUSTORE_PROJECT_ID: ${{ vars.RUSTORE_PROJECT_ID }}
+   VITE_API_BASE: ${{ vars.VITE_API_BASE }}
    ```
-3. Это **не секрет**: Project ID попадает в собранный JS-бандл, а в консоли
-   RuStore от него ничего не защищает. Секретом остаётся только Service Token,
+3. Это **не секреты**: `VITE_*` попадают в собранный JS-бандл, а в консоли
+   RuStore от них ничего не защищает. Секретом остаётся только Service Token,
    и он в мобильную сборку **не попадает** — он нужен исключительно бэкенду.
 
-Для локальной сборки переменная задаётся в `web/.env` (шаблон —
-`web/.env.example`, поле `VITE_RUSTORE_PROJECT_ID`) или через окружение
-(`$env:VITE_RUSTORE_PROJECT_ID='<ID проекта>'` перед `pnpm --dir web build`).
+Для локальной сборки переменные задаются в `web/.env` (шаблон —
+`web/.env.example`) или через окружение
+(`$env:VITE_RUSTORE_PROJECT_ID='<ID проекта>'; $env:VITE_API_BASE='https://api.example.com'`
+перед `pnpm --dir web build`).
 
 Список секретов Android-сборки (keystore) и их настройка —
 в `docs/development/v1.5/KEYSTORE_SETUP.md`. Секрета `GOOGLE_SERVICES_JSON`
@@ -182,6 +188,161 @@ Project ID нужен не только бэкенду, но и приложен
    Push-уведомления → Проекты → твой проект → вкладка **Тестовые уведомления**
    → вставить push-токен из лога, заголовок и текст → **Отправить**.
    Уведомление должно прийти в течение нескольких секунд.
+
+---
+
+## Backend origin для release-сборки (KI-658)
+
+WebView грузится с `https://localhost` (`androidScheme: 'https'` в
+`web/capacitor.config.ts`), поэтому относительный запрос `/workflow` ушёл бы в
+сам WebView: 404/connection refused, приложение не авторизуется. В native-сборке
+база API приходит из переменной `VITE_API_BASE`.
+
+### Что задать
+
+GitHub → **Settings → Secrets and variables → Actions → Variables** → **New
+repository variable**:
+
+- Name: `VITE_API_BASE`;
+- Value: публичный HTTPS-URL backend **без `/api`** и без завершающего слэша,
+  например `https://api.example.com`.
+
+Это **не секрет**: `VITE_*` инлайнятся в JS-бандл, значение видно при
+распаковке AAB, поэтому оно лежит в repository **variable**, а не в secret.
+
+Workflow передаёт значение в шаг web-сборки:
+
+```yaml
+- name: Build web (Capacitor mode)
+  env:
+    CAPACITOR: '1'
+    VITE_RUSTORE_PROJECT_ID: ${{ vars.RUSTORE_PROJECT_ID }}
+    VITE_API_BASE: ${{ vars.VITE_API_BASE }}
+  run: pnpm --dir web build
+```
+
+Локальная проверка:
+
+```powershell
+$env:CAPACITOR='1'; $env:VITE_API_BASE='https://api.example.com'
+pnpm --dir web build
+Select-String -Path web/dist/assets/*.js -Pattern 'https://api\.example\.com'
+# в native-сборке origin должен найтись; без CAPACITOR — отсутствовать
+```
+
+### Требования к backend
+
+- **Публично доступен по HTTPS.** В `capacitor.config.ts` стоят
+  `cleartext: false` и `allowMixedContent: false`, поэтому http-запрос из AAB
+  блокируется WebView.
+- **CORS.** `src/main.ts` вызывает `app.enableCors({ origin: true })`: заголовок
+  отражает `Origin` запроса (`https://localhost` на Android,
+  `capacitor://localhost` на iOS). Auth идёт через `Authorization: Bearer`, а не
+  через cookie-CORS-обмен, поэтому allowlist origin'ов для MVP не нужен.
+- Проверка CORS снаружи:
+
+```powershell
+curl.exe -i -H "Origin: https://localhost" https://api.example.com/llm/models
+# ожидаем в ответе: Access-Control-Allow-Origin: https://localhost
+```
+
+> `server.url` в `capacitor.config.ts` (загрузка SPA с dev-сервера) — только
+> для локальной отладки. Для альфа-тестирования backend обязан быть доступен
+> по HTTPS: иначе AAB не достучится до API.
+
+### Если `VITE_API_BASE` не задан
+
+В Logcat появится:
+
+```text
+[api] VITE_API_BASE не задан в native-сборке — запросы уйдут в https://localhost
+```
+
+Приложение не падает (fail-visible), но вход и загрузка данных не работают:
+запросы уходят в `https://localhost`. Проверить переменную в CI:
+`Settings → Variables` и шаг `Build web (Capacitor mode)` в
+`release-mobile.yml`.
+
+---
+
+## Push: триггер отправки (KI-659)
+
+`DeviceTokensService.sendToUserAsync` вызывается из `RunsProcessor` **после**
+финального события `run_completed`, поэтому push не влияет на исход запуска.
+
+| Событие | Push | Условие |
+|---|---|---|
+| `failed` (финальная попытка) | да | `PUSH_ON_RUN_COMPLETE=true` |
+| `failed`, но BullMQ будет retry | нет | уведомление только на финале |
+| `completed` | по флагу | `PUSH_ON_RUN_COMPLETE=true` **и** `PUSH_ON_RUN_COMPLETE_SUCCESS=true` |
+| `cancelled` | нет | отмену инициировал сам пользователь |
+
+Env backend (`.env`; строгий boolean, RULES 4.35):
+
+| Переменная | Default | Значение |
+|---|---|---|
+| `PUSH_ON_RUN_COMPLETE` | `true` | общий выключатель push о завершении |
+| `PUSH_ON_RUN_COMPLETE_SUCCESS` | `false` | push и при успешном завершении (по умолчанию — только падения) |
+
+Текст уведомления: заголовок «Запуск завершён» / «Запуск упал», тело
+«Запуск «<имя workflow>» завершён» / «…упал». В `data` — `{ runId, workflowId }`
+для перехода по тапу. Email, граф и выходы узлов в тело не попадают
+(RULES 5.9).
+
+Отправка **fire-and-forget**: ошибка RuStore логируется, но не меняет статус
+запуска и не отменяет `run_completed`. Если RuStore не настроен
+(`RUSTORE_PROJECT_ID`/`RUSTORE_SERVICE_TOKEN` пусты), WARN пишется в лог, а
+запуск завершается штатно.
+
+Проверка после запуска из приложения:
+
+```powershell
+adb logcat | Select-String "RuStore Push"
+```
+
+Ожидаемо: `RuStore Push: notification received`. На backend в логе — запись об
+отправке (токены устройств в логи не попадают, RULES 5.3).
+
+---
+
+## Разрешения (KI-663)
+
+Манифест — `web/android/app/src/main/AndroidManifest.xml`. Merged-манифест
+(после `npx cap sync android` и сборки) —
+`web/android/app/build/intermediates/merged_manifests/debug/AndroidManifest.xml`.
+
+| Разрешение | Зачем | Android | Когда запрашивается |
+|---|---|---|---|
+| `INTERNET` | все запросы к backend, S3, провайдерам | любая | при установке (normal permission) |
+| `CAMERA` | QR-сканер (`@capacitor-mlkit/barcode-scanning`) | любая | runtime, по кнопке «Сканировать QR» (`BarcodeScanner.requestPermissions`) |
+| `POST_NOTIFICATIONS` | push через RuStore Push | 13+ (API 33) | runtime, при инициализации `RuStorePush` после входа (`RuStorePushPlugin.init`) |
+| `READ_MEDIA_IMAGES` | **не объявляется** — галерея не открывается | — | — |
+| `READ_EXTERNAL_STORAGE` | **не объявляется** — фото не сохраняется в общий storage | — | — |
+| `WRITE_EXTERNAL_STORAGE` | **не объявляется** (deprecated) | — | — |
+
+`<uses-feature android:name="android.hardware.camera" android:required="false" />`
+оставлен: камера нужна QR-сканеру, но приложение устанавливается и на
+устройства без камеры.
+
+Почему storage-разрешения не нужны: `web/src/hooks/useCamera.ts` использует
+только `CameraSource.Camera` (`MediaStore.ACTION_IMAGE_CAPTURE`), который их не
+требует; `CameraSource.Photos` и `saveToGallery` не вызываются. На Android 13+
+выбор фото шёл бы через системный Photo Picker, которому
+`READ_MEDIA_IMAGES` тоже не нужен.
+
+После правки манифеста:
+
+```powershell
+pnpm --dir web exec cap sync android
+# merged-манифест появится после сборки:
+# web/android/app/build/intermediates/merged_manifests/debug/AndroidManifest.xml
+Select-String -Path web/android/app/build/intermediates/merged_manifests/debug/AndroidManifest.xml `
+  -Pattern 'READ_MEDIA_IMAGES|READ_EXTERNAL_STORAGE|POST_NOTIFICATIONS'
+```
+
+В CI шаг `Verify AAB (signed + permissions)` проверяет и наличие
+`INTERNET`/`CAMERA`/`POST_NOTIFICATIONS`, и **отсутствие**
+storage-разрешений в merged-манифесте.
 
 ---
 

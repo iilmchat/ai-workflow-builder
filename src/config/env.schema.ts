@@ -105,6 +105,36 @@ export const WorkerEnvSchema = z.object({
     emptyToUndefined,
     z.string().min(1).max(200).optional(),
   ),
+  /**
+   * Общий выключатель push о завершении запуска (v1.5.0 S5-B, KI-659).
+   *
+   * `true` (default) — `RunsProcessor` отправляет уведомление владельцу
+   * workflow, когда запуск дошёл до финала; `false` — не отправляет ничего.
+   * Флаг читается через `ConfigService` (`RULES 4.6`); объявлен в
+   * `WorkerEnvSchema`, потому что управляет тем же воркером очереди
+   * `workflow-runs`, что и `WORKFLOW_RUNS_*`.
+   */
+  PUSH_ON_RUN_COMPLETE: z.preprocess(
+    emptyToUndefined,
+    z
+      .union([z.boolean(), z.enum(['true', 'false'])])
+      .transform((value) => value === true || value === 'true')
+      .optional(),
+  ).default(true),
+  /**
+   * Отправлять push и при успешном завершении запуска (v1.5.0 S5-B, KI-659).
+   *
+   * `false` (default) — уведомление только про `failed`, чтобы каждый успешный
+   * запуск не спамил пользователя; `true` — push и на `completed`.
+   * `PUSH_ON_RUN_COMPLETE=false` выключает оба случая.
+   */
+  PUSH_ON_RUN_COMPLETE_SUCCESS: z.preprocess(
+    emptyToUndefined,
+    z
+      .union([z.boolean(), z.enum(['true', 'false'])])
+      .transform((value) => value === true || value === 'true')
+      .optional(),
+  ).default(false),
 });
 
 /** Валидированные настройки воркера очереди workflow-runs и lease-порога. */
