@@ -30,12 +30,14 @@ const REGISTRY_PATH = join(PROJECT_ROOT, 'api-prefixes.json');
 const SRC_DIR = join(PROJECT_ROOT, 'src');
 
 /**
- * Ожидаемые префиксы с контроллерами (12).
+ * Ожидаемые префиксы с контроллерами (13).
  *
  * `/api` сюда не входит: это legacy-префикс backend'а без собственного
  * `@Controller` (`controller: false` в реестре). `/admin` добавлен в v1.0.0 S3
  * под `@Controller('admin/audit')` (журнал аудита), `/metrics` — в v1.0.0 S4
- * под `@Controller('metrics')` (экспозиция Prometheus).
+ * под `@Controller('metrics')` (экспозиция Prometheus), `/notifications` —
+ * в v1.5.0 S3 под `@Controller('notifications')` (push-токены мобильного
+ * клиента, DESIGN V150 § 3 S3).
  */
 const EXPECTED_CONTROLLER_PREFIXES = [
   'admin',
@@ -46,6 +48,7 @@ const EXPECTED_CONTROLLER_PREFIXES = [
   'media',
   'metrics',
   'nodes',
+  'notifications',
   'runs',
   'templates',
   'web-search',
@@ -322,7 +325,7 @@ describe('API_PREFIXES: паритет с @Controller (KI-299/072/120/472)', () 
     );
   });
 
-  it('реестр содержит все 12 префиксов с контроллерами', async () => {
+  it('реестр содержит все 13 префиксов с контроллерами', async () => {
     const entries = await readRegistryAsync();
     const registryPrefixes = await readRegistryPrefixesAsync();
 

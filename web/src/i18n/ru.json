@@ -159,6 +159,7 @@
   "node.document_gen.content.placeholderJson": "JSON: { \"title\": \"…\", \"blocks\": [ … ] }",
   "node.document_gen.download": "Скачать DOCX",
   "node.document_gen.downloadPdf": "Скачать PDF",
+  "node.document_gen.download_error": "Не удалось скачать файл. Попробуйте ещё раз.",
   "node.document_gen.format": "Формат",
   "node.document_gen.format.docx": "DOCX",
   "node.document_gen.format.pdf": "PDF",

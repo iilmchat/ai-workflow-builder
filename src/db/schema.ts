@@ -760,6 +760,72 @@ export const nodeRuns = pgTable(
   ],
 );
 
+/**
+ * Платформы устройств для push-токенов (v1.5.0 S3, DESIGN V150 § 3 S3).
+ *
+ * Единый источник значений для CHECK-ограничения `device_tokens_platform_check`
+ * и Zod-схемы `POST /notifications/register`: FCM-токен приходит с Android или
+ * iOS, web-push — из браузера. Список закрытый: неизвестная платформа означает
+ * ошибку клиента, а не новый режим доставки, поэтому валидируется и на границе
+ * API, и в БД (RULES 1.17).
+ */
+export const DEVICE_TOKEN_PLATFORMS = ['android', 'ios', 'web'] as const;
+
+/** Платформа устройства для push-токена (v1.5.0 S3). */
+export type DeviceTokenPlatform = (typeof DEVICE_TOKEN_PLATFORMS)[number];
+
+/**
+ * device_tokens — push-токены устройств пользователя (v1.5.0 S3, миграция 0021).
+ *
+ * Токен FCM уникален **глобально**, а не в рамках пользователя: одно и то же
+ * устройство может войти другим аккаунтом, и тогда строка должна переехать к
+ * новому владельцу, а не задвоиться. Поэтому `UNIQUE (token)` работает как
+ * ключ UPSERT'а: `INSERT ... ON CONFLICT (token) DO UPDATE SET user_id,
+ * organization_id` (см. `DeviceTokensService.upsertAsync`). Поля `platform` и
+ * `created_at` при конфликте не обновляются — платформа устройства не меняется,
+ * а дата первой регистрации остаётся историей.
+ *
+ * `organization_id` денормализован (его можно вывести из `users`), потому что
+ * будущая отправка push пойдёт выборкой токенов арендатора; значение всегда
+ * пишется из строки `users` (KI-554), а не из `orgId` access-токена.
+ *
+ * `ON DELETE CASCADE` с обеих сторон (RULES 4.26): удаление пользователя или
+ * организации не оставляет «висячих» токенов, на которые некому слать push.
+ * Индекс `device_tokens_user_id_idx` обслуживает выборку токенов пользователя
+ * (например, отзыв при выходе), а UNIQUE-констрейнт — поиск по токену.
+ */
+export const deviceTokens = pgTable(
+  'device_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    token: text('token').notNull().unique(),
+    platform: text('platform').notNull().$type<DeviceTokenPlatform>(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index('device_tokens_user_id_idx').on(table.userId),
+    // RULES 1.17: платформу валидирует Zod на входе API, а прямые записи в
+    // БД ограничивает CHECK — набор значений совпадает с DEVICE_TOKEN_PLATFORMS.
+    check(
+      'device_tokens_platform_check',
+      sql`${table.platform} in ('android', 'ios', 'web')`,
+    ),
+  ],
+);
+
+/** Строка таблицы `device_tokens`. */
+export type DeviceToken = typeof deviceTokens.$inferSelect;
+/** Значения для INSERT в `device_tokens`. */
+export type NewDeviceToken = typeof deviceTokens.$inferInsert;
+
 export const workflowsRelations = relations(workflows, ({ many }) => ({
   runs: many(workflowRuns),
 }));

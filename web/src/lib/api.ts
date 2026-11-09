@@ -1062,3 +1062,57 @@ export async function fetchMcpServersAsync(): Promise<McpServersResponse> {
 
   return McpServersResponseSchema.parse(data);
 }
+
+/**
+ * Домены платформы для push-токена (v1.5.0 S3, DESIGN V150 § 3.3).
+ *
+ * Тот же список, что CHECK-констрейнт `device_tokens_platform_check` в БД и
+ * `RegisterDeviceTokenSchema` на backend: web — для браузерных push (в S3 не
+ * регистрируется, но домен общий), android/ios — нативные FCM/APNs.
+ */
+export const DeviceTokenPlatformSchema = z.enum(['android', 'ios', 'web']);
+
+/** Платформа push-токена. */
+export type DeviceTokenPlatform = z.infer<typeof DeviceTokenPlatformSchema>;
+
+/**
+ * Тело `POST /notifications/register` (v1.5.0 S3, DESIGN V150 § 3.3).
+ *
+ * `token` — FCM/APNs-токен устройства (`registration`-событие плагина),
+ * `platform` — домен из {@link DeviceTokenPlatformSchema}. Схема валидирует
+ * тело на клиенте до отправки: пустой токен или чужая платформа — ошибка в
+ * консоли, а не 400 от сервера (RULES 1.17).
+ */
+export const RegisterDeviceTokenSchema = z.object({
+  token: z.string().min(1),
+  platform: DeviceTokenPlatformSchema,
+});
+
+/** Валидированное тело `POST /notifications/register`. */
+export type RegisterDeviceTokenDto = z.infer<typeof RegisterDeviceTokenSchema>;
+
+/**
+ * Регистрирует push-токен устройства на бэкенде (v1.5.0 S3).
+ *
+ * Вызывается из `usePushNotifications` по событию `registration`. Backend
+ * делает upsert по `token` (`ON CONFLICT (token) DO UPDATE`), поэтому
+ * повторная отправка того же токена безопасна: строка обновит владельца, а не
+ * создаст дубль. Ответ `{ ok: true }` не разбирается — важен сам факт 2xx;
+ * текст ошибки несёт `ApiError` (`requestAsync`).
+ *
+ * @param token - FCM/APNs-токен устройства
+ * @param platform - платформа устройства (`android`/`ios`/`web`)
+ * @throws ZodError если токен пустой или платформа вне домена
+ * @throws ApiError при сетевой ошибке или не-2xx статусе
+ */
+export async function registerDeviceTokenAsync(
+  token: string,
+  platform: DeviceTokenPlatform,
+): Promise<void> {
+  const body = RegisterDeviceTokenSchema.parse({ token, platform });
+
+  await requestAsync<unknown>('/notifications/register', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}

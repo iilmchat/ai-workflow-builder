@@ -4,6 +4,7 @@ import {
   fetchWebSearchProvidersAsync,
   fetchWorkflowRunsAsync,
   listDocumentTemplatesAsync,
+  registerDeviceTokenAsync,
   requestAsync,
   uploadDocumentTemplateAsync,
 } from './api';
@@ -340,5 +341,36 @@ describe('fetchWebSearchProvidersAsync (v0.15 S3)', () => {
     );
 
     await expect(fetchWebSearchProvidersAsync()).rejects.toThrow();
+  });
+});
+
+describe('registerDeviceTokenAsync (v1.5.0 S3)', () => {
+  it('POST /notifications/register с токеном и платформой', async () => {
+    const fetchMock = stubFetch(() => jsonResponse({ ok: true }));
+
+    await registerDeviceTokenAsync('fcm-token-123', 'android');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/notifications/register');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({
+      token: 'fcm-token-123',
+      platform: 'android',
+    });
+    // `Content-Type: application/json` ставится `sendAsync` для строкового тела.
+    expect(headersOf(fetchMock).get('Content-Type')).toBe('application/json');
+  });
+
+  it('валидирует тело на клиенте: пустой токен и чужая платформа не уходят в сеть', async () => {
+    const fetchMock = stubFetch(() => jsonResponse({ ok: true }));
+
+    await expect(registerDeviceTokenAsync('', 'android')).rejects.toThrow();
+
+    // Платформа вне домена возможна только из JS без типов — проверяем схему.
+    await expect(
+      registerDeviceTokenAsync('token', 'windows' as 'web'),
+    ).rejects.toThrow();
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

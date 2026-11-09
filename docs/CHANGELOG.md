@@ -19,6 +19,14 @@
 
 ### Added
 
+- **Files & Push: уведомления, скачивание DOCX (v1.5.0 S3)**
+  ([отчёт](development/reports/v1.5.0/S3-files-push.md)): `POST
+  /notifications/register` (JWT; идемпотентный UPSERT `device_tokens`,
+  организация — из БД по `users`) и миграция `0021_dizzy_reptil.sql` —
+  таблица `device_tokens` (`token` UNIQUE, `platform` android/ios/web, FK на
+  `users`/`organizations`); нативное скачивание/открытие DOCX
+  (`web/src/hooks/useFileDownload.ts`); push-инициализация
+  (`web/src/hooks/usePushNotifications.ts`).
 - **Capacitor: каркас + камера/QR (v1.5.0 S1)** ([отчёт](development/reports/v1.5.0/S1-capacitor.md)):
   `@capacitor/core`, `@capacitor/android`, `@capacitor/camera`, `@capacitor-mlkit/barcode-scanning`,
   `@capacitor/cli` (в `web/package.json`). `web/capacitor.config.ts`, `web/android/` (без build/).
@@ -64,6 +72,9 @@
 - **`LLM_HEALTH_RECOVERY_PING_DELAY_MS` → `LLM_HEALTH_UNAVAILABLE_RETRY_MS`**
   (5 с): пинг теперь выполняется **пока** провайдер `unavailable`, а не после
   перехода в `available`; после успеха обычный интервал перезапускается.
+- **Реестр `api-prefixes.json` (v1.5.0 S3):** добавлен префикс `notifications`
+  (`POST /notifications/register`); SPA-fallback backend'а и Vite-proxy видят
+  ручку без правок `app.module.ts` (KI-472).
 
 ### Fixed
 
@@ -78,8 +89,16 @@
 
 - **KI-646..651:** AndroidManifest без CAMERA/ML Kit, `src="/logo.svg"` под `base: './'`,
   устаревший API в рецепте, `web/android/` вне git, Capacitor 8 vs 7, вес бандла.
-- **KI-652:** в реестре остались 11 кратких дублей заголовков (643 при 632
-  уникальных номерах на HEAD v1.4.0); удаление — в S3.
+- **KI-652:** Fixed (v1.5.0 S3) — удалены 11 кратких дублей заголовков
+  KI-635..645; сводка пересчитана grep'ом (RULES 3.20).
+- **KI-653, KI-654:** push на Android не зарегистрируется без
+  `google-services.json` (Gradle-плагин Google Services не применяется,
+  FirebaseApp не инициализируется — подготовка в S4), а уведомление рисуется
+  без белой монохромной иконки, которую требует README плагина (белый
+  квадрат в статусбаре — S4).
+- **KI-651:** замер в S3 — плагины filesystem/file-opener/push дали ещё
+  vendor 144.94 → 154.46 kB (gzip +2.78) и index 198.24 → 213.13 kB;
+  ленивая загрузка плагинов отложена в S4.
 - **KI-624:** возвращён в `Documented` — ручки повторной отправки в коде нет,
   статус `Fixed` был выставлен ошибочно.
 - **KI-641, KI-642, KI-643, KI-644, KI-645:** retention/повтор outbox,

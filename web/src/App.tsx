@@ -9,6 +9,7 @@ import { useAuthStore } from '@/stores/auth';
 import { Toast } from '@/components/Toast';
 import { Toolbar } from '@/components/Toolbar';
 import { TopBar } from '@/components/TopBar';
+import { initPushNotificationsAsync } from '@/hooks/usePushNotifications';
 import {
   useWorkflowStore,
   type FindCenterHandler,
@@ -57,6 +58,18 @@ export function App() {
   useEffect(() => {
     void useWorkflowStore.getState().loadMediaModelsAsync();
   }, []);
+
+  // Push-уведомления (v1.5.0 S3, DESIGN V150 § 3.3): инициализация только
+  // после подтверждённой сессии — токен устройства привязан к пользователю и
+  // организации, и `POST /notifications/register` без access-токена вернул бы
+  // 401. В браузере хук сразу выходит (`isNative()`), поэтому веб-версия
+  // ничего не запрашивает. Повторный вызов (StrictMode, logout→login)
+  // безопасен: внутри хука стоит guard идемпотентности.
+  useEffect(() => {
+    if (authStatus === 'authenticated') {
+      void initPushNotificationsAsync();
+    }
+  }, [authStatus]);
 
   const handleCanvasReady = useCallback(
     (handler: FindCenterHandler) => {

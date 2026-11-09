@@ -38,6 +38,8 @@ import { MetricsModule } from './metrics/metrics.module.js';
 import { MetricsInterceptor } from './metrics/metrics.interceptor.js';
 // v1.0.0 S5: команда организации — GET /admin/members, POST /admin/members/invite.
 import { OrgMembersModule } from './organizations/org-members.module.js';
+// v1.5.0 S3 (DESIGN V150 § 3 S3): push-уведомления — POST /notifications/register.
+import { NotificationsModule } from './notifications/notifications.module.js';
 import { WorkflowModule } from './workflow/workflow.module.js';
 import { EngineModule } from './engine/engine.module.js';
 import { NodesModule } from './nodes/nodes.module.js';
@@ -144,6 +146,9 @@ const WEB_DIST_PATH = join(
     // v1.0.0 S5 (DESIGN V100 § 3.4): команда организации. Контроллер под
     // префиксом /admin/members, OrgOwnerGuard берётся из AuditModule.
     OrgMembersModule,
+    // v1.5.0 S3 (DESIGN V150 § 3 S3): push-токены устройств мобильного клиента.
+    // Контроллер под префиксом /notifications (реестр api-prefixes.json).
+    NotificationsModule,
     LlmModule,
     WebSearchModule,
     DocumentsModule,

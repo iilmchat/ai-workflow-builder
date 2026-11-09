@@ -155,6 +155,7 @@
   "node.document_gen.content.placeholderJson": "JSON: { \"title\": \"…\", \"blocks\": [ … ] }",
   "node.document_gen.download": "Download DOCX",
   "node.document_gen.downloadPdf": "Download PDF",
+  "node.document_gen.download_error": "Failed to download the file. Please try again.",
   "node.document_gen.format": "Format",
   "node.document_gen.format.docx": "DOCX",
   "node.document_gen.format.pdf": "PDF",

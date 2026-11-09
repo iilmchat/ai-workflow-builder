@@ -25,7 +25,7 @@ Capacitor 7 — тонкая обёртка над `web/`. Изменения в
 ### S2 — Восстановление S1 поверх v1.4.0 + блокеры (сделано, v1.5.0)
 - KI-646..651, AndroidManifest (CAMERA, ML Kit), `assetUrl`, `tsconfig.node.json`, рецепт обновлён.
 
-### S3 — Файлы (DOCX) + Push (план)
+### S3 — Файлы (DOCX) + Push (сделано, v1.5.0)
 - `@capacitor/filesystem`, `@capacitor-community/file-opener`, `@capacitor/push-notifications`.
 - `useFileDownload.ts` (нативный file opener для DOCX).
 - `usePushNotifications.ts` + `POST /notifications/register` (NestJS) + таблица `device_tokens` (миграция).
@@ -41,7 +41,7 @@ Capacitor 7 — тонкая обёртка над `web/`. Изменения в
 ## 5. План работ
 - S1: 1.5 сессии (сделано)
 - S2: 1 сессия (сделано)
-- S3: 1.5 сессии
+- S3: 1.5 сессии (сделано)
 - S4: 1 сессия
 
 ## 6. Что НЕ входит

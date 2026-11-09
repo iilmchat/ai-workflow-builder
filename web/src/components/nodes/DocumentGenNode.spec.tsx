@@ -33,6 +33,32 @@ vi.mock('@/lib/api', async (importOriginal) => {
   };
 });
 
+/**
+ * Нативное скачивание (v1.5.0 S3).
+ *
+ * `native` переключает `isNative()` из `@/lib/platform`, `download` — сам хук
+ * `useFileDownload`. Плагины Capacitor здесь не нужны: компонент зависит от
+ * хука, а не от `Filesystem`/`FileOpener` напрямую.
+ */
+const downloadMocks = vi.hoisted(() => ({
+  native: false,
+  download: vi.fn(),
+}));
+
+vi.mock('@/lib/platform', () => ({
+  isNative: () => downloadMocks.native,
+  isAndroid: () => downloadMocks.native,
+  isIOS: () => false,
+  isWeb: () => !downloadMocks.native,
+}));
+
+vi.mock('@/hooks/useFileDownload', () => ({
+  downloadAndOpenFileAsync: downloadMocks.download,
+  MIME_DOCX:
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  MIME_PDF: 'application/pdf',
+}));
+
 /** id узла в тестовом графе. */
 const NODE_ID = 'document-gen-1';
 
@@ -144,6 +170,10 @@ beforeEach(() => {
     new Error('upload не вызывается в этом тесте'),
   );
   vi.mocked(deleteDocumentTemplateAsync).mockResolvedValue(undefined);
+  // v1.5.0 S3: по умолчанию «браузер»; тесты нативного скачивания включают сами.
+  downloadMocks.native = false;
+  downloadMocks.download.mockReset();
+  downloadMocks.download.mockResolvedValue(undefined);
 
   useWorkflowStore.setState({
     nodes: [],
@@ -361,6 +391,134 @@ describe('DocumentGenNode — inline-режим (v0.10 S6)', () => {
     expect(
       screen.getByText(ru['node.document_gen.hint']),
     ).toBeInTheDocument();
+  });
+
+  it('в браузере клик не перехватывается: работает обычная ссылка', () => {
+    useWorkflowStore.setState({
+      nodeOutputs: {
+        [NODE_ID]: {
+          storedUrl: '/media/file/run-1/generated-document-gen-1.docx',
+          fileName: 'generated-document-gen-1.docx',
+        },
+      },
+    });
+
+    renderNode(documentData());
+
+    const link = screen.getByRole('link', {
+      name: ru['node.document_gen.download'],
+    });
+
+    // jsdom не реализует навигацию по ссылке, поэтому ошибку глушим: проверяем
+    // только то, что обработчик не вмешивается в событие и не зовёт хук.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      // `fireEvent.click` возвращает `false`, если `preventDefault` был вызван.
+      expect(fireEvent.click(link)).toBe(true);
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    expect(downloadMocks.download).not.toHaveBeenCalled();
+  });
+
+  it('в нативе клик отдаёт файл нативному опенеру (v1.5.0 S3)', async () => {
+    downloadMocks.native = true;
+    useWorkflowStore.setState({
+      nodeOutputs: {
+        [NODE_ID]: {
+          storedUrl: '/media/file/run-1/generated-document-gen-1.docx',
+          fileName: 'generated-document-gen-1.docx',
+          format: 'docx',
+        },
+      },
+    });
+
+    renderNode(documentData());
+
+    const link = screen.getByRole('link', {
+      name: ru['node.document_gen.download'],
+    });
+
+    // `preventDefault` вызван обработчиком: возврат `false`.
+    expect(fireEvent.click(link)).toBe(false);
+
+    await waitFor(() => {
+      expect(downloadMocks.download).toHaveBeenCalledWith(
+        '/media/file/run-1/generated-document-gen-1.docx',
+        'generated-document-gen-1.docx',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      );
+    });
+  });
+
+  it('в нативе подставляет имя по формату, если fileName нет (v1.5.0 S3)', async () => {
+    downloadMocks.native = true;
+    useWorkflowStore.setState({
+      nodeOutputs: {
+        [NODE_ID]: {
+          storedUrl: '/media/file/run-1/generated-document-gen-1.pdf',
+          format: 'pdf',
+          mimeType: 'application/pdf',
+        },
+      },
+    });
+
+    renderNode(documentData({ format: 'pdf' }));
+
+    fireEvent.click(
+      screen.getByRole('link', { name: ru['node.document_gen.downloadPdf'] }),
+    );
+
+    await waitFor(() => {
+      expect(downloadMocks.download).toHaveBeenCalledWith(
+        '/media/file/run-1/generated-document-gen-1.pdf',
+        'document.pdf',
+        'application/pdf',
+      );
+    });
+  });
+
+  it('ошибка нативного скачивания показывается строкой под ссылкой', async () => {
+    downloadMocks.native = true;
+    downloadMocks.download.mockRejectedValue(new Error('нет сети'));
+    useWorkflowStore.setState({
+      nodeOutputs: {
+        [NODE_ID]: {
+          storedUrl: '/media/file/run-1/generated-document-gen-1.docx',
+          fileName: 'generated-document-gen-1.docx',
+        },
+      },
+    });
+
+    renderNode(documentData());
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      fireEvent.click(
+        screen.getByRole('link', { name: ru['node.document_gen.download'] }),
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(ru['node.document_gen.download_error']),
+        ).toBeInTheDocument();
+      });
+
+      // Причина уходит в консоль (RULES 4.18), пользователь видит строку.
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[file-download]',
+        expect.any(Error),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    expect(
+      document.querySelector('[data-document-gen-download-error]'),
+    ).not.toBeNull();
   });
 });
 

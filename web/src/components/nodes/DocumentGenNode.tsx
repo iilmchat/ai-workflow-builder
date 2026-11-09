@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode } from '@/components/nodes/BaseNode';
 import { useAutoResize } from '@/hooks/use-auto-resize';
+import {
+  downloadAndOpenFileAsync,
+  MIME_DOCX,
+  MIME_PDF,
+} from '@/hooks/useFileDownload';
 import { useNodeDataHistory } from '@/hooks/use-node-data-history';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import {
@@ -12,6 +17,7 @@ import {
   type ApiDocumentTemplate,
 } from '@/lib/api';
 import { NODE_REGISTRY } from '@/lib/node-registry';
+import { isNative } from '@/lib/platform';
 import { useWorkflowStore } from '@/stores/workflow';
 import {
   DATA_TYPE_COLORS,
@@ -278,6 +284,19 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
     outputs?.format === 'pdf' ? 'pdf' : 'docx';
   const missingVariables = readMissingVariables(outputs);
 
+  // v1.5.0 S3: MIME-тип для нативного просмотрщика. Сначала берём явный
+  // `outputs.mimeType` (его кладёт backend), иначе — по формату: у старых
+  // запусков поля нет, но формат есть.
+  const downloadMimeType =
+    typeof outputs?.mimeType === 'string' && outputs.mimeType.length > 0
+      ? outputs.mimeType
+      : outputFormat === 'pdf'
+        ? MIME_PDF
+        : MIME_DOCX;
+  // Как и остальные операции узла (upload/delete), ошибка скачивания — не
+  // глобальный тост, а строка под ссылкой: узел самодостаточен.
+  const [downloadError, setDownloadError] = useState(false);
+
   /** Список шаблонов workflow (`GET …/document-templates`). */
   const [templates, setTemplates] = useState<ApiDocumentTemplate[]>([]);
   const [templatesError, setTemplatesError] = useState(false);
@@ -419,6 +438,39 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
       setDeleteError(true);
     }
   }, [id, isViewer, selectedTemplate, t, updateNodeData, workflowId]);
+
+  /**
+   * Скачивает и открывает готовый документ (v1.5.0 S3, DESIGN V150 § 3.3).
+   *
+   * В браузере обработчик не мешает событию: ссылка ниже уже несёт `href`,
+   * `download` и `target="_blank"`, и обычный клик даёт прежнее поведение
+   * (в том числе «Сохранить ссылку как»). В нативном WebView атрибут
+   * `download` не работает, поэтому клик перехватывается и уходит в
+   * {@link downloadAndOpenFileAsync}: файл сохраняется в `Documents` и
+   * открывается системным просмотрщиком.
+   *
+   * @param event - клик по ссылке скачивания
+   */
+  const handleDownloadClick = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>): void => {
+      if (!isNative() || downloadUrl === null) {
+        return;
+      }
+
+      event.preventDefault();
+      setDownloadError(false);
+
+      void downloadAndOpenFileAsync(
+        downloadUrl,
+        fileName ?? `document.${outputFormat}`,
+        downloadMimeType,
+      ).catch((error: unknown) => {
+        setDownloadError(true);
+        console.error('[file-download]', error);
+      });
+    },
+    [downloadMimeType, downloadUrl, fileName, outputFormat],
+  );
 
   return (
     <>
@@ -696,22 +748,33 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
         )}
 
         {downloadUrl !== null ? (
-          <a
-            href={downloadUrl}
-            download={fileName ?? `document.${outputFormat}`}
-            target="_blank"
-            rel="noreferrer"
-            data-document-gen-download=""
-            data-document-gen-output-format={outputFormat}
-            className={DOWNLOAD_CLASS}
-          >
-            <span aria-hidden="true">⬇</span>
-            {t(
-              outputFormat === 'pdf'
-                ? 'node.document_gen.downloadPdf'
-                : 'node.document_gen.download',
-            )}
-          </a>
+          <>
+            <a
+              href={downloadUrl}
+              download={fileName ?? `document.${outputFormat}`}
+              target="_blank"
+              rel="noreferrer"
+              data-document-gen-download=""
+              data-document-gen-output-format={outputFormat}
+              className={DOWNLOAD_CLASS}
+              onClick={handleDownloadClick}
+            >
+              <span aria-hidden="true">⬇</span>
+              {t(
+                outputFormat === 'pdf'
+                  ? 'node.document_gen.downloadPdf'
+                  : 'node.document_gen.download',
+              )}
+            </a>
+            {downloadError ? (
+              <p
+                className="mt-1 text-[9px] text-status-danger-foreground"
+                data-document-gen-download-error=""
+              >
+                {t('node.document_gen.download_error')}
+              </p>
+            ) : null}
+          </>
         ) : (
           <p className="mt-1 text-[9px] text-muted-foreground">
             {t('node.document_gen.hint')}
