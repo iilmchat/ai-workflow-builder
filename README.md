@@ -173,14 +173,21 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 - **Safe Filesystem (`read_file`/`write_file`):** чтение и запись TXT/CSV/JSON
   в изолированном `./data/workspace/{workflowId}/` с защитой от path traversal
   и лимитом 5 МБ на файл.
-- **Метрики и наблюдаемость (v1.0 S4; v1.1 S4):** `GET /metrics` (без auth,
-  только для scrape-сети) отдаёт `http_request_duration_seconds`,
+- **Метрики и наблюдаемость (v1.0 S4; v1.1 S4; v1.6 S6-A):** `GET /metrics`
+  (без JWT — только для scrape-сети) отдаёт `http_request_duration_seconds`,
   `run_execution_duration_seconds`, `run_cost_total`,
   `agent_step_duration_seconds{model,status}`,
   `llm_call_duration_seconds{model,status}` и стандартные
-  `process_*`/`nodejs_*` (`collectDefaultMetrics`). Готовые конфиги —
+  `process_*`/`nodejs_*` (`collectDefaultMetrics`). С v1.6.0 S6-A ручка закрыта
+  allowlist'ом по IP (`METRICS_ALLOWED_IPS`: точные адреса и IPv4-CIDR,
+  дефолт — `127.0.0.1`): остальным `403`. Готовые конфиги —
   `infra/prometheus/prometheus.yml` и `infra/grafana/dashboard.json`
   (HTTP latency, длительность узлов, ошибки агента).
+- **Healthcheck (v1.6.0 S6-A):** публичный `GET /health` проверяет процесс и
+  зависимости — `SELECT 1` в PostgreSQL и `PING` в Redis; `200` с
+  `{ status: "ok", details: { db: "up", redis: "up" } }`, при отказе любой из
+  них — `503` с постатусной детализацией. Используется `docker healthcheck` и
+  внешним uptime-монитором.
 
 ### 🔐 Совместная работа и безопасность
 
@@ -249,7 +256,10 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 - **OpenTelemetry:** трейсы OTLP/HTTP, Pino-логи, per-provider semaphore.
 - **Docker:** multi-stage `Dockerfile` (NestJS + React), `docker-compose.prod.yml`
   (app + PostgreSQL 17 + pgvector + Redis), миграции в entrypoint и публикация
-  образа в GHCR (`latest`, `sha-*`, `vX.Y.Z`).
+  образа в GHCR (`latest`, `sha-*`, `vX.Y.Z`). С v1.6.0 S6-A —
+  `docker-compose.prod.override.yml` (Caddy как единственная точка входа,
+  лимиты памяти, ротация логов) и `Caddyfile`; деплой по digest, откат и
+  бэкапы — в [`PRODUCTION.md`](docs/development/PRODUCTION.md).
 
 ### 📱 Android Mobile App (v1.5.0)
 
@@ -365,17 +375,28 @@ pnpm --dir web dev
 
 ### Production: Docker
 
+Для боевого сервера используется **два** compose-файла: базовый и override
+(Caddy, лимиты, healthcheck `/health`). Полная инструкция — деплой, обновление
+по digest, откат, бэкапы, алерты — в
+[**PRODUCTION.md**](docs/development/PRODUCTION.md).
+
 ```bash
-# .env должен содержать секреты; POSTGRES_PASSWORD смените с dev-дефолта
-docker compose -f docker-compose.prod.yml up -d --build
-# → http://localhost:3000 — SPA и API из одного контейнера
+# .env заполняется из шаблона; все заглушки <...> заменяются секретами
+cp .env.production.example .env
+
+# База + override: наружу смотрит только Caddy (:80/:443)
+docker compose -f docker-compose.prod.yml -f docker-compose.prod.override.yml \
+  up -d --build
+# → https://app.<домен> — SPA и API из одного контейнера
 ```
 
 Образ собирается multi-stage: backend (`dist/`, `dist/migrate.js`), frontend
 (`web/dist/`) и production-зависимости. Entrypoint применяет миграции **до**
 старта приложения; SPA отдаёт `ServeStaticModule`. Порты БД/Redis проброшены
 только на loopback (`5434`/`6380`). В production-compose включён
-`COOKIE_SECURE=true`, поэтому вход рассчитан на HTTPS/reverse proxy.
+`COOKIE_SECURE=true`, поэтому вход рассчитан на HTTPS/reverse proxy; в
+production обязателен `CORS_ALLOWED_ORIGINS` — с пустым значением приложение
+не стартует (S6-A).
 
 Vite проксирует `/workflow`, `/engine`, `/llm`, `/media`, `/auth`,
 `/templates`, `/nodes` и `/runs` (SSE) на `http://localhost:3000`, поэтому
@@ -398,6 +419,7 @@ backend должен быть запущен первым.
 | [MANUAL_TESTING_GUIDE.md](docs/qa/MANUAL_TESTING_GUIDE.md) | QA | 158 ручных кейсов и чек-лист приёмки |
 | [GETTING_STARTED.md](docs/development/GETTING_STARTED.md) | разработчики | Разворачивание проекта за ~20 минут |
 | [ARCHITECTURE.md](docs/development/ARCHITECTURE.md) | разработчики | Архитектура, контракты и Docker-развёртывание |
+| [PRODUCTION.md](docs/development/PRODUCTION.md) | DevOps | Прод-деплой на VPS: Caddy, digest-обновления, откат, бэкапы, алерты |
 | [DESIGN v0.11](docs/development/v0.11/DESIGN_V011_FEATURES.md) | разработчики | DOCX-шаблоны, MCP Adapter, Reliability/History |
 | [DESIGN v1.5](docs/development/v1.5/DESIGN_V150_CAPACITOR.md) | разработчики | Android-приложение: Capacitor, камера/QR, файлы DOCX, push |
 | [RULES.md](docs/development/RULES.md) | разработчики | Правила кода, docs, workflow и безопасности |

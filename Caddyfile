@@ -1,0 +1,34 @@
+# Caddyfile — TLS и reverse proxy для production-стека (v1.6.0 S6-A).
+#
+# Монтируется в контейнер `caddy` из `docker-compose.prod.override.yml`
+# (`./Caddyfile:/etc/caddy/Caddyfile:ro`). Единственный сервис стека с
+# опубликованными портами: 80/443 (и 443/udp для HTTP/3).
+#
+# Перед деплоем заменить `app.example.com` на реальный домен: A/AAAA-запись
+# должна указывать на VPS, а 80/443 — быть открыты (Caddy сам получает
+# сертификат Let's Encrypt по HTTP-01/TLS-ALPN). Email в global-блоке —
+# контакт для писем об истечении сертификата, не секрет.
+#
+# Caddy автоматически:
+# - редиректит HTTP → HTTPS (кроме ACME-челленджа);
+# - проксирует WebSocket/SSE без отдельной настройки (`/runs/:id/stream`);
+# - выставляет `X-Forwarded-For`/`X-Forwarded-Proto`, поэтому в приложении
+#   обязателен `TRUST_PROXY=true` (иначе rate limit видит один IP Caddy).
+#
+# Перечитать конфиг без простоя:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.prod.override.yml \
+#     exec caddy caddy reload --config /etc/caddy/Caddyfile
+{
+	# Контакт ACME. Можно переопределить переменной окружения контейнера или
+	# заменить значение вручную — на работу TLS это не влияет.
+	email {$ACME_EMAIL:admin@example.com}
+}
+
+app.example.com {
+	# Сжатие текстовых ответов; SSE Caddy не буферизует и не сжимает.
+	encode zstd gzip
+
+	# Backend слушает 3000 внутри compose-сети и наружу не публикуется.
+	# Healthcheck контейнера `app` — `GET /health` (БД + Redis).
+	reverse_proxy app:3000
+}

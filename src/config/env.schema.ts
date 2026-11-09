@@ -17,6 +17,22 @@ const emptyToUndefined = (value: unknown): unknown =>
   value === '' ? undefined : value;
 
 /**
+ * Приводит строку к `trim`-виду и трактует пустую/пробельную строку как
+ * «не задано» (`undefined`).
+ *
+ * Для списков в env (`CORS_ALLOWED_ORIGINS`, `METRICS_ALLOWED_IPS`): значение
+ * `"   "` — это не список из одного пробела, а незаполненная переменная.
+ * Без нормализации `z.string().min(1)` ронял бы старт, а `.max()` — пропускал
+ * пробелы внутрь allowlist'а.
+ *
+ * @param value - сырое значение переменной окружения
+ * @returns `undefined` для пустой/пробельной строки, иначе строку без
+ *   обрамляющих пробелов
+ */
+const trimmedEmptyToUndefined = (value: unknown): unknown =>
+  typeof value === 'string' ? emptyToUndefined(value.trim()) : value;
+
+/**
  * URL, допустимый для обращения к LLM API: только `http`/`https`.
  *
  * Без ограничения схемы `z.url()` принимает `ftp://` и `ws://` (KI-085),
@@ -1073,6 +1089,38 @@ export const EnvSchema = z.object({
         .optional(),
     )
     .default(false),
+  /**
+   * Allowlist origin'ов для CORS в production (v1.6.0 S6-A, KI-658/KI-664).
+   *
+   * До S6-A `main.ts` включал `origin: true` (отражать `Origin` запроса) —
+   * для Capacitor это работает, но в проде принимает **любой** сайт: чужой
+   * фронтенд мог бы читать ответы API, если у пользователя есть доступ.
+   * Список — через запятую, схемы `http`/`https`/`capacitor`; пустые элементы
+   * и завершающие запятые игнорируются, хвостовой слэш срезается.
+   *
+   * Обязателен при `NODE_ENV=production`: пустое значение — отказ старта
+   * (`main.ts`, fail-fast), а не тихое «разрешить всё». В dev значение не
+   * используется: там по-прежнему `origin: true` (Vite-прокси и WebView).
+   */
+  CORS_ALLOWED_ORIGINS: z.preprocess(
+    trimmedEmptyToUndefined,
+    z.string().max(1000).optional(),
+  ),
+  /**
+   * Allowlist адресов, которым разрешён `GET /metrics` (v1.6.0 S6-A, KI-575).
+   *
+   * Prometheus не умеет JWT, поэтому ручка защищена сетевым правилом: guard
+   * (`MetricsIpGuard`) сравнивает IP клиента (`req.ip`, учитывая `TRUST_PROXY`)
+   * с этим списком и отвечает 403 остальным. Формат — через запятую: точные
+   * адреса и IPv4-CIDR (`127.0.0.1,172.18.0.0/16`). Дефолт — только loopback:
+   * публичный `/metrics` в интернете не нужен ни в какой среде.
+   *
+   * Пустая строка — «не задано» (KI-084): применяется дефолт.
+   */
+  METRICS_ALLOWED_IPS: z.preprocess(
+    trimmedEmptyToUndefined,
+    z.string().min(1).max(1000).default('127.0.0.1'),
+  ),
   /** Строка подключения к PostgreSQL (в Docker compose проброшен порт 5433). */
   DATABASE_URL: z.url('DATABASE_URL должен быть валидным URL'),
   /**

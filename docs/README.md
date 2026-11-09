@@ -92,6 +92,7 @@
 |---|---|---|
 | [**RULES.md**](development/RULES.md) | Единый свод правил: базовые, документация, workflow, TypeScript/NestJS/ESM, безопасность, git | **Обязателен** для всех изменений |
 | [**ARCHITECTURE.md**](development/ARCHITECTURE.md) | C4-архитектура, жизненный цикл Run, контракты, Docker-развёртывание | При изучении кода и деплоя |
+| [**PRODUCTION.md**](development/PRODUCTION.md) | Прод-деплой на VPS: Caddy/TLS, обновление по digest, откат, бэкапы, алерты, troubleshooting | Перед выкладкой и при инциденте |
 | [**PROMPT_CURRENT.md**](development/PROMPT_CURRENT.md) | Актуальный системный промпт для ассистента/dsh: статус, метрики, открытые KI, план | Перед новой сессией |
 | [**GETTING_STARTED.md**](development/GETTING_STARTED.md) | Пошаговое разворачивание: Node, pnpm, Docker, миграции, тесты | Первый запуск |
 | [**RELEASES.md**](development/RELEASES.md) | Чек-лист релиза: тесты, сборка, docs, версия, тег, Release Notes | Перед каждым релизом |

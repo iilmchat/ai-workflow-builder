@@ -493,6 +493,64 @@ describe('TRUST_PROXY (R7.7, KI-419)', () => {
   });
 });
 
+describe('CORS_ALLOWED_ORIGINS (v1.6.0 S6-A)', () => {
+  it('опционален: без значения приложение поднимается (dev — origin: true)', () => {
+    expect(EnvSchema.parse(baseEnv).CORS_ALLOWED_ORIGINS).toBeUndefined();
+    // Пустая строка в .env = «не задано» (KI-084), а не ошибка старта.
+    expect(
+      EnvSchema.parse({ ...baseEnv, CORS_ALLOWED_ORIGINS: '' })
+        .CORS_ALLOWED_ORIGINS,
+    ).toBeUndefined();
+    expect(
+      EnvSchema.parse({ ...baseEnv, CORS_ALLOWED_ORIGINS: '   ' })
+        .CORS_ALLOWED_ORIGINS,
+    ).toBeUndefined();
+  });
+
+  it('принимает список origin-ов строкой (разбор — в src/config/cors.ts)', () => {
+    const parsed = EnvSchema.parse({
+      ...baseEnv,
+      CORS_ALLOWED_ORIGINS:
+        'https://app.example.com,https://localhost,capacitor://localhost',
+    });
+
+    expect(parsed).toMatchObject({
+      CORS_ALLOWED_ORIGINS:
+        'https://app.example.com,https://localhost,capacitor://localhost',
+    });
+  });
+
+  it('не падает при NODE_ENV=production с валидным allowlist', () => {
+    expect(() =>
+      validateEnv({
+        ...baseEnv,
+        NODE_ENV: 'production',
+        COOKIE_SECURE: 'true',
+        CORS_ALLOWED_ORIGINS: 'https://app.example.com',
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe('METRICS_ALLOWED_IPS (v1.6.0 S6-A)', () => {
+  it('по умолчанию только loopback — публичный /metrics не нужен', () => {
+    expect(EnvSchema.parse(baseEnv).METRICS_ALLOWED_IPS).toBe('127.0.0.1');
+    // Пустая строка = «не задано» (KI-084) → дефолт, а не пустой allowlist.
+    expect(
+      EnvSchema.parse({ ...baseEnv, METRICS_ALLOWED_IPS: '' }).METRICS_ALLOWED_IPS,
+    ).toBe('127.0.0.1');
+  });
+
+  it('принимает список адресов и CIDR строкой', () => {
+    expect(
+      EnvSchema.parse({
+        ...baseEnv,
+        METRICS_ALLOWED_IPS: '127.0.0.1,172.18.0.0/16,62.109.1.230',
+      }).METRICS_ALLOWED_IPS,
+    ).toBe('127.0.0.1,172.18.0.0/16,62.109.1.230');
+  });
+});
+
 describe('S3_PUBLIC_BUCKET (KI-444)', () => {
   it('по умолчанию false — приватный бакет и presigned GET', () => {
     expect(EnvSchema.parse(baseEnv).S3_PUBLIC_BUCKET).toBe(false);

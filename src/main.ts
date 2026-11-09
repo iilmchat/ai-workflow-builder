@@ -3,6 +3,7 @@ import cookieParser from 'cookie-parser';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
+import { resolveCorsOrigin } from './config/cors.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -27,10 +28,32 @@ async function bootstrap() {
   // CORS не участвует. В native-сборке origin — `https://localhost` (Android)
   // или `capacitor://localhost` (iOS), и без заголовков
   // `Access-Control-Allow-Origin` браузерный `fetch` внутри WebView блокирует
-  // ответ ещё до чтения тела (KI-658). `origin: true` отражает `Origin`
-  // запроса, а не отвечает `*`: это совместимо с `Authorization: Bearer`
-  // (auth не полагается на cookie-CORS-обмен) и не шире, чем нужно MVP.
-  app.enableCors({ origin: true });
+  // ответ ещё до чтения тела (KI-658).
+  //
+  // v1.6.0 S6-A: в production `origin: true` слишком широк — он принимает любой
+  // сайт. Там используется allowlist из `CORS_ALLOWED_ORIGINS` (массив origin'ов,
+  // сравнение точное), а пустой allowlist — ошибка старта: лучше не подняться,
+  // чем открыть API всему интернету. В dev/staging поведение прежнее
+  // (`origin: true`), чтобы не ломать Vite-прокси, CDP-смоук и Capacitor.
+  const nodeEnv = configService.get<string>('NODE_ENV');
+
+  try {
+    app.enableCors({
+      origin: resolveCorsOrigin(
+        nodeEnv,
+        configService.get<string>('CORS_ALLOWED_ORIGINS'),
+      ),
+    });
+  } catch (error: unknown) {
+    // Fail-fast по конфигурации: `console.error`, потому что Nest-логгер на этом
+    // этапе ещё не гарантирует вывод при отказе bootstrap, а сообщение должно
+    // попасть в `docker logs` в любом случае (RULES 4.6 — значение из ConfigService).
+    console.error(
+      `[bootstrap] ${error instanceof Error ? error.message : String(error)}`,
+    );
+    await app.close();
+    process.exit(1);
+  }
 
   // Refresh-токен приходит httpOnly-cookie (R6.1b): без парсера
   // `req.cookies` пуст, и POST /auth/refresh всегда отвечал бы 401.

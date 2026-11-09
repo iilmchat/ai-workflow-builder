@@ -17,7 +17,12 @@ services:
       dockerfile: Dockerfile
     # Для деплоя готового образа из GHCR задайте IMAGE_NAME/IMAGE_TAG
     # (например, ghcr.io/owner/workflow-builder:v0.9.1) и уберите build.
-    image: ${IMAGE_NAME:-workflow-builder}:${IMAGE_TAG:-latest}
+    #
+    # v1.6.0 S6-A: `IMAGE_REF` позволяет прибить образ по digest
+    # (`ghcr.io/owner/workflow-builder@sha256:...`) — тег можно перезаписать,
+    # digest нельзя, поэтому прод деплоится и откатывается по нему. Без
+    # `IMAGE_REF` работает прежняя пара IMAGE_NAME/IMAGE_TAG.
+    image: ${IMAGE_REF:-${IMAGE_NAME:-workflow-builder}:${IMAGE_TAG:-latest}}
     restart: unless-stopped
     depends_on:
       db:

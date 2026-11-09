@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | S6-A | Production readiness: CORS-allowlist `CORS_ALLOWED_ORIGINS` (+fail-fast, `src/config/cors.ts`), `GET /health` (PostgreSQL `SELECT 1` + Redis `PING`, 200/503, `HealthModule`), allowlist `/metrics` по IP (`METRICS_ALLOWED_IPS`, `MetricsIpGuard`, IPv4-CIDR), `docker-compose.prod.override.yml` (Caddy — единственная точка входа, `!reset` портов, лимиты, json-file-ротация) + `Caddyfile`, `IMAGE_REF` для деплоя по digest, `.env.production.example`, `PRODUCTION.md`; новые KI-666…670, сводка KI 657 | 2026-11-10 | [S6-A-production-readiness.md](v1.6.0/S6-A-production-readiness.md) |
 | v1.5.0 | S1 | Capacitor: каркас + камера/QR | 2026-11-09 | [S1-capacitor.md](v1.5.0/S1-capacitor.md) |
 | v1.5.0 | S2 | Восстановление S1 поверх v1.4.0 + блокеры | 2026-11-09 | [S2-fix-merge.md](v1.5.0/S2-fix-merge.md) |
 | v1.5.0 | S3 | Files & Push: `POST /notifications/register` (JWT, идемпотентный UPSERT `device_tokens`, организация из БД по `users`), миграция `0021_dizzy_reptil.sql` — таблица `device_tokens` (`token` UNIQUE, `platform` android/ios/web, FK на `users`/`organizations`, индекс `user_id`), нативное скачивание/открытие DOCX (`useFileDownload`), push-инициализация (`usePushNotifications`), префикс `notifications` в `api-prefixes.json`; docs (KI-652): удалены 11 кратких дублей заголовков KI-635..645, сводка статусов пересчитана grep'ом (RULES 3.20) | 2026-11-09 | [S3-files-push.md](v1.5.0/S3-files-push.md) |

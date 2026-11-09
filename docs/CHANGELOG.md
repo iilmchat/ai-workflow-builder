@@ -19,6 +19,39 @@
 
 ### Added
 
+- **Production readiness и инфра-интеграция (v1.6.0 S6-A)**
+  ([отчёт](development/reports/v1.6.0/S6-A-production-readiness.md)):
+  - **CORS-allowlist:** `CORS_ALLOWED_ORIGINS` в `EnvSchema`; в production
+    `main.ts` передаёт `origin: <массив>` (`src/config/cors.ts` — разбор списка
+    через Zod, trim, срезание хвостового слэша, dedupe), а пустое значение —
+    отказ старта (`console.error` + `exit 1`). В dev/staging — прежнее
+    `origin: true` (KI-658).
+  - **Healthcheck:** `src/health/health.controller.ts` — `GET /health` без
+    авторизации: `SELECT 1` в PostgreSQL и `PING` в Redis параллельно, таймаут
+    2 с на проверку; `200 { status: "ok", details: { db: "up", redis: "up" } }`
+    или `503 { status: "error", ... }` с постатусной детализацией. Подключён
+    `HealthModule` в `AppModule`; префикс `health` — в `api-prefixes.json`
+    (паритет-тест обновлён).
+  - **Защита `/metrics`:** `MetricsIpGuard` + `METRICS_ALLOWED_IPS` (точные
+    адреса и IPv4-CIDR, дефолт `127.0.0.1`, loopback-алиасы `127.0.0.1`↔`::1`,
+    нормализация IPv4-mapped IPv6). `req.ip` приоритетнее `X-Forwarded-For` —
+    иначе allowlist обходится подделкой заголовка (KI-575).
+  - **Инфраструктура:** `docker-compose.prod.override.yml` (Caddy — единственная
+    точка входа, `!reset` снимает публикацию порта `app`, лимиты памяти
+    `2g/2g/512m/256m`, ротация json-file `10m×3`, healthcheck на `/health`),
+    `Caddyfile` (TLS + reverse proxy), `IMAGE_REF` для деплоя по digest,
+    `.env.production.example`, `.gitignore` — `.env.production` больше не
+    коммитится.
+  - **Документация:** `docs/development/PRODUCTION.md` (деплой, обновление по
+    digest, откат, бэкапы PostgreSQL/S3, алерты, troubleshooting);
+    `.env.example` — `CORS_ALLOWED_ORIGINS`, `METRICS_ALLOWED_IPS`.
+  - **Тесты:** `src/config/cors.spec.ts`, `src/health/health.controller.spec.ts`
+    (200/503/частичный отказ/таймаут), `src/metrics/metrics-ip-allowlist.spec.ts`,
+    `src/metrics/metrics-ip.guard.spec.ts`, 403 в
+    `metrics.controller.spec.ts`, env-тесты новых переменных.
+  - **KI:** новые KI-666 (WAL/PITR, `Deferred`), KI-667 (автобэкапы),
+    KI-668 (CORS в staging/preprod), KI-669 (IPv6-CIDR), KI-670 (`!reset` и
+    Compose < 2.24).
 - **Release finalization: API-origin, push-триггер, иконки, разрешения
   (v1.5.0 S5-B)**
   ([отчёт](development/reports/v1.5.0/S5-B-release-finalization.md)):

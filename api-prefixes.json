@@ -6,6 +6,7 @@
     { "prefix": "api", "controller": false, "proxy": false },
     { "prefix": "auth" },
     { "prefix": "engine" },
+    { "prefix": "health" },
     { "prefix": "llm" },
     { "prefix": "mcp" },
     { "prefix": "media" },

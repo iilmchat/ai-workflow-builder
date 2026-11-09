@@ -1,5 +1,6 @@
-import { Controller, Get, Res } from '@nestjs/common';
+import { Controller, Get, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
+import { MetricsIpGuard } from './metrics-ip.guard.js';
 import { MetricsService } from './metrics.service.js';
 
 /**
@@ -7,9 +8,14 @@ import { MetricsService } from './metrics.service.js';
  *
  * `GET /metrics` — единственная ручка, которую читает скрейпер Prometheus.
  * **Без `JwtAuthGuard`**: у скрейпера нет и не должно быть пользовательского
- * токена; защита периметра — сетевая (ручка доступна только изнутри кластера /
- * scrape-сети), а данные метрик не содержат пользовательских секретов
- * (только агрегаты с ограниченными подписями).
+ * токена; данные метрик не содержат пользовательских секретов (только агрегаты
+ * с ограниченными подписями).
+ *
+ * v1.6.0 S6-A: вместо «защиты периметром» ручка закрыта сетевым allowlist'ом —
+ * {@link MetricsIpGuard} сверяет `req.ip` с `METRICS_ALLOWED_IPS` и отвечает
+ * 403 всем остальным (KI-575). Guard стоит на контроллере, а не на методе:
+ * новых методов у контроллера нет, а забыть декоратор на будущей ручке иначе
+ * было бы слишком легко.
  *
  * Заголовки выставляются из сервиса: `Content-Type` берётся из реестра
  * `@prometheus-io/client` (`text/plain; version=0.0.4; charset=utf-8`), а
@@ -17,6 +23,7 @@ import { MetricsService } from './metrics.service.js';
  * она меняется на каждом запросе. Тело — результат `registry.metrics()`,
  * поэтому формат остаётся на ответственности библиотеки, а не контроллера.
  */
+@UseGuards(MetricsIpGuard)
 @Controller('metrics')
 export class MetricsController {
   /**
