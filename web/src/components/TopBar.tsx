@@ -3,10 +3,12 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import i18n, { setLanguage, type Language } from '@/i18n';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
+import { scanQr } from '@/hooks/useQrScanner';
 import { useTheme } from '@/hooks/use-theme';
 import { fetchLlmHealthAsync, cancelRunAsync } from '@/lib/api';
 import { APP_VERSION } from '@/lib/app-version';
 import { logoutAsync } from '@/lib/auth-api';
+import { assetUrl } from '@/lib/asset-url';
 import { exportFileNameOf, triggerDownload } from '@/lib/download-blob';
 import {
   exportWorkflowAsync,
@@ -15,6 +17,8 @@ import {
 } from '@/lib/export-import-api';
 import { nodeLabelOf } from '@/lib/node-registry';
 import { isAudioUrlInvalid, readToolAudioUrl } from '@/lib/image-tool-node';
+import { isNative } from '@/lib/platform';
+import { parseQrPayload } from '@/lib/qr-payload';
 import { useAuthStore } from '@/stores/auth';
 import { useWorkflowStore } from '@/stores/workflow';
 import type { RunStatus } from '@/types/run-stream';
@@ -167,6 +171,9 @@ export function TopBar() {
   // остаётся `running` (движок замечает флаг перед следующим уровнем/узлом),
   // поэтому кнопка показывает «Отмена...» до прихода `run_completed`.
   const [isCancelling, setIsCancelling] = useState(false);
+  // v1.5.0 S1: открыт нативный QR-сканер — кнопка блокируется, чтобы повторный
+  // клик не открыл второй экран сканера поверх первого.
+  const [isScanning, setIsScanning] = useState(false);
   // v1.2.0 S3 (DESIGN V120 § 3.4): доступен ли локальный LLM-бэкенд (GPU).
   // Исходное значение — `false`: до первого ответа healthcheck'а о GPU ничего
   // не известно, и индикатор не должен обещать online.
@@ -265,6 +272,11 @@ export function TopBar() {
   const isLoading = useWorkflowStore((state) => state.isLoading);
   const saveWorkflowAsync = useWorkflowStore((state) => state.saveWorkflowAsync);
   const loadWorkflowAsync = useWorkflowStore((state) => state.loadWorkflowAsync);
+  // v1.5.0 S1: QR-сканер открывает workflow по id — пишем id в стор до
+  // загрузки, чтобы шапка (ссылки, история, шаринг) сразу увидела новый граф.
+  const setCurrentWorkflowId = useWorkflowStore(
+    (state) => state.setCurrentWorkflowId,
+  );
   const startRunAsync = useWorkflowStore((state) => state.startRunAsync);
   const setNotice = useWorkflowStore((state) => state.setNotice);
   const runStatus = useWorkflowStore((state) => state.runStatus);
@@ -613,6 +625,67 @@ export function TopBar() {
   };
 
   /**
+   * Открывает QR-сканер и обрабатывает распознанное значение (v1.5.0 S1).
+   *
+   * Поддерживаются два «своих» формата (разбор — `parseQrPayload`):
+   * - uuid сохранённого workflow → открыть его (`setCurrentWorkflowId` +
+   *   `loadWorkflowAsync`, как после `LoadModal`);
+   * - share-ссылка `/workflow/share/<token>` → перейти на публичную страницу.
+   *
+   * Отмена сканирования (`scanQr()` вернул `null`) не показывает ошибку: это
+   * нормальный сценарий, пользователь сам закрыл камеру. Тост об ошибке
+   * показывается только для распознанного, но неподдерживаемого формата —
+   * произвольные ссылки из QR не открываем (фишинг).
+   *
+   * @returns промис без значения (ошибки внутри гасятся в уведомление)
+   */
+  const handleScanQr = async () => {
+    if (isScanning) {
+      return;
+    }
+
+    setIsScanning(true);
+
+    try {
+      const value = await scanQr();
+
+      if (value === null) {
+        // Отмена, отсутствие Play Services или запрет камеры.
+        return;
+      }
+
+      const payload = parseQrPayload(value);
+
+      if (payload === null) {
+        setNotice({ kind: 'error', text: t('topbar.scan_qr_error') });
+
+        return;
+      }
+
+      if (payload.kind === 'share') {
+        void navigate(payload.path);
+
+        return;
+      }
+
+      // Сначала id в стор, затем загрузка: даже если сеть упадёт, шапка уже
+      // знает, какой workflow пытается открыть (история/шаринг/экспорт).
+      setCurrentWorkflowId(payload.id);
+      syncWorkflowUrlParam(payload.id);
+
+      await loadWorkflowAsync(payload.id);
+
+      // Успех — только если граф действительно открылся: `loadWorkflowAsync`
+      // при ошибке оставляет прежний id и показывает своё уведомление.
+      if (useWorkflowStore.getState().currentWorkflowId === payload.id) {
+        setNotice({ kind: 'success', text: t('topbar.scan_qr_ok') });
+      }
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  /**
    * Начинает новый workflow (A3): чистит граф и историю запуска.
    *
    * Если в графе что-то есть, спрашиваем подтверждение — несохранённая работа
@@ -636,7 +709,7 @@ export function TopBar() {
             фиксирована (24 px), ширина — по пропорциям исходника; тема
             переключает светлый/тёмный SVG. */}
         <img
-          src={resolved === 'dark' ? '/logo-dark.svg' : '/logo.svg'}
+          src={resolved === 'dark' ? assetUrl('logo-dark.svg') : assetUrl('logo.svg')}
           alt="IIRuChating"
           data-app-logo=""
           className="h-6 w-auto shrink-0"
@@ -919,6 +992,27 @@ export function TopBar() {
             >
               <span aria-hidden="true">👥</span>
               <ActionLabel>{t('topbar.team')}</ActionLabel>
+            </button>
+          )}
+
+          {/* v1.5.0 S1 (DESIGN V150 § 3.2): QR-сканер — только в нативном
+              приложении. В браузере нативного сканера нет, а кнопка,
+              гарантированно ничего не делающая, — обман пользователя.
+              `data-topbar-scan-qr` — контракт для смоука/тестов; подпись
+              скрывается по общей адаптивной механике (`ActionLabel`), значок
+              остаётся. */}
+          {isNative() && (
+            <button
+              type="button"
+              data-topbar-scan-qr=""
+              onClick={() => void handleScanQr()}
+              disabled={isScanning}
+              aria-label={t('topbar.scan_qr')}
+              title={t('topbar.scan_qr')}
+              className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isScanning ? <Spinner /> : <span aria-hidden="true">📷</span>}
+              <ActionLabel>{t('topbar.scan_qr')}</ActionLabel>
             </button>
           )}
 

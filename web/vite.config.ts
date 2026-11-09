@@ -72,10 +72,20 @@ function buildProxy(): Record<string, string | ProxyOptions> {
  * `http://localhost:5173` после этого изменения может не открыться.
  */
 export default defineConfig({
-  // Docker-образ отдаёт SPA с корня (`/`), поэтому base не должен быть `/api/`.
-  // Явно фиксируем: все ассеты index.html ссылаются на `/assets/...`, и
-  // ServeStaticModule находит их в web/dist.
-  base: '/',
+  // База ассетов зависит от цели сборки (v1.5.0 S1, DESIGN V150 § 3.1).
+  //
+  // `'/'` — обычная веб-сборка: Docker-образ отдаёт SPA с корня, поэтому все
+  // ассеты index.html ссылаются на `/assets/...`, ServeStaticModule находит их
+  // в web/dist, а deep links (`/workflow/share/<token>`, `/login`) работают как
+  // абсолютные пути. Этот режим — по умолчанию, без переменных окружения.
+  //
+  // `'./'` — сборка для Capacitor: WebView грузит `index.html` с
+  // `https://localhost`/`file://`, где `/assets/...` указывает в корень
+  // устройства, и приложение падает с белым экраном. Относительные пути
+  // резолвятся от каталога `index.html` и работают и в нативе, и в браузере.
+  // Включается только явно: `CAPACITOR=1 pnpm build`
+  // (PowerShell: `$env:CAPACITOR='1'; pnpm build`).
+  base: process.env.CAPACITOR === '1' ? './' : '/',
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

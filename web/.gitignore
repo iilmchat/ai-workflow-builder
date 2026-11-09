@@ -18,3 +18,6 @@ pnpm-debug.log*
 
 nodes-preview.png
 *-preview.png
+
+# ios/ — на Windows не генерируется (S4+), Android идёт в git (манифест правится в S2).
+ios/

@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   cancelRunAsync,
@@ -13,6 +13,28 @@ import ru from '@/i18n/ru.json';
 import { useAuthStore } from '@/stores/auth';
 import { useWorkflowStore } from '@/stores/workflow';
 import { TopBar } from './TopBar';
+
+/**
+ * Мок платформы и нативного QR-сканера (v1.5.0 S1).
+ *
+ * Кнопка сканера рендерится только при `isNative() === true`, поэтому
+ * платформа управляется переменной `qr.native`. Сам сканер подменён: в jsdom
+ * нет ни камеры, ни нативного моста Capacitor, а проверить нужно разбор
+ * результата и реакцию шапки (`loadWorkflowAsync` / `navigate`).
+ */
+const qr = vi.hoisted(() => ({
+  native: false,
+  scanQr: vi.fn(),
+}));
+
+vi.mock('@/lib/platform', () => ({
+  isNative: () => qr.native,
+  isAndroid: () => qr.native,
+  isIOS: () => false,
+  isWeb: () => !qr.native,
+}));
+
+vi.mock('@/hooks/useQrScanner', () => ({ scanQr: qr.scanQr }));
 
 /**
  * Мок API истории запусков (v0.14 S2) и healthcheck'а GPU (v1.2.0 S3).
@@ -569,5 +591,139 @@ describe('TopBar — адаптивность шапки (v1.4.0 S3, KI-628)', (
     expect(actions).toHaveClass('min-w-0');
     expect(actions).toHaveClass('overflow-x-auto');
     expect(actions).toHaveClass('[&>*]:shrink-0');
+  });
+});
+
+describe('TopBar — QR-сканер (v1.5.0 S1)', () => {
+  /** Сохранённый workflow, который «находит» сканер. */
+  const WORKFLOW_ID = '33333333-3333-4333-8333-333333333333';
+  /** Токен из share-ссылки, которую «находит» сканер. */
+  const SHARE_TOKEN = '55555555-5555-4555-8555-555555555555';
+  /** Настоящее действие загрузки — восстанавливается в `afterEach`. */
+  const originalLoadWorkflowAsync =
+    useWorkflowStore.getState().loadWorkflowAsync;
+
+  afterEach(() => {
+    qr.native = false;
+    qr.scanQr.mockReset();
+    useWorkflowStore.setState({
+      currentWorkflowId: null,
+      currentWorkflowOwnerId: null,
+      notice: null,
+      isLoading: false,
+      loadWorkflowAsync: originalLoadWorkflowAsync,
+    });
+    vi.restoreAllMocks();
+  });
+
+  /** Кликает по кнопке сканера (она уже отрендерена). */
+  function clickScanButton(): void {
+    const button = screen.getByRole('button', {
+      name: ru['topbar.scan_qr'],
+    });
+
+    fireEvent.click(button);
+  }
+
+  it('в браузере кнопки нет: isNative() === false', () => {
+    const { container } = renderTopBar();
+
+    expect(container.querySelector('[data-topbar-scan-qr]')).toBeNull();
+  });
+
+  it('в нативном приложении кнопка видна и подписана (aria-label)', () => {
+    qr.native = true;
+
+    const { container } = renderTopBar();
+    const button = container.querySelector('[data-topbar-scan-qr]');
+
+    expect(button).not.toBeNull();
+    expect(button).toHaveAttribute('aria-label', ru['topbar.scan_qr']);
+    expect(button).toHaveTextContent(ru['topbar.scan_qr']);
+  });
+
+  it('клик сканирует QR и открывает workflow по uuid', async () => {
+    qr.native = true;
+    qr.scanQr.mockResolvedValue(WORKFLOW_ID);
+    const loadSpy = vi
+      .spyOn(useWorkflowStore.getState(), 'loadWorkflowAsync')
+      .mockResolvedValue(undefined);
+
+    renderTopBar();
+    clickScanButton();
+
+    await waitFor(() => expect(qr.scanQr).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(loadSpy).toHaveBeenCalledWith(WORKFLOW_ID));
+
+    // id попадает в стор до загрузки — шапка сразу знает новый граф.
+    expect(useWorkflowStore.getState().currentWorkflowId).toBe(WORKFLOW_ID);
+    expect(useWorkflowStore.getState().notice).toEqual({
+      kind: 'success',
+      text: ru['topbar.scan_qr_ok'],
+    });
+  });
+
+  it('QR со share-ссылкой переводит на публичную страницу', async () => {
+    qr.native = true;
+    qr.scanQr.mockResolvedValue(
+      `https://app.example/workflow/share/${SHARE_TOKEN}`,
+    );
+
+    /**
+     * Пробник текущего маршрута: `TopBar` навигирует через `useNavigate`,
+     * и проверить это можно только по location внутри роутера.
+     *
+     * @returns текущий путь в `data-testid="location"`
+     */
+    function LocationProbe() {
+      const location = useLocation();
+
+      return <span data-testid="location">{location.pathname}</span>;
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <TopBar />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    clickScanButton();
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location')).toHaveTextContent(
+        `/workflow/share/${SHARE_TOKEN}`,
+      ),
+    );
+  });
+
+  it('некорректный QR — тост об ошибке, workflow не загружается', async () => {
+    qr.native = true;
+    qr.scanQr.mockResolvedValue('https://evil.example/login');
+    const loadSpy = vi
+      .spyOn(useWorkflowStore.getState(), 'loadWorkflowAsync')
+      .mockResolvedValue(undefined);
+
+    renderTopBar();
+    clickScanButton();
+
+    await waitFor(() =>
+      expect(useWorkflowStore.getState().notice).toEqual({
+        kind: 'error',
+        text: ru['topbar.scan_qr_error'],
+      }),
+    );
+    expect(loadSpy).not.toHaveBeenCalled();
+  });
+
+  it('отмена сканирования не показывает ошибку: scanQr() → null', async () => {
+    qr.native = true;
+    qr.scanQr.mockResolvedValue(null);
+
+    renderTopBar();
+    clickScanButton();
+
+    await waitFor(() => expect(qr.scanQr).toHaveBeenCalledTimes(1));
+    expect(useWorkflowStore.getState().notice).toBeNull();
   });
 });

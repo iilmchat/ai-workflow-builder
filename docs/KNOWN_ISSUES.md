@@ -10266,36 +10266,137 @@ MediaModelInfo, engine-DTO
 - **Файлы:** `src/email/email.processor.ts`
 - **Описание:** При сбое `markSentAsync` после принятого SMTP письма job повторится.
 
+## v1.5.0 — Capacitor: каркас + камера/QR (S1/S2, 2026-11-09)
+
+Источник S1-записей — отчёт `docs/development/reports/v1.5.0/S1-capacitor.md`;
+при восстановлении S1 поверх v1.4.0 номера сдвинуты на 646..651, потому что
+исходная нумерация S1 (635..640) пересекалась с записями v1.4.0 (см. KI-652).
+
+### KI-646 — QR-сканер не заработает на Android: в манифесте нет CAMERA и ML Kit meta-data
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-11-09
+- **Файлы:** `web/android/app/src/main/AndroidManifest.xml`,
+  `web/src/hooks/useQrScanner.ts`, `docs/development/MOBILE_CAPACITOR_NESTJS.md` § 7
+- **Описание:** `cap add android` генерирует манифест только с `INTERNET`.
+  README `@capacitor-mlkit/barcode-scanning@7.5.0` требует
+  `<uses-permission android:name="android.permission.CAMERA" />` **и**
+  `<meta-data android:name="com.google.mlkit.vision.DEPENDENCIES"
+  android:value="barcode_ui" />` внутри `<application>`. Без них
+  `requestPermissions()` на реальном устройстве вернёт `denied`, и `scanQr`
+  отдаст `null` с WARN (без краша) — кнопка «Сканировать QR» на устройстве
+  фактически нерабочая. `@capacitor/camera` разрешений не требует: снимок
+  идёт через внешнюю camera-activity, `FileProvider` уже в шаблоне.
+- **Решение:** исправлено в S2: манифест правится в
+  `web/android/app/src/main/AndroidManifest.xml` — `CAMERA`,
+  `READ_MEDIA_IMAGES`, `READ_EXTERNAL_STORAGE` (`maxSdkVersion=32`),
+  `<uses-feature android:name="android.hardware.camera" />`, meta-data
+  `barcode_ui`.
+- **Связанные:** KI-648, KI-649.
+
+### KI-647 — Абсолютные пути к логотипу ломаются в Capacitor (`base: './'`)
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Обнаружено:** 2026-11-09
+- **Файлы:** `web/src/components/TopBar.tsx:575`,
+  `web/src/components/auth/LoginPage.tsx:131`, `web/src/lib/asset-url.ts`
+- **Описание:** `src="/logo.svg"` / `src="/logo-dark.svg"` — runtime-строки в
+  JSX, Vite их не переписывает (в отличие от `<link rel="icon">` в
+  `index.html`, который при `base: './'` корректно стал `./logo.svg`). В
+  нативной сборке WebView ищет файл в корне `https://localhost/logo.svg` →
+  404, логотип в шапке и на `/login` пропадает.
+- **Решение:** исправлено в S2: хелпер `web/src/lib/asset-url.ts`
+  (`assetUrl()` от `import.meta.env.BASE_URL`); в `TopBar` и `LoginPage`
+  пути к логотипу идут через него. В web-сборке `BASE_URL === '/'`, поэтому
+  ожидания тестов (`/logo.svg`) остаются валидными.
+- **Связанные:** KI-646.
+
+### KI-648 — Рецепт `MOBILE_CAPACITOR_NESTJS.md` использует устаревший API ML Kit
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Обнаружено:** 2026-11-09
+- **Файлы:** `docs/development/MOBILE_CAPACITOR_NESTJS.md` § 9,
+  `web/src/hooks/useQrScanner.ts`
+- **Описание:** в рецепте `const { available } = await
+  BarcodeScanner.isSupported()`, но в `@capacitor-mlkit/barcode-scanning@7.5.0`
+  `IsSupportedResult = { supported: boolean }` — код не компилируется
+  (`TS2339: Property 'available' does not exist`). «Play Services» проверяется
+  отдельно: `isGoogleBarcodeScannerModuleAvailable()` (только Android; на
+  iOS/web бросает `Unavailable`). S1 реализован по фактическому API:
+  `{ supported }` + Android-guard на модуль Google Barcode Scanner.
+- **Решение:** исправлено в S2: § 9 рецепта обновлён на `{ supported }` +
+  `isGoogleBarcodeScannerModuleAvailable()`, добавлены манифест-метаданные и
+  оговорка про условный `base`.
+- **Связанные:** KI-646.
+
+### KI-649 — Нативный проект вне git и CI до S3: регрессии Android не ловятся
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed (частично) | **Обнаружено:** 2026-11-09
+- **Файлы:** `web/.gitignore`, `.github/workflows/ci.yml`
+- **Описание:** по правилам S1 `web/android/` в git не входит (исключён
+  `web/.gitignore`) и в CI-job `web` нет `cap sync`/gradle. Проверка S1
+  ограничена `cap doctor` (зелёный) и unit-тестами с моками плагинов. Правки
+  `AndroidManifest.xml`, `variables.gradle` и версий плагинов до S3 не
+  проверяются ни локально в CI, ни на устройстве.
+- **Решение:** исправлено частично в S2: `web/android/` вошёл в git, манифест
+  трекается; CI-job сборки AAB (`cap sync` + gradle) и device-smoke остаются
+  в S3.
+- **Связанные:** KI-646, KI-650.
+
+### KI-650 — Capacitor 8 — текущая мажорная версия; проект на 7.6.10
+- **Приоритет:** 🟢 Low | **Статус:** Deferred | **Обнаружено:** 2026-11-09
+- **Файлы:** `web/package.json`, `web/pnpm-lock.yaml`
+- **Описание:** `cap doctor` показывает latest 8.6.0 для `cli`/`core`/`android`
+  (плагины: `camera` 8.2.6, `barcode-scanning` 8.2.2), установлено 7.6.10 по
+  DESIGN V150 («Capacitor 7»). Версии зафиксированы мажором: без `@7` в
+  `pnpm add` поставилась бы 8.x.
+- **Решение:** после S3 — `pnpm --dir web up @capacitor/*@8
+  @capacitor-mlkit/barcode-scanning@8`, `cap sync`, проверка манифеста/gradle
+  (Capacitor 8 требует более новый AGP/JDK — учесть в CI S3). В S2 рецепт § 14
+  получил предупреждение про мажор 8.
+- **Связанные:** KI-649.
+
+### KI-651 — Capacitor core утяжеляет веб-бандл на ~12 kB
+- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-09
+- **Файлы:** `web/src/lib/platform.ts`, `web/src/components/TopBar.tsx`
+- **Описание:** `platform.ts` статически импортирует `@capacitor/core` и попал в
+  стартовый граф `TopBar` → vendor-чанк в web-сборке вырос с 133.23 kB
+  (gzip 40.35) до 144.94 kB (gzip 44.56), хотя в браузере Capacitor не нужен.
+  Не критично (лимит warning'а 500 kB), но это мёртвый груз для веб-клиентов.
+- **Решение:** ленивый `await import('@/hooks/useQrScanner')` в обработчике
+  клика и/или `isNative` через `window.Capacitor?.isNativePlatform?.()` без
+  импорта core; замер в S2: vendor 133.23 → 144.94 kB (+11.71 kB, gzip
+  +4.21 kB), оптимизация — в S3.
+- **Связанные:** KI-008.
+
+### KI-652 — В реестре остались 11 кратких дублей заголовков KI-635..645
+- **Приоритет:** 🟢 Low | **Статус:** Documented | **Обнаружено:** 2026-11-09
+- **Файлы:** `docs/KNOWN_ISSUES.md`
+- **Описание:** на HEAD v1.4.0 в реестре 643 заголовка `### KI-` при 632
+  уникальных номерах: у KI-635..645 по два заголовка (подробная запись +
+  краткая копия в конце блоков v1.4.0 S2/S3). Поэтому проверка RULES 3.20 (1)
+  в базовой точке не сходится. Найдено в S2 при пересчёте сводки.
+- **Решение:** удалить 11 кратких дублей в S3. В S2 нельзя: KI-635..640 —
+  записи v1.4.0, по заданию S2 их не трогаем.
+
 ## Сводка по статусам
 
-Пересчитано grep'ом по строкам статуса на 2026-11-08 (RULES 3.20) после
-пакета v1.4.0 S3 (UX Polish). В S2-коммите остались три кратких дубля
-KI-638..640 (подробные записи + повторные заголовки) — они удалены, поэтому
-перед S3 в реестре было **627** записей, а не 630. В S3 закрыты KI-623,
-KI-628, KI-632 (`Fixed`); добавлены KI-641..645 (retention outbox, прокрутка
-TopBar на <1280 px, нетранзакционный outbox, plaintext `invite_link`,
-возможный дубль письма); KI-624 возвращён в `Documented` — ручки resend в
-коде нет, статус `Fixed` был выставлен ошибочно. Итог — **632** записи,
-дублей номеров нет.
+**Пересчитано grep'ом на 2026-11-09 (v1.5.0 S2, RULES 3.20):** добавлены
+KI-646..651 (Capacitor, S1/S2: 3 — Fixed, 1 — Fixed (частично), 1 — Deferred,
+1 — Documented) и KI-652 (Documented). Всего **650** вхождений `### KI-` и
+**650** строк статуса; **уникальных номеров — 639**. Разница в 11 —
+предсуществующие краткие дубли заголовков KI-635..645 из v1.4.0 (не дефект
+S2, заведены KI-652; удаление — в S3).
+
+Проверка RULES 3.20: (1) вхождений `### KI-` = 650, строк статуса = 650
+— сходится по вхождениям (уникальных записей 639, см. KI-652); (2) сумма
+статусов в таблице ниже = 650.
 
 | Статус | Количество |
 |---|---:|
-| Fixed | 272 |
-| Fixed (частично) | 11 |
+| Fixed | 278 |
+| Fixed (частично) | 12 |
 | Open | 281 |
-| Documented | 58 |
+| Documented | 68 |
 | Documented (не воспроизводится) | 1 |
 | Planned | 3 |
-| Deferred | 2 |
+| Deferred | 3 |
 | Won't Fix | 4 |
-| **Итого** | **632** |
+| **Итого** | **650** |
 
-Сумма по статусам = числу записей `### KI-` = 632 (RULES 3.20).
-
-
-
-
-
-
-
+Сумма по статусам = числу вхождений `### KI-` = 650; уникальных номеров —
+639 (RULES 3.20, KI-652).
 

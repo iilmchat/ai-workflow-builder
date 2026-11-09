@@ -19,6 +19,14 @@
 
 ### Added
 
+- **Capacitor: каркас + камера/QR (v1.5.0 S1)** ([отчёт](development/reports/v1.5.0/S1-capacitor.md)):
+  `@capacitor/core`, `@capacitor/android`, `@capacitor/camera`, `@capacitor-mlkit/barcode-scanning`,
+  `@capacitor/cli` (в `web/package.json`). `web/capacitor.config.ts`, `web/android/` (без build/).
+  `web/vite.config.ts`: условный `base` (`CAPACITOR=1` → `./`, иначе `/`).
+  `web/src/lib/platform.ts` (`isNative`/`isAndroid`/`isIOS`/`isWeb`),
+  `web/src/lib/qr-payload.ts` (uuid/share-URL → путь),
+  `web/src/hooks/useCamera.ts`, `web/src/hooks/useQrScanner.ts`.
+  В `TopBar`: кнопка QR (`data-topbar-scan-qr`, только native).
 - **Отмена запуска (v1.4.0 S1, DESIGN V140 § 3.1)**
   ([отчёт](development/reports/v1.4.0/S1-cancel.md)): миграция
   `0019_plain_kang.sql` — `workflow_runs.cancelled_at`; `POST
@@ -68,6 +76,10 @@
 
 ### Documented
 
+- **KI-646..651:** AndroidManifest без CAMERA/ML Kit, `src="/logo.svg"` под `base: './'`,
+  устаревший API в рецепте, `web/android/` вне git, Capacitor 8 vs 7, вес бандла.
+- **KI-652:** в реестре остались 11 кратких дублей заголовков (643 при 632
+  уникальных номерах на HEAD v1.4.0); удаление — в S3.
 - **KI-624:** возвращён в `Documented` — ручки повторной отправки в коде нет,
   статус `Fixed` был выставлен ошибочно.
 - **KI-641, KI-642, KI-643, KI-644, KI-645:** retention/повтор outbox,

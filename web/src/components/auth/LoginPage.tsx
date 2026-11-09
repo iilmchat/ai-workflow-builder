@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from '@/hooks/use-theme';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import { ApiError } from '@/lib/api';
+import { assetUrl } from '@/lib/asset-url';
 import { loginAsync, registerAsync } from '@/lib/auth-api';
 import {
   PASSWORD_MAX,
@@ -128,7 +129,11 @@ export function LoginPage() {
       <div className="flex w-full max-w-sm flex-col items-center gap-4">
         {/* v0.10 S2: логотип 64 px по центру над формой. */}
         <img
-          src={resolved === 'dark' ? '/logo-dark.svg' : '/logo.svg'}
+          src={
+            resolved === 'dark'
+              ? assetUrl('logo-dark.svg')
+              : assetUrl('logo.svg')
+          }
           alt="IIRuChating"
           data-login-logo=""
           className="h-16 w-auto"
