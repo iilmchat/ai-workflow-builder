@@ -55,13 +55,19 @@ captures/
 # Keystore files
 *.jks
 *.keystore
+# Release keystore, который CI кладёт в app/ перед bundleRelease
+# (см. .github/workflows/release-mobile.yml, docs/development/v1.5/KEYSTORE_SETUP.md).
+release.keystore
 
 # External native build folder generated in Android Studio 2.2 and later
 .externalNativeBuild
 .cxx/
 
 # Google Services (e.g. APIs or Firebase)
-# google-services.json
+# Секрет Firebase: файл привязан к проекту и не коммитится (v1.5.0 S4-A).
+# В CI создаётся из секрета GOOGLE_SERVICES_JSON и удаляется в Cleanup secrets.
+# Инструкция: docs/development/v1.5/FIREBASE_SETUP.md.
+google-services.json
 
 # Freeline
 freeline.py

@@ -1,0 +1,164 @@
+name: Release Mobile (Android)
+
+# Сборка подписанного AAB для Google Play (v1.5.0 S4-A, DESIGN V150 § 3 S4).
+#
+# Запускается:
+# - по тегу `v*` — релизная сборка (v1.5.0 и далее);
+# - вручную (`workflow_dispatch`) — проверка пайплайна без выставления тега.
+#
+# Секреты (5): ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
+# ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD, GOOGLE_SERVICES_JSON.
+# Без них job падает с понятной ошибкой (`::error::`), а не собирает молча
+# нерабочий AAB. Инструкции: docs/development/v1.5/KEYSTORE_SETUP.md и
+# docs/development/v1.5/FIREBASE_SETUP.md.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    name: Build Android AAB
+    runs-on: ubuntu-latest
+    # contents: write — на будущее (S4-B: прикрепление AAB к GitHub Release).
+    # Для текущих шагов хватило бы contents: read.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # RULES 6.10: версия pnpm — из `packageManager` в package.json, поэтому
+      # `with: version` не указываем (иначе ERR_PNPM_BAD_PM_VERSION). Порядок
+      # как в ci.yml: `setup-node` с `cache: pnpm` требует уже установленный pnpm.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      # RULES 6.11: web/ — самостоятельный пакет со своим lockfile.
+      - name: Install dependencies (web)
+        run: pnpm --dir web install --frozen-lockfile
+
+      # CAPACITOR=1 → `base: './'` в vite.config.ts. Без этого WebView не
+      # найдёт ассеты: `/assets/...` уйдёт в корень `https://localhost`
+      # (регрессия KI-647 — белый экран на устройстве).
+      - name: Build web (Capacitor mode)
+        run: pnpm --dir web build
+        env:
+          CAPACITOR: '1'
+
+      # Обязательно ПОСЛЕ Capacitor-сборки: `cap sync` копирует текущий
+      # `web/dist` в `android/app/src/main/assets/public`.
+      - name: Sync Capacitor Android
+        run: pnpm --dir web exec cap sync android
+
+      # Java 21: Gradle 8.11.1 + AGP 8.7.2 (compileSdk 35 требует JDK 17+,
+      # 21 — LTS и совместим с обоими).
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Версии — из web/android/variables.gradle: compileSdk 35,
+      # targetSdk 35, build-tools 35.0.0.
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Decode release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 secret is not set — см. docs/development/v1.5/KEYSTORE_SETUP.md"
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > web/android/app/release.keystore
+          test -s web/android/app/release.keystore
+
+      - name: Restore google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::error::GOOGLE_SERVICES_JSON secret is not set — см. docs/development/v1.5/FIREBASE_SETUP.md"
+            exit 1
+          fi
+          printf '%s' "$GOOGLE_SERVICES_JSON" > web/android/app/google-services.json
+          test -s web/android/app/google-services.json
+
+      # Подпись — через inject-свойства AGP: build.gradle проектный не правим,
+      # секреты приходят из env. Абсолютный путь к keystore обязателен:
+      # relative-путь в injected signing резолвится от каталога модуля.
+      - name: Build AAB (signed release)
+        working-directory: web/android
+        env:
+          KEYSTORE_FILE: ${{ github.workspace }}/web/android/app/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew bundleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file="$KEYSTORE_FILE" \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+
+      # AAB — zip/jar, поэтому `aapt dump permissions` с ним НЕ работает (aapt
+      # читает APK). Проверяем три вещи:
+      # 1) файл существует и не пуст;
+      # 2) AAB реально подписан (jarsigner из JDK) — ловит регрессию, когда
+      #    inject-подпись не применилась и AGP собрал unsigned bundle;
+      # 3) в merged-манифесте есть разрешения v1.5.0 (KI-646: камера/ML Kit).
+      - name: Verify AAB (signed + permissions)
+        run: |
+          AAB=web/android/app/build/outputs/bundle/release/app-release.aab
+          test -f "$AAB" || { echo "::error::AAB not found: $AAB"; exit 1; }
+          ls -lh "$AAB"
+
+          if jarsigner -verify "$AAB" | grep -q 'jar verified'; then
+            echo "OK: AAB signed"
+          else
+            echo "::error::AAB is not signed (injected signing не применилась)"
+            exit 1
+          fi
+
+          MANIFEST=$(find web/android/app/build/intermediates -name AndroidManifest.xml -path '*release*' | head -n1)
+          if [ -z "$MANIFEST" ]; then
+            echo "::warning::merged AndroidManifest.xml not found — permission check skipped"
+            exit 0
+          fi
+          echo "Merged manifest: $MANIFEST"
+          for PERM in android.permission.INTERNET android.permission.CAMERA android.permission.READ_MEDIA_IMAGES; do
+            if grep -q "$PERM" "$MANIFEST"; then
+              echo "OK: $PERM"
+            else
+              echo "::error::missing $PERM in merged manifest"
+              exit 1
+            fi
+          done
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-aab
+          path: web/android/app/build/outputs/bundle/release/app-release.aab
+          retention-days: 30
+
+      # Секреты не должны пережить job — даже если предыдущий шаг упал.
+      # `if: always()` гарантирует очистку при любом исходе.
+      - name: Cleanup secrets
+        if: always()
+        run: |
+          rm -f web/android/app/release.keystore web/android/app/google-services.json

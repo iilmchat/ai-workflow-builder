@@ -1,14 +1,16 @@
 # Гайд по ручному тестированию — IIChatTools AI Workflow Builder
 
 **Файл:** `docs/qa/MANUAL_TESTING_GUIDE.md`
-**Версия документа:** 1.5 (2026-11-06)
-**Версия продукта:** 1.3.0
-**Область:** ручная проверка релиза v1.3.0 — Auth, Canvas UI, Engine,
+**Версия документа:** 1.6 (2026-11-09)
+**Версия продукта:** 1.5.0
+**Область:** ручная проверка релиза v1.5.0 — Auth, Canvas UI, Engine,
 LLM/Media, Vector/Agent, Share/Access, S3/Storage, Edge Cases, Web Search /
 Documents / Files, Docker, V0.11 (DOCX-шаблоны, MCP, heartbeat, история, тема),
-V1.2–V1.3 (LLM Router, GPU-индикатор, auth `/llm/health`, команда организации и
-приглашения, сверка возможностей моделей).
-**Источники требований:** [`DESIGN v1.2`](../development/v1.2/DESIGN_V120_FEATURES.md),
+V1.2–V1.5 (LLM Router, GPU-индикатор, auth `/llm/health`, команда организации и
+приглашения, сверка возможностей моделей; отмена и сравнение запусков,
+адаптивная шапка; Android-приложение — камера/QR, файлы DOCX, push, CI).
+**Источники требований:** [`DESIGN v1.5`](../development/v1.5/DESIGN_V150_CAPACITOR.md),
+[`DESIGN v1.2`](../development/v1.2/DESIGN_V120_FEATURES.md),
 [`DESIGN v0.11`](../development/v0.11/DESIGN_V011_FEATURES.md),
 [`DESIGN v0.10`](../development/v0.10/DESIGN_V010_FEATURES.md),
 [`DESIGN v0.9`](../development/v0.9/DESIGN_V09_FEATURES.md),
@@ -16,7 +18,9 @@ V1.2–V1.3 (LLM Router, GPU-индикатор, auth `/llm/health`, коман�
 [`api-contract.json`](../development/api-contract.json),
 [`sse-contract.json`](../development/sse-contract.json),
 [`RULES`](../development/RULES.md), [`KNOWN_ISSUES`](../KNOWN_ISSUES.md),
-отчёты [`S1`](../development/reports/v1.3.0/S1-router-model-check.md),
+отчёты [`v1.5.0`](../development/reports/v1.5.0/),
+[`v1.4.0`](../development/reports/v1.4.0/),
+[`S1`](../development/reports/v1.3.0/S1-router-model-check.md),
 [`S2`](../development/reports/v1.3.0/S2-healthcheck.md).
 
 ---
@@ -24,8 +28,8 @@ V1.2–V1.3 (LLM Router, GPU-индикатор, auth `/llm/health`, коман�
 ## 0. Как пользоваться этим документом
 
 1. **Кейсы идут блоками** (AUTH, CANVAS, ENGINE, LLM/MEDIA, VECTOR/AGENT,
-   SHARE/ACCESS, STORAGE, EDGE, CONTRACT, V0.10, V0.11, V1.3). Внутри блока —
-   сквозная нумерация, например `CANVAS-07` или `DOCKER-01`.
+   SHARE/ACCESS, STORAGE, EDGE, CONTRACT, V0.10, V0.11, V1.3, V1.4–V1.5). Внутри
+   блока — сквозная нумерация, например `CANVAS-07` или `DOCKER-01`.
 2. **У каждого кейса есть:** название, приоритет, предусловие, шаги, ожидаемый
    результат. Если шаг требует данных — они указаны в предусловии или прямо в шаге.
 3. **Приоритеты:**
@@ -33,7 +37,7 @@ V1.2–V1.3 (LLM Router, GPU-индикатор, auth `/llm/health`, коман�
    - **P2** — важный: выпуск возможен с записью в KI;
    - **P3** — косметика/редкий сценарий.
 4. **Результат фиксируется** коротко: `PASS` / `FAIL` + путь к скриншоту или
-   JSON-файлу. Для FAIL — баг-репорт по шаблону из § 16 и ссылка на KI.
+   JSON-файлу. Для FAIL — баг-репорт по шаблону из § 17 и ссылка на KI.
 5. **Правило «до/после» (RULES 4.33).** Для проверок вида «закрылось /
    не открылось / не изменилось» сначала зафиксируйте состояние **до**
    действия, иначе «после» неотличимо от исходного.
@@ -56,7 +60,8 @@ V1.2–V1.3 (LLM Router, GPU-индикатор, auth `/llm/health`, коман�
 | [V0.10](#11-web-search--documents--files--docker) | 13 | Web Search, DOCX, workspace, Docker |
 | [V0.11](#12-v011--docx-templates--mcp--reliability--history) | 10 | DOCX-шаблоны, MCP API/UI, heartbeat, история после F5, тёмная тема |
 | [V1.3](#13-v13--llm-router--healthcheck--team--security) | 9 | LLM Router и GPU-индикатор, auth `/llm/health`, команда и приглашения, сверка возможностей моделей |
-| **Итого** | **148** | |
+| [V1.4–V1.5](#14-v14v15--capacitor-камераqr-файлы-push-ci) | 10 | Android (Capacitor): QR/камера, файлы DOCX, push, CI/CD |
+| **Итого** | **158** | |
 
 ---
 
@@ -189,6 +194,7 @@ UUID участников нужны для приглашений: `GET /auth/m
 | `DELETE` | `/workflow/:id/document-templates/:templateId` | удалить шаблон (owner/editor, v0.11) |
 | `GET` | `/media/file/:runId/:fileName` | локальные медиа |
 | `GET` | `/templates`, `POST /templates/:id/instantiate` | шаблоны |
+| `POST` | `/notifications/register` | регистрация push-токена (`{ token, platform }`; JWT, upsert в `device_tokens`, v1.5) |
 
 ### 1.5. Селекторы для DevTools
 
@@ -197,12 +203,12 @@ UUID участников нужны для приглашений: `GET /auth/m
 
 | Область | Селектор |
 |---|---|
-| Шапка | `[data-topbar-new]`, `[data-topbar-load]`, `[data-topbar-save]`, `[data-topbar-export]`, `[data-topbar-import]`, `[data-topbar-run]`, `[data-topbar-undo]`, `[data-topbar-redo]`, `[data-share-button]`, `[data-user-menu]`, `[data-user-logout]` |
+| Шапка | `[data-topbar-new]`, `[data-topbar-load]`, `[data-topbar-save]`, `[data-topbar-export]`, `[data-topbar-import]`, `[data-topbar-run]`, `[data-topbar-cancel-run]` (v1.4), `[data-topbar-scan-qr]` (v1.5, только native), `[data-topbar-undo]`, `[data-topbar-redo]`, `[data-share-button]`, `[data-user-menu]`, `[data-user-logout]` |
 | Статусы | `[data-run-status]`, `[data-run-badge]`, `[data-run-budget]`, `[data-dirty-indicator]` |
 | Версия | `[data-app-version]` |
 | Холст | `[data-catalog-toggle]`, `[data-node-catalog="open"]`, `[data-canvas-mode]`, `[data-canvas-minimap-toggle]`, `[data-canvas-fit-selection]` |
 | Узлы | `[data-http-node]`, `[data-condition-node]`, `[data-compare-node]`, `[data-output-node]`, `[data-agent-node]`, `[data-vector-upsert-node]`, `[data-vector-query-node]`, `[data-memory-read-node]`, `[data-memory-write-node]`, `[data-sub-workflow-node]`, `[data-comment-node]`, `[data-document-gen-node]` |
-| DOCX-шаблоны | `[data-document-gen-mode]`, `[data-document-gen-source]`, `[data-document-gen-content]`, `[data-document-template-panel]`, `[data-document-template-select]`, `[data-document-template-upload]`, `[data-document-template-file]`, `[data-document-template-placeholders]`, `[data-document-template-variables]`, `[data-document-template-variables-error]`, `[data-document-template-delete]`, `[data-document-gen-download]`, `[data-document-gen-missing]` |
+| DOCX-шаблоны | `[data-document-gen-mode]`, `[data-document-gen-source]`, `[data-document-gen-content]`, `[data-document-template-panel]`, `[data-document-template-select]`, `[data-document-template-upload]`, `[data-document-template-file]`, `[data-document-template-placeholders]`, `[data-document-template-variables]`, `[data-document-template-variables-error]`, `[data-document-template-delete]`, `[data-document-gen-download]`, `[data-document-gen-download-error]` (v1.5), `[data-document-gen-missing]` |
 | Агент / MCP | `[data-agent-model]`, `[data-agent-system-prompt]`, `[data-agent-tools]`, `[data-agent-tool="<name>"]`, `[data-agent-iterations]`, `[data-agent-mcp]`, `[data-agent-mcp-server="<name>"]`, `[data-agent-mcp-tool="<server>:<tool>"]`, `[data-agent-mcp-limit]` |
 | История запуска | `[data-result-panel]`, `[data-agent-timeline]`, `[data-agent-step]`, `[data-cache-read]`, `[data-node-skipped-reason]` |
 | Медиа | `[data-media-expired]`, `[data-reasoning]`, `[data-max-tokens]`, `[data-system-toggle]` |
@@ -2333,14 +2339,223 @@ health-ответа на одной стороне гейт падает (KI-627
 
 ---
 
-## 14. Что НЕ тестируем в этой версии
+## 14. V1.4–V1.5 — CAPACITOR: КАМЕРА/QR, ФАЙЛЫ, PUSH, CI
+
+**Что проверяем:** Android-приложение на Capacitor 7 — запуск SPA в WebView без
+белого экрана, кнопку «Сканировать QR» только в native-приложении, открытие
+сценария и share-ссылки по QR-коду, отмену сканирования, скачивание DOCX в
+браузере и открытие файла системным просмотрщиком в приложении, ошибку
+скачивания, регистрацию push-токена (`POST /notifications/register`, таблица
+`device_tokens`) и CI-workflow `.github/workflows/release-mobile.yml`.
+Требования — DESIGN v1.5 § 3 (S1–S4), отчёты v1.5.0 S1/S3; KI-646..651 в
+S1–S2, KI-653 (push без Firebase), KI-654 (иконка уведомления).
+
+> **Границы релиза.** iOS и публикация в Play Console — вне v1.5 (S4-B).
+> Push-уведомления требуют `google-services.json` в сборке (KI-653): без файла
+> регистрация токена не произойдёт — это ожидаемо, а не баг. Иконка
+> уведомления системная (KI-654). `MOBILE-10` проверяет **наличие и триггеры**
+> workflow, а не запуск сборки AAB.
+>
+> **Как получить сборку для кейсов.** `CAPACITOR=1 pnpm --dir web build` →
+> `pnpm --dir web exec cap sync android` → установка APK/AAB (debug-сборка
+> допустима, кроме `MOBILE-09` — там нужен Firebase). Backend в приложении
+> обязан быть по HTTPS (`cleartext: false` в `web/capacitor.config.ts`).
+
+#### MOBILE-01 — Приложение открывается без белого экрана
+**Приоритет:** P1 · **Тип:** smoke
+**Предусловие:** собрано и установлено приложение из HEAD (`CAPACITOR=1`,
+`cap sync android`); устройство или эмулятор Android 10+; backend доступен по
+HTTPS; пользователь зарегистрирован.
+**Шаги:**
+1. Открыть приложение и дождаться экрана входа.
+2. Войти и открыть любой сохранённый сценарий.
+3. В Chrome `chrome://inspect` → WebView: проверить Console и Network.
+**Ожидаемый результат:**
+- Открывается экран входа, затем редактор: логотип и стили на месте, белого
+  экрана нет; адрес WebView — `https://localhost`.
+- В консоли нет 404 по `assets/*` и `logo*.svg` (сборка с `base: './'`,
+  регрессия KI-647); http-запросов нет (mixed content запрещён).
+- Ошибок в консоли нет; приложение не перезапускается.
+
+#### MOBILE-02 — Кнопка «Сканировать QR» видна только в приложении
+**Приоритет:** P1
+**Предусловие:** приложение на устройстве и десктопный браузер; вход под одним
+пользователем.
+**Шаги:**
+1. В приложении открыть редактор и посмотреть шапку.
+2. В DevTools приложения проверить наличие `[data-topbar-scan-qr]`.
+3. Открыть тот же сценарий в браузере и повторить пункт 2.
+4. Сузить окно браузера до ~1000 px (адаптивная шапка).
+**Ожидаемый результат:**
+- В приложении кнопка 📷 «Сканировать QR» есть, `[data-topbar-scan-qr]`
+  присутствует, `isNative()` — `true`; по клику открывается камера.
+- В браузере кнопки и элемента `[data-topbar-scan-qr]` нет; остальные кнопки
+  шапки (Сохранить, Запустить, Поделиться) на месте.
+- При сужении окна подписи кнопок сворачиваются до значков (v1.4.0), значок
+  сканера остаётся, копирайт не разваливается по буквам (KI-628).
+
+#### MOBILE-03 — QR с uuid открывает граф
+**Приоритет:** P1
+**Предусловие:** сохранённый сценарий `QA-MOBILE`; QR-код с его `id` (uuid)
+показан на другом экране/распечатке; в приложении открыт другой сценарий.
+**Шаги:**
+1. Зафиксировать «до»: имя сценария в шапке и число узлов.
+2. Нажать «Сканировать QR» и навести камеру на QR с uuid.
+3. Дождаться загрузки сценария.
+**Ожидаемый результат:**
+- Открывается именно `QA-MOBILE`: имя в шапке, узлы и связи совпадают с
+  сохранёнными; появляется сообщение «QR распознан: workflow открыт».
+- В Network — `GET /workflow/:id` (и загрузка графа); ошибок нет.
+- Повторное сканирование того же кода не ломает экран (граф не пустеет).
+
+#### MOBILE-04 — QR с share-ссылкой открывает публичный просмотр
+**Приоритет:** P1
+**Предусловие:** у сценария создана share-ссылка (SHARE-01); в QR зашит адрес
+`…/workflow/share/<token>` — абсолютный или относительный; пользователь вошёл.
+**Шаги:**
+1. Нажать «Сканировать QR», отсканировать share-ссылку.
+2. Проверить адрес и страницу.
+3. Вернуться назад в редактор.
+**Ожидаемый результат:**
+- Открывается публичная страница `/workflow/share/<token>` (тот же экран, что в
+  браузере): баннер read-only (`[data-readonly-banner]`), граф без возможности
+  редактирования; внешний браузер не открывается.
+- Некорректный/отозванный токен даёт экран ошибки (`[data-share-error]`), а не
+  белый экран и не падение приложения.
+- Возврат назад приводит в редактор с прежним сценарием.
+
+#### MOBILE-05 — Отмена сканирования не ломает экран
+**Приоритет:** P1
+**Предусловие:** приложение на устройстве; камера доступна; известен валидный
+QR (из MOBILE-03).
+**Шаги:**
+1. Нажать «Сканировать QR» и дождаться экрана камеры.
+2. Закрыть камеру системной кнопкой «Назад» (или крестиком), ничего не
+   сканируя.
+3. Повторить шаги 1–2 три раза.
+4. Отсканировать валидный QR.
+**Ожидаемый результат:**
+- Возврат в редактор без тоста об ошибке и без ошибок в консоли: отмена —
+  нормальный сценарий, `scanQr()` вернул `null`.
+- Кнопка снова активна (спиннер не залипает): `[data-topbar-scan-qr]` не в
+  состоянии `disabled`, повторный клик открывает камеру.
+- После отмен валидное сканирование работает как в MOBILE-03.
+
+#### MOBILE-06 — В браузере скачивание DOCX работает как раньше
+**Приоритет:** P2
+**Предусловие:** `MEDIA_STORAGE_BACKEND=local`; сценарий `QA-DOCS` с узлом
+«Генерация документа»; успешный запуск; десктопный браузер (не приложение).
+**Шаги:**
+1. Запустить сценарий и дождаться `completed`.
+2. Нажать «Скачать DOCX» (`[data-document-gen-download]`).
+3. Открыть файл из «Загрузок».
+**Ожидаемый результат:**
+- Файл сохраняется браузером (атрибут `download`), имя — `outputs.fileName` или
+  `document.docx`; страница не перезагружается и не белеет.
+- DOCX открывается в Word/LibreOffice, содержимое соответствует графу; строка
+  ошибки под ссылкой не появляется.
+- Ошибок в консоли нет.
+
+#### MOBILE-07 — В приложении DOCX открывается системным просмотрщиком
+**Приоритет:** P2
+**Предусловие:** приложение на устройстве; установлен просмотрщик DOCX (Word,
+Google Docs или аналог); сценарий `QA-DOCS`; запуск выполнен, ссылка «Скачать
+DOCX» есть; на устройстве включён доступ к файлам приложения (для проверки —
+`adb`).
+**Шаги:**
+1. Открыть узел «Генерация документа» с готовым результатом.
+2. Нажать «Скачать DOCX».
+3. В диалоге «Открыть с помощью» выбрать Word/Google Docs.
+4. Найти файл в каталоге документов приложения (например,
+   `adb shell ls /sdcard/Android/data/com.iilmchat.workflowbuilder/files/Documents`).
+**Ожидаемый результат:**
+- Файл сохраняется в `Documents/` приложения и открывается системным
+  просмотрщиком; диалог «Открыть с помощью» предлагает установленные
+  приложения. Документ читается, содержимое соответствует графу.
+- Строка ошибки под ссылкой (`[data-document-gen-download-error]`) не
+  появляется; в консоли нет `[file-download]`-ошибок.
+- WebView не открывает пустую вкладку/`blob:`-ссылку: нативная ветка
+  перехватывает клик (в браузере — обычное скачивание).
+
+#### MOBILE-08 — Ошибка скачивания показывает строку ошибки под ссылкой
+**Приоритет:** P2
+**Предусловие:** приложение; узел с готовым DOCX и видимой ссылкой «Скачать
+DOCX»; способ оборвать доступ к файлу (выключить сеть на устройстве,
+остановить backend или указать заведомо недоступный `MEDIA_STORAGE_BACKEND`).
+**Шаги:**
+1. Зафиксировать «до»: строка ошибки под ссылкой отсутствует.
+2. Выключить сеть на устройстве (или остановить backend).
+3. Нажать «Скачать DOCX».
+4. Вернуть сеть и нажать «Скачать DOCX» снова.
+**Ожидаемый результат:**
+- Под ссылкой появляется строка «Не удалось скачать файл. Попробуйте ещё раз.»
+  (`[data-document-gen-download-error]`); карточка, ссылка и граф остаются на
+  месте, приложение не падает.
+- Причина пишется в лог (`adb logcat`, тег `[file-download]`), но не всплывает
+  тостом — ошибка не «глотается» молча.
+- После восстановления сети повторный клик открывает файл, строка ошибки
+  исчезает (правило «до/после», RULES 4.33).
+
+#### MOBILE-09 — Push: разрешение и `POST /notifications/register`
+**Приоритет:** P2
+**Предусловие:** сборка приложения **с** `google-services.json` (Firebase
+настроен по [FIREBASE_SETUP](../development/v1.5/FIREBASE_SETUP.md)); на
+устройстве есть Google Play Services; backend на HEAD (модуль `notifications`,
+миграция `0021`); пользователь вошёл. Если Firebase не настроен — ожидаемый
+результат фиксируется по KI-653 (см. ниже).
+**Шаги:**
+1. Войти в приложение и дождаться системного диалога разрешения уведомлений.
+2. Разрешить уведомления, дождаться события `registration` в `adb logcat`.
+3. Проверить `POST /notifications/register` (лог backend / прокси) и строку в
+   таблице `device_tokens`.
+4. Выйти и войти снова, не переустанавливая приложение.
+**Ожидаемый результат:**
+- Диалог появляется **после** подтверждённой сессии (не на экране входа); при
+  разрешении уходит `POST /notifications/register` с `{ token, platform:
+  "android" }`, ответ **201** `{ "ok": true }`, `Cache-Control: no-store`.
+- В `device_tokens` одна строка на устройство (`ON CONFLICT (token) DO UPDATE`);
+  `user_id` и `organization_id` — из БД, попытка с чужим токеном заменяет
+  владельца.
+- Повторный вход не дублирует строку и не повторяет запрос (guard
+  идемпотентности); при отказе в разрешении запросов нет, в консоли WARN,
+  приложение работает как обычно.
+- Без `google-services.json` событие `registration` не приходит, запроса нет —
+  это KI-653 (Planned, S4), не баг ручной приёмки.
+
+#### MOBILE-10 — Наличие и триггеры `.github/workflows/release-mobile.yml`
+**Приоритет:** P3
+**Предусловие:** репозиторий на HEAD; доступ к GitHub Actions (или только к
+файлу workflow).
+**Шаги:**
+1. Открыть `.github/workflows/release-mobile.yml` (или Actions → «Release
+   Mobile (Android)»).
+2. Проверить триггеры: `push` по тегу `v*` и `workflow_dispatch`.
+3. Сверить шаги job `build-android`: `CAPACITOR=1 pnpm --dir web build`,
+   `cap sync android`, decode keystore, restore `google-services.json`,
+   `bundleRelease`, verify (подпись + разрешения), upload artifact, cleanup.
+4. Проверить, что значения секретов не зашиты в файл.
+**Ожидаемый результат:**
+- Триггеры и шаги на месте, соответствуют DESIGN v1.5 § 3 (S4) и
+  [KEYSTORE_SETUP](../development/v1.5/KEYSTORE_SETUP.md); в файле только
+  ссылки `${{ secrets.* }}`, без значений.
+- Без секретов job падает с `::error::…secret is not set` и ссылкой на
+  инструкцию, а не собирает молча нерабочий AAB.
+- `git check-ignore -v web/android/app/google-services.json
+  web/android/app/release.keystore` показывает правила из `web/android/.gitignore`
+  — секреты не попадут в коммит.
+- AAB в этом кейсе не собираем и в Play Console не публикуем (S4-B).
+
+---
+
+## 15. Что НЕ тестируем в этой версии
 
 > **Актуальность.** Список ниже фиксирует границы **v0.11**; часть пунктов
-> закрыта в v0.12–v1.3: PDF у `document_gen` (v0.12), email-приглашения в
+> закрыта в v0.12–v1.5: PDF у `document_gen` (v0.12), email-приглашения в
 > команду (v1.1), история запусков (v0.14), `searchDepth`/`freshness` (v0.15),
-> LLM Router и GPU-индикатор (v1.2), auth `/llm/health` (v1.3). Актуальные
-> ограничения v1.3.0 — в блоке V1.3 и
-> [`USER_GUIDE` § 6.2](../user_guide/USER_GUIDE.md#62-известные-ограничения-версии-130).
+> LLM Router и GPU-индикатор (v1.2), auth `/llm/health` (v1.3), отмена и
+> сравнение запусков (v1.4), Android-приложение (v1.5). Актуальные ограничения
+> v1.5.0 — в блоке V1.3, в мобильном блоке V1.4–V1.5 и
+> [`USER_GUIDE` § 7.2](../user_guide/USER_GUIDE.md#72-известные-ограничения-версии-150).
 
 Явные ограничения v0.11.0 (не заводить как баги, но фиксировать как «ожидаемо»):
 
@@ -2348,7 +2563,8 @@ health-ответа на одной стороне гейт падает (KI-627
    ветки продолжают выполняться.
 2. **Режим «LLM-судья» у сравнения** — не реализован, селект неактивен.
 3. **Отмена запуска из UI** — кнопки нет; статус `cancelled` возможен только
-   на стороне сервера.
+   на стороне сервера (закрыто в v1.4.0: кнопка «Отменить» в шапке, см.
+   блок V1.4–V1.5 и `USER_GUIDE` § 9.4).
 4. **Приглашение по email** — только по UUID.
 5. **«Скопировать к себе» по публичной ссылке** — кнопка неактивна.
 6. **Флажок «Разрешить копирование»** — не влияет на доступ.
@@ -2369,7 +2585,8 @@ health-ответа на одной стороне гейт падает (KI-627
     (KI-461); в v0.11 только `maxResults`.
 15. **Браузера истории запусков нет** — `GET /workflow/:id/runs` и UI
     списка/сравнения запусков не реализованы; после F5 восстанавливается
-    запуск по `?runId=…` (KI-077 закрыт, но список — v0.12+).
+    запуск по `?runId=…` (KI-077 закрыт, но список — v0.12+). История (v0.14)
+    и сравнение запусков (v1.4.0) реализованы — см. `USER_GUIDE` § 2.8/§ 9.4.
 16. **Редактор и preview DOCX-шаблонов в браузере** — не реализованы; шаблон
     готовится в Word и загружается файлом.
 17. **PDF-шаблоны и DOCX→PDF** — вне релиза (KI-463).
@@ -2379,10 +2596,21 @@ health-ответа на одной стороне гейт падает (KI-627
     MCP-вызов даёт 0, а не цену внешнего сервера.
 20. **Ошибки загрузки/удаления DOCX-шаблона в UI — общие** (KI-489): точную
     причину (`invalid-docx`, 413, 403) видно только в ответе API/логах.
+21. **iOS-приложения нет** — v1.5.0 выпускается только для Android; версия для
+    iOS — S5+ (DESIGN v1.5 § 6). Веб-версия от мобильной работы не менялась.
+22. **Публикация в Google Play не входит в v1.5.0** — CI собирает и проверяет
+    подписанный AAB, а загрузка в Play Console (Internal testing) и rollout —
+    S4-B. Поэтому кейсов на установку из Play в блоке нет.
+23. **Push в приложении без `google-services.json` не регистрируется**
+    (KI-653): сборка без Firebase ожидаемо не получает токен, `POST
+    /notifications/register` не вызывается. Файл не коммитится
+    (`web/android/.gitignore`) и в CI создаётся из секрета.
+24. **Иконка push-уведомления системная** (KI-654): своей монохромной иконки
+    нет, в статусбаре уведомление может выглядеть белым квадратом/пятном.
 
 ---
 
-## 15. Приёмка релиза
+## 16. Приёмка релиза
 
 Минимальный набор для «зелёного» релиза — все кейсы `P1` (smoke-ядро):
 
@@ -2405,15 +2633,27 @@ health-ответа на одной стороне гейт падает (KI-627
 - [ ] `TPL-01`, `TPL-02`, `MCP-01`, `MCP-03`, `MCP-04`, `HB-01`, `HIST-01`
       (v0.11.0)
 - [ ] `V13-01`, `V13-02` (v1.3.0: auth `/llm/health`, `AUTH_DISABLED=true`)
+- [ ] `MOBILE-01`, `MOBILE-02`, `MOBILE-03`, `MOBILE-04`, `MOBILE-05` (v1.5.0:
+      запуск приложения, QR только в native, открытие сценария и share-ссылки,
+      отмена сканирования)
 
 Дополнительно перед релизом:
 
 - [ ] `pnpm build` — 0 errors, 0 warnings.
 - [ ] `pnpm build:migrate` — `dist/migrate.js` создан.
-- [ ] `pnpm test` — все зелёные (на момент v1.3.0: **1935 passed / 2 skipped**,
-      128 файлов).
+- [ ] `pnpm test` — все зелёные (на момент v1.5.0: **1958 passed / 26 skipped**,
+      130 файлов — 126 passed + 4 skipped).
 - [ ] `pnpm --dir web build` — 0 errors, 0 warnings.
-- [ ] `pnpm --dir web test` — все зелёные (v1.3.0: **500 passed**, 54 файла).
+- [ ] `pnpm --dir web test` — все зелёные (v1.5.0: **559 passed**, 62 файла).
+- [ ] `CAPACITOR=1 pnpm --dir web build` — 0 errors, 0 warnings (сборка с
+      `base: './'` для WebView, регрессия KI-647).
+- [ ] `pnpm --dir web exec cap sync android` — плагины Capacitor 7.x
+      синхронизируются без ошибок (`cap doctor` про Capacitor 8 — KI-650).
+- [ ] `git check-ignore -v web/android/app/google-services.json
+      web/android/app/release.keystore` — оба секрета игнорируются
+      (`web/android/.gitignore`), в коммит не попадут.
+- [ ] `.github/workflows/release-mobile.yml` — триггеры `v*`/`workflow_dispatch`
+      на месте; AAB собирается, но в Play Console не публикуется (S4-B).
 - [ ] `pnpm test:parity` — зелёный при доступной БД (RULES § 3.19).
 - [ ] `docker compose -f docker-compose.prod.yml config --quiet` — без ошибок.
 - [ ] В браузере нет ошибок в консоли на основном пути (вход → граф → запуск →
@@ -2421,13 +2661,13 @@ health-ответа на одной стороне гейт падает (KI-627
 
 ---
 
-## 16. Шаблон баг-репорта
+## 17. Шаблон баг-репорта
 
 ```
 ### BUG — <краткое название>
 **Кейс:** <ID из этого гайда, например CANVAS-14>
 **Приоритет:** P1 / P2 / P3
-**Окружение:** браузер + версия, ОС, `NODE_ENV`, commit hash
+**Окружение:** браузер + версия (для mobile — устройство, версия Android, тип сборки), ОС, `NODE_ENV`, commit hash
 **Предусловие:** <состояние системы/данных>
 **Шаги воспроизведения:**
 1. …
@@ -2449,7 +2689,7 @@ health-ответа на одной стороне гейт падает (KI-627
 
 ---
 
-## 17. История документа
+## 18. История документа
 
 | Дата | Версия | Изменения |
 |---|---|---|
@@ -2459,5 +2699,6 @@ health-ответа на одной стороне гейт падает (KI-627
 | 2026-10-19 | 1.3 | v0.11.0 S8: +2 кейса (MCP-03 UI выбора инструментов, MCP-04 контракт `GET /mcp/servers`), итого 139; селекторы MCP в узле, ручка каталога MCP, обновлены MCP-01/границы релиза/приёмка и метрики (1424/417) |
 | 2026-10-19 | 1.4 | v0.11.1: MEDIA-03 — 4 операции (хромакей скрыт, KI-418); OpenAI Images `upscale`/`bg_removal` через multipart `/images/edits` (KI-380); метрики 1439/419 |
 | 2026-11-06 | 1.5 | v1.3.0: +9 кейсов блока V1.3 (auth `/llm/health` 401/200, `AUTH_DISABLED=true`, GPU-индикатор, восстановление LM Studio и внеочередной пинг, сверка возможностей роутера, приглашения по email, роли команды и отзыв токена, паритет health-контракта, публичность `/llm/models`), итого 148; обновлены область/источники, приёмка и метрики (1935/500); блоки 13–16 перенумерованы в 14–17 |
+| 2026-11-09 | 1.6 | v1.5.0: +10 кейсов блока V1.4–V1.5 (`MOBILE-01..10`: запуск приложения без белого экрана, кнопка QR только в native, QR с uuid и с share-ссылкой, отмена сканирования, DOCX в браузере и нативное открытие системным просмотрщиком, ошибка скачивания под ссылкой, разрешение и `POST /notifications/register`, наличие workflow `release-mobile.yml`), итого 158; обновлены область/источники, § 1.4 (ручка `notifications`), § 1.5 (селекторы), приёмка (+ mobile-пункты и `git check-ignore` для секретов), ограничения (iOS, Play rollout — S4-B, KI-653/KI-654) и метрики (1958/559); разделы 14–17 перенумерованы в 15–18 |
 
 **Конец документа.**

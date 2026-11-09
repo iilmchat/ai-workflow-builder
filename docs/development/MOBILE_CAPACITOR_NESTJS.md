@@ -516,6 +516,52 @@
 
 ---
 
+## 18. CI/CD: NestJS + Firebase + Keystore
+
+Для NestJS + Capacitor проекта CI/CD состоит из 3 независимых пайплайнов:
+
+1. **Backend/Web** (GitHub Actions — уже есть): `pnpm test`, `pnpm --dir web test`, деплой Docker.
+2. **Mobile (Android)**: сборка AAB, публикация в Play Console.
+3. **Firebase**: `google-services.json` в Secrets, инъекция при сборке.
+
+### Мобильный workflow (`.github/workflows/release-mobile.yml`)
+
+Ключевые моменты:
+- `CAPACITOR=1 pnpm --dir web build` — обязательно, иначе `base: '/'` сломает WebView.
+- `cap sync android` **после** Capacitor-сборки.
+- `google-services.json` и `release.keystore` инжектятся из Secrets в `web/android/app/`.
+- `Cleanup secrets` в `if: always()` — файлы удаляются даже при падении.
+- Проверка AAB: `jarsigner -verify` (AAB — jar/zip, `aapt dump permissions` с ним **не работает**) + грепы `CAMERA`/`INTERNET` по **merged** `AndroidManifest.xml`.
+- `pnpm/action-setup@v4` без `with: version` — версия берётся из `packageManager` (RULES 6.10).
+
+### Secrets (5 штук)
+
+| Secret | Откуда |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | `base64 -w 0 keystore` |
+| `ANDROID_KEYSTORE_PASSWORD` | пароль keystore |
+| `ANDROID_KEY_ALIAS` | алиас ключа |
+| `ANDROID_KEY_PASSWORD` | пароль ключа |
+| `GOOGLE_SERVICES_JSON` | `google-services.json` из Firebase Console |
+
+### Порядок деплоя
+
+1. `CAPACITOR=1 pnpm --dir web build` → `web/dist/` с `./assets/`.
+2. `cap sync android` → копирует `dist` в `android/app/src/main/assets/public`.
+3. `gradlew bundleRelease` → AAB, подписанный keystore.
+4. Upload в Play Console → Review → Rollout.
+
+### Что НЕ делать
+
+- НЕ коммить `google-services.json` и `keystore` в git (`.gitignore`).
+- НЕ собирать AAB без `CAPACITOR=1` — белый экран.
+- НЕ терять keystore — нельзя обновить приложение.
+
+**Полные инструкции:** `docs/development/v1.5/FIREBASE_SETUP.md`,
+`docs/development/v1.5/KEYSTORE_SETUP.md`.
+
+---
+
 ## Связанные документы
 
 - `docs/development/v1.5/DESIGN_V150_CAPACITOR.md` — применение в ai-workflow-builder.

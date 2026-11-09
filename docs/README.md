@@ -3,7 +3,7 @@
 > **Навигационный хаб проекта.** Здесь собраны все документы: от руководства
 > пользователя до правил разработки и чек-листа релиза.
 >
-> **Версия продукта:** `v1.3.0` · **Обновлено:** 2026-11-06 · **HEAD:** актуальный
+> **Версия продукта:** `v1.5.0` · **Обновлено:** 2026-11-09 · **HEAD:** актуальный
 
 ---
 
@@ -41,8 +41,9 @@
 3. [Каталог узлов](user_guide/USER_GUIDE.md#3-каталог-узлов)
 4. [Совместная работа](user_guide/USER_GUIDE.md#4-совместная-работа)
 5. [Бюджет и стоимость](user_guide/USER_GUIDE.md#5-бюджет-и-стоимость)
-6. [Вопросы и ограничения](user_guide/USER_GUIDE.md#6-вопросы-и-ограничения)
-7. [Словарь](user_guide/USER_GUIDE.md#7-словарь)
+6. [Android-приложение](user_guide/USER_GUIDE.md#6-android-приложение-v150)
+7. [Вопросы и ограничения](user_guide/USER_GUIDE.md#7-вопросы-и-ограничения)
+8. [Словарь](user_guide/USER_GUIDE.md#8-словарь)
 
 > 💡 **Совет.** Если интерфейс отличается от описанного — сначала проверьте
 > [CHANGELOG.md](CHANGELOG.md): возможно, вы смотрите более новую версию.
@@ -55,7 +56,7 @@
 
 | Документ | Что внутри | Когда читать |
 |---|---|---|
-| [**MANUAL_TESTING_GUIDE.md**](qa/MANUAL_TESTING_GUIDE.md) | **137 ручных кейсов** с приоритетами P1–P3, предусловиями, шагами и ожидаемым результатом; чек-лист приёмки и шаблон баг-репорта | Перед каждым релизом и при регрессе |
+| [**MANUAL_TESTING_GUIDE.md**](qa/MANUAL_TESTING_GUIDE.md) | **158 ручных кейсов** с приоритетами P1–P3, предусловиями, шагами и ожидаемым результатом; чек-лист приёмки и шаблон баг-репорта | Перед каждым релизом и при регрессе |
 | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | Реестр KI: приоритет, статус, файлы, решения | Перед тестированием — что уже известно |
 | [RELEASES.md](development/RELEASES.md) | Пошаговый чек-лист выпуска версии | При подготовке релиза |
 
@@ -73,7 +74,10 @@
 | EDGE CASES | 18 | бюджет, Redis, ключи, БД, нагрузка |
 | CONTRACT | 4 | api/sse/prefixes/enums |
 | V0.10 | 13 | Web Search, DOCX, workspace, Docker |
-| **Итого** | **129** | |
+| V0.11 | 10 | DOCX-шаблоны, MCP API/UI, heartbeat, история после F5, тёмная тема |
+| V1.3 | 9 | LLM Router и GPU-индикатор, auth `/llm/health`, команда и приглашения |
+| V1.4–V1.5 | 10 | Android (Capacitor): QR/камера, файлы DOCX, push, CI/CD |
+| **Итого** | **158** | |
 
 > ⚠️ **Правило «до/после»** (RULES 4.33). Для проверок «закрылось / не
 > открылось / не изменилось» фиксируйте состояние **до** действия.
@@ -106,6 +110,8 @@
 
 | Версия | Документ | Статус | О чём |
 |---|---|---|---|
+| v1.5 | [DESIGN_V150_CAPACITOR.md](development/v1.5/DESIGN_V150_CAPACITOR.md) | Released (v1.5.0) | Android Mobile App (Capacitor 7): каркас + камера/QR, файлы DOCX/PDF, push-уведомления, CI/CD; гайды [FIREBASE_SETUP](development/v1.5/FIREBASE_SETUP.md) и [KEYSTORE_SETUP](development/v1.5/KEYSTORE_SETUP.md) |
+| v1.4 | — (DESIGN не заводился) | Released (v1.4.0) | точечные срезы без DESIGN: S1 — Cancel Run, S2 — сравнение запусков, S3 — UX polish (адаптивный TopBar, восстановление LM Studio, Email Outbox); см. [отчёты](development/reports/v1.4.0/) |
 | v1.3 | — (DESIGN не заводился) | Released (v1.3.0) | точечные срезы без DESIGN: S1 — сверка возможностей моделей, S2 — auth/паритет health, S3 — release prep; см. [отчёты](development/reports/v1.3.0/) |
 | v1.2 | [DESIGN_V120_FEATURES.md](development/v1.2/DESIGN_V120_FEATURES.md) | Released (v1.2.0) | LLM Router, healthcheck GPU, SMTP Retry (BullMQ), UI-индикатор |
 | v1.1 | [DESIGN_V110_FEATURES.md](development/v1.1/DESIGN_V110_FEATURES.md) | Released (v1.1.0) | команда организации, приглашения SMTP, аудит-фильтры, метрики, security |
@@ -145,11 +151,11 @@
 
 | Показатель | Значение |
 |---|---|
-| Версия продукта | **v1.3.0** |
-| Backend-тесты | **1935** (2 skipped, 128 файлов) |
-| Frontend-тесты | **500** (54 файла) |
+| Версия продукта | **v1.5.0** |
+| Backend-тесты | **1958** (26 skipped, 130 файлов — 126 passed + 4 skipped) |
+| Frontend-тесты | **559** (62 файла) |
 | Типов узлов | **22** |
-| KI-реестр | **KI-634** — последний номер; всего **621** запись |
+| KI-реестр | **KI-655** — последний номер; всего **642** записи; Open **281** |
 | Открытых High KI | **0** |
 | Языки интерфейса | RU / EN |
 | Стек | NestJS 12 · React 19 · PostgreSQL 17 + pgvector · S3 · OTel · Docker/GHCR |
@@ -179,7 +185,8 @@ docs/
     ├── KI_GITHUB_SYNC.md          ← синхронизация KI с GitHub
     ├── api-contract.json          ← REST-контракт
     ├── sse-contract.json          ← SSE-контракт
-    ├── v0.7/ v0.8/ v0.9/ v0.10/ v0.11/  ← DESIGN-документы
+    ├── v0.7/ … v0.11/ v1.0/ … v1.4/  ← DESIGN-документы прошлых версий
+    ├── v1.5/                      ← DESIGN_V150_CAPACITOR, FIREBASE_SETUP, KEYSTORE_SETUP
     └── archive/prompts/           ← архив промптов
 ```
 
@@ -202,4 +209,4 @@ docs/
 
 ---
 
-**© 2026 RuChating (iilmchat) · IIChatTools AI Workflow Builder v1.3.0**
+**© 2026 RuChating (iilmchat) · IIChatTools AI Workflow Builder v1.5.0**

@@ -17,8 +17,25 @@
 ---
 ## [Unreleased]
 
+## [1.5.0] — 2026-11-09
+
+**Minor-релиз: Android Mobile App (Capacitor).**
+
 ### Added
 
+- **CI/CD и release-prep (v1.5.0 S4-A)**
+  ([отчёт](development/reports/v1.5.0/S4-release-prep.md)): workflow
+  `.github/workflows/release-mobile.yml` — сборка подписанного AAB по тегу
+  `v*` и вручную (`workflow_dispatch`): `CAPACITOR=1 pnpm --dir web build` →
+  `cap sync android` → Java 21 + Android SDK 35 → `bundleRelease` с
+  inject-подписью из Secrets; проверка `jarsigner -verify` и разрешений
+  merged-манифеста; AAB — в артефактах 30 дней; `Cleanup secrets` в
+  `if: always()`. Секреты защищены `web/android/.gitignore`
+  (`google-services.json`, `release.keystore`). Инструкции пользователю:
+  `docs/development/v1.5/FIREBASE_SETUP.md` (Firebase/FCM, KI-653) и
+  `KEYSTORE_SETUP.md` (keystore, подпись, Play Console); рецепт
+  `MOBILE_CAPACITOR_NESTJS.md` § 18. Версии `1.5.0`, обновлены
+  `CHANGELOG`/`README`/`docs/README`/`PROMPT_CURRENT`/гайды.
 - **Files & Push: уведомления, скачивание DOCX (v1.5.0 S3)**
   ([отчёт](development/reports/v1.5.0/S3-files-push.md)): `POST
   /notifications/register` (JWT; идемпотентный UPSERT `device_tokens`,
@@ -78,6 +95,8 @@
 
 ### Fixed
 
+- **KI-652:** удалены 11 кратких дублей заголовков KI-635..645 в
+  `docs/KNOWN_ISSUES.md`; сводка статусов пересчитана grep'ом (RULES 3.20).
 - **KI-623:** PII и ссылка-приглашение больше не хранятся в Redis — payload
   перенесён в `email_outbox`.
 - **KI-628:** TopBar не переполняется на 1440/1280 px; поле имени не
@@ -89,13 +108,14 @@
 
 - **KI-646..651:** AndroidManifest без CAMERA/ML Kit, `src="/logo.svg"` под `base: './'`,
   устаревший API в рецепте, `web/android/` вне git, Capacitor 8 vs 7, вес бандла.
-- **KI-652:** Fixed (v1.5.0 S3) — удалены 11 кратких дублей заголовков
-  KI-635..645; сводка пересчитана grep'ом (RULES 3.20).
-- **KI-653, KI-654:** push на Android не зарегистрируется без
+- **KI-653 (High, S4-B):** push на Android не зарегистрируется без
   `google-services.json` (Gradle-плагин Google Services не применяется,
-  FirebaseApp не инициализируется — подготовка в S4), а уведомление рисуется
-  без белой монохромной иконки, которую требует README плагина (белый
-  квадрат в статусбаре — S4).
+  FirebaseApp не инициализируется — ожидает ручных шагов пользователя).
+- **KI-654 (Low, S4-B):** push-уведомление рисуется без белой монохромной
+  иконки, которую требует README плагина (белый квадрат в статусбаре).
+- **KI-655 (Medium, S4-B):** `.github/workflows/release-mobile.yml` не проверен
+  реальным прогоном — AAB ещё не собирался (локально нет JDK/Android SDK,
+  Secrets создаёт пользователь); первый `workflow_dispatch` — в S4-B.
 - **KI-651:** замер в S3 — плагины filesystem/file-opener/push дали ещё
   vendor 144.94 → 154.46 kB (gzip +2.78) и index 198.24 → 213.13 kB;
   ленивая загрузка плагинов отложена в S4.

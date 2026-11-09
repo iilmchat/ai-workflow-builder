@@ -1,17 +1,17 @@
 # IIChatTools AI Workflow Builder
 
 [![CI](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml/badge.svg)](https://github.com/iilmchat/ai-workflow-builder/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](docs/CHANGELOG.md)
-[![Backend tests](https://img.shields.io/badge/backend_tests-1935-brightgreen.svg)](docs/development/RELEASES.md)
-[![Frontend tests](https://img.shields.io/badge/frontend_tests-500-brightgreen.svg)](docs/development/RELEASES.md)
+[![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](docs/CHANGELOG.md)
+[![Backend tests](https://img.shields.io/badge/backend_tests-1958-brightgreen.svg)](docs/development/RELEASES.md)
+[![Frontend tests](https://img.shields.io/badge/frontend_tests-559-brightgreen.svg)](docs/development/RELEASES.md)
 [![License](https://img.shields.io/badge/license-proprietary-lightgrey.svg)](#лицензия)
 
 > **Визуальный конструктор AI-сценариев.** Собирайте LLM-, медиа- и агентные
 > workflow на холсте, запускайте их в фоне и наблюдайте за результатом в
 > реальном времени.
 
-**Версия:** `v1.3.0` · **Стек:** NestJS 12 · React 19 · PostgreSQL 17 + pgvector ·
-S3 · OpenTelemetry · Docker/GHCR
+**Версия:** `v1.5.0` · **Стек:** NestJS 12 · React 19 · PostgreSQL 17 + pgvector ·
+S3 · OpenTelemetry · Docker/GHCR · **Android (Capacitor 7)**
 **© 2026 RuChating (iilmchat)**
 
 ---
@@ -251,6 +251,59 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
   (app + PostgreSQL 17 + pgvector + Redis), миграции в entrypoint и публикация
   образа в GHCR (`latest`, `sha-*`, `vX.Y.Z`).
 
+### 📱 Android Mobile App (v1.5.0)
+
+Тот же SPA в нативной обёртке **Capacitor 7** (`web/android/`, appId
+`com.iilmchat.workflowbuilder`). Веб-версия не меняется: все нативные ветки
+закрыты `isNative()` (`web/src/lib/platform.ts`, DESIGN V150 § 3.2), поэтому в
+браузере кнопки, которых там нет, не рисуются.
+
+- **Камера и QR (v1.5.0 S1):** кнопка **📷 Сканировать QR**
+  (`[data-topbar-scan-qr]`) — только в приложении. QR с `uuid` сохранённого
+  сценария открывает его, QR с share-ссылкой `/workflow/share/<token>` —
+  публичную страницу; произвольные ссылки из QR не открываются (фишинг).
+  Разбор payload'а — `web/src/lib/qr-payload.ts`.
+- **Файлы DOCX/PDF (v1.5.0 S3):** в приложении «Скачать DOCX» перехватывается
+  и идёт через `downloadAndOpenFileAsync` (`web/src/hooks/useFileDownload.ts`):
+  файл пишется в `Documents/` и открывается системным просмотрщиком (Word,
+  Google Docs, PDF-viewer). В браузере — прежнее скачивание по `<a download>`;
+  ошибка сохранения/открытия показывается строкой под ссылкой
+  (`[data-document-gen-download-error]`).
+- **Push (v1.5.0 S3):** после входа приложение спрашивает разрешение и на
+  событие `registration` отправляет FCM-токен в
+  `POST /notifications/register` (JWT; upsert в `device_tokens`, миграция
+  `0021`, `orgId` читается из БД). Отправка push с сервера — S4-B.
+- **CI/CD и релиз (v1.5.0 S4-A):** [`.github/workflows/release-mobile.yml`](.github/workflows/release-mobile.yml)
+  — подписанный AAB по тегу `v*` или вручную (`workflow_dispatch`), проверка
+  подписи (`jarsigner`) и разрешений в merged-манифесте, артефакт на 30 дней,
+  очистка секретов. Пять секретов репозитория: `ANDROID_KEYSTORE_BASE64`,
+  `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`,
+  `GOOGLE_SERVICES_JSON`. Публикация в Play Console — S4-B.
+
+Локальная сборка (backend в приложении должен быть по **HTTPS**:
+`cleartext: false` в `web/capacitor.config.ts`):
+
+```bash
+# 1. Собрать SPA с относительными путями (base: './' — иначе белый экран)
+CAPACITOR=1 pnpm --dir web build
+
+# 2. Скопировать web/dist в нативный проект
+pnpm --dir web exec cap sync android
+
+# 3. Подписанный AAB
+#    web/android/app/build/outputs/bundle/release/app-release.aab
+```
+
+Документация: [DESIGN v1.5](docs/development/v1.5/DESIGN_V150_CAPACITOR.md),
+рецепт [MOBILE_CAPACITOR_NESTJS.md](docs/development/MOBILE_CAPACITOR_NESTJS.md),
+[FIREBASE_SETUP.md](docs/development/v1.5/FIREBASE_SETUP.md),
+[KEYSTORE_SETUP.md](docs/development/v1.5/KEYSTORE_SETUP.md).
+
+Ограничения: **iOS** — вне v1.5 (S5+); push не заработает без
+`google-services.json` (KI-653, Planned — S4); уведомление рисуется без
+собственной иконки (KI-654); для DOCX нужно приложение-просмотрщик на
+устройстве.
+
 ---
 
 ## Стек
@@ -263,6 +316,7 @@ S3-хранилище и наблюдаемость через OpenTelemetry.
 | **Очереди** | BullMQ 6, Redis 6 (ioredis) |
 | **AI / медиа** | Anthropic, OpenAI, RouterAI, GPTunnel, DeepSeek, Yandex AI Studio, LM Studio; CreativeLab, Replicate, FAL, OpenAI Images |
 | **Хранилище** | S3-совместимое (AWS SDK v3), локальная файловая система |
+| **Mobile** | Capacitor 7 (Android): Camera, ML Kit Barcode Scanning, Filesystem + File Opener, Push Notifications (FCM) |
 | **Инфраструктура** | Docker Compose, QuickJS-WASM sandbox, **OpenTelemetry**, SSE |
 | **Качество** | Vitest 4, Testing Library, jsdom, oxlint, Husky + lint-staged |
 
@@ -334,10 +388,11 @@ backend должен быть запущен первым.
 |---|---|---|
 | [**docs/README.md**](docs/README.md) | все | Навигационный хаб документации |
 | [USER_GUIDE.md](docs/user_guide/USER_GUIDE.md) | пользователи | Быстрый старт, интерфейс, 22 узла, Share, бюджет |
-| [MANUAL_TESTING_GUIDE.md](docs/qa/MANUAL_TESTING_GUIDE.md) | QA | 137 ручных кейсов и чек-лист приёмки |
+| [MANUAL_TESTING_GUIDE.md](docs/qa/MANUAL_TESTING_GUIDE.md) | QA | 158 ручных кейсов и чек-лист приёмки |
 | [GETTING_STARTED.md](docs/development/GETTING_STARTED.md) | разработчики | Разворачивание проекта за ~20 минут |
 | [ARCHITECTURE.md](docs/development/ARCHITECTURE.md) | разработчики | Архитектура, контракты и Docker-развёртывание |
 | [DESIGN v0.11](docs/development/v0.11/DESIGN_V011_FEATURES.md) | разработчики | DOCX-шаблоны, MCP Adapter, Reliability/History |
+| [DESIGN v1.5](docs/development/v1.5/DESIGN_V150_CAPACITOR.md) | разработчики | Android-приложение: Capacitor, камера/QR, файлы DOCX, push |
 | [RULES.md](docs/development/RULES.md) | разработчики | Правила кода, docs, workflow и безопасности |
 | [PROMPT_CURRENT.md](docs/development/PROMPT_CURRENT.md) | ассистент / dsh | Актуальные системные инструкции и метрики |
 | [RELEASES.md](docs/development/RELEASES.md) | релиз-менеджер | Пошаговый чек-лист выпуска версии |
@@ -350,12 +405,13 @@ backend должен быть запущен первым.
 
 | Показатель | Значение |
 |---|---|
-| Версия | **v1.3.0** |
-| Backend-тесты | **1935** (2 skipped, 128 файлов) |
-| Frontend-тесты | **500** (54 файла) |
+| Версия | **v1.5.0** |
+| Backend-тесты | **1958** (26 skipped, 130 файлов) |
+| Frontend-тесты | **559** (62 файла) |
 | Типов узлов | **22** |
-| KI-реестр | **KI-634** — последний номер; всего **621** запись |
+| KI-реестр | **KI-655** — последний номер; всего **642** записи; Open **281**, Open High **0** |
 | CI | GitHub Actions: build, typecheck, migrations, tests (backend + web) |
+| Mobile | Android (Capacitor 7): подписанный AAB в `release-mobile.yml`, публикация — S4-B |
 | Docker | multi-stage образ + `docker-compose.prod.yml`, публикация в GHCR |
 
 ---
