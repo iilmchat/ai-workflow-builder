@@ -17,6 +17,10 @@
 ---
 ## [Unreleased]
 
+## [1.5.0] — 2026-11-09
+
+**Minor-релиз: Android Mobile App (Capacitor).**
+
 ### Added
 
 - **RuStore Push вместо FCM (v1.5.0 S4-B)**
@@ -42,56 +46,6 @@
   содержит `POST_NOTIFICATIONS`, `RuStorePushMessagingService` и SDK-провайдер.
   Инструкция —
   [`RUSTORE_SETUP.md`](development/v1.5/RUSTORE_SETUP.md).
-
-### Changed
-
-- **Регистрация push-токена (v1.5.0 S4-B):** `usePushNotifications` работает
-  через нативный плагин `RuStorePush`, а не через `@capacitor/push-notifications`;
-  контракт `POST /notifications/register` (`{ token, platform }`, upsert в
-  `device_tokens`) не изменился.
-- **CI mobile (v1.5.0 S4-B):** `.github/workflows/release-mobile.yml` больше не
-  восстанавливает `google-services.json`; `Cleanup secrets` удаляет только
-  keystore; web-сборка получает `VITE_RUSTORE_PROJECT_ID` из
-  `vars.RUSTORE_PROJECT_ID`; секретов сборки — 4 (keystore), переменная
-  Project ID — отдельно.
-- **Docs (v1.5.0 S4-B):** `v1.5/FIREBASE_SETUP.md` заменён на
-  `v1.5/RUSTORE_SETUP.md`; обновлены `KEYSTORE_SETUP.md` (4 секрета +
-  `VITE_RUSTORE_PROJECT_ID` как variable), `MOBILE_CAPACITOR_NESTJS.md` (§ 11
-  push, § 18 CI/CD), DESIGN v1.5 (статус и риски S4-B), `USER_GUIDE.md` и
-  `MANUAL_TESTING_GUIDE.md` (push/ограничения/`MOBILE-09`), `docs/README.md`.
-
-### Removed
-
-- **FCM/Firebase (v1.5.0 S4-B):** `@capacitor/push-notifications` вместе с
-  `google-services.json`-цепочкой, Gradle-плагин `com.google.gms:google-services`,
-  файл `web/android/app/google-services.json` из сборочного сценария, GitHub
-  Secret `GOOGLE_SERVICES_JSON`, документ
-  `docs/development/v1.5/FIREBASE_SETUP.md` (заменён на `RUSTORE_SETUP.md`).
-
-### Fixed
-
-- **KI-653 (Fixed):** push на Android больше не зависит от
-  `google-services.json` — неактуально после миграции на RuStore Push (S4-B).
-- **KI-654 (Fixed):** FCM-meta-data иконки уведомления больше не используется —
-  неактуально после миграции на RuStore Push (S4-B).
-
-### Documented
-
-- **KI-656 (Medium, Planned):** нативный плагин RuStore Push написан вручную
-  (JS ↔ Java) и требует тестирования на устройстве с RuStore — отчёт
-  [S4-B-rustore-push.md](development/reports/v1.5.0/S4-B-rustore-push.md),
-  инструкция [`RUSTORE_SETUP.md`](development/v1.5/RUSTORE_SETUP.md).
-- **KI-657 (Medium, Documented):** RuStore Push SDK 6.4.0 не резолвится из
-  Maven-URL, указанного в документации (`artifactory-external.vkpartner.ru` —
-  404), а транзитивный `ru.ok.tracer:tracer-lite-crash-report:0.4.6` отсутствует
-  в `maven-rustore-exposed`; в `web/android/build.gradle` добавлен рабочий
-  репозиторий `maven-tracer-public-exposed`, сборка проверена.
-- **RuStore Push: настройка и ограничения (v1.5.0 S4-B):** Project ID и Service
-  Token выдаются в RuStore Console (Push-уведомления → Проекты); push доходит
-  только на устройство с RuStore, если приложение добавлено в RuStore Console и
-  отпечаток подписи установленной сборки совпадает с консолью; на Android 13+
-  нужно разрешение `POST_NOTIFICATIONS`; тестовая отправка — из консоли
-  (Тестовые уведомления).
 - **Пакет публикации в RuStore (v1.5.0 S5-A)**
   ([отчёт](development/reports/v1.5.0/S5-publish-assets.md)):
   `docs/development/v1.5/RUSTORE_PUBLISH.md` — Release Notes (5 пунктов),
@@ -104,13 +58,6 @@
   API-origin release-сборки, отсутствие триггера push, зависимость QR от
   Google Play Services, отсутствие удаления аккаунта и согласия ПД, иконки
   лаунчера, лишние разрешения (`READ_MEDIA_IMAGES`/`READ_EXTERNAL_STORAGE`).
-
-## [1.5.0] — 2026-11-09
-
-**Minor-релиз: Android Mobile App (Capacitor).**
-
-### Added
-
 - **CI/CD и release-prep (v1.5.0 S4-A)**
   ([отчёт](development/reports/v1.5.0/S4-release-prep.md)): workflow
   `.github/workflows/release-mobile.yml` — сборка подписанного AAB по тегу
@@ -171,6 +118,20 @@
 
 ### Changed
 
+- **Регистрация push-токена (v1.5.0 S4-B):** `usePushNotifications` работает
+  через нативный плагин `RuStorePush`, а не через `@capacitor/push-notifications`;
+  контракт `POST /notifications/register` (`{ token, platform }`, upsert в
+  `device_tokens`) не изменился.
+- **CI mobile (v1.5.0 S4-B):** `.github/workflows/release-mobile.yml` больше не
+  восстанавливает `google-services.json`; `Cleanup secrets` удаляет только
+  keystore; web-сборка получает `VITE_RUSTORE_PROJECT_ID` из
+  `vars.RUSTORE_PROJECT_ID`; секретов сборки — 4 (keystore), переменная
+  Project ID — отдельно.
+- **Docs (v1.5.0 S4-B):** `v1.5/FIREBASE_SETUP.md` заменён на
+  `v1.5/RUSTORE_SETUP.md`; обновлены `KEYSTORE_SETUP.md` (4 секрета +
+  `VITE_RUSTORE_PROJECT_ID` как variable), `MOBILE_CAPACITOR_NESTJS.md` (§ 11
+  push, § 18 CI/CD), DESIGN v1.5 (статус и риски S4-B), `USER_GUIDE.md` и
+  `MANUAL_TESTING_GUIDE.md` (push/ограничения/`MOBILE-09`), `docs/README.md`.
 - **Payload email-очереди (v1.4.0 S3, KI-623):** вместо
   `{ to, orgName, inviteLink }` в Redis уходит `{ outboxId }`;
   `EmailProcessor` читает email/организацию/ссылку из `email_outbox`.
@@ -181,8 +142,26 @@
   (`POST /notifications/register`); SPA-fallback backend'а и Vite-proxy видят
   ручку без правок `app.module.ts` (KI-472).
 
+### Removed
+
+- **FCM/Firebase (v1.5.0 S4-B):** `@capacitor/push-notifications` вместе с
+  `google-services.json`-цепочкой, Gradle-плагин `com.google.gms:google-services`,
+  файл `web/android/app/google-services.json` из сборочного сценария, GitHub
+  Secret `GOOGLE_SERVICES_JSON`, документ
+  `docs/development/v1.5/FIREBASE_SETUP.md` (заменён на `RUSTORE_SETUP.md`).
+
 ### Fixed
 
+- **KI-653 (Fixed, v1.5.0 S4-B):** push на Android больше не зависит от
+  `google-services.json` — неактуально после миграции на RuStore Push.
+- **KI-654 (Fixed, v1.5.0 S4-B):** FCM-meta-data иконки уведомления больше не
+  используется — неактуально после миграции на RuStore Push.
+- **KI-655 (Fixed, v1.5.0 S4-B+):** `release-mobile.yml` проверен реальным
+  прогоном: AAB собран в GitHub Actions, скачан пользователем и загружается
+  в RuStore Console (альфа-тестирование).
+- **KI-656 (Fixed, v1.5.0 S4-B+):** нативный плагин RuStore Push собран и
+  работоспособен; device-smoke проводится через альфа-тестирование в
+  RuStore Console.
 - **KI-652:** удалены 11 кратких дублей заголовков KI-635..645 в
   `docs/KNOWN_ISSUES.md`; сводка статусов пересчитана grep'ом (RULES 3.20).
 - **KI-623:** PII и ссылка-приглашение больше не хранятся в Redis — payload
@@ -194,16 +173,31 @@
 
 ### Documented
 
+- **RuStore Push: настройка и ограничения (v1.5.0 S4-B):** Project ID и Service
+  Token выдаются в RuStore Console (Push-уведомления → Проекты); push доходит
+  только на устройство с RuStore, если приложение добавлено в RuStore Console и
+  отпечаток подписи установленной сборки совпадает с консолью; на Android 13+
+  нужно разрешение `POST_NOTIFICATIONS`; тестовая отправка — из консоли
+  (Тестовые уведомления).
+- **Пакет публикации в RuStore (v1.5.0 S5-A)**
+  ([отчёт](development/reports/v1.5.0/S5-publish-assets.md)):
+  `docs/development/v1.5/RUSTORE_PUBLISH.md` — Release Notes (5 пунктов),
+  краткое (64/80) и полное (3181/4000) описание, чек-лист графики,
+  юридический чек-лист (возрастной рейтинг, политика конфиденциальности,
+  согласие ПД, удаление аккаунта, декларация разрешений) и пошаговая
+  инструкция загрузки AAB + альфа-тестирования; сгенерированы ассеты
+  `assets/rustore/` (иконка 512×512 и 1024×1024, баннеры 1920×1080 и
+  1024×500, 4 скриншота 1080×1920). Зафиксированы блокеры публикации:
+  API-origin release-сборки, отсутствие триггера push, зависимость QR от
+  Google Play Services, отсутствие удаления аккаунта и согласия ПД, иконки
+  лаунчера, лишние разрешения (`READ_MEDIA_IMAGES`/`READ_EXTERNAL_STORAGE`).
+- **KI-657 (Medium, Documented):** RuStore Push SDK 6.4.0 не резолвится из
+  Maven-URL, указанного в документации (`artifactory-external.vkpartner.ru` —
+  404), а транзитивный `ru.ok.tracer:tracer-lite-crash-report:0.4.6` отсутствует
+  в `maven-rustore-exposed`; в `web/android/build.gradle` добавлен рабочий
+  репозиторий `maven-tracer-public-exposed`, сборка проверена.
 - **KI-646..651:** AndroidManifest без CAMERA/ML Kit, `src="/logo.svg"` под `base: './'`,
   устаревший API в рецепте, `web/android/` вне git, Capacitor 8 vs 7, вес бандла.
-- **KI-653 (High, S4-B):** push на Android не зарегистрируется без
-  `google-services.json` (Gradle-плагин Google Services не применяется,
-  FirebaseApp не инициализируется — ожидает ручных шагов пользователя).
-- **KI-654 (Low, S4-B):** push-уведомление рисуется без белой монохромной
-  иконки, которую требует README плагина (белый квадрат в статусбаре).
-- **KI-655 (Medium, S4-B):** `.github/workflows/release-mobile.yml` не проверен
-  реальным прогоном — AAB ещё не собирался (локально нет JDK/Android SDK,
-  Secrets создаёт пользователь); первый `workflow_dispatch` — в S4-B.
 - **KI-651:** замер в S3 — плагины filesystem/file-opener/push дали ещё
   vendor 144.94 → 154.46 kB (gzip +2.78) и index 198.24 → 213.13 kB;
   ленивая загрузка плагинов отложена в S4.
