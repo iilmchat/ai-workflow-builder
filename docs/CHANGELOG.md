@@ -17,6 +17,8 @@
 ---
 ## [Unreleased]
 
+## [1.5.0] — 2026-11-10
+
 ### Added
 
 - **Production hardening (v1.6.0 S6-C)**
@@ -3046,6 +3048,7 @@ Canvas (React Flow) → Engine (топосортировка) → Runner (BullMQ
 - **`.env`** — в `.gitignore`, содержит только dev-секреты
   (`workflow_dev_password` — локальный PostgreSQL в Docker).
 - **Публичный репозиторий** — email автора обезличен.
+
 
 
 
