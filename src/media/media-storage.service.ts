@@ -767,6 +767,18 @@ export interface S3MediaStorageOptions {
    */
   publicBucket?: boolean;
   /**
+   * Адресация бакета (`S3_FORCE_PATH_STYLE`, KI-4xx).
+   *
+   * `true` или не задано — path-style `<endpoint>/<bucket>/<key>`: подходит
+   * для MinIO, R2, Yandex Object Storage.
+   *
+   * `false` — virtual-hosted `<bucket>.<endpoint>/<key>`. Нужен для бакетов
+   * Selectel и AWS: CORS на стороне провайдера отдаётся только для
+   * virtual-hosted адресации, иначе Android-клиент не сможет скачать
+   * presigned URL через `fetch`.
+   */
+  forcePathStyle?: boolean;
+  /**
    * Готовый клиент S3. Подменяется в тестах, чтобы не ходить в сеть; в
    * приложении не задаётся — клиент собирается из env.
    */
@@ -1411,9 +1423,9 @@ export class S3MediaStorage implements IMediaStorage {
   /**
    * Создаёт SDK-клиент S3 по проверенным параметрам.
    *
-   * `forcePathStyle` включён всегда: endpoint задаётся вручную (MinIO, R2,
-   * Yandex Object Storage), а для них path-style — единственный рабочий режим;
-   * AWS S3 такой формат также поддерживает.
+   * Режим адресации берётся из `S3_FORCE_PATH_STYLE` (KI-4xx): по умолчанию
+   * path-style — единственный рабочий режим для MinIO, R2 и Yandex Object
+   * Storage; `false` включает virtual-hosted (нужен для CORS у Selectel).
    *
    * @param config - проверенные параметры подключения
    * @returns новый клиент `S3Client`
@@ -1431,7 +1443,7 @@ export class S3MediaStorage implements IMediaStorage {
     return new sdk.S3Client({
       region: config.region,
       endpoint: config.endpoint,
-      forcePathStyle: true,
+      forcePathStyle: this.options.forcePathStyle !== false,
       credentials: {
         accessKeyId: config.accessKeyId,
         secretAccessKey: config.secretAccessKey,
@@ -1440,7 +1452,11 @@ export class S3MediaStorage implements IMediaStorage {
   }
 
   /**
-   * Строит прямой URL объекта: `<endpoint>/<bucket>/<key>`.
+   * Строит прямой URL объекта.
+   *
+   * Режим совпадает с SDK-клиентом (KI-4xx):
+   * - path-style: `<endpoint>/<bucket>/<key>`;
+   * - virtual-hosted: `<bucket>.<host>:<port>/<key>`.
    *
    * Работает только для публичного бакета: приватный ответит 403, поэтому для
    * него `storedUrl` — presigned GET (см. {@link getSignedUrlAsync}).
@@ -1452,6 +1468,16 @@ export class S3MediaStorage implements IMediaStorage {
   private buildDirectUrl(config: ResolvedS3Config, storageKey: string): string {
     const base = config.endpoint.replace(/\/+$/, '');
 
+    if (this.options.forcePathStyle === false) {
+      const endpoint = new URL(base);
+      const prefix = endpoint.pathname.replace(/\/+$/, '');
+      const key = storageKey.replace(/^\/+/, '');
+      endpoint.hostname = `${config.bucket}.${endpoint.hostname}`;
+      endpoint.pathname = `${prefix}/${key}`;
+
+      return endpoint.toString();
+    }
+
     return `${base}/${config.bucket}/${storageKey}`;
   }
 }
@@ -1459,10 +1485,14 @@ export class S3MediaStorage implements IMediaStorage {
 /**
  * Восстанавливает ключ объекта из сохранённой S3-ссылки (KI-443).
  *
- * `stored_url` — это либо presigned GET, либо прямой URL, но в обоих случаях
- * path-style: `<endpoint>/<bucket>/<runId>/<fileName>`. Bucket известен из
- * конфигурации, поэтому ключ — всё, что идёт после `/<bucket>/`. Query
- * (`X-Amz-Signature`, `X-Amz-Expires`) отбрасывается.
+ * Поддерживаются оба режима адресации (KI-4xx): в `stored_url` могли
+ * остаться ссылки, подписанные до переключения `S3_FORCE_PATH_STYLE`.
+ * - path-style `<endpoint>/<bucket>/<runId>/<fileName>` — ключ идёт после
+ *   `/<bucket>/`;
+ * - virtual-hosted `<bucket>.<endpoint>/<runId>/<fileName>` — ключ это весь
+ *   pathname без ведущего `/`.
+ *
+ * Query (`X-Amz-Signature`, `X-Amz-Expires`) отбрасывается.
  *
  * @param config - проверенные параметры подключения
  * @param storedUrl - ссылка из `node_runs.stored_url`
@@ -1473,29 +1503,43 @@ function storageKeyFromUrl(
   config: ResolvedS3Config,
   storedUrl: string,
 ): string | null {
-  let pathname: string;
+  let url: URL;
 
   try {
-    pathname = new URL(storedUrl).pathname;
+    url = new URL(storedUrl);
   } catch {
     return null;
   }
 
+  if (url.hostname.startsWith(`${config.bucket}.`)) {
+    return decodeStorageKey(url.pathname);
+  }
+
   const marker = `/${config.bucket}/`;
-  const markerIndex = pathname.indexOf(marker);
+  const markerIndex = url.pathname.indexOf(marker);
 
   if (markerIndex === -1) {
     return null;
   }
 
-  const rawKey = pathname.slice(markerIndex + marker.length);
+  return decodeStorageKey(url.pathname.slice(markerIndex + marker.length));
+}
 
-  if (rawKey.length === 0) {
+/**
+ * Декодирует ключ объекта из pathname.
+ *
+ * @param rawKey - часть URL после бакета (может начинаться с `/`)
+ * @returns ключ без ведущего `/` либо `null` для пустого/битого значения
+ */
+function decodeStorageKey(rawKey: string): string | null {
+  const trimmed = rawKey.replace(/^\/+/, '');
+
+  if (trimmed.length === 0) {
     return null;
   }
 
   try {
-    return decodeURIComponent(rawKey);
+    return decodeURIComponent(trimmed);
   } catch {
     // Битый percent-encoding: ключ не восстановить.
     return null;
@@ -1642,6 +1686,9 @@ export function createMediaStorage(
         ttlDays: config?.get<number>('S3_TTL_DAYS'),
         // KI-444: флаг публичного бакета приходит из env, как остальные `S3_*`.
         publicBucket: config?.get<boolean>('S3_PUBLIC_BUCKET') === true,
+        // KI-4xx: `false` включает virtual-hosted адресацию (нужен CORS).
+        forcePathStyle:
+          config?.get<boolean>('S3_FORCE_PATH_STYLE') !== false,
       });
 
       if (s3.isConfigured) {

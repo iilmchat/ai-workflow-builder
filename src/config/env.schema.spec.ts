@@ -607,6 +607,41 @@ describe('S3_PUBLIC_BUCKET (KI-444)', () => {
   });
 });
 
+describe('S3_FORCE_PATH_STYLE (KI-4xx)', () => {
+  it('по умолчанию path-style включён', () => {
+    expect(EnvSchema.parse(baseEnv).S3_FORCE_PATH_STYLE).toBe(true);
+    // Пустое значение в .env = «не задано» (KI-084).
+    expect(
+      EnvSchema.parse({ ...baseEnv, S3_FORCE_PATH_STYLE: '' })
+        .S3_FORCE_PATH_STYLE,
+    ).toBe(true);
+  });
+
+  it("различает 'true' и 'false' из .env", () => {
+    expect(
+      EnvSchema.parse({ ...baseEnv, S3_FORCE_PATH_STYLE: 'false' })
+        .S3_FORCE_PATH_STYLE,
+    ).toBe(false);
+    expect(
+      EnvSchema.parse({ ...baseEnv, S3_FORCE_PATH_STYLE: 'true' })
+        .S3_FORCE_PATH_STYLE,
+    ).toBe(true);
+    expect(
+      EnvSchema.parse({ ...baseEnv, S3_FORCE_PATH_STYLE: false })
+        .S3_FORCE_PATH_STYLE,
+    ).toBe(false);
+  });
+
+  it('отклоняет мусор вместо булева значения', () => {
+    expect(() =>
+      EnvSchema.parse({ ...baseEnv, S3_FORCE_PATH_STYLE: 'yes' }),
+    ).toThrow();
+    expect(() =>
+      EnvSchema.parse({ ...baseEnv, S3_FORCE_PATH_STYLE: '0' }),
+    ).toThrow();
+  });
+});
+
 describe('SANDBOX_* (R7.5, KI-364)', () => {
   it('дефолты: выключено, таймаут 100 мс, память 16 МБ', () => {
     const parsed = EnvSchema.parse(baseEnv);
