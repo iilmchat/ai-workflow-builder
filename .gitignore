@@ -62,8 +62,13 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 .env
 .env.local
 .env.*.local
+# v1.6.0 S6-A: production-env на VPS — секреты, в git не попадает.
+# Коммитится только шаблон `.env.production.example`.
+.env.production
+.env.production.local
 
 !.env.example
+!.env.production.example
 
 # Debug logs
 *.log

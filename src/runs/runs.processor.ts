@@ -1,13 +1,15 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Job } from 'bullmq';
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { workflowRuns, type RunStatus } from '../db/schema.js';
+import { workflows, workflowRuns, type RunStatus } from '../db/schema.js';
 import { GraphSnapshotSchema, type GraphSnapshotDto } from '../engine/dto/index.js';
 import { isRunCancelledError } from '../engine/errors.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
+import { DeviceTokensService } from '../notifications/device-tokens.service.js';
 import { ExecuteRunJobSchema, type ExecuteRunJobDto } from './dto/index.js';
 import { RunEventsService } from './run-events.service.js';
 import { WORKFLOW_RUNS_QUEUE } from './runs.constants.js';
@@ -67,12 +69,28 @@ interface RunForExecution {
 export class RunsProcessor extends WorkerHost {
   private readonly logger = new Logger(RunsProcessor.name);
 
+  /** Отправлять ли push о завершении запуска вообще (`PUSH_ON_RUN_COMPLETE`). */
+  private readonly pushOnRunComplete: boolean;
+
+  /** Отправлять ли push при успешном завершении (`PUSH_ON_RUN_COMPLETE_SUCCESS`). */
+  private readonly pushOnRunCompleteSuccess: boolean;
+
   constructor(
     @Inject(DRIZZLE) private readonly db: Database,
     private readonly executionEngine: ExecutionEngineService,
     private readonly runEvents: RunEventsService,
+    private readonly deviceTokens: DeviceTokensService,
+    config: ConfigService,
   ) {
     super();
+
+    // v1.5.0 S5-B (KI-659): флаги читаются один раз при создании воркера
+    // (RULES 4.6). Оба — строгие boolean из `EnvSchema` (RULES 4.35);
+    // `?? …` — защита от мока ConfigService в тестах, а не второй дефолт.
+    this.pushOnRunComplete =
+      config.get<boolean>('PUSH_ON_RUN_COMPLETE') ?? true;
+    this.pushOnRunCompleteSuccess =
+      config.get<boolean>('PUSH_ON_RUN_COMPLETE_SUCCESS') ?? false;
   }
 
   /**
@@ -224,6 +242,10 @@ export class RunsProcessor extends WorkerHost {
         attempts,
         final: true,
       });
+
+      // v1.5.0 S5-B (KI-659): push — после финального `run_completed`, чтобы
+      // сбой доставки не влиял на исход запуска.
+      await this.notifyRunFinishedAsync(runId, result.status);
     } catch (error: unknown) {
       // v1.4.0 S1 (DESIGN V140 § 3.1): отмена — не провал job'а. Движок
       // остановился по флагу `cancelled_at`, поэтому:
@@ -258,7 +280,98 @@ export class RunsProcessor extends WorkerHost {
         final: !willRetry,
       });
 
+      // Push — только на финальной попытке: промежуточный `failed` ещё будет
+      // переигран BullMQ, и пользователь получил бы ложное «запуск упал».
+      if (!willRetry) {
+        await this.notifyRunFinishedAsync(runId, 'failed');
+      }
+
       throw error;
+    }
+  }
+
+  /**
+   * Отправляет push владельцу workflow о финале запуска (v1.5.0 S5-B, KI-659).
+   *
+   * **Почему здесь, а не в движке.** `RunsProcessor` — единственное место,
+   * которое знает, финальна ли попытка (`final`): при retry BullMQ запуск
+   * переигрывается, и промежуточный `failed` не должен превращаться в
+   * уведомление. Событие `run_completed` уже публикуется здесь (KI-060) —
+   * push идёт рядом с ним, после него.
+   *
+   * **Что отправляем.** Только `failed` по умолчанию; `completed` — при
+   * `PUSH_ON_RUN_COMPLETE_SUCCESS=true`. `cancelled` не уведомляем: отмену
+   * инициировал сам пользователь, он уже знает результат. Общий выключатель —
+   * `PUSH_ON_RUN_COMPLETE=false`.
+   *
+   * **Fire-and-forget.** `sendToUserAsync` не ожидается: HTTP-запрос к RuStore
+   * не должен задерживать освобождение job'а и тем более менять его исход.
+   * Ошибка доставки логируется, но `run_completed` и `finishRunAsync` уже
+   * выполнены (RULES 4.18). SELECT владельца и имени workflow — в `try/catch`:
+   * сбой БД на этом шаге тоже не должен ронять запуск.
+   *
+   * **Приватность.** В теле — только имя workflow (его задал сам пользователь);
+   * email, граф и выходы узлов не попадают (RULES 5.9). `data` содержит
+   * `runId`/`workflowId` для перехода по тапу.
+   *
+   * @param runId - uuid запуска
+   * @param status - статус попытки: `completed`/`failed`/`cancelled`
+   * @returns промис без значения: завершается после попытки отправки
+   */
+  private async notifyRunFinishedAsync(
+    runId: string,
+    status: 'completed' | 'failed' | 'cancelled',
+  ): Promise<void> {
+    if (status === 'cancelled' || !this.pushOnRunComplete) {
+      return;
+    }
+
+    if (status === 'completed' && !this.pushOnRunCompleteSuccess) {
+      return;
+    }
+
+    try {
+      // Владелец запуска — `workflows.user_id`: в `workflow_runs` колонки
+      // `user_id` нет (KI-659), запуск наследует владельца workflow.
+      const [target] = await this.db
+        .select({
+          userId: workflows.userId,
+          workflowId: workflowRuns.workflowId,
+          workflowName: workflows.name,
+        })
+        .from(workflowRuns)
+        .innerJoin(workflows, eq(workflowRuns.workflowId, workflows.id))
+        .where(eq(workflowRuns.id, runId))
+        .limit(1);
+
+      if (target === undefined) {
+        this.logger.warn(
+          `Запуск ${runId}: владелец workflow не найден — push не отправлен`,
+        );
+
+        return;
+      }
+
+      const title = status === 'completed' ? 'Запуск завершён' : 'Запуск упал';
+      const body =
+        status === 'completed'
+          ? `Запуск «${target.workflowName}» завершён`
+          : `Запуск «${target.workflowName}» упал`;
+
+      void this.deviceTokens
+        .sendToUserAsync(target.userId, title, body, {
+          runId,
+          workflowId: target.workflowId,
+        })
+        .catch((error: unknown) => {
+          this.logger.error(
+            `Не удалось отправить push о запуске ${runId}: ${toMessage(error)}`,
+          );
+        });
+    } catch (error: unknown) {
+      this.logger.error(
+        `Не удалось подготовить push о запуске ${runId}: ${toMessage(error)}`,
+      );
     }
   }
 

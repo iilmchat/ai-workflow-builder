@@ -7,8 +7,12 @@
          RuStore Push SDK получит токен, но уведомления не покажет.
          Запрос делает RuStorePushPlugin.init (v1.5.0 S4-B). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- v1.5.0 S5-B (KI-663): storage-разрешения не объявляются.
+         `useCamera` использует только `CameraSource.Camera`
+         (`MediaStore.ACTION_IMAGE_CAPTURE`) — он не требует READ_*; галерея
+         (`CameraSource.Photos`) и сохранение фото в общий storage не
+         вызываются. На Android 13+ выбор фото шёл бы через Photo Picker,
+         которому READ_MEDIA_IMAGES тоже не нужен. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application

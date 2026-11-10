@@ -107,7 +107,9 @@ describe('web-search env (v0.10 S1, v0.15 S3)', () => {
 
 describe('WorkerEnvSchema (KI-065, KI-032)', () => {
   it('применяет дефолты, когда переменные не заданы', () => {
-    expect(WorkerEnvSchema.parse({})).toEqual({
+    // v1.5.0 S5-B (KI-659): в схеме появились push-флаги, поэтому проверка —
+    // через `toMatchObject`: добавление нового поля не должно ломать тест.
+    expect(WorkerEnvSchema.parse({})).toMatchObject({
       WORKFLOW_RUNS_CONCURRENCY: 5,
       WORKFLOW_RUNS_LOCK_DURATION_MS: 300_000,
       WORKFLOW_RUNS_MAX_STALLED_COUNT: 2,
@@ -115,6 +117,9 @@ describe('WorkerEnvSchema (KI-065, KI-032)', () => {
       // KI-387: изоляция очередей между инстансами.
       BULLMQ_PREFIX: 'workflow-runs',
       REDIS_QUEUE_DB: 0,
+      // KI-659: push включён, успешные запуски — без уведомления.
+      PUSH_ON_RUN_COMPLETE: true,
+      PUSH_ON_RUN_COMPLETE_SUCCESS: false,
     });
   });
 
@@ -126,7 +131,7 @@ describe('WorkerEnvSchema (KI-065, KI-032)', () => {
       WORKFLOW_RUNS_STALE_THRESHOLD_MS: '120000',
     });
 
-    expect(parsed).toEqual({
+    expect(parsed).toMatchObject({
       WORKFLOW_RUNS_CONCURRENCY: 12,
       WORKFLOW_RUNS_LOCK_DURATION_MS: 60_000,
       WORKFLOW_RUNS_MAX_STALLED_COUNT: 0,
@@ -485,6 +490,64 @@ describe('TRUST_PROXY (R7.7, KI-419)', () => {
   it('отклоняет мусор вместо булева значения', () => {
     expect(() => EnvSchema.parse({ ...baseEnv, TRUST_PROXY: 'yes' })).toThrow();
     expect(() => EnvSchema.parse({ ...baseEnv, TRUST_PROXY: '1' })).toThrow();
+  });
+});
+
+describe('CORS_ALLOWED_ORIGINS (v1.6.0 S6-A)', () => {
+  it('опционален: без значения приложение поднимается (dev — origin: true)', () => {
+    expect(EnvSchema.parse(baseEnv).CORS_ALLOWED_ORIGINS).toBeUndefined();
+    // Пустая строка в .env = «не задано» (KI-084), а не ошибка старта.
+    expect(
+      EnvSchema.parse({ ...baseEnv, CORS_ALLOWED_ORIGINS: '' })
+        .CORS_ALLOWED_ORIGINS,
+    ).toBeUndefined();
+    expect(
+      EnvSchema.parse({ ...baseEnv, CORS_ALLOWED_ORIGINS: '   ' })
+        .CORS_ALLOWED_ORIGINS,
+    ).toBeUndefined();
+  });
+
+  it('принимает список origin-ов строкой (разбор — в src/config/cors.ts)', () => {
+    const parsed = EnvSchema.parse({
+      ...baseEnv,
+      CORS_ALLOWED_ORIGINS:
+        'https://app.example.com,https://localhost,capacitor://localhost',
+    });
+
+    expect(parsed).toMatchObject({
+      CORS_ALLOWED_ORIGINS:
+        'https://app.example.com,https://localhost,capacitor://localhost',
+    });
+  });
+
+  it('не падает при NODE_ENV=production с валидным allowlist', () => {
+    expect(() =>
+      validateEnv({
+        ...baseEnv,
+        NODE_ENV: 'production',
+        COOKIE_SECURE: 'true',
+        CORS_ALLOWED_ORIGINS: 'https://app.example.com',
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe('METRICS_ALLOWED_IPS (v1.6.0 S6-A)', () => {
+  it('по умолчанию только loopback — публичный /metrics не нужен', () => {
+    expect(EnvSchema.parse(baseEnv).METRICS_ALLOWED_IPS).toBe('127.0.0.1');
+    // Пустая строка = «не задано» (KI-084) → дефолт, а не пустой allowlist.
+    expect(
+      EnvSchema.parse({ ...baseEnv, METRICS_ALLOWED_IPS: '' }).METRICS_ALLOWED_IPS,
+    ).toBe('127.0.0.1');
+  });
+
+  it('принимает список адресов и CIDR строкой', () => {
+    expect(
+      EnvSchema.parse({
+        ...baseEnv,
+        METRICS_ALLOWED_IPS: '127.0.0.1,172.18.0.0/16,62.109.1.230',
+      }).METRICS_ALLOWED_IPS,
+    ).toBe('127.0.0.1,172.18.0.0/16,62.109.1.230');
   });
 });
 
@@ -1000,5 +1063,37 @@ describe('RuStore Push env (S4-B)', () => {
 
     expect(parsed.RUSTORE_PROJECT_ID).toBe('project-42');
     expect(parsed.RUSTORE_SERVICE_TOKEN).toBe('service-token');
+  });
+});
+
+describe('Push о завершении запуска (v1.5.0 S5-B, KI-659)', () => {
+  it('дефолты: push включён, успешные запуски — без уведомления', () => {
+    const parsed = WorkerEnvSchema.parse({});
+
+    expect(parsed.PUSH_ON_RUN_COMPLETE).toBe(true);
+    expect(parsed.PUSH_ON_RUN_COMPLETE_SUCCESS).toBe(false);
+  });
+
+  it("строго разбирает 'true'/'false' и отвергает мусор (RULES 4.35)", () => {
+    expect(
+      WorkerEnvSchema.parse({ PUSH_ON_RUN_COMPLETE: 'false' })
+        .PUSH_ON_RUN_COMPLETE,
+    ).toBe(false);
+    expect(
+      WorkerEnvSchema.parse({ PUSH_ON_RUN_COMPLETE: 'true' })
+        .PUSH_ON_RUN_COMPLETE,
+    ).toBe(true);
+    expect(
+      WorkerEnvSchema.parse({ PUSH_ON_RUN_COMPLETE_SUCCESS: 'true' })
+        .PUSH_ON_RUN_COMPLETE_SUCCESS,
+    ).toBe(true);
+
+    // `'garbage'` не должен молча включать/выключать флаг.
+    expect(
+      WorkerEnvSchema.safeParse({ PUSH_ON_RUN_COMPLETE: 'garbage' }).success,
+    ).toBe(false);
+    expect(
+      WorkerEnvSchema.safeParse({ PUSH_ON_RUN_COMPLETE_SUCCESS: '1' }).success,
+    ).toBe(false);
   });
 });

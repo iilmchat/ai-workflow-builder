@@ -1,5 +1,6 @@
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { FileOpener } from '@capacitor-community/file-opener';
+import { resolveApiUrl } from '@/lib/api-base';
 import { isNative } from '@/lib/platform';
 
 /**
@@ -52,7 +53,10 @@ export async function downloadAndOpenFileAsync(
     return;
   }
 
-  const response = await fetch(url);
+  // В native-сборке относительный `/media/file/...` указывал бы в сам WebView
+  // (`https://localhost`): resolveApiUrl добавляет `VITE_API_BASE` (KI-658),
+  // абсолютные presigned-ссылки S3 остаются как есть.
+  const response = await fetch(resolveApiUrl(url));
 
   if (!response.ok) {
     throw new Error(`Failed to download: ${response.status}`);

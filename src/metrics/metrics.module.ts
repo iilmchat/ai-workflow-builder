@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { MetricsController } from './metrics.controller.js';
 import { MetricsInterceptor } from './metrics.interceptor.js';
+import { MetricsIpGuard } from './metrics-ip.guard.js';
 import { MetricsService } from './metrics.service.js';
 
 /**
@@ -20,7 +21,9 @@ import { MetricsService } from './metrics.service.js';
 @Global()
 @Module({
   controllers: [MetricsController],
-  providers: [MetricsService, MetricsInterceptor],
+  // v1.6.0 S6-A: MetricsIpGuard — allowlist `GET /metrics` по IP. Провайдер
+  // нужен, потому что guard стоит на контроллере этого модуля.
+  providers: [MetricsService, MetricsInterceptor, MetricsIpGuard],
   exports: [MetricsService, MetricsInterceptor],
 })
 export class MetricsModule {}

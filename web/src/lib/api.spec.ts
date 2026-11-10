@@ -11,6 +11,18 @@ import {
 import { useAuthStore } from '@/stores/auth';
 
 /**
+ * Флаг нативной платформы для проверки `getApiBase` (v1.5.0 S5-B, KI-658).
+ *
+ * Мок нужен только новому describe в конце файла; по умолчанию `false`, поэтому
+ * остальные тесты продолжают работать с относительными URL, как в браузере.
+ */
+const platform = vi.hoisted(() => ({ native: false }));
+
+vi.mock('@/lib/platform', () => ({
+  isNative: () => platform.native,
+}));
+
+/**
  * Заголовки `sendAsync` (KI-479, DESIGN v0.11 § 3.1.8).
  *
  * `sendAsync` не экспортируется, поэтому проверяется через публичный
@@ -81,7 +93,9 @@ function bodyOf(fetchMock: ReturnType<typeof vi.fn>, index = 0): BodyInit | null
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  platform.native = false;
   useAuthStore.getState().clearSession();
 });
 
@@ -372,5 +386,27 @@ describe('registerDeviceTokenAsync (v1.5.0 S3)', () => {
     ).rejects.toThrow();
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('requestAsync: база API (v1.5.0 S5-B, KI-658)', () => {
+  it('в браузере URL остаётся относительным', async () => {
+    const fetchMock = stubFetch();
+
+    await requestAsync('/workflow');
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/workflow');
+  });
+
+  it('в native-сборке к пути добавляется VITE_API_BASE', async () => {
+    platform.native = true;
+    vi.stubEnv('VITE_API_BASE', 'https://api.example.com/');
+    const fetchMock = stubFetch();
+
+    await requestAsync('/workflow');
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://api.example.com/workflow',
+    );
   });
 });

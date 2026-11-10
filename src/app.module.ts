@@ -29,6 +29,8 @@ import { DbModule } from './db/db.module.js';
 import { DocumentsModule } from './documents/documents.module.js';
 // v0.10 S7: безопасный файловый workspace (FilesystemService).
 import { FilesystemModule } from './filesystem/filesystem.module.js';
+// v1.6.0 S6-A: health/readiness `GET /health` (БД + Redis) для Docker/Caddy.
+import { HealthModule } from './health/health.module.js';
 import { LlmModule } from './llm/llm.module.js';
 // v0.11 S8: MCP-модуль также отдаёт HTTP-ручку каталога `GET /mcp/servers`.
 import { McpModule } from './mcp/mcp.module.js';
@@ -134,6 +136,9 @@ const WEB_DIST_PATH = join(
     }),
     DbModule,
     RedisModule,
+    // v1.6.0 S6-A: публичный `GET /health` (process + PostgreSQL + Redis).
+    // Модуль без imports: DbModule и RedisModule помечены @Global.
+    HealthModule,
     ObservabilityModule,
     // v1.0.0 S4 (DESIGN V100 § 3.3): подсистема метрик Prometheus. @Global:
     // EngineModule/AgentModule получают MetricsService без правок их imports.

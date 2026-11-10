@@ -1,3 +1,4 @@
+import { resolveApiUrl } from '@/lib/api-base';
 import { isRenderableMediaUrl } from '@/types/media';
 
 /**
@@ -128,7 +129,10 @@ export function resolveMediaSource(input: MediaSourceInput): MediaSource {
     }
 
     return isSafeStoredUrl(storedUrl)
-      ? { src: storedUrl, expired: false, invalid: false }
+      ? // Абсолютный URL (S3) не меняется, относительный `/media/file/...`
+        // получает `VITE_API_BASE` в native-сборке (KI-658): иначе WebView
+        // искал бы картинку на `https://localhost`.
+        { src: resolveApiUrl(storedUrl), expired: false, invalid: false }
       : { src: null, expired: false, invalid: true };
   }
 

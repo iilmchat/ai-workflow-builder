@@ -1,0 +1,92 @@
+# Production-override (v1.6.0 S6-A): единственная точка входа — Caddy.
+#
+# Применяется ПОВЕРХ базового `docker-compose.prod.yml`:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.prod.override.yml up -d
+#
+# Compose не подхватит файл автоматически (это не `docker-compose.override.yml`),
+# поэтому оба `-f` обязательны. Проверка итоговой конфигурации:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.prod.override.yml config --quiet
+#
+# Что меняется относительно базы:
+# - `app` больше не публикует порт наружу (`ports` сбрасывается тегом `!reset`):
+#   прямые запросы на :3000 в обход TLS/rate-limit недопустимы. `!reset`
+#   обязателен, иначе Compose ДОБАВИТ порт базы к нашему списку (merge
+#   последовательностей), и 3000 оказался бы в интернете;
+# - добавлен `caddy` (TLS + reverse proxy) — единственный сервис с `ports`;
+# - лимиты памяти и json-file-логи с ротацией (иначе `docker logs` съест диск);
+# - healthcheck приложения бьёт в `/health` (проверка БД + Redis), а не в `/`.
+#
+# Требуется Docker Compose ≥ 2.24 (тег `!reset`). Проверка версии:
+#   docker compose version
+# Старые версии — см. KI-670 в `docs/KNOWN_ISSUES.md`.
+
+name: workflow-builder-prod
+
+# Общий logging-профиль: ротация на уровне Docker, без внешнего драйвера.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  app:
+    # `!reset []` очищает `ports` из базового файла: наружу смотрит только Caddy.
+    ports: !reset []
+    expose:
+      - "3000"
+    restart: unless-stopped
+    mem_limit: 2g
+    logging: *default-logging
+    healthcheck:
+      # `/health` отдаёт 200 только когда живы PostgreSQL и Redis, поэтому
+      # `healthy` означает «API реально может обслуживать запросы».
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  db:
+    # Только loopback: отладка с хоста (psql), снаружи порт закрыт.
+    # Тот же адрес, что в базе: Compose схлопывает одинаковые записи.
+    ports:
+      - "127.0.0.1:5434:5432"
+    mem_limit: 2g
+    logging: *default-logging
+
+  redis:
+    ports:
+      - "127.0.0.1:6380:6379"
+    mem_limit: 512m
+    logging: *default-logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    # Единственные опубликованные порты стека. 443/udp — HTTP/3.
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      # Конфиг монтируется только на чтение: правится в репозитории и
+      # перечитывается `docker compose restart caddy` (или `caddy reload`).
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Сертификаты Let's Encrypt и состояние Caddy переживают пересоздание.
+      - caddy-data:/data
+      - caddy-config:/config
+    mem_limit: 256m
+    logging: *default-logging
+
+volumes:
+  caddy-data:
+  caddy-config:

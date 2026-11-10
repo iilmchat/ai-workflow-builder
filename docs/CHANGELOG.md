@@ -23,6 +23,53 @@
 
 ### Added
 
+- **Production readiness и инфра-интеграция (v1.6.0 S6-A)**
+  ([отчёт](development/reports/v1.6.0/S6-A-production-readiness.md)):
+  - **CORS-allowlist:** `CORS_ALLOWED_ORIGINS` в `EnvSchema`; в production
+    `main.ts` передаёт `origin: <массив>` (`src/config/cors.ts` — разбор списка
+    через Zod, trim, срезание хвостового слэша, dedupe), а пустое значение —
+    отказ старта (`console.error` + `exit 1`). В dev/staging — прежнее
+    `origin: true` (KI-658).
+  - **Healthcheck:** `src/health/health.controller.ts` — `GET /health` без
+    авторизации: `SELECT 1` в PostgreSQL и `PING` в Redis параллельно, таймаут
+    2 с на проверку; `200 { status: "ok", details: { db: "up", redis: "up" } }`
+    или `503 { status: "error", ... }` с постатусной детализацией. Подключён
+    `HealthModule` в `AppModule`; префикс `health` — в `api-prefixes.json`
+    (паритет-тест обновлён).
+  - **Защита `/metrics`:** `MetricsIpGuard` + `METRICS_ALLOWED_IPS` (точные
+    адреса и IPv4-CIDR, дефолт `127.0.0.1`, loopback-алиасы `127.0.0.1`↔`::1`,
+    нормализация IPv4-mapped IPv6). `req.ip` приоритетнее `X-Forwarded-For` —
+    иначе allowlist обходится подделкой заголовка (KI-575).
+  - **Инфраструктура:** `docker-compose.prod.override.yml` (Caddy — единственная
+    точка входа, `!reset` снимает публикацию порта `app`, лимиты памяти
+    `2g/2g/512m/256m`, ротация json-file `10m×3`, healthcheck на `/health`),
+    `Caddyfile` (TLS + reverse proxy), `IMAGE_REF` для деплоя по digest,
+    `.env.production.example`, `.gitignore` — `.env.production` больше не
+    коммитится.
+  - **Документация:** `docs/development/PRODUCTION.md` (деплой, обновление по
+    digest, откат, бэкапы PostgreSQL/S3, алерты, troubleshooting);
+    `.env.example` — `CORS_ALLOWED_ORIGINS`, `METRICS_ALLOWED_IPS`.
+  - **Тесты:** `src/config/cors.spec.ts`, `src/health/health.controller.spec.ts`
+    (200/503/частичный отказ/таймаут), `src/metrics/metrics-ip-allowlist.spec.ts`,
+    `src/metrics/metrics-ip.guard.spec.ts`, 403 в
+    `metrics.controller.spec.ts`, env-тесты новых переменных.
+  - **KI:** новые KI-666 (WAL/PITR, `Deferred`), KI-667 (автобэкапы),
+    KI-668 (CORS в staging/preprod), KI-669 (IPv6-CIDR), KI-670 (`!reset` и
+    Compose < 2.24).
+- **Release finalization: API-origin, push-триггер, иконки, разрешения
+  (v1.5.0 S5-B)**
+  ([отчёт](development/reports/v1.5.0/S5-B-release-finalization.md)):
+  `web/src/lib/api-base.ts` — `getApiBase()`/`apiUrl()`/`resolveApiUrl()`
+  (в native-сборке читают `VITE_API_BASE`, в браузере возвращают пустую базу),
+  применены в `requestAsync`, SSE (`run-stream.ts`), нативном скачивании
+  документов и media-узлах; `VITE_API_BASE` передаётся в `release-mobile.yml`
+  из repository variable. `RunsProcessor.notifyRunFinishedAsync` — push о
+  финале запуска: `failed` по умолчанию, `completed` при
+  `PUSH_ON_RUN_COMPLETE_SUCCESS=true`; env `PUSH_ON_RUN_COMPLETE` и
+  `PUSH_ON_RUN_COMPLETE_SUCCESS` (строгий boolean). Брендовые иконки лаунчера,
+  adaptive icon и splash сгенерированы `@capacitor/assets` из
+  `assets/rustore/icon-1024x1024.png`. Тесты: `web/src/lib/api-base.spec.ts`,
+  `src/runs/runs.processor.push.spec.ts`.
 - **RuStore Push вместо FCM (v1.5.0 S4-B)**
   ([отчёт](development/reports/v1.5.0/S4-B-rustore-push.md)): доставка
   push-уведомлений переведена с Firebase Cloud Messaging на RuStore Push.
@@ -46,6 +93,99 @@
   содержит `POST_NOTIFICATIONS`, `RuStorePushMessagingService` и SDK-провайдер.
   Инструкция —
   [`RUSTORE_SETUP.md`](development/v1.5/RUSTORE_SETUP.md).
+
+### Changed
+
+- **CORS для Capacitor (v1.5.0 S5-B):** `src/main.ts` включает
+  `app.enableCors({ origin: true })` — WebView грузится с `https://localhost`
+  (Android) / `capacitor://localhost` (iOS), а auth остаётся на
+  `Authorization: Bearer`, без cookie-CORS-обмена (KI-658).
+- **CI mobile (v1.5.0 S5-B):** `.github/workflows/release-mobile.yml` передаёт
+  `VITE_API_BASE: ${{ vars.VITE_API_BASE }}` в web-сборку и проверяет, что в
+  merged-манифесте нет `READ_MEDIA_IMAGES`/`READ_EXTERNAL_STORAGE`/
+  `WRITE_EXTERNAL_STORAGE` (KI-663).
+- **Иконки и splash (v1.5.0 S5-B, KI-662):** `mipmap-*` и adaptive-icon
+  перегенерированы из брендового логотипа; `ic_launcher.xml`/
+  `ic_launcher_round.xml` ссылаются на `@color/ic_launcher_background`
+  (`#FEF3E7`) и `@mipmap/ic_launcher_foreground`; splash-экраны — брендовые.
+- **Полное описание RuStore (v1.5.0 S5-B, KI-660):** добавлено ограничение
+  «QR работает на устройствах с Google Play Services»; длина — 3358/4000
+  символов (было 3181), Release Notes — 461 символ.
+- **Регистрация push-токена (v1.5.0 S4-B):** `usePushNotifications` работает
+  через нативный плагин `RuStorePush`, а не через `@capacitor/push-notifications`;
+  контракт `POST /notifications/register` (`{ token, platform }`, upsert в
+  `device_tokens`) не изменился.
+- **CI mobile (v1.5.0 S4-B):** `.github/workflows/release-mobile.yml` больше не
+  восстанавливает `google-services.json`; `Cleanup secrets` удаляет только
+  keystore; web-сборка получает `VITE_RUSTORE_PROJECT_ID` из
+  `vars.RUSTORE_PROJECT_ID`; секретов сборки — 4 (keystore), переменная
+  Project ID — отдельно.
+- **Docs (v1.5.0 S4-B):** `v1.5/FIREBASE_SETUP.md` заменён на
+  `v1.5/RUSTORE_SETUP.md`; обновлены `KEYSTORE_SETUP.md` (4 секрета +
+  `VITE_RUSTORE_PROJECT_ID` как variable), `MOBILE_CAPACITOR_NESTJS.md` (§ 11
+  push, § 18 CI/CD), DESIGN v1.5 (статус и риски S4-B), `USER_GUIDE.md` и
+  `MANUAL_TESTING_GUIDE.md` (push/ограничения/`MOBILE-09`), `docs/README.md`.
+
+### Removed
+
+- **Storage-разрешения (v1.5.0 S5-B, KI-663):** `READ_MEDIA_IMAGES` и
+  `READ_EXTERNAL_STORAGE` удалены из `AndroidManifest.xml`: камера используется
+  только через `CameraSource.Camera`, галерея (`CameraSource.Photos`) и
+  сохранение фото в общий storage не вызываются.
+- **FCM/Firebase (v1.5.0 S4-B):** `@capacitor/push-notifications` вместе с
+  `google-services.json`-цепочкой, Gradle-плагин `com.google.gms:google-services`,
+  файл `web/android/app/google-services.json` из сборочного сценария, GitHub
+  Secret `GOOGLE_SERVICES_JSON`, документ
+  `docs/development/v1.5/FIREBASE_SETUP.md` (заменён на `RUSTORE_SETUP.md`).
+
+### Fixed
+
+- **KI-658 (Fixed):** release-AAB доходит до backend — `VITE_API_BASE` в
+  native-сборке, `getApiBase()`/`apiUrl()`/`resolveApiUrl()`, CORS
+  `origin: true`, SSE/файлы/media; docs — `RUSTORE_SETUP.md` § «Backend
+  origin» (S5-B).
+- **KI-659 (Fixed):** push о завершении запуска инициируется из
+  `RunsProcessor` после финального `run_completed`; ошибка отправки не ломает
+  запуск (S5-B).
+- **KI-662 (Fixed):** иконки лаунчера и adaptive icon — брендовые, совпадают с
+  иконкой карточки RuStore (S5-B).
+- **KI-663 (Fixed):** лишние storage-разрешения удалены; CI проверяет их
+  отсутствие в merged-манифесте (S5-B).
+- **KI-653 (Fixed):** push на Android больше не зависит от
+  `google-services.json` — неактуально после миграции на RuStore Push (S4-B).
+- **KI-654 (Fixed):** FCM-meta-data иконки уведомления больше не используется —
+  неактуально после миграции на RuStore Push (S4-B).
+
+### Documented
+
+- **KI-660 (Documented):** QR-сканер зависит от Google Play Services; на
+  устройствах без GMS кнопка «Сканировать QR» недоступна. Ограничение
+  зафиксировано в `RUSTORE_PUBLISH.md` (§ 2.2 и «Известные ограничения
+  альфа-тестирования»); замена на bundled ML Kit — S6+.
+- **KI-661 (Open, вне S5-B):** удаление аккаунта внутри приложения и согласие
+  на обработку ПД не реализованы — блокер публикации RuStore п. 5.4, отдельный
+  срез S6.
+- **KI-664 (Open):** refresh-cookie (`SameSite=Strict`) не отправляется из
+  Capacitor WebView на другой origin; сессия живёт до истечения access-токена
+  (24 ч в примере), затем нужен повторный вход. План — S6+.
+- **KI-665 (Open):** при отсутствии GMS `scanQr()` возвращает `null` без
+  пользовательского сообщения — кнопка выглядит сломанной; UI-фикс или bundled
+  ML Kit — S6+.
+- **KI-656 (Medium, Planned):** нативный плагин RuStore Push написан вручную
+  (JS ↔ Java) и требует тестирования на устройстве с RuStore — отчёт
+  [S4-B-rustore-push.md](development/reports/v1.5.0/S4-B-rustore-push.md),
+  инструкция [`RUSTORE_SETUP.md`](development/v1.5/RUSTORE_SETUP.md).
+- **KI-657 (Medium, Documented):** RuStore Push SDK 6.4.0 не резолвится из
+  Maven-URL, указанного в документации (`artifactory-external.vkpartner.ru` —
+  404), а транзитивный `ru.ok.tracer:tracer-lite-crash-report:0.4.6` отсутствует
+  в `maven-rustore-exposed`; в `web/android/build.gradle` добавлен рабочий
+  репозиторий `maven-tracer-public-exposed`, сборка проверена.
+- **RuStore Push: настройка и ограничения (v1.5.0 S4-B):** Project ID и Service
+  Token выдаются в RuStore Console (Push-уведомления → Проекты); push доходит
+  только на устройство с RuStore, если приложение добавлено в RuStore Console и
+  отпечаток подписи установленной сборки совпадает с консолью; на Android 13+
+  нужно разрешение `POST_NOTIFICATIONS`; тестовая отправка — из консоли
+  (Тестовые уведомления).
 - **Пакет публикации в RuStore (v1.5.0 S5-A)**
   ([отчёт](development/reports/v1.5.0/S5-publish-assets.md)):
   `docs/development/v1.5/RUSTORE_PUBLISH.md` — Release Notes (5 пунктов),
