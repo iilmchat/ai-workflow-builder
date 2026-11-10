@@ -19,6 +19,8 @@
 
 ## [1.5.0] — 2026-11-10
 
+**Minor-релиз: Android Mobile App (Capacitor).**
+
 ### Added
 
 - **Production hardening (v1.6.0 S6-C)**
@@ -44,36 +46,6 @@
     `--force-recreate` для `Caddyfile`/`prometheus.yml`, offsite-бэкапы в S3,
     `REGISTRATION_MODE=open` + fail2ban; `.env.example`/`.env.production.example`
     — новые переменные.
-
-### Fixed
-
-- **Dockerfile: `api-prefixes.json` в runtime-стадии (v1.6.0 S6-B)**
-  ([отчёт](development/reports/v1.6.0/S6-B-post-deploy-fixes.md)):
-  `COPY --from=builder --chown=node:node /app/api-prefixes.json ./api-prefixes.json`
-  рядом с `dist`/`package.json`/`node_modules`, до `USER node`. Runtime-стадия
-  раньше не копировала файл, хотя `src/common/api-prefixes.ts` читает его при
-  импорте (`/app/api-prefixes.json`), поэтому образ из GHCR падал на старте
-  «Не прочитан единый реестр API-префиксов». На проде до пересборки файл
-  монтировался volume'ом (PRODUCTION.md § 13.1).
-
-### Changed
-
-- **Refresh-cookie `SameSite=None` для Capacitor WebView (v1.6.0 S6-B,
-  KI-664)** ([отчёт](development/reports/v1.6.0/S6-B-post-deploy-fixes.md)):
-  `src/auth/auth.cookie.ts` — `resolveRefreshCookieOptions`; в `production`
-  запрос с `Origin: capacitor://localhost` или `https://localhost` получает
-  `SameSite=None; Secure` (WebView и API — разные origin'ы), остальные —
-  `COOKIE_SAMESITE` из env (enum `Strict`/`Lax`/`None`, дефолт `Strict`).
-  `None` всегда включает `Secure`; `clearRefreshCookie` повторяет те же
-  атрибуты. `main.ts` — `credentials` в CORS только при точном allowlist'е
-  (production), чтобы браузер принял cross-origin `Set-Cookie`.
-  `.env.production.example` — комментарий для Android/Capacitor.
-
-## [1.5.0] — 2026-11-09
-
-**Minor-релиз: Android Mobile App (Capacitor).**
-
-### Added
 
 - **Production readiness и инфра-интеграция (v1.6.0 S6-A)**
   ([отчёт](development/reports/v1.6.0/S6-A-production-readiness.md)):
@@ -148,6 +120,16 @@
 
 ### Changed
 
+- **Refresh-cookie `SameSite=None` для Capacitor WebView (v1.6.0 S6-B,
+  KI-664)** ([отчёт](development/reports/v1.6.0/S6-B-post-deploy-fixes.md)):
+  `src/auth/auth.cookie.ts` — `resolveRefreshCookieOptions`; в `production`
+  запрос с `Origin: capacitor://localhost` или `https://localhost` получает
+  `SameSite=None; Secure` (WebView и API — разные origin'ы), остальные —
+  `COOKIE_SAMESITE` из env (enum `Strict`/`Lax`/`None`, дефолт `Strict`).
+  `None` всегда включает `Secure`; `clearRefreshCookie` повторяет те же
+  атрибуты. `main.ts` — `credentials` в CORS только при точном allowlist'е
+  (production), чтобы браузер принял cross-origin `Set-Cookie`.
+  `.env.production.example` — комментарий для Android/Capacitor.
 - **CORS для Capacitor (v1.5.0 S5-B):** `src/main.ts` включает
   `app.enableCors({ origin: true })` — WebView грузится с `https://localhost`
   (Android) / `capacitor://localhost` (iOS), а auth остаётся на
@@ -192,6 +174,14 @@
 
 ### Fixed
 
+- **Dockerfile: `api-prefixes.json` в runtime-стадии (v1.6.0 S6-B)**
+  ([отчёт](development/reports/v1.6.0/S6-B-post-deploy-fixes.md)):
+  `COPY --from=builder --chown=node:node /app/api-prefixes.json ./api-prefixes.json`
+  рядом с `dist`/`package.json`/`node_modules`, до `USER node`. Runtime-стадия
+  раньше не копировала файл, хотя `src/common/api-prefixes.ts` читает его при
+  импорте (`/app/api-prefixes.json`), поэтому образ из GHCR падал на старте
+  «Не прочитан единый реестр API-префиксов». На проде до пересборки файл
+  монтировался volume'ом (PRODUCTION.md § 13.1).
 - **KI-658 (Fixed):** release-AAB доходит до backend — `VITE_API_BASE` в
   native-сборке, `getApiBase()`/`apiUrl()`/`resolveApiUrl()`, CORS
   `origin: true`, SSE/файлы/media; docs — `RUSTORE_SETUP.md` § «Backend
@@ -210,6 +200,14 @@
 
 ### Documented
 
+- **Docs sync релиза v1.5.0 (S6-D)**
+  ([отчёт](development/reports/v1.5.0/S6-D-final-docs-sync.md)): `PROMPT_CURRENT`
+  v12.2 — метрики HEAD (backend 2065, frontend 577, KI 657, Open 286, Open High 1),
+  факты прода (FirstVDS 4 vCPU / 8 ГБ RAM, Selectel S3 virtual-hosted, Prometheus +
+  Grafana + blackbox, LM Studio через SSH-туннель + fallback), план v1.6.0;
+  сводка `KNOWN_ISSUES.md` пересчитана grep'ом (657/657/657), KI-655/656
+  приведены в порядок (fix-заметки); `CHANGELOG` сведён в одну секцию
+  `[1.5.0] — 2026-11-10`.
 - **KI-660 (Documented):** QR-сканер зависит от Google Play Services; на
   устройствах без GMS кнопка «Сканировать QR» недоступна. Ограничение
   зафиксировано в `RUSTORE_PUBLISH.md` (§ 2.2 и «Известные ограничения
@@ -217,14 +215,15 @@
 - **KI-661 (Open, вне S5-B):** удаление аккаунта внутри приложения и согласие
   на обработку ПД не реализованы — блокер публикации RuStore п. 5.4, отдельный
   срез S6.
-- **KI-664 (Open):** refresh-cookie (`SameSite=Strict`) не отправляется из
-  Capacitor WebView на другой origin; сессия живёт до истечения access-токена
-  (24 ч в примере), затем нужен повторный вход. План — S6+.
+- **KI-664 (Fixed, v1.6.0 S6-B):** refresh-cookie (`SameSite=Strict`) не
+  отправлялся из Capacitor WebView на другой origin; теперь в `production`
+  запрос с `Origin: capacitor://localhost`/`https://localhost` получает
+  `SameSite=None; Secure` (`COOKIE_SAMESITE`), `credentials: true` в CORS.
 - **KI-665 (Open):** при отсутствии GMS `scanQr()` возвращает `null` без
   пользовательского сообщения — кнопка выглядит сломанной; UI-фикс или bundled
   ML Kit — S6+.
-- **KI-656 (Medium, Planned):** нативный плагин RuStore Push написан вручную
-  (JS ↔ Java) и требует тестирования на устройстве с RuStore — отчёт
+- **KI-656 (Medium, Fixed):** нативный плагин RuStore Push (JS ↔ Java) собран и
+  работоспособен; device-smoke проводится на альфа-канале RuStore — отчёт
   [S4-B-rustore-push.md](development/reports/v1.5.0/S4-B-rustore-push.md),
   инструкция [`RUSTORE_SETUP.md`](development/v1.5/RUSTORE_SETUP.md).
 - **KI-657 (Medium, Documented):** RuStore Push SDK 6.4.0 не резолвится из

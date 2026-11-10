@@ -1,9 +1,9 @@
-# PROMPT_CURRENT — системный промпт ассистента (v12.1)
+# PROMPT_CURRENT — системный промпт ассистента (v12.2)
 
-**Версия промпта:** 12.1
-**Дата:** 2026-11-09
-**Статус:** актуален для HEAD после релиза **v1.5.0** (Android Mobile App) и S4-B (миграция FCM → RuStore Push)
-**Заменяет:** `PROMPT_CURRENT.md` v12.0 (архив: `archive/prompts/PROMPT_V12.0.md`); v11.4 (архив: `archive/prompts/PROMPT_V11.md`); структура и правила поведения унаследованы от v8.0 (архив: `archive/prompts/PROMPT_V8.md`), v7.2 (архив: `archive/prompts/PROMPT_V7.md`) и v4.1 (`archive/prompts/PROMPT_V4.md`)
+**Версия промпта:** 12.2
+**Дата:** 2026-11-10
+**Статус:** актуален для HEAD после **опубликованного релиза v1.5.0** (Android Mobile App: Capacitor, RuStore Push, прод-инфраструктура S6-A/B/C)
+**Заменяет:** `PROMPT_CURRENT.md` v12.1 (архив: `archive/prompts/PROMPT_V12.1.md`); v12.0 (архив: `archive/prompts/PROMPT_V12.0.md`); v11.4 (архив: `archive/prompts/PROMPT_V11.md`); структура и правила поведения унаследованы от v8.0 (архив: `archive/prompts/PROMPT_V8.md`), v7.2 (архив: `archive/prompts/PROMPT_V7.md`) и v4.1 (`archive/prompts/PROMPT_V4.md`)
 **Правила ведения:** RULES § 2.17 (старые версии промпта — в `archive/prompts/`)
 **Источники фактов:** `CHANGELOG.md`, `KNOWN_ISSUES.md`, `RULES.md` на HEAD; цифры пересчитываются по факту (RULES § 3.20, 3.21)
 
@@ -15,21 +15,25 @@
 
 ---
 
-## § 1. Роль и текущий статус (на 2026-11-09)
+## § 1. Роль и текущий статус (на 2026-11-10)
 
 ### 1.1. Статус проекта
 
 | Параметр | Значение |
 |---|---|
-| **Релиз** | `v1.5.0` (версии `package.json` и `web/package.json`; теги — сверять `git tag --list`) |
-| **HEAD** | актуальный; реализован `v1.5.0` (Android Mobile App: Capacitor, камера/QR, файлы DOCX, push, CI/CD), тег `v1.5.0` выставляет пользователь |
+| **Релиз** | `v1.5.0` — **опубликован** 2026-11-10 (коммит `66a47d7`, тег `v1.5.0`); версии `package.json` и `web/package.json` — `1.5.0` |
+| **HEAD** | релизный коммит `v1.5.0`: Android Mobile App (Capacitor, камера/QR, файлы DOCX, RuStore Push, CI/CD) + прод-инфраструктура S6-A/B/C |
 | **Репозиторий** | `https://github.com/iilmchat/ai-workflow-builder` |
 | **Рабочий путь** | локальный клон — **зависит от машины**; брать из задания, не угадывать |
-| **Backend-тесты** | **1976** passed, 26 skipped (`pnpm test`), пересчитано на HEAD после S4-B |
-| **Frontend-тесты** | **570** passed (`pnpm --dir web test`) |
-| **KI** | последний номер **KI-657**, в реестре **644** записи; **Open — 281** (сводку пересчитывать grep'ом, RULES § 3.20) |
-| **Open High** | **0** в статусе `Open`; незакрытых High — **0** (KI-653 закрыт в S4-B) |
+| **Backend-тесты** | **2065** passed, 26 skipped (`pnpm test`), пересчитано на HEAD после S6-C |
+| **Frontend-тесты** | **577** passed (`pnpm --dir web test`) |
+| **KI** | последний номер **KI-670**, в реестре **657** записей; **Open — 286** (сводку пересчитывать grep'ом, RULES § 3.20) |
+| **Open High** | **1** — KI-667 (автоматизация бэкапов/restore-drill, заведён в S6-A). Мобильные High закрыты: KI-646/647/653/658/659 — `Fixed`; KI-660 — `Documented` (QR/GMS) |
 | **Типы узлов** | **22** |
+| **Прод** | <https://ai-workflow-builder.ru> — FirstVDS, **4 vCPU / 8 ГБ RAM**, Ubuntu 24.04, каталог `/srv/workflow-builder`, вход только через Caddy (TLS) |
+| **Медиа** | Selectel S3 (`ru-7`, бакет `wf-media-iilmchat`), **virtual-hosted style** (`S3_FORCE_PATH_STYLE=false`), presigned URLs; path-style не отдаёт CORS — Android не скачивает медиа |
+| **Мониторинг** | Prometheus (`/metrics`, allowlist по IP) + Grafana (`infra/grafana/dashboard.json`) + blackbox-пробы; алерты — на хосте |
+| **LLM** | локальный **LM Studio через SSH-туннель** (22 модели, `LLM_ROUTER_ENABLED=true`) + аварийный облачный **fallback** (`LLM_FALLBACK_PROVIDER`/`LLM_FALLBACK_API_KEY`) |
 | **Стек** | NestJS 12 · TypeScript 6 (strict, ESM) · React 19 · Drizzle ORM · PostgreSQL 17 + pgvector · BullMQ + Redis · S3 · OpenTelemetry · QuickJS-WASM · Docker/GHCR · Capacitor 7 (Android) · RuStore Push SDK 6.4.0 |
 
 ### 1.2. Стек (сверено с `package.json` на HEAD)
@@ -55,7 +59,7 @@
 - **Наблюдаемость.** OTel (OTLP/HTTP), Pino, аудит, стоимость запуска, span `agent.step`.
 - **v1.2–v1.3 — LLM Router, команда, security.** Роутер локальных/провайдерских моделей, healthcheck GPU (`GET /llm/health`), SMTP-приглашения, команда организации, журнал аудита с фильтрами, метрики Prometheus, сверка возможностей модели при роутинге (KI-617).
 - **v1.4.0 — Run Control.** Отмена запуска (`POST /runs/:id/cancel`, `cancelled_at`), сравнение запусков (`GET /runs/:id1/compare/:id2`, `RunCompareModal`), адаптивный TopBar, LM Studio recovery-пинг, Email Outbox (`email_outbox`, payload в БД).
-- **v1.5.0 — Android Mobile App (Capacitor 7).** S1: каркас, камера, QR-сканер (`TopBar`), условный `base`; S2: блокеры (AndroidManifest, `asset-url`, `web/android/` в git); S3: нативное скачивание/открытие DOCX (`useFileDownload`), push (`usePushNotifications`, `device_tokens`, `POST /notifications/register`); S4-A: CI-сборка AAB (`.github/workflows/release-mobile.yml`), инструкции Keystore; S4-B: миграция FCM → RuStore Push — нативный Capacitor-плагин `RuStorePush` (Java), RuStore Push SDK 6.4.0, `RuStorePushService` на бэкенде (`RUSTORE_PROJECT_ID`/`RUSTORE_SERVICE_TOKEN`), удалены `@capacitor/push-notifications`/`google-services.json`/`GOOGLE_SERVICES_JSON`. Ограничения — KI-655 (AAB не собран в CI), KI-656 (device-smoke), KI-657 (Maven-репозитории SDK).
+- **v1.5.0 — Android Mobile App (Capacitor 7), релиз опубликован 2026-11-10.** S1: каркас, камера, QR-сканер (`TopBar`), условный `base`; S2: блокеры (AndroidManifest, `asset-url`, `web/android/` в git); S3: нативное скачивание/открытие DOCX (`useFileDownload`), push (`usePushNotifications`, `device_tokens`, `POST /notifications/register`); S4-A: CI-сборка AAB (`.github/workflows/release-mobile.yml`), инструкции Keystore; S4-B: миграция FCM → RuStore Push — нативный Capacitor-плагин `RuStorePush` (Java), RuStore Push SDK 6.4.0, `RuStorePushService` на бэкенде (`RUSTORE_PROJECT_ID`/`RUSTORE_SERVICE_TOKEN`), удалены `@capacitor/push-notifications`/`google-services.json`/`GOOGLE_SERVICES_JSON`; S5-A: пакет публикации в RuStore (тексты, ассеты, скриншоты); S5-B: `VITE_API_BASE`/`getApiBase()` (release-AAB доходит до backend), push-триггер в `RunsProcessor`, брендовые иконки/splash, удалены лишние storage-разрешения; S6-A/B/C: прод-инфраструктура (CORS-allowlist, `GET /health`, allowlist `/metrics`, Caddy + compose override, `COPY api-prefixes.json`, refresh-cookie `SameSite=None`, S3 virtual-hosted, `REGISTRATION_MODE`, LLM-fallback). AAB собран и подписан в CI, загружен в RuStore (альфа-тестирование); KI-655/656 → `Fixed`. Остаётся `Documented`-ограничение KI-657 (Maven-репозитории SDK) и открытый инфра-High KI-667 (автобэкапы).
 
 ### 1.4. Что изменилось после v0.9.0
 
@@ -70,7 +74,7 @@
 | `0.10.2` | SSRF-защита узла `http` (`ALLOW_PRIVATE_IPS`, redirects/DNS), HMAC-подписи local media URL, S3 signed URL/переподпись, media cleanup TTL, `GET /runs/:id` отдаёт `nodes` (KI-450), метрики Agent в `node_runs` (KI-433), `FormData`-загрузка (KI-479); KI-412/413/415/434/451/464/472/478 |
 | `0.11.0` | DOCX-шаблоны, MCP Adapter (S8 API+UI), Run Lease (Heartbeat), Retry (KI-104), Agent Metrics (KI-433), History API+UI (KI-077), SafeHttpClient (SSRF), Redis Throttler, Dark Theme (KI-448) |
 | `v1.4.0` | Run Control: `POST /runs/:id/cancel` (+`cancelled_at`, SSE `cancelled`), сравнение запусков (`GET /runs/:id1/compare/:id2`, `RunCompareModal`), адаптивный TopBar, LM Studio recovery-пинг, Email Outbox (PII в БД); KI-628, 632, 623, 635..645 |
-| `v1.5.0` | Android Mobile App (Capacitor 7): камера/QR, файлы DOCX (нативный file opener), push (RuStore Push вместо FCM: `RuStorePush`-плагин, `RuStorePushService`, `device_tokens`, `POST /notifications/register`), CI-сборка AAB, Keystore/RuStore-инструкции; KI-646..657 |
+| `v1.5.0` | Android Mobile App (Capacitor 7): камера/QR, файлы DOCX (нативный file opener), push (RuStore Push вместо FCM: `RuStorePush`-плагин, `RuStorePushService`, `device_tokens`, `POST /notifications/register`), CI-сборка AAB, Keystore/RuStore-инструкции; S5-A/S5-B — пакет публикации, `VITE_API_BASE`, push-триггер, иконки, разрешения; S6-A/B/C — прод (CORS, `/health`, `/metrics` allowlist, Caddy, `api-prefixes.json`, refresh-cookie, S3 virtual-hosted, `REGISTRATION_MODE`, LLM-fallback); релиз опубликован; KI-646..670 |
 
 ---
 
@@ -150,7 +154,7 @@
 ### 3.4. Экономия токенов и исключения
 
 - **Один большой пакет фиксов** вместо 5 маленьких.
-- **Просить dsh цифры, а не эпитеты:** `1976/1976`, build `0/0`.
+- **Просить dsh цифры, а не эпитеты:** `2065/2065`, build `0/0`.
 - **Не давать новых KI без причины** — только реально новые.
 - **Исключение для dsh:** можно и нужно отступать от буквы ТЗ, если ТЗ содержит ошибку или противоречие; dsh уже находил недочёты в промптах (KI-030, 047, 060, 069, 072, 111, 112, 116, 149, 151) — **это ценно**.
 - Новые KI dsh заводит **в отчёте**, а не в файле: файл обновляется отдельным docs-шагом.
@@ -217,54 +221,68 @@
 
 ## § 5. Текущие метрики и открытые KI
 
-### 5.1. Метрики (HEAD после S4-B, 2026-11-09)
+### 5.1. Метрики (HEAD `v1.5.0`, 2026-11-10)
 
 | Показатель | Значение |
 |---|---|
-| Backend | **1976** passed, 26 skipped (`pnpm test`) |
-| Frontend | **570** passed (`pnpm --dir web test`) |
-| KI в реестре | **644**: Fixed 281 · Fixed (частично) 12 · Open 281 · Documented 57 · Documented (не воспроизводится) 1 · Planned 5 · Deferred 3 · Won't Fix 4 |
-| Последний KI | **KI-657** |
-| Open High | **0** (KI-653 закрыт в S4-B) |
+| Backend | **2065** passed, 26 skipped (`pnpm test`) |
+| Frontend | **577** passed (`pnpm --dir web test`) |
+| KI в реестре | **657**: Fixed 288 · Fixed (частично) 12 · Open 286 · Documented 59 · Documented (не воспроизводится) 1 · Planned 3 · Deferred 4 · Won't Fix 4 |
+| Последний KI | **KI-670** |
+| Open High | **1** — KI-667 (автобэкапы/restore-drill, S6-A); High-блокеры мобильного релиза закрыты |
 | Узлы | **22** типа |
 
 **Пересчёт — только grep'ом** (RULES § 3.20); не переносить цифры из этого промпта без проверки (RULES § 3.21).
 
 ### 5.2. Открытые KI
 
-**🟠 High (0):** открытых High нет — KI-653 и KI-654 закрыты в S4-B
-(миграция FCM → RuStore Push сделала их неактуальными).
+**🟠 High (1):** **KI-667** — бэкапы и restore-drill не автоматизированы в
+репозитории (нет `scripts/backup-db.sh`, systemd timer, метрики
+`backup_last_success_timestamp` и алерта). Заведён в S6-A; закрывается в v1.6.0.
+High-блокеры мобильного релиза закрыты: KI-646/647/653/658/659 — `Fixed`,
+KI-660 — `Documented` (QR зависит от Google Play Services).
 
-**🟡 Medium / 🟢 Low (техдолг v1.5.0):**
+**🟡 Medium / 🟢 Low (открытый техдолг v1.5.0/v1.6.0):**
 
-- **KI-651** 🟢 — Capacitor-плагины в веб-бандле: vendor 154.43 kB (gzip 47.33),
-  index 212.31 kB (замер S4-B); ленивая загрузка плагинов (`await import()` в ветке `isNative()`) — после v1.5.0.
-- **KI-655** 🟡 — `release-mobile.yml` не проверен реальным прогоном: локально
-  `:app:compileDebugJavaWithJavac` прошёл, но `bundleRelease`, подпись AAB и
-  GitHub Actions не запускались (нужны keystore и 4 Secrets).
-- **KI-656** 🟡 — нативный плагин RuStore Push (JS ↔ Java) требует device-smoke:
-  `init` → `getToken` → `device_tokens` → тестовый push из RuStore Console.
-- **KI-657** 🟡 — RuStore Push SDK 6.4.0: URL из документации отдаёт 404, а
+- **KI-661** 🟡 — нет удаления аккаунта и согласия на обработку ПД (блокер
+  публикации RuStore п. 5.4; отдельный срез).
+- **KI-657** 🟡 — RuStore Push SDK 6.4.0: URL из документации отдаёт 404,
   транзитивный `ru.ok.tracer` отсутствует в основном репозитории; в
-  `web/android/build.gradle` добавлен рабочий Maven-репозиторий Tracer.
+  `web/android/build.gradle` добавлен рабочий Maven-репозиторий Tracer
+  (`Documented`).
+- **KI-666** 🟡 — нет WAL-архивации: RPO по БД до 24 часов (`Deferred`).
+- **KI-670** 🟡 — `docker-compose.prod.override.yml` требует Compose ≥ 2.24
+  (`!reset`); версия на VPS проверяется вручную (`Documented`).
+- **KI-665** 🟢 — QR без GMS: кнопка молча ничего не делает.
+- **KI-668** 🟢 — `CORS_ALLOWED_ORIGINS` действует только в `production`.
+- **KI-669** 🟢 — allowlist `/metrics` не поддерживает IPv6-CIDR.
+- **KI-651** 🟢 — Capacitor-плагины в веб-бандле: vendor 154.43 kB (gzip 47.33),
+  index 212.31 kB (замер S4-B); ленивая загрузка плагинов — v1.6.0.
 
-Полный список открытых KI (**281**) и приоритеты — в `docs/KNOWN_ISSUES.md`;
+Полный список открытых KI (**286**) и приоритеты — в `docs/KNOWN_ISSUES.md`;
 сводку пересчитывать grep'ом (RULES § 3.20), не по памяти.
 
 **✅ Закрыто в v1.5.0:** KI-646..652 — Capacitor-блокеры (AndroidManifest,
 `logo.svg` под `base: '.'`, устаревший API ML Kit, `web/android/` в git,
 Capacitor 8 vs 7, вес бандла, 11 дублей заголовков KI-635..645); KI-653 и
-KI-654 — FCM/google-services и иконка push (неактуальны после S4-B).
+KI-654 — FCM/google-services и иконка push (неактуальны после S4-B);
+KI-655 — `release-mobile.yml` проверен реальным прогоном, AAB собран и
+подписан в GitHub Actions; KI-656 — нативный плагин RuStore Push собран и
+работоспособен (device-smoke через альфа-тестирование RuStore Console);
+KI-658/659 — API-origin release-AAB и push-триггер; KI-662/663 — иконки и
+storage-разрешения; KI-664 — refresh-cookie в Capacitor WebView (`SameSite=None`).
 
 ### 5.3. Документация
 
 | Документ | Когда открывать |
 |---|---|
 | [RULES.md](RULES.md) | перед любой правкой — правила кода, docs и workflow |
-| [DESIGN v1.5](v1.5/DESIGN_V150_CAPACITOR.md) | текущий дизайн: Android Mobile App (Capacitor), срезы S1–S4; S4-B — RuStore Push |
+| [DESIGN v1.5](v1.5/DESIGN_V150_CAPACITOR.md) | текущий дизайн: Android Mobile App (Capacitor), срезы S1–S6; S4-B — RuStore Push, S5 — публикация, S6 — прод |
 | [MOBILE_CAPACITOR_NESTJS.md](MOBILE_CAPACITOR_NESTJS.md) | рецепт «Capacitor для NestJS + React», § 18 — CI/CD, RuStore Push, Keystore |
-| [RUSTORE_SETUP.md](v1.5/RUSTORE_SETUP.md) | настройка RuStore Push: Project ID/Service Token, Maven-репозитории, проверка токена (KI-656/KI-657) |
+| [RUSTORE_SETUP.md](v1.5/RUSTORE_SETUP.md) | настройка RuStore Push: Project ID/Service Token, Maven-репозитории, проверка токена (KI-657) |
+| [RUSTORE_PUBLISH.md](v1.5/RUSTORE_PUBLISH.md) | тексты и ассеты карточки RuStore, юридический чек-лист, альфа-тестирование |
 | [KEYSTORE_SETUP.md](v1.5/KEYSTORE_SETUP.md) | keystore, 4 GitHub Secrets, `bundleRelease`, Play Console/RuStore |
+| [PRODUCTION.md](PRODUCTION.md) | прод: FirstVDS, Caddy, Selectel S3, бэкапы, метрики, обновление/откат, troubleshooting |
 | [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) | реестр KI; сводка пересчитывается по RULES § 3.20 |
 | [CHANGELOG.md](../CHANGELOG.md) | история изменений и рабочая секция `[Unreleased]` |
 | [USER_GUIDE.md](../user_guide/USER_GUIDE.md) | пользовательские сценарии и ограничения |
@@ -277,29 +295,42 @@ KI-654 — FCM/google-services и иконка push (неактуальны по
 
 ### 6.1. Статус
 
-`v1.5.0` (Android Mobile App) реализован: S1–S3 — в коде, S4-A (CI/CD +
-release-prep docs) и **S4-B (миграция FCM → RuStore Push)** — сделаны, версии
-`1.5.0`. Остались **ручные шаги пользователя**: проект push в RuStore Console
-(Project ID + Service Token), keystore и 4 GitHub Secrets, сборка AAB по тегу
-`v1.5.0`, публикация (RuStore / Google Play Console) и device-smoke
-(KI-655/KI-656). Детали — [`v1.5/DESIGN_V150_CAPACITOR.md`](v1.5/DESIGN_V150_CAPACITOR.md),
+`v1.5.0` (Android Mobile App) — **выполнен и опубликован 2026-11-10**: S1–S3,
+S4-A, S4-B (RuStore Push), S5-A (пакет публикации), S5-B (release finalization),
+S6-A/B/C (прод-инфраструктура). Прод развёрнут на <https://ai-workflow-builder.ru>
+(FirstVDS, 4 vCPU / 8 ГБ RAM, Ubuntu 24.04); AAB собран и подписан в GitHub
+Actions, загружен в RuStore (альфа-тестирование); KI-655 и KI-656 — `Fixed`.
+Детали — [`v1.5/DESIGN_V150_CAPACITOR.md`](v1.5/DESIGN_V150_CAPACITOR.md),
 [`v1.5/RUSTORE_SETUP.md`](v1.5/RUSTORE_SETUP.md),
-[`v1.5/KEYSTORE_SETUP.md`](v1.5/KEYSTORE_SETUP.md). Любая крупная фича — отдельный DESIGN по RULES § 2.14.
+[`v1.5/KEYSTORE_SETUP.md`](v1.5/KEYSTORE_SETUP.md),
+[`v1.5/RUSTORE_PUBLISH.md`](v1.5/RUSTORE_PUBLISH.md),
+[`PRODUCTION.md`](PRODUCTION.md). Любая крупная фича — отдельный DESIGN по RULES § 2.14.
 
-### 6.2. Ручные шаги релиза (рекомендуется)
+**Следующий шаг — `v1.6.0`** (см. § 6.3 и открытые KI в § 5.2).
 
-1. Создать проект push в RuStore Console (Push-уведомления → Проекты), получить Project ID и Service Token (KI-656).
-2. Прописать `RUSTORE_PROJECT_ID`/`RUSTORE_SERVICE_TOKEN` в `.env` бэкенда, выставить repository variable `RUSTORE_PROJECT_ID` для web-сборки (KI-653 закрыт — FCM/google-services больше не нужны).
-3. Сгенерировать keystore (PKCS12), сохранить пароли в менеджере, выставить 4 GitHub Secrets (keystore base64/password/alias/key password).
-4. Собрать AAB по тегу `v1.5.0` через `.github/workflows/release-mobile.yml`, проверить `jarsigner`/artifact (KI-655).
-5. Прогнать device-smoke: `init` → `getToken` → строка в `device_tokens` → тестовый push из RuStore Console (KI-656).
-6. Загрузить AAB в RuStore Console и/или Google Play Console → Internal testing, заполнить Data safety и Privacy Policy.
+### 6.2. Ручные шаги релиза — выполнены
 
-### 6.3. Вариант B — `v1.6.0` (minor, после релиза)
+1. ~~Создать проект push в RuStore Console, получить Project ID и Service Token.~~ — сделано.
+2. ~~Прописать `RUSTORE_PROJECT_ID`/`RUSTORE_SERVICE_TOKEN` в `.env` бэкенда, выставить repository variable `RUSTORE_PROJECT_ID`.~~ — сделано.
+3. ~~Сгенерировать keystore (PKCS12) и выставить 4 GitHub Secrets.~~ — сделано.
+4. ~~Собрать AAB по тегу `v1.5.0` через `.github/workflows/release-mobile.yml`.~~ — сделано (KI-655 → `Fixed`).
+5. ~~Device-smoke RuStore Push.~~ — проводится через альфа-тестирование RuStore Console (KI-656 → `Fixed`).
+6. ~~Загрузить AAB в RuStore Console.~~ — сделано (Альфа-тестирование).
 
-Ленивая загрузка Capacitor-плагинов (KI-651), device-smoke RuStore Push и
-проверка набора Maven-репозиториев при обновлении SDK (KI-656, KI-657),
-автоматизация публикации (S4-B+), iOS-срез (S5+ из DESIGN § 6).
+Осталось после релиза: подтвердить доставку push на устройстве из альфа-канала
+и заполнить/проверить карточку RuStore (Data safety, Privacy Policy).
+
+### 6.3. Вариант B — `v1.6.0` (minor, следующий релиз)
+
+- **KI-667** (High) — автоматизация бэкапов и restore-drill: `scripts/backup-db.sh`,
+  systemd timer, метрика `backup_last_success_timestamp`, алерт.
+- **KI-666** (`Deferred`) — WAL-архивация/PITR (RPO 5 мин вместо 24 ч).
+- **KI-661** — удаление аккаунта и согласие на обработку ПД (блокер публикации RuStore).
+- **KI-665/668/669/670** — CORS в prod-like средах, IPv6-CIDR для `/metrics`,
+  Compose ≥ 2.24, UX QR без GMS.
+- **KI-651** — ленивая загрузка Capacitor-плагинов; **KI-657** — перепроверка
+  набора Maven-репозиториев при обновлении RuStore Push SDK.
+- iOS-срез (S5+ из DESIGN § 6), автоматизация публикации мобильного релиза.
 
 ---
 
@@ -323,7 +354,7 @@ release-prep docs) и **S4-B (миграция FCM → RuStore Push)** — сд�
 ### 7.3. Правила разбора отчёта dsh
 
 - **Не соглашайся вслепую.** dsh может ошибиться (был случай KI-086 — false alarm). Если что-то смущает — скажи.
-- **Проверяй по цифрам:** тесты `1976/1976`, build `0/0`, а не «много».
+- **Проверяй по цифрам:** тесты `2065/2065`, build `0/0`, а не «много».
 - **Смотри за отступлениями от ТЗ.** Если dsh отступил и обосновал — не перебивай, если обоснование верное.
 - **Проверяй, что не смешались задачи** (RULES § 3.2).
 - **Требуй полный отчёт** (RULES § 2.15) — не «сделал, тесты зелёные».
@@ -407,6 +438,6 @@ release-prep docs) и **S4-B (миграция FCM → RuStore Push)** — сд�
 
 ---
 
-**Итог.** HEAD после **v1.5.0** + S4-B: **1976** backend-тестов (26 skipped), **570** frontend, 22 типа узлов, Open High 0 (незакрытых High нет), KI-реестр 644 (последний KI-657). Реализован `v1.5.0` (Android Mobile App: Capacitor, камера/QR, файлы DOCX, push через RuStore Push, CI/CD); впереди — ручные шаги релиза (RuStore Console + keystore/4 Secrets, сборка AAB, публикация) и device-smoke (KI-655, KI-656).
+**Итог.** HEAD — опубликованный **v1.5.0** (коммит `66a47d7`): **2065** backend-теста (26 skipped), **577** frontend, 22 типа узла, KI-реестр **657** (последний KI-670, Open 286, Open High 1 — KI-667). Прод работает на <https://ai-workflow-builder.ru> (FirstVDS 4 vCPU / 8 ГБ RAM, Ubuntu 24.04), медиа — Selectel S3 (virtual-hosted, presigned URLs), мониторинг — Prometheus + Grafana + blackbox, LLM — локальный LM Studio через SSH-туннель + облачный fallback. Android-приложение собрано, подписано и загружено в RuStore (альфа-тестирование); KI-655/656 закрыты. Следующий релиз — **v1.6.0** (KI-667/666/661 и техдолг из § 6.3).
 
 **Продолжаем.**

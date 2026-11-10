@@ -10385,12 +10385,8 @@ MediaModelInfo, engine-DTO
   проверить `BUILD SUCCESSFUL`, `jar verified`, скачиваемость artifact
   `app-release-aab`, зафиксировать размер AAB и время сборки в отчёте S4-B.
 - **Fix (S4-B+):** `workflow_dispatch` выполнен успешно — AAB собран в GitHub
-  Actions (`BUILD SUCCESSFUL`), скачан пользователем и загружается в RuStore
+  Actions (`BUILD SUCCESSFUL`), скачан пользователем и загружен в RuStore
   Console для альфа-тестирования. Секреты keystore созданы.
-- **Fix (S4-B+):** нативный плагин собран и работоспособен; device-smoke
-  проводится через альфа-тестирование в RuStore Console. Результат
-  подтверждается пользователем в S5 Release Finalization (фактический push
-  требует закрытия KI-659 — триггер отправки на бэкенде).
 - **Связанные:** KI-653, KI-654, KI-659.
 
 ## v1.5.0 — RuStore Push вместо FCM (S4-B, 2026-11-09)
@@ -10422,7 +10418,13 @@ KI-656, ограничение Maven-репозиториев SDK — KI-657.
   (Push-уведомления → Проекты → Тестовые уведомления); зафиксировать результат в
   отчёте [S4-B-rustore-push.md](development/reports/v1.5.0/S4-B-rustore-push.md),
   шаги — [`v1.5/RUSTORE_SETUP.md`](development/v1.5/RUSTORE_SETUP.md).
-- **Связанные:** KI-653, KI-654.
+- **Fix (v1.5.0):** нативный плагин `RuStorePush` собран и работоспособен
+  (`:app:compileDebugJavaWithJavac` — BUILD SUCCESSFUL), AAB подписан и загружен
+  в RuStore Console (Альфа-тестирование); device-smoke цепочки
+  «`init` → `getToken` → `POST /notifications/register` → `device_tokens` →
+  тестовый push» проводится на альфа-канале RuStore. Триггер отправки
+  (`sendToUserAsync` из `RunsProcessor`) реализован в S5-B — KI-659 `Fixed`.
+- **Связанные:** KI-653, KI-654, KI-659.
 
 ### KI-657 — RuStore Push SDK 6.4.0 не резолвится из «документационного» Maven-репозитория
 
@@ -10722,5 +10724,14 @@ staging/preprod — `Open`), KI-669 (IPv6-CIDR — `Open`) и KI-670
 
 Сумма по статусам = числу вхождений `### KI-` = 657; уникальных номеров — 657
 (RULES 3.20, KI-652).
+
+**Повторная сверка на релизе v1.5.0 (2026-11-10, S6-D docs sync):** вхождений
+`### KI-` — **657**, строк `- **Статус:**` — **657** (легенда KI-001 входит в оба
+счётчика), сумма по таблице — **657**, уникальных номеров — **657**; максимальный
+номер — **KI-670** (пропуски в нумерации: 78–83, 111, 198–199, 256–257, 377,
+526 — исторические, не потерянные записи). Закрытие KI-655/KI-656 в релизном
+коммите `66a47d7` не меняло сводку (оба были `Fixed` раньше), поэтому таблица
+актуальна без правок. Открытых High — **1** (KI-667), остальные High —
+`Fixed` или `Documented`.
 
 
