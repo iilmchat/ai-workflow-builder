@@ -273,6 +273,21 @@ export class LlmProviderFactory {
       providers.push(yandex);
     }
 
+    // v1.6.0 S6-C: аварийный облачный провайдер из отдельного ключа. Нужен,
+    // когда основного ключа нет (прод живёт на LM Studio), но при выключенной
+    // рабочей станции вызов должен уйти в облако.
+    const fallback = this.createFallbackProvider();
+
+    if (fallback !== null) {
+      if (providers.some((provider) => provider.name === fallback.name)) {
+        this.logger.log(
+          `LLM_FALLBACK_PROVIDER=${fallback.name}: провайдер уже настроен основным ключом — отдельный fallback не создаётся`,
+        );
+      } else {
+        providers.push(fallback);
+      }
+    }
+
     const lmstudio = await this.createLmStudioProvider();
 
     if (lmstudio) {
@@ -284,6 +299,90 @@ export class LlmProviderFactory {
     );
 
     return providers;
+  }
+
+  /**
+   * Создаёт аварийного облачного провайдера (v1.6.0 S6-C).
+   *
+   * `LLM_FALLBACK_PROVIDER` выбирает вендора, `LLM_FALLBACK_API_KEY` — его
+   * ключ. Провайдер добавляется в общий реестр, поэтому существующий
+   * `LlmRouterService` использует его как обычный облачный fallback, когда
+   * LM Studio недоступен или упал. Отдельного пути вызова не нужно.
+   *
+   * Если ключа нет — WARN и `null`: локальный LM Studio остаётся основным
+   * маршрутом, приложение стартует. Yandex без `YANDEX_FOLDER_ID` собрать
+   * нельзя (короткие id превращаются в `gpt://<folder>/…`) — тоже WARN.
+   *
+   * @returns провайдер либо `null`, если fallback выключен/не настроен
+   */
+  private createFallbackProvider(): OpenAiCompatibleProvider | null {
+    const provider = this.config.get<string>('LLM_FALLBACK_PROVIDER');
+
+    if (!provider || provider === 'none') {
+      return null;
+    }
+
+    const apiKey = this.config.get<string>('LLM_FALLBACK_API_KEY');
+
+    if (!apiKey) {
+      this.logger.warn(
+        `LLM_FALLBACK_PROVIDER=${provider}, но LLM_FALLBACK_API_KEY не задан — аварийный облачный fallback пропущен`,
+      );
+
+      return null;
+    }
+
+    switch (provider) {
+      case 'deepseek':
+        return new OpenAiCompatibleProvider({
+          name: 'deepseek',
+          apiKey,
+          baseURL:
+            this.config.get<string>('DEEPSEEK_BASE_URL') ??
+            'https://api.deepseek.com/v1',
+          models: DEEPSEEK_MODELS,
+          envKey: 'LLM_FALLBACK_API_KEY',
+        });
+      case 'openai':
+        return new OpenAiCompatibleProvider({
+          name: 'openai',
+          apiKey,
+          baseURL:
+            this.config.get<string>('OPENAI_BASE_URL') ??
+            'https://api.openai.com/v1',
+          models: OPENAI_MODELS,
+          envKey: 'LLM_FALLBACK_API_KEY',
+        });
+      case 'yandex': {
+        const folderId = this.config.get<string>('YANDEX_FOLDER_ID');
+        const rawModels = this.config.get<string>('YANDEX_MODELS');
+        const models =
+          rawModels && rawModels.trim().length > 0
+            ? this.parseYandexModels(rawModels, folderId)
+            : this.buildYandexModels(YANDEX_DEFAULT_MODEL_IDS, folderId);
+
+        if (models.length === 0) {
+          this.logger.warn(
+            'LLM_FALLBACK_PROVIDER=yandex, но YANDEX_FOLDER_ID не задан (или каталог моделей пуст) — fallback пропущен',
+          );
+
+          return null;
+        }
+
+        return new OpenAiCompatibleProvider({
+          name: 'yandex',
+          apiKey,
+          baseURL:
+            this.config.get<string>('YANDEX_BASE_URL') ??
+            'https://llm.api.cloud.yandex.net/v1',
+          models,
+          envKey: 'LLM_FALLBACK_API_KEY',
+          resolveModel: (model) => this.toYandexUri(model, folderId),
+        });
+      }
+      default:
+        return null;
+    }
   }
 
   /**

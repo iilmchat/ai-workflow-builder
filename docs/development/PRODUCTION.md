@@ -1,6 +1,6 @@
 # Production: развёртывание на VPS
 
-**Версия:** v1.6.0 (S6-B) · **Обновлено:** 2026-11-10
+**Версия:** v1.6.0 (S6-C) · **Обновлено:** 2026-11-10
 **Стек:** Docker Compose (app + db + redis + caddy) · Ubuntu 24.04 · FirstVDS
 **Прод:** <https://ai-workflow-builder.ru> (94.250.252.142), каталог
 `/srv/workflow-builder`.
@@ -25,7 +25,22 @@
 
 ---
 
-## 2. Топология
+## 2. Инфраструктура и топология
+
+### Инфраструктура прода (факты)
+
+| Параметр | Значение |
+|---|---|
+| Хостинг | FirstVDS, `94.250.252.142`, Ubuntu 24.04 |
+| Домен | <https://ai-workflow-builder.ru> |
+| Каталог | `/srv/workflow-builder` |
+| S3 (медиа) | Selectel: `S3_ENDPOINT=https://s3.ru-7.storage.selcloud.ru`, `S3_REGION=ru-7`, `S3_BUCKET=wf-media-iilmchat`, `S3_PUBLIC_BUCKET=false`, `S3_FORCE_PATH_STYLE=false` (virtual-hosted — иначе Selectel не отдаёт CORS) |
+| Метрики | `METRICS_ALLOWED_IPS=127.0.0.1,::1,172.18.0.0/16,62.109.1.230` |
+| LLM | локальный LM Studio через reverse-SSH туннель, **22 модели**; `LLM_ROUTER_ENABLED=true`, облачный fallback — `LLM_FALLBACK_PROVIDER`/`LLM_FALLBACK_API_KEY` |
+| Бэкапы БД | `pg_dump \| age` в **03:30 MSK**, retention **30 дней**, локально + offsite в S3 |
+| Регистрация | `REGISTRATION_MODE=open` + fail2ban на хосте; режим `invite` — только по ожидающему приглашению |
+
+### Топология
 
 ```text
                     Internet
@@ -60,10 +75,10 @@
    `443/udp`. Порты `3000`, `5432`, `6379` наружу **не** открываются никогда.
 3. **Docker:** Engine 27+ и Compose **≥ 2.24** (тег `!reset`); проверить:
    `docker compose version`. Старее — KI-670.
-4. **Секреты:** `JWT_SECRET` (≥ 32 символа), пароль PostgreSQL, сервисный
-   токен RuStore (если push включён). Ключи Selectel S3 понадобятся после
-   переезда медиа (§ 8) — сейчас медиа на `local`. Генерировать, например,
-   `openssl rand -hex 32`. В git они не попадают.
+4. **Секреты:** `JWT_SECRET` (≥ 32 символа), пароль PostgreSQL, ключи Selectel
+   S3 (`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`), сервисный токен RuStore
+   (если push включён) и ключ аварийного LLM-fallback (если включён).
+   Генерировать, например, `openssl rand -hex 32`. В git они не попадают.
 5. **Каталог:** `/srv/workflow-builder` (фактический путь на проде; пути в
    командах ниже — от него). Репозиторий клонируется целиком: `Caddyfile` и
    compose-файлы читаются из рабочей копии.
@@ -81,8 +96,8 @@ chmod 600 .env                 # секреты не должны быть world
 
 # 2. Заполнить ВСЕ заглушки <...> в .env (редактор, не sed: значения с / и @)
 #    Обязательно: POSTGRES_PASSWORD, JWT_SECRET, CORS_ALLOWED_ORIGINS,
-#    METRICS_ALLOWED_IPS (подсеть compose), INSTANCE_ID.
-#    S3_* — только после переезда медиа на Selectel (§ 8), сейчас не нужны.
+#    METRICS_ALLOWED_IPS (подсеть compose + внешний скрейпер), INSTANCE_ID,
+#    S3_ENDPOINT/S3_BUCKET/S3_REGION/S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY.
 
 # 3. Домен в Caddyfile
 #    app.example.com { ... }  →  ai-workflow-builder.ru { ... }
@@ -116,15 +131,24 @@ healthcheck'а: 40 с).
 | `DATABASE_URL` | `postgres://<user>:<pass>@db:5432/<db>` | Внутри compose перекрывается сборкой из `POSTGRES_*`; строка нужна для запуска образа без compose. |
 | `POSTGRES_USER/PASSWORD/DB` | свои значения | Их использует контейнер `db`; пароль должен совпадать с `DATABASE_URL`. |
 | `REDIS_URL` | `redis://redis:6379` | Очереди BullMQ + общий rate limit. |
-| `MEDIA_STORAGE_BACKEND` | `local` | **Текущий прод:** файлы на volume, TTL 90 дней (`MEDIA_STORAGE_LOCAL_TTL_DAYS=90`). **TODO:** переезд на Selectel S3 — следующая задача; до неё медиа не переживут потерю VPS. |
-| `MEDIA_STORAGE_LOCAL_TTL_DAYS` | `90` | Срок жизни локальных медиа; cron приложения удаляет файлы старше TTL. |
-| `S3_ENDPOINT/BUCKET/ACCESS_KEY_ID/SECRET_ACCESS_KEY` | свои | Целевое S3-совместимое хранилище (Selectel S3). **Пока не используются** при `MEDIA_STORAGE_BACKEND=local`; понадобятся после переезда. |
+| `MEDIA_STORAGE_BACKEND` | `s3` | Медиа в Selectel S3; `local` (TTL 90 дней) — только аварийный откат, файлы потеряются вместе с VPS. |
+| `S3_ENDPOINT` | `https://s3.ru-7.storage.selcloud.ru` | Selectel S3, регион `ru-7`. |
+| `S3_BUCKET` | `wf-media-iilmchat` | Приватный бакет медиа. |
+| `S3_REGION` | `ru-7` | Регион Selectel (обязателен для SigV4). |
+| `S3_PUBLIC_BUCKET` | `false` | Presigned GET на час; прямой URL приватного бакета даёт 403 (KI-444). |
+| `S3_FORCE_PATH_STYLE` | `false` | Virtual-hosted style: Selectel не отдаёт CORS для path-style, из-за чего Android/Capacitor не скачивает медиа (S6-C). |
+| `S3_ACCESS_KEY_ID/SECRET_ACCESS_KEY` | свои | Секреты Selectel; в git не попадают. |
+| `MEDIA_STORAGE_LOCAL_TTL_DAYS` | `90` | TTL локального аварийного бэкенда; cron приложения удаляет файлы старше TTL. |
 | `INSTANCE_ID` | `wf-prod-01` | Маркер инстанса в job'ах BullMQ (в Docker hostname эфемерный, KI-387/391). |
 | `OTEL_ENABLED` | `false` | `true` только когда есть OTLP-коллектор (SDK держит фоновый экспортёр). |
 | `SANDBOX_ENABLED` | `true` | Режим `sandbox` узла `condition`; выключен по умолчанию в коде (безопасность), в проде включается осознанно. |
 | `JWT_SECRET` | ≥ 32 символа | Подпись access-токенов; смена разлогинивает всех. |
-| `METRICS_ALLOWED_IPS` | `127.0.0.1,::1,172.18.0.0/16` + IP внешнего скрейпера | `/metrics` без JWT: доступ только из доверенных сетей. |
+| `METRICS_ALLOWED_IPS` | `127.0.0.1,::1,172.18.0.0/16,62.109.1.230` | `/metrics` без JWT: loopback + подсеть compose + внешний скрейпер. |
 | `THROTTLER_STORAGE` | `redis` (дефолт) | Общие счётчики rate limit между инстансами (KI-420); `memory` — только аварийный откат. |
+| `REGISTRATION_MODE` | `open` | `/auth/register` открыт, на хосте — fail2ban. `invite` — только по ожидающему приглашению (403 без него), S6-C. |
+| `LLM_ROUTER_ENABLED` | `true` | Локальный LM Studio как основной маршрут, облако — fallback. |
+| `LLM_FALLBACK_PROVIDER` | `none` (включается при появлении ключа) | `deepseek`/`yandex`/`openai` — аварийный облачный провайдер, если LM Studio недоступен (S6-C). |
+| `LLM_FALLBACK_API_KEY` | не задан/секрет | Ключ аварийного провайдера; без него WARN и fallback пропускается. |
 
 ---
 
@@ -163,6 +187,31 @@ docker compose -f docker-compose.prod.yml -f docker-compose.prod.override.yml st
 
 Docker-проверка `app` бьёт в `http://127.0.0.1:3000/health`: `healthy`
 означает «API реально может обслуживать запросы» (БД и Redis живы).
+
+### Эксплуатация: правила применения изменений
+
+- **`Caddyfile` и `prometheus.yml` — только через пересоздание сервиса.**
+  Оба файла смонтированы single-file bind mount'ом, поэтому правка на хосте
+  применяется командой:
+
+  ```bash
+  cd /srv/workflow-builder
+  docker compose -f docker-compose.prod.yml -f docker-compose.prod.override.yml \
+    up -d --force-recreate caddy
+  docker compose -f docker-compose.prod.yml -f docker-compose.prod.override.yml \
+    up -d --force-recreate prometheus
+  ```
+
+  `restart`/перечитывание «на лету» не использовать: контейнер может остаться
+  со старым файлом, а ошибка конфигурации всплывёт позже. Перед пересозданием
+  `caddy` — `caddy validate` (см. § 6).
+- **Бэкапы БД:** `pg_dump | age` в **03:30 MSK**, retention **30 дней**;
+  локальная копия на хосте + выгрузка offsite в S3 (см. § 8). Offsite-копия —
+  обязательная часть: локальный дамп не переживёт потерю VPS.
+- **Регистрация:** на проде `REGISTRATION_MODE=open` и fail2ban на хосте
+  (rate limit приложения — отдельный слой). Для закрытого контура —
+  `REGISTRATION_MODE=invite`: без ожидающего приглашения в
+  `organization_invitations` регистрация отвечает `403`.
 
 ---
 
@@ -263,9 +312,9 @@ git, `git diff`/`git checkout` на хосте, затем `up -d` для `.env`
 ### PostgreSQL
 
 **Текущий прод:** ежедневный логический дамп, зашифрованный `age`, в **03:30
-MSK**, retention **30 дней**, хранение — **локально на хосте** в
-`/var/backups/workflow-builder`. Скрипт и cron живут на хосте (в репозитории их
-пока нет — KI-667):
+MSK**, retention **30 дней**: локальная копия в `/var/backups/workflow-builder`
+**и offsite-выгрузка в S3 (Selectel)**. Скрипт и cron живут на хосте (в
+репозитории их пока нет — KI-667):
 
 ```bash
 #!/usr/bin/env bash
@@ -280,7 +329,9 @@ docker compose -f docker-compose.prod.yml -f docker-compose.prod.override.yml \
   exec -T db pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc \
   | age -R /etc/age/backup.pub \
   > "$BACKUP_DIR/db-${STAMP}.dump.age"
-# Retention 30 дней.
+# Offsite: загрузить свежий .dump.age в S3-бакет бэкапов (Selectel; aws s3 cp
+# или mc cp — инструмент, установленный на хосте). Локальная копия — не бэкап.
+# Retention 30 дней — и локально, и в бакете (lifecycle-правило).
 find "$BACKUP_DIR" -name 'db-*.dump.age' -mtime +30 -delete
 ```
 
@@ -290,14 +341,13 @@ Cron (TZ сервера — Europe/Moscow; `03:30` — ночное окно б�
 30 3 * * * /usr/local/bin/wb-backup-db.sh >> /var/log/wb-backup-db.log 2>&1
 ```
 
-- **Куда сохраняется:** `/var/backups/workflow-builder/db-*.dump.age` — на том
-  же диске/хосте, что и БД. `age` шифрует дамп публичным ключом
-  (`/etc/age/backup.pub`), приватный (`/etc/age/backup.key`) — только на хосте
-  и в офлайн-копии; секретов в репозитории нет (RULES 5.1).
-- **Это временно до S3.** Локальный бэкап не переживёт потерю VPS/диска и не
-  защищает от ошибки оператора. Следующий шаг — выгрузка `.dump.age` в
-  Selectel S3 (отдельный бакет, lifecycle/versioning). До этого offsite-копии
-  нет — см. TODO в § 8 «Медиа» и KI-667.
+- **Куда сохраняется:** локально `/var/backups/workflow-builder/db-*.dump.age`
+  и offsite — тот же файл в S3-бакете бэкапов (Selectel). `age` шифрует дамп
+  публичным ключом (`/etc/age/backup.pub`), приватный (`/etc/age/backup.key`) —
+  только на хосте и в офлайн-копии; секретов в репозитории нет (RULES 5.1).
+- **Offsite обязателен:** локальный дамп на том же диске не переживёт потерю
+  VPS и не защищает от ошибки оператора. S3-копия — единственная защита от
+  потери хоста; retention 30 дней настраивается lifecycle-правилом бакета.
 - **RPO при ежедневном дампе — до 24 ч.** Более короткий RPO (5 мин) требует
   WAL-архивации (PITR) — это **отложено** (KI-666), а не забыто.
 - **Восстановление** (проверять на копии, не на проде):
@@ -310,21 +360,22 @@ Cron (TZ сервера — Europe/Moscow; `03:30` — ночное окно б�
 - Раз в месяц — **учебное восстановление** в отдельный compose-проект и
   проверка `GET /health` + входа в UI. Непроверенный бэкап бэкапом не считается.
 
-### Медиа (сейчас `local`, целевое — Selectel S3)
+### Медиа (Selectel S3)
 
-**Текущий прод:** `MEDIA_STORAGE_BACKEND=local`,
-`MEDIA_STORAGE_LOCAL_TTL_DAYS=90`; файлы лежат в volume `app` (`/app/data/media`)
-и удаляются cron'ом приложения по TTL. `pg_dump` медиа **не содержит** — при
-потере VPS они теряются вместе с диском.
+**Текущий прод:** `MEDIA_STORAGE_BACKEND=s3`,
+`S3_ENDPOINT=https://s3.ru-7.storage.selcloud.ru`, `S3_REGION=ru-7`,
+`S3_BUCKET=wf-media-iilmchat`, `S3_PUBLIC_BUCKET=false`. Файлы в приватном
+бакете, UI получает presigned GET на час; просроченная ссылка переподписывается
+по `storage_key`.
 
-- **TODO (следующая задача):** переезд на Selectel S3 —
-  `MEDIA_STORAGE_BACKEND=s3`, `S3_ENDPOINT/BUCKET/ACCESS_KEY_ID/SECRET_ACCESS_KEY`,
-  приватный бакет + presigned-ссылки (`S3_PUBLIC_BUCKET=false`), versioning и
-  lifecycle.
-- После переезда бакет станет отдельной точкой бэкапа (репликация в другой
-  регион/бакет по политике провайдера); локальный TTL можно будет снизить.
-- До переезда единственная копия медиа — volume на проде: это **ограничение**,
-  а не готовая схема бэкапа.
+- **`S3_FORCE_PATH_STYLE=false` обязателен.** Selectel не отдаёт CORS-заголовки
+  для path-style URL, поэтому Android/Capacitor не может скачать медиа.
+  Virtual-hosted style: `https://wf-media-iilmchat.s3.ru-7.storage.selcloud.ru/<key>`.
+- Включить **versioning** и **lifecycle** на бакете: удаление старых версий и
+  репликация/offsite по политике провайдера. `pg_dump` медиа **не содержит**,
+  поэтому бакет — отдельная точка бэкапа.
+- `MEDIA_STORAGE_BACKEND=local` (`MEDIA_STORAGE_LOCAL_TTL_DAYS=90`) — только
+  аварийный откат: файлы лежат в volume и теряются вместе с VPS.
 
 ### Прочее
 
@@ -338,10 +389,10 @@ Cron (TZ сервера — Europe/Moscow; `03:30` — ночное окно б�
 ## 9. Метрики, алерты, мониторинг
 
 - **Prometheus** (`infra/prometheus/prometheus.yml`) скрейпит `/metrics`.
-  На проде `METRICS_ALLOWED_IPS=127.0.0.1,::1,172.18.0.0/16`: loopback — scrape
-  с самого хоста, `172.18.0.0/16` — подсеть compose (IP контейнера меняется при
-  пересоздании, поэтому разрешена подсеть, а не адрес). Снаружи ручка отвечает
-  403.
+  На проде `METRICS_ALLOWED_IPS=127.0.0.1,::1,172.18.0.0/16,62.109.1.230`:
+  loopback — scrape с самого хоста, `172.18.0.0/16` — подсеть compose (IP
+  контейнера меняется при пересоздании, поэтому разрешена подсеть, а не адрес),
+  `62.109.1.230` — внешний скрейпер. Снаружи остальные адреса получают 403.
 - **Grafana:** `infra/grafana/dashboard.json`.
 - **Алерты (минимум):**
   - `GET /health` != 200 дольше 2 минут (Caddy/uptime-монитор);
@@ -374,8 +425,8 @@ Cron (TZ сервера — Europe/Moscow; `03:30` — ночное окно б�
 - [ ] `AUTH_DISABLED=false`, `COOKIE_SECURE=true`, `NODE_ENV=production`
       (иначе приложение не стартует — это защита).
 - [ ] `CORS_ALLOWED_ORIGINS` — ровно те origin'ы, что нужны (домен + Capacitor).
-- [ ] `METRICS_ALLOWED_IPS` — loopback + подсеть Prometheus
-      (`127.0.0.1,::1,172.18.0.0/16` на проде), без `0.0.0.0/0`.
+- [ ] `METRICS_ALLOWED_IPS` — loopback + подсеть Prometheus + внешний скрейпер
+      (`127.0.0.1,::1,172.18.0.0/16,62.109.1.230` на проде), без `0.0.0.0/0`.
 - [ ] `/admin/*` закрыт `JwtAuthGuard` (+`OrgOwnerGuard`/`OrgOwnerOnlyGuard`) —
       проверяется кодом, но извне убедиться: `curl -o /dev/null -w '%{http_code}' -X POST https://ai-workflow-builder.ru/admin/members/invite` → 401.
 - [ ] `SANDBOX_ENABLED=true` — только осознанно (исполнение пользовательского JS).
@@ -395,6 +446,8 @@ Cron (TZ сервера — Europe/Moscow; `03:30` — ночное окно б�
 | Refresh-cookie не ставится | `COOKIE_SECURE=false` или доступ по HTTP | Включить HTTPS, `COOKIE_SECURE=true`. |
 | Refresh-cookie не работает только в Android-приложении | WebView (`https://localhost`) и API — разные origin'ы, `SameSite=Strict` не отправляется | S6-B ставит `None; Secure` для Capacitor-origin в production (KI-664); проверить `NODE_ENV=production`, `COOKIE_SECURE=true` и `Origin` запроса. |
 | `app` падает: «Не прочитан единый реестр API-префиксов: /app/api-prefixes.json» | В образе нет `api-prefixes.json` (образы до S6-B) | Обновить digest на собранный после S6-B и убрать volume-монтирование (см. § 13.1). |
+| Медиа не скачивается в Android/Capacitor, в браузере — работает | S3 в path-style: Selectel не отдаёт CORS для `<endpoint>/<bucket>/…` | `S3_FORCE_PATH_STYLE=false` (virtual-hosted), пересоздать `app`. |
+| `POST /auth/register` → 403 «Регистрация только по приглашению» | `REGISTRATION_MODE=invite`, а приглашения для email нет | Пригласить пользователя (`organization_invitations`) или вернуть `REGISTRATION_MODE=open`. |
 | `docker compose config`: unknown tag `!reset` | Compose < 2.24 | Обновить Compose (KI-670) или убрать `!reset` и вручную удалить `ports` у `app` в базовом файле. |
 | `db`/`redis` недоступны с хоста | Порты на loopback, но контейнер не поднят | `docker compose ... ps`, `logs db`. |
 | Диск заполняется | Логи без ротации / старые образы | Проверить override, `docker image prune -f`. |
@@ -403,52 +456,39 @@ Cron (TZ сервера — Europe/Moscow; `03:30` — ночное окно б�
 
 ## 13. Известные проблемы
 
-### 13.1 `api-prefixes.json` монтируется через volume (временно, до S6-B)
+### 13.1 `api-prefixes.json` (исправлено в S6-B)
 
-**Симптом:** при удалении монтирования `app` падает на старте:
-
-```text
-Не прочитан единый реестр API-префиксов: /app/api-prefixes.json.
-В Docker-образе файл копируется Dockerfile.
-```
+**Исторический симптом:** `app` падал на старте с
+«Не прочитан единый реестр API-префиксов: /app/api-prefixes.json».
 
 **Причина:** runtime-стадия `Dockerfile` до S6-B копировала `dist`,
 `package.json`, `node_modules`, `web/dist`, `drizzle` и entrypoint, но **не**
 `api-prefixes.json`. Модуль `src/common/api-prefixes.ts` строит путь от
 `dist/common/api-prefixes.js` на два уровня вверх — к `/app/api-prefixes.json`,
-поэтому без файла backend не стартует (fail-fast при импорте).
+поэтому без файла backend не стартует (fail-fast при импорте). На проде файл
+временно монтировался volume'ом.
 
-**Временное решение на проде:** файл из рабочей копии
-`/srv/workflow-builder/api-prefixes.json` монтируется в контейнер:
+**Fix (S6-B):** в runtime-стадию добавлен
+`COPY --from=builder --chown=node:node /app/api-prefixes.json ./api-prefixes.json`.
+Проверка внутри образа:
 
-```yaml
-volumes:
-  - /srv/workflow-builder/api-prefixes.json:/app/api-prefixes.json:ro
+```bash
+docker compose -f docker-compose.prod.yml -f docker-compose.prod.override.yml \
+  exec app ls -l /app/api-prefixes.json
 ```
 
-Монтирование живёт в прод-конфигурации (compose override/`.env`) и **не**
-должно остаться после обновления образа: иначе рабочая копия на хосте
-затеняет файл из digest'а и расходится с кодом.
-
-**После мержа фикса (`fix(infra): S6-B`, PR #4183):**
-
-1. CI собирает образ и публикует новый digest.
-2. Инфра-агент обновляет `IMAGE_REF` в `.env` на новый digest.
-3. Применяет `up -d --no-build app`.
-4. Проверяет файл внутри образа:
-   `docker compose ... exec app ls -l /app/api-prefixes.json`.
-5. Удаляет volume-монтирование из прод-конфигурации и пересоздаёт `app`
-   (`up -d --force-recreate app`), затем повторяет `/health`.
-
-До шага 5 образ остаётся рабочим только благодаря volume — это временный
-обход, а не штатная схема деплоя.
+Если используется образ **до S6-B**, нужно обновить `IMAGE_REF` на digest
+после S6-B и убрать volume-монтирование из прод-конфигурации, затем
+`up -d --force-recreate app`. Для актуального образа монтирование не нужно и
+только затеняет файл из digest'а.
 
 ---
 
 ## 14. Связанные документы и KI
 
 - Отчёты: [`reports/v1.6.0/S6-A-production-readiness.md`](reports/v1.6.0/S6-A-production-readiness.md),
-  [`reports/v1.6.0/S6-B-post-deploy-fixes.md`](reports/v1.6.0/S6-B-post-deploy-fixes.md).
+  [`reports/v1.6.0/S6-B-post-deploy-fixes.md`](reports/v1.6.0/S6-B-post-deploy-fixes.md),
+  [`reports/v1.6.0/S6-C-production-hardening.md`](reports/v1.6.0/S6-C-production-hardening.md).
 - `docs/KNOWN_ISSUES.md`: KI-575 (`/metrics`), KI-419 (`TRUST_PROXY`),
   KI-658 (CORS/Capacitor), KI-664 (refresh-cookie в WebView — **Fixed** в
   S6-B), KI-666 (WAL/PITR), KI-667 (автобэкапы), KI-668 (CORS в

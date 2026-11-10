@@ -1,4 +1,8 @@
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
@@ -56,8 +60,11 @@ describe('AuthService', () => {
   let deleteTable: ReturnType<typeof vi.fn>;
   /** `WHERE` удаления приглашения — проверяется, что удалена нужная строка. */
   let deleteWhere: ReturnType<typeof vi.fn>;
+  /** Режим регистрации (v1.6.0 S6-C). */
+  let registrationMode: 'open' | 'invite';
 
   beforeEach(async () => {
+    registrationMode = 'open';
     selectLimit = vi.fn(() => Promise.resolve([]));
     insertReturning = vi.fn(() => Promise.resolve([]));
     insertValues = vi.fn(() => ({ returning: insertReturning }));
@@ -103,7 +110,12 @@ describe('AuthService', () => {
         { provide: JwtService, useValue: { signAsync } },
         {
           provide: ConfigService,
-          useValue: { getOrThrow: vi.fn(() => '24h') },
+          useValue: {
+            getOrThrow: vi.fn(() => '24h'),
+            get: vi.fn((key: string) =>
+              key === 'REGISTRATION_MODE' ? registrationMode : undefined,
+            ),
+          },
         },
       ],
     }).compile();
@@ -293,6 +305,60 @@ describe('AuthService', () => {
       expect(userInsertValues().organizationId).toBe(ORG_ID);
       expect(userInsertValues().role).toBe('owner');
       expect(deleteTable).not.toHaveBeenCalled();
+    });
+
+    it('REGISTRATION_MODE=open: регистрирует без приглашения (S6-C)', async () => {
+      registrationMode = 'open';
+      selectLimit.mockResolvedValue([]);
+      mockRegisterInserts({ id: ORG_ID, name: ORG_NAME }, registeredUser());
+
+      const result = await service.registerAsync({
+        email: EMAIL,
+        password: PASSWORD,
+      });
+
+      expect(result.accessToken).toBe(TOKEN);
+      expect(userInsertValues().role).toBe('owner');
+    });
+
+    it('REGISTRATION_MODE=invite: без приглашения — 403 (S6-C)', async () => {
+      registrationMode = 'invite';
+      // Занятости email нет, приглашения тоже нет.
+      selectLimit.mockResolvedValue([]);
+
+      await expect(
+        service.registerAsync({ email: EMAIL, password: PASSWORD }),
+      ).rejects.toThrow(ForbiddenException);
+
+      // Отказ до хэширования/транзакции: никаких строк не создано.
+      expect(transaction).not.toHaveBeenCalled();
+      expect(insertReturning).not.toHaveBeenCalled();
+    });
+
+    it('REGISTRATION_MODE=invite: с приглашением — успех и «сжигание» (S6-C)', async () => {
+      registrationMode = 'invite';
+      selectLimit
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([invitation('member')]);
+      insertReturning.mockResolvedValueOnce([
+        { ...baseUser, role: 'member', passwordHash: 'scrypt$x$y' },
+      ]);
+
+      const result = await service.registerAsync({
+        email: EMAIL,
+        password: PASSWORD,
+      });
+
+      // В пути с приглашением INSERT только один — сразу в users.
+      expect(insertValues).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: EMAIL,
+          organizationId: ORG_ID,
+          role: 'member',
+        }),
+      );
+      expect(deleteTable).toHaveBeenCalledWith(organizationInvitations);
+      expect(result.user.role).toBe('member');
     });
 
     it('бросает ConflictException на занятый email', async () => {

@@ -471,6 +471,27 @@ describe('COOKIE_SAMESITE (v1.6.0 S6-B, KI-664)', () => {
   });
 });
 
+describe('REGISTRATION_MODE (v1.6.0 S6-C)', () => {
+  it('дефолт — open; пустая строка = «не задано» (KI-084)', () => {
+    expect(validateEnv(baseEnv)).toMatchObject({ REGISTRATION_MODE: 'open' });
+    expect(validateEnv({ ...baseEnv, REGISTRATION_MODE: '' })).toMatchObject({
+      REGISTRATION_MODE: 'open',
+    });
+  });
+
+  it('принимает invite', () => {
+    expect(
+      validateEnv({ ...baseEnv, REGISTRATION_MODE: 'invite' }),
+    ).toMatchObject({ REGISTRATION_MODE: 'invite' });
+  });
+
+  it('отклоняет неизвестный режим, а не открывает регистрацию молча', () => {
+    expect(
+      EnvSchema.safeParse({ ...baseEnv, REGISTRATION_MODE: 'invites' }).success,
+    ).toBe(false);
+  });
+});
+
 describe('staging / preprod считаются prod-подобными (KI-221)', () => {
   it('отклоняет AUTH_DISABLED=true при NODE_ENV=staging', () => {
     expect(() =>
@@ -607,38 +628,30 @@ describe('S3_PUBLIC_BUCKET (KI-444)', () => {
   });
 });
 
-describe('S3_FORCE_PATH_STYLE (KI-4xx)', () => {
-  it('по умолчанию path-style включён', () => {
-    expect(EnvSchema.parse(baseEnv).S3_FORCE_PATH_STYLE).toBe(true);
-    // Пустое значение в .env = «не задано» (KI-084).
-    expect(
-      EnvSchema.parse({ ...baseEnv, S3_FORCE_PATH_STYLE: '' })
-        .S3_FORCE_PATH_STYLE,
-    ).toBe(true);
+describe('S3_FORCE_PATH_STYLE (v1.6.0 S6-C)', () => {
+  it('дефолт — false (virtual-hosted, Selectel); пустая строка = дефолт', () => {
+    expect(validateEnv(baseEnv)).toMatchObject({ S3_FORCE_PATH_STYLE: false });
+    expect(validateEnv({ ...baseEnv, S3_FORCE_PATH_STYLE: '' })).toMatchObject({
+      S3_FORCE_PATH_STYLE: false,
+    });
   });
 
-  it("различает 'true' и 'false' из .env", () => {
+  it("строго разбирает 'true'/'false'", () => {
     expect(
-      EnvSchema.parse({ ...baseEnv, S3_FORCE_PATH_STYLE: 'false' })
-        .S3_FORCE_PATH_STYLE,
-    ).toBe(false);
+      validateEnv({ ...baseEnv, S3_FORCE_PATH_STYLE: 'true' }),
+    ).toMatchObject({ S3_FORCE_PATH_STYLE: true });
     expect(
-      EnvSchema.parse({ ...baseEnv, S3_FORCE_PATH_STYLE: 'true' })
-        .S3_FORCE_PATH_STYLE,
-    ).toBe(true);
-    expect(
-      EnvSchema.parse({ ...baseEnv, S3_FORCE_PATH_STYLE: false })
-        .S3_FORCE_PATH_STYLE,
-    ).toBe(false);
+      validateEnv({ ...baseEnv, S3_FORCE_PATH_STYLE: 'false' }),
+    ).toMatchObject({ S3_FORCE_PATH_STYLE: false });
   });
 
   it('отклоняет мусор вместо булева значения', () => {
-    expect(() =>
-      EnvSchema.parse({ ...baseEnv, S3_FORCE_PATH_STYLE: 'yes' }),
-    ).toThrow();
-    expect(() =>
-      EnvSchema.parse({ ...baseEnv, S3_FORCE_PATH_STYLE: '0' }),
-    ).toThrow();
+    expect(
+      EnvSchema.safeParse({ ...baseEnv, S3_FORCE_PATH_STYLE: 'yes' }).success,
+    ).toBe(false);
+    expect(
+      EnvSchema.safeParse({ ...baseEnv, S3_FORCE_PATH_STYLE: '1' }).success,
+    ).toBe(false);
   });
 });
 
@@ -1082,6 +1095,37 @@ describe('LLM Router env (v1.2 S1, DESIGN V120 § 3.1)', () => {
       LlmRouterEnvSchema.parse({ LLM_ROUTER_FALLBACK_MODEL: '  gpt-4o  ' })
         .LLM_ROUTER_FALLBACK_MODEL,
     ).toBe('gpt-4o');
+  });
+});
+
+describe('LLM fallback env (v1.6.0 S6-C)', () => {
+  it('дефолт: fallback выключен, ключа нет', () => {
+    const parsed = validateEnv(baseEnv);
+
+    expect(parsed).toMatchObject({ LLM_FALLBACK_PROVIDER: 'none' });
+    expect(parsed.LLM_FALLBACK_API_KEY).toBeUndefined();
+  });
+
+  it('принимает deepseek/yandex/openai и ключ', () => {
+    for (const provider of ['deepseek', 'yandex', 'openai'] as const) {
+      expect(
+        validateEnv({
+          ...baseEnv,
+          LLM_FALLBACK_PROVIDER: provider,
+          LLM_FALLBACK_API_KEY: 'sk-fallback',
+        }),
+      ).toMatchObject({
+        LLM_FALLBACK_PROVIDER: provider,
+        LLM_FALLBACK_API_KEY: 'sk-fallback',
+      });
+    }
+  });
+
+  it('отклоняет неизвестного провайдера', () => {
+    expect(
+      EnvSchema.safeParse({ ...baseEnv, LLM_FALLBACK_PROVIDER: 'anthropic' })
+        .success,
+    ).toBe(false);
   });
 });
 

@@ -668,6 +668,76 @@ describe('LlmProviderFactory', () => {
     ]);
   });
 
+  describe('LLM fallback (v1.6.0 S6-C)', () => {
+    it('none — аварийный провайдер не создаётся', async () => {
+      const providers = await createProviders({
+        LLM_FALLBACK_PROVIDER: 'none',
+        LLM_FALLBACK_API_KEY: 'sk-fallback',
+      });
+
+      expect(providers).toEqual([]);
+    });
+
+    it('deepseek + ключ — провайдер добавлен в реестр', async () => {
+      const deepseek = await byName(
+        {
+          LLM_FALLBACK_PROVIDER: 'deepseek',
+          LLM_FALLBACK_API_KEY: 'sk-fallback',
+        },
+        'deepseek',
+      );
+
+      expect(deepseek?.name).toBe('deepseek');
+      expect(deepseek?.models.map((model) => model.id)).toEqual([
+        'deepseek-chat',
+        'deepseek-reasoner',
+      ]);
+    });
+
+    it('без LLM_FALLBACK_API_KEY — WARN и пропуск, приложение стартует', async () => {
+      const warn = vi
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      const providers = await createProviders({
+        LLM_FALLBACK_PROVIDER: 'deepseek',
+      });
+
+      expect(providers).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('LLM_FALLBACK_API_KEY не задан'),
+      );
+      warn.mockRestore();
+    });
+
+    it('не дублирует провайдера, уже настроенного основным ключом', async () => {
+      const providers = await createProviders({
+        DEEPSEEK_API_KEY: 'sk-main',
+        LLM_FALLBACK_PROVIDER: 'deepseek',
+        LLM_FALLBACK_API_KEY: 'sk-fallback',
+      });
+
+      expect(
+        providers.filter((provider) => provider.name === 'deepseek'),
+      ).toHaveLength(1);
+    });
+
+    it('yandex без YANDEX_FOLDER_ID — WARN и пропуск', async () => {
+      const warn = vi
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      const providers = await createProviders({
+        LLM_FALLBACK_PROVIDER: 'yandex',
+        LLM_FALLBACK_API_KEY: 'sk-fallback',
+      });
+
+      expect(providers).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('YANDEX_FOLDER_ID не задан'),
+      );
+      warn.mockRestore();
+    });
+  });
+
   it('ставит GPTunnel в приоритете после RouterAI (v0.6.0b.1)', async () => {
     const providers = await createProviders({
       ANTHROPIC_API_KEY: 'sk-ant',

@@ -594,6 +594,74 @@ describe('S3MediaStorage: загрузка в бакет (R7.8, KI-412)', () => 
     expect(send).not.toHaveBeenCalled();
   });
 
+  describe('S3_FORCE_PATH_STYLE (v1.6.0 S6-C)', () => {
+    it('false — presigned URL virtual-hosted (Selectel CORS)', async () => {
+      const send = vi.fn(() => Promise.resolve({}));
+      const storage = new S3MediaStorage({
+        ...optionsWith(send),
+        forcePathStyle: false,
+      });
+
+      const signed = await storage.getSignedUrlAsync('run-1/node-a.png');
+
+      // Bucket становится поддоменом, path-style `/media/` отсутствует.
+      expect(signed).toContain('https://media.s3.test/run-1/node-a.png?');
+      expect(signed).not.toContain('https://s3.test/media/');
+      expect(signed).toContain('X-Amz-Signature=');
+      // Подпись локальная: в S3 ничего не отправляется.
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it('false — прямой URL публичного бакета тоже virtual-hosted', async () => {
+      stubFetch(new Uint8Array([137, 80, 78, 71, 1]), {
+        headers: { 'content-type': 'image/png' },
+      });
+      const send = vi.fn(() => Promise.resolve({}));
+      const storage = new S3MediaStorage({
+        ...optionsWith(send),
+        publicBucket: true,
+        forcePathStyle: false,
+      });
+
+      const saved = await storage.uploadAsync({
+        runId: 'run-1',
+        nodeId: 'node-a',
+        sourceUrl: 'https://provider.test/result.png',
+      });
+
+      expect(saved?.storedUrl).toBe('https://media.s3.test/run-1/node-a.png');
+    });
+
+    it('переподписывает virtual-hosted URL по ключу (fallback старых строк)', async () => {
+      const send = vi.fn(() => Promise.resolve({}));
+      const storage = new S3MediaStorage({
+        ...optionsWith(send),
+        forcePathStyle: false,
+      });
+
+      const refreshed = await storage.refreshStoredUrlAsync(
+        'https://media.s3.test/run-1/node-a.png?X-Amz-Signature=old',
+      );
+
+      expect(refreshed?.storedUrl).toContain(
+        'https://media.s3.test/run-1/node-a.png?',
+      );
+      expect(refreshed?.storedUrl).not.toContain('old');
+    });
+
+    it('true — прежний path-style URL (MinIO)', async () => {
+      const send = vi.fn(() => Promise.resolve({}));
+      const storage = new S3MediaStorage({
+        ...optionsWith(send),
+        forcePathStyle: true,
+      });
+
+      const signed = await storage.getSignedUrlAsync('run-1/node-a.png');
+
+      expect(signed).toContain('https://s3.test/media/run-1/node-a.png?');
+    });
+  });
+
   it('KI-443: refreshStoredUrlAsync переподписывает просроченный URL по ключу', async () => {
     const send = vi.fn(() => Promise.resolve({}));
     const storage = new S3MediaStorage(optionsWith(send));
@@ -1026,6 +1094,32 @@ describe('createMediaStorage: отсутствие S3 SDK (KI-412)', () => {
     );
 
     expect(storage.backend).toBe('local');
+  });
+
+  it('прокидывает S3_FORCE_PATH_STYLE=false в клиент (S6-C)', async () => {
+    const config = (values: Record<string, unknown>): ConfigService =>
+      ({ get: (key: string) => values[key] }) as unknown as ConfigService;
+
+    const storage = createMediaStorage(
+      config({
+        MEDIA_STORAGE_BACKEND: 's3',
+        S3_ENDPOINT: 'https://s3.test',
+        S3_BUCKET: 'media',
+        S3_ACCESS_KEY_ID: 'access',
+        S3_SECRET_ACCESS_KEY: 'secret',
+        S3_REGION: 'ru-7',
+        S3_FORCE_PATH_STYLE: false,
+      }),
+      { sdkAvailable: true },
+    );
+
+    expect(storage.backend).toBe('s3');
+
+    const signed = await (storage as S3MediaStorage).getSignedUrlAsync(
+      'run-1/node-a.png',
+    );
+
+    expect(signed).toContain('https://media.s3.test/run-1/node-a.png?');
   });
 });
 

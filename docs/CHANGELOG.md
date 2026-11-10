@@ -19,14 +19,29 @@
 
 ### Added
 
-- **`S3_FORCE_PATH_STYLE` — адресация S3-бакета (KI-4xx).** По умолчанию
-  `true`: path-style `<endpoint>/<bucket>/<key>` (MinIO, R2, Yandex Object
-  Storage). `false` включает virtual-hosted `<bucket>.<endpoint>/<key>` —
-  он нужен для бакетов Selectel/AWS, где CORS отдаётся только для
-  virtual-hosted адресации; без этого Android-клиент не может скачать
-  presigned URL через `fetch`. `storageKeyFromUrl` теперь понимает оба
-  формата, поэтому ранее сохранённые `stored_url` продолжают
-  переподписываться.
+- **Production hardening (v1.6.0 S6-C)**
+  ([отчёт](development/reports/v1.6.0/S6-C-production-hardening.md)):
+  - **S3 virtual-hosted style:** `S3_FORCE_PATH_STYLE` (строгий boolean, дефолт
+    `false`) в `EnvSchema` и `S3MediaStorageOptions`; `S3Client` получает
+    `forcePathStyle` из env, прямой URL публичного бакета строится как
+    `https://<bucket>.<endpoint>/<key>`, переподпись понимает оба формата.
+    Selectel не отдаёт CORS для path-style — из-за этого Android/Capacitor не
+    скачивал медиа.
+  - **Режим регистрации:** `REGISTRATION_MODE` (`open` | `invite`, дефолт
+    `open`). В `invite` `AuthService.registerAsync` требует ожидающее
+    приглашение в `organization_invitations` для нормализованного email иначе
+    `403 Регистрация только по приглашению`; приглашение по-прежнему «сжигается»
+    в транзакции.
+  - **Аварийный LLM-fallback:** `LLM_FALLBACK_PROVIDER` (`none` | `deepseek` |
+    `yandex` | `openai`, дефолт `none`) и `LLM_FALLBACK_API_KEY`;
+    `LlmProviderFactory` добавляет облачного провайдера в реестр, и
+    существующий `LlmRouterService` уводит вызов в облако, когда LM Studio
+    недоступен. Без ключа — WARN и пропуск, приложение стартует.
+  - **Документация:** `PRODUCTION.md` — факты инфраструктуры (FirstVDS,
+    Selectel S3, метрики, LM Studio/reverse-SSH), правила
+    `--force-recreate` для `Caddyfile`/`prometheus.yml`, offsite-бэкапы в S3,
+    `REGISTRATION_MODE=open` + fail2ban; `.env.example`/`.env.production.example`
+    — новые переменные.
 
 ### Fixed
 

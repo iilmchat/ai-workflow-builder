@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   UnauthorizedException,
@@ -180,9 +181,15 @@ export class AuthService {
    * Если приглашения нет — прежнее поведение: личная организация и роль `owner`
    * (v1.0 S3), которая даёт доступ к журналу аудита (`GET /admin/audit`).
    *
+   * **Режим регистрации (v1.6.0 S6-C).** При `REGISTRATION_MODE=invite`
+   * отсутствие строки в `organization_invitations` для этого email — отказ
+   * `403` до хэширования пароля и транзакции. `open` сохраняет прежнее
+   * поведение: регистрация без приглашения создаёт личную организацию.
+   *
    * @param dto - валидированные email/пароль
    * @returns токен и публичные данные пользователя
    * @throws ConflictException если email уже занят (проверка вне транзакции)
+   * @throws ForbiddenException если `REGISTRATION_MODE=invite`, а приглашения нет
    */
   async registerAsync(dto: RegisterDto): Promise<AuthResult> {
     const email = this.normalizeEmail(dto.email);
@@ -198,6 +205,9 @@ export class AuthService {
 
     // Самое старое приглашение: если организаций несколько, пользователь
     // попадает в ту, которая пригласила раньше (порядок стабилен по id).
+    // Отдельного статуса у строки нет: она существует, пока приглашение
+    // ожидает, и удаляется при регистрации/повторном инвайте — то есть
+    // найденная запись и есть `pending` (v1.6.0 S6-C).
     const [invitation] = await this.db
       .select()
       .from(organizationInvitations)
@@ -207,6 +217,16 @@ export class AuthService {
         asc(organizationInvitations.id),
       )
       .limit(1);
+
+    // v1.6.0 S6-C: режим «только по приглашению». Проверка стоит до хэширования
+    // пароля и транзакции: без приглашения регистрация не должна выполнять
+    // дорогую работу и создавать какие-либо строки.
+    if (
+      this.config.get<string>('REGISTRATION_MODE') === 'invite' &&
+      invitation === undefined
+    ) {
+      throw new ForbiddenException('Регистрация только по приглашению');
+    }
 
     const passwordHash = await this.hashPasswordAsync(dto.password);
 

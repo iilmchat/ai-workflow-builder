@@ -491,18 +491,18 @@ export const MediaStorageEnvSchema = z.object({
     )
     .default(false),
   /**
-   * Адресация бакета: path-style или virtual-hosted (KI-4xx).
+   * Использовать path-style URL S3 (`<endpoint>/<bucket>/<key>`), default false
+   * (v1.6.0 S6-C).
    *
-   * `true` (по умолчанию) — path-style `<endpoint>/<bucket>/<key>`: подходит
-   * для MinIO, R2, Yandex Object Storage и сохраняет совместимость с уже
-   * записанными `stored_url`.
+   * Selectel S3 **не отдаёт CORS-заголовки для path-style** запросов, поэтому
+   * скачивание медиа из Android/Capacitor блокируется браузером. Virtual-hosted
+   * style (`https://<bucket>.s3.ru-7.storage.selcloud.ru/<key>`) — рабочая
+   * схема для Selectel; `false` и есть virtual-hosted.
    *
-   * `false` — virtual-hosted `<bucket>.<endpoint>/<key>`: нужен для бакетов
-   * Selectel/AWS, где CORS отдаётся только для virtual-hosted адресации
-   * (Android-клиент скачивает presigned URL через `fetch`, без CORS падает).
-   *
-   * Булево строго, как `S3_PUBLIC_BUCKET` (RULES 4.35): `'false'` не должен
-   * превращаться в `true` через `z.coerce.boolean()`.
+   * `true` оставлен для MinIO и старых S3-совместимых хранилищ, где
+   * virtual-hosted DNS не настроен. Разбор строгий, как у `S3_PUBLIC_BUCKET`
+   * (RULES 4.35): `z.coerce.boolean()` превратил бы строку `'false'` в `true`
+   * и молча вернул path-style, то есть снова сломал бы CORS.
    */
   S3_FORCE_PATH_STYLE: z
     .preprocess(
@@ -512,7 +512,7 @@ export const MediaStorageEnvSchema = z.object({
         .transform((value) => value === true || value === 'true')
         .optional(),
     )
-    .default(true),
+    .default(false),
 });
 
 /** Валидированные настройки хранилища media-результатов (R7.8). */
@@ -1038,6 +1038,32 @@ export const LlmRouterEnvSchema = z.object({
     emptyToUndefined,
     z.string().trim().min(1).max(200).optional(),
   ).default('gpt-4o-mini'),
+  /**
+   * Облачный провайдер аварийного fallback'а (v1.6.0 S6-C).
+   *
+   * Прод работает на локальном LM Studio через reverse-SSH: если рабочая
+   * станция выключится, без облачного ключа LLM-узлы падают. `none` (default)
+   * сохраняет прежнее поведение. `deepseek`/`yandex`/`openai` добавляют
+   * провайдера из {@link LLM_FALLBACK_API_KEY}, даже если основного ключа
+   * провайдера (`DEEPSEEK_API_KEY` и т.п.) нет.
+   */
+  LLM_FALLBACK_PROVIDER: z
+    .preprocess(
+      emptyToUndefined,
+      z.enum(['none', 'deepseek', 'yandex', 'openai']).optional(),
+    )
+    .default('none'),
+  /**
+   * Ключ аварийного облачного провайдера (v1.6.0 S6-C).
+   *
+   * Секрет (RULES 5.1/5.3): в логи не пишется. Пустое значение — «не задан»;
+   * при `LLM_FALLBACK_PROVIDER != none` это WARN и fallback пропускается, а не
+   * падение старта: локальный LM Studio остаётся основным маршрутом.
+   */
+  LLM_FALLBACK_API_KEY: z.preprocess(
+    emptyToUndefined,
+    z.string().trim().min(1).max(512).optional(),
+  ),
 });
 
 /** Валидированные настройки LLM-роутера (v1.2 S1). */
@@ -1322,6 +1348,21 @@ export const EnvSchema = z.object({
   COOKIE_SAMESITE: z
     .preprocess(emptyToUndefined, z.enum(['Strict', 'Lax', 'None']).optional())
     .default('Strict'),
+  /**
+   * Режим регистрации (v1.6.0 S6-C).
+   *
+   * - `open` (default) — `/auth/register` доступен всем; на проде защищён
+   *   fail2ban'ом на хосте (rate limit приложения — отдельный слой);
+   * - `invite` — регистрация только по ожидающему приглашению в
+   *   `organization_invitations` для нормализованного email. Нет приглашения —
+   *   `403 Регистрация только по приглашению`.
+   *
+   * Строгий enum: опечатка `invites` не должна молча открыть регистрацию
+   * (безопасный режим выбирается явно, RULES 4.35).
+   */
+  REGISTRATION_MODE: z
+    .preprocess(emptyToUndefined, z.enum(['open', 'invite']).optional())
+    .default('open'),
   /**
    * Отключает проверку токена (dev/CI): запросы выполняются от системного
    * пользователя миграции 0004. В проде обязано быть `false`.
