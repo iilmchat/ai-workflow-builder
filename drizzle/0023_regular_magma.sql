@@ -1,0 +1,1 @@
+CREATE INDEX "workflow_runs_workflow_id_created_at_idx" ON "workflow_runs" USING btree ("workflow_id","created_at" desc,"id" desc);

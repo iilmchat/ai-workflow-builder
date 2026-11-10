@@ -1,4 +1,4 @@
-import { relations, sql } from 'drizzle-orm';
+import { desc, relations, sql } from 'drizzle-orm';
 import {
   check,
   customType,
@@ -707,7 +707,18 @@ export const workflowRuns = pgTable('workflow_runs', {
    * `started_at` (`RUN_STALE_THRESHOLD_MS`), поэтому backfill не нужен.
    */
   leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
-});
+  },
+  // KI-540: история запусков листается keyset-пагинацией
+  // `WHERE workflow_id = $1 ORDER BY created_at DESC, id DESC`; без индекса
+  // это seq scan + sort по растущей таблице.
+  (table) => [
+    index('workflow_runs_workflow_id_created_at_idx').on(
+      table.workflowId,
+      desc(table.createdAt),
+      desc(table.id),
+    ),
+  ],
+);
 
 /**
  * node_runs — выполнение отдельного узла внутри запуска workflow.

@@ -19,6 +19,16 @@
 
 ### Added
 
+- **Final Performance & UX Fixes (v1.6.0 S8.2)**
+  ([отчёт](development/reports/v1.6.0/S8.2-final-fixes.md)):
+  - **KI-540:** составной индекс
+    `workflow_runs_workflow_id_created_at_idx` на
+    `(workflow_id, created_at DESC, id DESC)` (миграция `0023`) — история
+    запусков больше не сканирует таблицу.
+  - **KI-466:** `GET /media/download?url=...` — прокси-скачивание через
+    `SafeHttpClient` (SSRF + лимит 25 МБ) с `Content-Disposition: attachment`;
+    web-версии ImageGen и DocumentGen скачивают через него, а не через
+    cross-origin `<a download>`.
 - **FinOps Polish & UX Quick Wins (v1.6.0 S8.1)**
   ([отчёт](development/reports/v1.6.0/S8.1-finops-ux.md)):
   - **KI-152:** явный `costStatus` (`exact` | `cached` | `local` | `unknown`)
@@ -55,6 +65,7 @@
 
 ### Fixed
 
+- **KI-540/466 (S8.2):** индекс истории запусков и прокси-скачивание S3.
 - **KI-152/124/383 (S8.1):** `costStatus` в метриках/выходах, единый курс
   USD→RUB, кнопки скачивания/открытия изображения.
 - **Performance (KI-113):** `MediaRegistryService` кэширует карту

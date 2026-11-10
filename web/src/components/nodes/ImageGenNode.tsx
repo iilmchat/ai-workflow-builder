@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode } from '@/components/nodes/BaseNode';
 import { ExpiredMediaPlaceholder } from '@/components/ExpiredMediaPlaceholder';
 import i18n from '@/i18n';
+import { apiUrl } from '@/lib/api-base';
 import { useAutoResize } from '@/hooks/use-auto-resize';
 import { useNodeDataHistory } from '@/hooks/use-node-data-history';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
@@ -85,9 +86,6 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
   }, [loadMediaModels]);
 
   const prompt = data.prompt ?? '';
-  // v1.6.0 S8.1 (KI-124): скачивание может занять время/упасть по CORS —
-  // блокируем кнопку, чтобы повторный клик не запустил второй fetch.
-  const [isDownloading, setIsDownloading] = useState(false);
 
   // KI-157: промпт пишется в хранилище на каждый символ — сохраняем курсор.
   // KI-166: дублирование в `data.value` больше не нужно — backend читает
@@ -114,12 +112,6 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
     storedExpiresAt: nodeMetrics?.storedExpiresAt ?? null,
   });
 
-  // S8.1 (KI-124): имя файла из URL (без query) либо безопасный дефолт.
-  const downloadFileName =
-    mediaSource.src === null
-      ? `image-${id}.png`
-      : mediaSource.src.split('?')[0]?.split('/').pop() || `image-${id}.png`;
-
   /**
    * Открывает результат в новой вкладке (KI-124).
    *
@@ -132,45 +124,30 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
   }, [mediaSource.src]);
 
   /**
-   * Скачивает результат через blob (KI-124).
+   * Скачивает результат через backend-прокси (S8.2, KI-466).
    *
-   * Если CDN провайдера не отдал CORS-заголовки, `fetch` падает — тогда
-   * открываем картинку в новой вкладке: пользователь сохранит её сам. Тот же
-   * fallback — при любой сетевой ошибке: кнопка не должна молча ничего делать.
+   * Браузер игнорирует `download` у кросс-доменной ссылки (S3/Selectel), а
+   * прямой `fetch` падает на CORS. Поэтому переходим на same-origin ручку
+   * `/media/download`: она скачивает файл с backend и отдаёт его с
+   * `Content-Disposition: attachment`.
    *
-   * @returns промис без значения
+   * @returns ничего
    */
-  const handleDownload = useCallback(async () => {
-    if (mediaSource.src === null || isDownloading) {
+  const handleDownload = useCallback(() => {
+    if (mediaSource.src === null) {
       return;
     }
 
-    setIsDownloading(true);
+    const link = document.createElement('a');
 
-    try {
-      const response = await fetch(mediaSource.src);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-
-      link.href = objectUrl;
-      link.download = downloadFileName;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      // Освобождаем blob после того, как браузер начал скачивание.
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-    } catch {
-      window.open(mediaSource.src, '_blank', 'noopener,noreferrer');
-    } finally {
-      setIsDownloading(false);
-    }
-  }, [downloadFileName, isDownloading, mediaSource.src]);
+    link.href = apiUrl(
+      `/media/download?url=${encodeURIComponent(mediaSource.src)}`,
+    );
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }, [mediaSource.src]);
 
   const aspectRatioParam = selected?.params.find(
     (param) => param.key === ASPECT_RATIO_KEY,
@@ -314,11 +291,10 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
                 <button
                   type="button"
                   data-image-download=""
-                  onClick={() => void handleDownload()}
-                  disabled={isDownloading}
+                  onClick={handleDownload}
                   aria-label={t('node.image.download')}
                   title={t('node.image.download')}
-                  className="cursor-pointer rounded-md bg-background/90 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow ring-1 ring-border hover:bg-muted disabled:cursor-wait disabled:opacity-60"
+                  className="cursor-pointer rounded-md bg-background/90 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow ring-1 ring-border hover:bg-muted"
                 >
                   {t('node.image.download')}
                 </button>

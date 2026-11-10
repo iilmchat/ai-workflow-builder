@@ -162,6 +162,13 @@
       "when": 1794342292586,
       "tag": "0022_lyrical_midnight",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794346756422,
+      "tag": "0023_regular_magma",
+      "breakpoints": true
     }
   ]
 }

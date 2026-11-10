@@ -307,7 +307,7 @@ describe('DocumentGenNode — inline-режим (v0.10 S6)', () => {
 
     expect(link).toHaveAttribute(
       'href',
-      '/media/file/run-1/generated-document-gen-1.docx',
+      `/media/download?url=${encodeURIComponent('/media/file/run-1/generated-document-gen-1.docx')}`,
     );
     expect(link).toHaveAttribute('download', 'generated-document-gen-1.docx');
   });
@@ -332,7 +332,7 @@ describe('DocumentGenNode — inline-режим (v0.10 S6)', () => {
 
     expect(link).toHaveAttribute(
       'href',
-      '/media/file/run-1/generated-document-gen-1.pdf',
+      `/media/download?url=${encodeURIComponent('/media/file/run-1/generated-document-gen-1.pdf')}`,
     );
     expect(link).toHaveAttribute('download', 'generated-document-gen-1.pdf');
     expect(link).toHaveAttribute('data-document-gen-output-format', 'pdf');
@@ -370,7 +370,10 @@ describe('DocumentGenNode — inline-режим (v0.10 S6)', () => {
 
     expect(
       screen.getByRole('link', { name: ru['node.document_gen.download'] }),
-    ).toHaveAttribute('href', 'https://cdn.example.com/document.docx');
+    ).toHaveAttribute(
+      'href',
+      `/media/download?url=${encodeURIComponent('https://cdn.example.com/document.docx')}`,
+    );
   });
 
   it('не делает ссылкой небезопасный URL', () => {

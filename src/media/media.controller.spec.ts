@@ -1,7 +1,12 @@
 import type { INestApplication } from '@nestjs/common';
-import { Logger } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import type { Response } from 'express';
+import {
+  SafeHttpClient,
+  type SafeHttpBufferResponse,
+} from '../common/http/safe-http.client.js';
 import { MediaController } from './media.controller.js';
 import { MediaRegistryService } from './media-registry.service.js';
 import {
@@ -38,15 +43,20 @@ describe('MediaController', () => {
   let app: INestApplication;
   let controller: MediaController;
   let registry: { listModelsAsync: ReturnType<typeof vi.fn> };
+  let safeHttp: { fetchBufferAsync: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     registry = {
       listModelsAsync: vi.fn(() => Promise.resolve([model])),
     };
+    safeHttp = { fetchBufferAsync: vi.fn() };
 
     const moduleRef = await Test.createTestingModule({
       controllers: [MediaController],
-      providers: [{ provide: MediaRegistryService, useValue: registry }],
+      providers: [
+        { provide: MediaRegistryService, useValue: registry },
+        { provide: SafeHttpClient, useValue: safeHttp },
+      ],
     }).compile();
 
     controller = moduleRef.get(MediaController);
@@ -132,5 +142,54 @@ describe('MediaController', () => {
     await expect(controller.listModelsAsync({ type: 'IMAGE' })).rejects.toThrow(
       'программная ошибка',
     );
+  });
+
+  it('GET /media/download отдаёт Content-Disposition и тело файла (S8.2, KI-466)', async () => {
+    const buffer = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const upstream: SafeHttpBufferResponse = {
+      status: 200,
+      ok: true,
+      headers: new Headers({ 'content-type': 'image/png' }),
+      buffer,
+      contentType: 'image/png',
+      finalUrl: 'https://cdn.example.com/path/cat.png',
+    };
+    safeHttp.fetchBufferAsync.mockResolvedValue(upstream);
+
+    const response = await request(app.getHttpServer())
+      .get('/media/download')
+      .query({ url: 'https://cdn.example.com/path/cat.png' })
+      .expect(200);
+
+    expect(response.headers['content-disposition']).toBe(
+      'attachment; filename="cat.png"',
+    );
+    expect(response.headers['content-type']).toContain('image/png');
+    expect(Buffer.from(response.body)).toEqual(buffer);
+  });
+
+  it('блокирует http://127.0.0.1 до сетевого вызова (SSRF)', async () => {
+    // Настоящий клиент: литерал loopback блокируется до DNS/транспорта.
+    const realClient = new SafeHttpClient();
+    const realController = new MediaController(
+      registry as unknown as MediaRegistryService,
+      realClient,
+    );
+    const setHeader = vi.fn();
+    const end = vi.fn();
+    const response = {
+      setHeader,
+      end,
+    } as unknown as Response;
+
+    await expect(
+      realController.downloadAsync(
+        { url: 'http://127.0.0.1/secret' },
+        response,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(end).not.toHaveBeenCalled();
+    expect(setHeader).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,6 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ru from '@/i18n/ru.json';
 import { useWorkflowStore } from '@/stores/workflow';
@@ -42,26 +42,13 @@ function renderNode() {
   );
 }
 
-describe('ImageGenNode — «Открыть»/«Скачать» (S8.1, KI-124)', () => {
+describe('ImageGenNode — «Открыть»/«Скачать» (S8.1/S8.2, KI-124/KI-466)', () => {
   let openSpy: ReturnType<typeof vi.spyOn>;
-  let createObjectUrl: ReturnType<typeof vi.fn>;
-  let revokeObjectUrl: ReturnType<typeof vi.fn>;
   let clickedLink: HTMLAnchorElement | null;
 
   beforeEach(() => {
     openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
-    createObjectUrl = vi.fn(() => 'blob:mock-image');
-    revokeObjectUrl = vi.fn();
     clickedLink = null;
-
-    Object.defineProperty(URL, 'createObjectURL', {
-      configurable: true,
-      value: createObjectUrl,
-    });
-    Object.defineProperty(URL, 'revokeObjectURL', {
-      configurable: true,
-      value: revokeObjectUrl,
-    });
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
       this: HTMLAnchorElement,
     ) {
@@ -98,7 +85,6 @@ describe('ImageGenNode — «Открыть»/«Скачать» (S8.1, KI-124)'
 
   afterEach(() => {
     vi.restoreAllMocks();
-    vi.unstubAllGlobals();
   });
 
   it('«Открыть» открывает ссылку в новой вкладке', () => {
@@ -113,44 +99,23 @@ describe('ImageGenNode — «Открыть»/«Скачать» (S8.1, KI-124)'
     );
   });
 
-  it('«Скачать» скачивает blob и подставляет имя файла', async () => {
-    const blob = new Blob(['image'], { type: 'image/png' });
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() => Promise.resolve({ ok: true, blob: () => Promise.resolve(blob) })),
-    );
-
+  it('«Скачать» ведёт на same-origin прокси, а не качает blob в браузере', () => {
     renderNode();
 
     fireEvent.click(
       screen.getByRole('button', { name: ru['node.image.download'] }),
     );
 
-    await waitFor(() => expect(createObjectUrl).toHaveBeenCalledWith(blob));
+    expect(clickedLink).not.toBeNull();
 
-    expect(clickedLink?.download).toBe('image.png');
-    expect(clickedLink?.href).toContain('blob:mock-image');
-  });
+    const href = clickedLink?.getAttribute('href') ?? '';
+    const parsed = new URL(href, 'http://localhost');
 
-  it('при CORS/сетевой ошибке «Скачать» открывает ссылку в новой вкладке', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))),
+    expect(parsed.pathname).toBe('/media/download');
+    expect(decodeURIComponent(parsed.searchParams.get('url') ?? '')).toContain(
+      '/media/file/run-1/image.png',
     );
-
-    renderNode();
-
-    fireEvent.click(
-      screen.getByRole('button', { name: ru['node.image.download'] }),
-    );
-
-    await waitFor(() =>
-      expect(openSpy).toHaveBeenCalledWith(
-        expect.stringContaining('/media/file/run-1/image.png'),
-        '_blank',
-        'noopener,noreferrer',
-      ),
-    );
-    expect(createObjectUrl).not.toHaveBeenCalled();
+    // Старый blob-путь больше не используется: CORS на S3 не нужен.
+    expect(href).not.toContain('blob:');
   });
 });

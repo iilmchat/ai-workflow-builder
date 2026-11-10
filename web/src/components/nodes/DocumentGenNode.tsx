@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode } from '@/components/nodes/BaseNode';
+import { apiUrl } from '@/lib/api-base';
 import { useAutoResize } from '@/hooks/use-auto-resize';
 import {
   downloadAndOpenFileAsync,
@@ -277,6 +278,15 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
   const content = readContent(data.content);
   const templateId = readTemplateId(data.templateId);
   const downloadUrl = readDocumentUrl(outputs);
+  // S8.2 (KI-466): в браузере `download` у cross-origin S3-ссылки игнорируется.
+  // Поэтому web идёт через same-origin прокси с `Content-Disposition`, а
+  // нативное приложение по-прежнему скачивает напрямую в `Documents`.
+  const downloadHref =
+    downloadUrl === null
+      ? null
+      : isNative()
+        ? downloadUrl
+        : apiUrl(`/media/download?url=${encodeURIComponent(downloadUrl)}`);
   const fileName = readFileName(outputs);
   // Формат уже сгенерированного файла: по нему строятся подпись ссылки и
   // fallback-имя, даже если `fileName` не пришёл из старых запусков.
@@ -750,7 +760,7 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
         {downloadUrl !== null ? (
           <>
             <a
-              href={downloadUrl}
+              href={downloadHref ?? downloadUrl}
               download={fileName ?? `document.${outputFormat}`}
               target="_blank"
               rel="noreferrer"
