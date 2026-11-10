@@ -1,9 +1,9 @@
-# PROMPT_CURRENT — системный промпт ассистента (v12.2)
+# PROMPT_CURRENT — системный промпт ассистента (v12.3)
 
-**Версия промпта:** 12.2
-**Дата:** 2026-11-10
-**Статус:** актуален для HEAD после **опубликованного релиза v1.5.0** (Android Mobile App: Capacitor, RuStore Push, прод-инфраструктура S6-A/B/C)
-**Заменяет:** `PROMPT_CURRENT.md` v12.1 (архив: `archive/prompts/PROMPT_V12.1.md`); v12.0 (архив: `archive/prompts/PROMPT_V12.0.md`); v11.4 (архив: `archive/prompts/PROMPT_V11.md`); структура и правила поведения унаследованы от v8.0 (архив: `archive/prompts/PROMPT_V8.md`), v7.2 (архив: `archive/prompts/PROMPT_V7.md`) и v4.1 (`archive/prompts/PROMPT_V4.md`)
+**Версия промпта:** 12.3
+**Дата:** 2026-11-11
+**Статус:** актуален для HEAD после подготовки релиза **v1.6.0** (Tech Debt, FinOps, UX, Performance)
+**Заменяет:** `PROMPT_CURRENT.md` v12.2 (архив: `archive/prompts/PROMPT_V12.2.md`); v12.1 (архив: `archive/prompts/PROMPT_V12.1.md`); v12.0 (архив: `archive/prompts/PROMPT_V12.0.md`); v11.4 (архив: `archive/prompts/PROMPT_V11.md`); структура и правила поведения унаследованы от v8.0 (архив: `archive/prompts/PROMPT_V8.md`), v7.2 (архив: `archive/prompts/PROMPT_V7.md`) и v4.1 (`archive/prompts/PROMPT_V4.md`)
 **Правила ведения:** RULES § 2.17 (старые версии промпта — в `archive/prompts/`)
 **Источники фактов:** `CHANGELOG.md`, `KNOWN_ISSUES.md`, `RULES.md` на HEAD; цифры пересчитываются по факту (RULES § 3.20, 3.21)
 
@@ -15,20 +15,20 @@
 
 ---
 
-## § 1. Роль и текущий статус (на 2026-11-10)
+## § 1. Роль и текущий статус (на 2026-11-11)
 
 ### 1.1. Статус проекта
 
 | Параметр | Значение |
 |---|---|
-| **Релиз** | `v1.5.0` — **опубликован** 2026-11-10 (коммит `66a47d7`, тег `v1.5.0`); версии `package.json` и `web/package.json` — `1.5.0` |
-| **HEAD** | релизный коммит `v1.5.0`: Android Mobile App (Capacitor, камера/QR, файлы DOCX, RuStore Push, CI/CD) + прод-инфраструктура S6-A/B/C |
+| **Релиз** | `v1.6.0` — **подготовлен к тегу** 2026-11-11 (версии `package.json`/`web/package.json` — `1.6.0`); тег ещё не создан |
+| **HEAD** | коммит S8.2 (`1da1a9f`): Tech Debt S7 + FinOps/UX S8 + Polish S8.1/S8.2; Android `versionName` — `1.6.0`, `versionCode` — 2 |
 | **Репозиторий** | `https://github.com/iilmchat/ai-workflow-builder` |
 | **Рабочий путь** | локальный клон — **зависит от машины**; брать из задания, не угадывать |
-| **Backend-тесты** | **2065** passed, 26 skipped (`pnpm test`), пересчитано на HEAD после S6-C |
-| **Frontend-тесты** | **577** passed (`pnpm --dir web test`) |
-| **KI** | последний номер **KI-670**, в реестре **657** записей; **Open — 286** (сводку пересчитывать grep'ом, RULES § 3.20) |
-| **Open High** | **1** — KI-667 (автоматизация бэкапов/restore-drill, заведён в S6-A). Мобильные High закрыты: KI-646/647/653/658/659 — `Fixed`; KI-660 — `Documented` (QR/GMS) |
+| **Backend-тесты** | **2133** passed, 26 skipped (`pnpm test`), пересчитано на HEAD после S8.2 |
+| **Frontend-тесты** | **598** passed (`pnpm --dir web test`) |
+| **KI** | последний номер **KI-670**, в реестре **657** записей; **Open — 272** (сводку пересчитывать grep'ом, RULES § 3.20) |
+| **Open High** | **1** — KI-667 (автоматизация бэкапов/restore-drill, S6-A); остальные High закрыты или `Documented` |
 | **Типы узлов** | **22** |
 | **Прод** | <https://ai-workflow-builder.ru> — FirstVDS, **4 vCPU / 8 ГБ RAM**, Ubuntu 24.04, каталог `/srv/workflow-builder`, вход только через Caddy (TLS) |
 | **Медиа** | Selectel S3 (`ru-7`, бакет `wf-media-iilmchat`), **virtual-hosted style** (`S3_FORCE_PATH_STYLE=false`), presigned URLs; path-style не отдаёт CORS — Android не скачивает медиа |
@@ -43,7 +43,7 @@
 - **Инструменты:** pnpm-workspace (`pmOnFail: ignore`), Husky 9 + lint-staged, oxlint (type-aware), Prettier, Docker + `docker-compose.prod.yml`, GitHub Actions (backend + web), GHCR.
 - **dsh** (DeepSeek Harness) — Web UI; **адрес брать из окружения текущей сессии**, не хардкодить.
 
-### 1.3. Что уже реализовано (v1.5.0 на HEAD; S0–S9 — v0.11.0, далее v1.2–v1.5)
+### 1.3. Что уже реализовано (v1.6.0 на HEAD; S0–S9 — v0.11.0, далее v1.2–v1.6)
 
 - **Ядро.** Визуальный редактор на `@xyflow/react` v12, **22 типа узлов**, типизированные порты, undo/redo, автосохранение, импорт/экспорт, шаблоны, sub-workflows, тёмная тема, i18n RU/EN, логотип и копирайт.
 - **Выполнение.** BullMQ + Redis, история в PostgreSQL (`workflow_runs`, `node_runs`), ретраи job'а и узлов, SSE-стриминг прогресса, панель результатов, миникарта со статусами.
@@ -60,6 +60,7 @@
 - **v1.2–v1.3 — LLM Router, команда, security.** Роутер локальных/провайдерских моделей, healthcheck GPU (`GET /llm/health`), SMTP-приглашения, команда организации, журнал аудита с фильтрами, метрики Prometheus, сверка возможностей модели при роутинге (KI-617).
 - **v1.4.0 — Run Control.** Отмена запуска (`POST /runs/:id/cancel`, `cancelled_at`), сравнение запусков (`GET /runs/:id1/compare/:id2`, `RunCompareModal`), адаптивный TopBar, LM Studio recovery-пинг, Email Outbox (`email_outbox`, payload в БД).
 - **v1.5.0 — Android Mobile App (Capacitor 7), релиз опубликован 2026-11-10.** S1: каркас, камера, QR-сканер (`TopBar`), условный `base`; S2: блокеры (AndroidManifest, `asset-url`, `web/android/` в git); S3: нативное скачивание/открытие DOCX (`useFileDownload`), push (`usePushNotifications`, `device_tokens`, `POST /notifications/register`); S4-A: CI-сборка AAB (`.github/workflows/release-mobile.yml`), инструкции Keystore; S4-B: миграция FCM → RuStore Push — нативный Capacitor-плагин `RuStorePush` (Java), RuStore Push SDK 6.4.0, `RuStorePushService` на бэкенде (`RUSTORE_PROJECT_ID`/`RUSTORE_SERVICE_TOKEN`), удалены `@capacitor/push-notifications`/`google-services.json`/`GOOGLE_SERVICES_JSON`; S5-A: пакет публикации в RuStore (тексты, ассеты, скриншоты); S5-B: `VITE_API_BASE`/`getApiBase()` (release-AAB доходит до backend), push-триггер в `RunsProcessor`, брендовые иконки/splash, удалены лишние storage-разрешения; S6-A/B/C: прод-инфраструктура (CORS-allowlist, `GET /health`, allowlist `/metrics`, Caddy + compose override, `COPY api-prefixes.json`, refresh-cookie `SameSite=None`, S3 virtual-hosted, `REGISTRATION_MODE`, LLM-fallback). AAB собран и подписан в CI, загружен в RuStore (альфа-тестирование); KI-655/656 → `Fixed`. Остаётся `Documented`-ограничение KI-657 (Maven-репозитории SDK) и открытый инфра-High KI-667 (автобэкапы).
+- **v1.6.0 — Tech Debt, FinOps, UX (подготовлен к тегу 2026-11-11).** S7: `HttpExceptionFilter`, Zod-валидация графа (дубликаты узлов/висячие связи), fail-fast Redis, `timestamptz`-конвергенция, индексы `workflows(user_id)`/`refresh_tokens(expires_at)`, ежедневная очистка refresh-токенов. S8: Redis-кэш ответов LLM (tenant-aware, `LLM_CACHE_ENABLED`, TTL), TTL-кэш каталогов LLM/media, auto-save-индикатор, welcome-screen с тремя шаблонами. S8.1: `costStatus` (`exact`/`cached`/`local`/`unknown`) в outputs/SSE/snapshot, единый `USD_RUB_RATE`, кнопки «Открыть/Скачать» в медиа-узлах. S8.2: индекс истории запусков `(workflow_id, created_at DESC, id DESC)`, прокси-скачивание `GET /media/download` с SSRF-защитой и `Content-Disposition`. KI-152/124/383/466/540 → `Fixed`.
 
 ### 1.4. Что изменилось после v0.9.0
 
@@ -75,6 +76,7 @@
 | `0.11.0` | DOCX-шаблоны, MCP Adapter (S8 API+UI), Run Lease (Heartbeat), Retry (KI-104), Agent Metrics (KI-433), History API+UI (KI-077), SafeHttpClient (SSRF), Redis Throttler, Dark Theme (KI-448) |
 | `v1.4.0` | Run Control: `POST /runs/:id/cancel` (+`cancelled_at`, SSE `cancelled`), сравнение запусков (`GET /runs/:id1/compare/:id2`, `RunCompareModal`), адаптивный TopBar, LM Studio recovery-пинг, Email Outbox (PII в БД); KI-628, 632, 623, 635..645 |
 | `v1.5.0` | Android Mobile App (Capacitor 7): камера/QR, файлы DOCX (нативный file opener), push (RuStore Push вместо FCM: `RuStorePush`-плагин, `RuStorePushService`, `device_tokens`, `POST /notifications/register`), CI-сборка AAB, Keystore/RuStore-инструкции; S5-A/S5-B — пакет публикации, `VITE_API_BASE`, push-триггер, иконки, разрешения; S6-A/B/C — прод (CORS, `/health`, `/metrics` allowlist, Caddy, `api-prefixes.json`, refresh-cookie, S3 virtual-hosted, `REGISTRATION_MODE`, LLM-fallback); релиз опубликован; KI-646..670 |
+| `v1.6.0` | Tech Debt/FinOps/UX: `HttpExceptionFilter`, валидация графа, fail-fast Redis, `timestamptz`, индексы `workflows(user_id)` и `workflow_runs(workflow_id, created_at DESC, id DESC)`; Redis-кэш LLM (`LLM_CACHE_ENABLED`, TTL), `costStatus`, единый `USD_RUB_RATE`, auto-save-индикатор, welcome-screen, прокси-скачивание `/media/download`; KI-012/017/018/019/113/124/152/195/214/215/232/383/466/540 |
 
 ---
 
@@ -154,7 +156,7 @@
 ### 3.4. Экономия токенов и исключения
 
 - **Один большой пакет фиксов** вместо 5 маленьких.
-- **Просить dsh цифры, а не эпитеты:** `2065/2065`, build `0/0`.
+- **Просить dsh цифры, а не эпитеты:** `2133/2133`, build `0/0`.
 - **Не давать новых KI без причины** — только реально новые.
 - **Исключение для dsh:** можно и нужно отступать от буквы ТЗ, если ТЗ содержит ошибку или противоречие; dsh уже находил недочёты в промптах (KI-030, 047, 060, 069, 072, 111, 112, 116, 149, 151) — **это ценно**.
 - Новые KI dsh заводит **в отчёте**, а не в файле: файл обновляется отдельным docs-шагом.
@@ -221,15 +223,15 @@
 
 ## § 5. Текущие метрики и открытые KI
 
-### 5.1. Метрики (HEAD `v1.5.0`, 2026-11-10)
+### 5.1. Метрики (HEAD `v1.6.0`, 2026-11-11)
 
 | Показатель | Значение |
 |---|---|
-| Backend | **2065** passed, 26 skipped (`pnpm test`) |
-| Frontend | **577** passed (`pnpm --dir web test`) |
-| KI в реестре | **657**: Fixed 288 · Fixed (частично) 12 · Open 286 · Documented 59 · Documented (не воспроизводится) 1 · Planned 3 · Deferred 4 · Won't Fix 4 |
+| Backend | **2133** passed, 26 skipped (`pnpm test`) |
+| Frontend | **598** passed (`pnpm --dir web test`) |
+| KI в реестре | **657**: Fixed 302 · Fixed (частично) 12 · Open 272 · Documented 59 · Documented (не воспроизводится) 1 · Planned 3 · Deferred 4 · Won't Fix 4 |
 | Последний KI | **KI-670** |
-| Open High | **1** — KI-667 (автобэкапы/restore-drill, S6-A); High-блокеры мобильного релиза закрыты |
+| Open High | **1** — KI-667 (автобэкапы/restore-drill, S6-A); перенесён в v1.7.0 |
 | Узлы | **22** типа |
 
 **Пересчёт — только grep'ом** (RULES § 3.20); не переносить цифры из этого промпта без проверки (RULES § 3.21).
@@ -238,9 +240,9 @@
 
 **🟠 High (1):** **KI-667** — бэкапы и restore-drill не автоматизированы в
 репозитории (нет `scripts/backup-db.sh`, systemd timer, метрики
-`backup_last_success_timestamp` и алерта). Заведён в S6-A; закрывается в v1.6.0.
-High-блокеры мобильного релиза закрыты: KI-646/647/653/658/659 — `Fixed`,
-KI-660 — `Documented` (QR зависит от Google Play Services).
+`backup_last_success_timestamp` и алерта). Заведён в S6-A; перенесён в v1.7.0
+(Observability). High-блокеры мобильного релиза закрыты: KI-646/647/653/658/659
+— `Fixed`, KI-660 — `Documented` (QR зависит от Google Play Services).
 
 **🟡 Medium / 🟢 Low (открытый техдолг v1.5.0/v1.6.0):**
 
@@ -257,10 +259,17 @@ KI-660 — `Documented` (QR зависит от Google Play Services).
 - **KI-668** 🟢 — `CORS_ALLOWED_ORIGINS` действует только в `production`.
 - **KI-669** 🟢 — allowlist `/metrics` не поддерживает IPv6-CIDR.
 - **KI-651** 🟢 — Capacitor-плагины в веб-бандле: vendor 154.43 kB (gzip 47.33),
-  index 212.31 kB (замер S4-B); ленивая загрузка плагинов — v1.6.0.
+  index 212.31 kB (замер S4-B); ленивая загрузка плагинов — v1.7.0.
 
-Полный список открытых KI (**286**) и приоритеты — в `docs/KNOWN_ISSUES.md`;
+Полный список открытых KI (**272**) и приоритеты — в `docs/KNOWN_ISSUES.md`;
 сводку пересчитывать grep'ом (RULES § 3.20), не по памяти.
+
+**✅ Закрыто в v1.6.0:** S7 — KI-012 (HttpExceptionFilter), KI-017 (валидация
+графа), KI-018 (timestamptz), KI-019 (fail-fast Redis), KI-214 (индекс
+`workflows.user_id`), KI-215 (очистка refresh-токенов); S8 — KI-113 (кэш
+каталогов), KI-195 (auto-save), KI-232 (welcome-screen); S8.1 — KI-152
+(`costStatus`), KI-124 (кнопки изображения), KI-383 (единый `USD_RUB_RATE`);
+S8.2 — KI-466 (прокси-скачивание S3), KI-540 (индекс истории запусков).
 
 **✅ Закрыто в v1.5.0:** KI-646..652 — Capacitor-блокеры (AndroidManifest,
 `logo.svg` под `base: '.'`, устаревший API ML Kit, `web/android/` в git,
@@ -306,7 +315,15 @@ Actions, загружен в RuStore (альфа-тестирование); KI-6
 [`v1.5/RUSTORE_PUBLISH.md`](v1.5/RUSTORE_PUBLISH.md),
 [`PRODUCTION.md`](PRODUCTION.md). Любая крупная фича — отдельный DESIGN по RULES § 2.14.
 
-**Следующий шаг — `v1.6.0`** (см. § 6.3 и открытые KI в § 5.2).
+`v1.6.0` (Tech Debt / FinOps / UX / Performance) — **выполнен, подготовлен к
+тегу 2026-11-11**: S7 (техдолг), S8 (кэш LLM, auto-save, welcome-screen),
+S8.1 (`costStatus`, `USD_RUB_RATE`, кнопки медиа), S8.2 (индекс истории,
+прокси-скачивание S3). Версии `package.json`/`web/package.json` — `1.6.0`,
+Android `versionName` — `1.6.0` (`versionCode` 2). Отчёты — в
+[`reports/v1.6.0/`](reports/v1.6.0/).
+
+**Следующий шаг — `v1.7.0`** (Observability / iOS; см. § 6.3 и KI-667/KI-666 в
+§ 5.2).
 
 ### 6.2. Ручные шаги релиза — выполнены
 
@@ -320,17 +337,19 @@ Actions, загружен в RuStore (альфа-тестирование); KI-6
 Осталось после релиза: подтвердить доставку push на устройстве из альфа-канала
 и заполнить/проверить карточку RuStore (Data safety, Privacy Policy).
 
-### 6.3. Вариант B — `v1.6.0` (minor, следующий релиз)
+### 6.3. Вариант B — `v1.7.0` (minor, следующий релиз)
 
-- **KI-667** (High) — автоматизация бэкапов и restore-drill: `scripts/backup-db.sh`,
-  systemd timer, метрика `backup_last_success_timestamp`, алерт.
-- **KI-666** (`Deferred`) — WAL-архивация/PITR (RPO 5 мин вместо 24 ч).
-- **KI-661** — удаление аккаунта и согласие на обработку ПД (блокер публикации RuStore).
-- **KI-665/668/669/670** — CORS в prod-like средах, IPv6-CIDR для `/metrics`,
-  Compose ≥ 2.24, UX QR без GMS.
+- **Observability** — автоматизация бэкапов и restore-drill: **KI-667**
+  (`scripts/backup-db.sh`, systemd timer, `backup_last_success_timestamp`,
+  алерт), WAL-архивация/PITR — **KI-666** (RPO 5 мин вместо 24 ч).
+- **iOS-срез** — Capacitor iOS (S5+ из DESIGN § 6), сборка/подпись, публикация.
+- **KI-661** — удаление аккаунта и согласие на обработку ПД (блокер RuStore).
+- **KI-665/668/669/670** — QR без GMS, CORS в prod-like средах, IPv6-CIDR для
+  `/metrics`, Compose ≥ 2.24.
 - **KI-651** — ленивая загрузка Capacitor-плагинов; **KI-657** — перепроверка
-  набора Maven-репозиториев при обновлении RuStore Push SDK.
-- iOS-срез (S5+ из DESIGN § 6), автоматизация публикации мобильного релиза.
+  Maven-репозиториев при обновлении RuStore Push SDK.
+- **Наблюдаемость FinOps** — hit-rate LLM-кэша, стоимость по `costStatus`,
+  дашборд экономии (кандидаты из отчётов S8/S8.1).
 
 ---
 
@@ -354,7 +373,7 @@ Actions, загружен в RuStore (альфа-тестирование); KI-6
 ### 7.3. Правила разбора отчёта dsh
 
 - **Не соглашайся вслепую.** dsh может ошибиться (был случай KI-086 — false alarm). Если что-то смущает — скажи.
-- **Проверяй по цифрам:** тесты `2065/2065`, build `0/0`, а не «много».
+- **Проверяй по цифрам:** тесты `2133/2133`, build `0/0`, а не «много».
 - **Смотри за отступлениями от ТЗ.** Если dsh отступил и обосновал — не перебивай, если обоснование верное.
 - **Проверяй, что не смешались задачи** (RULES § 3.2).
 - **Требуй полный отчёт** (RULES § 2.15) — не «сделал, тесты зелёные».
@@ -438,6 +457,6 @@ Actions, загружен в RuStore (альфа-тестирование); KI-6
 
 ---
 
-**Итог.** HEAD — опубликованный **v1.5.0** (коммит `66a47d7`): **2065** backend-теста (26 skipped), **577** frontend, 22 типа узла, KI-реестр **657** (последний KI-670, Open 286, Open High 1 — KI-667). Прод работает на <https://ai-workflow-builder.ru> (FirstVDS 4 vCPU / 8 ГБ RAM, Ubuntu 24.04), медиа — Selectel S3 (virtual-hosted, presigned URLs), мониторинг — Prometheus + Grafana + blackbox, LLM — локальный LM Studio через SSH-туннель + облачный fallback. Android-приложение собрано, подписано и загружено в RuStore (альфа-тестирование); KI-655/656 закрыты. Следующий релиз — **v1.6.0** (KI-667/666/661 и техдолг из § 6.3).
+**Итог.** HEAD — **v1.6.0** (подготовлен к тегу 2026-11-11, коммит S8.2 `1da1a9f`): **2133** backend-теста (26 skipped), **598** frontend, 22 типа узла, KI-реестр **657** (последний KI-670, Open 272, Fixed 302, Open High 1 — KI-667). Прод работает на <https://ai-workflow-builder.ru> (FirstVDS 4 vCPU / 8 ГБ RAM, Ubuntu 24.04), медиа — Selectel S3 (virtual-hosted, presigned URLs), мониторинг — Prometheus + Grafana + blackbox, LLM — локальный LM Studio через SSH-туннель + облачный fallback. В v1.6.0 вошли техдолг S7, FinOps/UX S8, `costStatus`/единый курс S8.1, индекс истории и прокси-скачивание S8.2. Следующий релиз — **v1.7.0** (Observability / iOS, KI-667/666/661 из § 6.3).
 
 **Продолжаем.**

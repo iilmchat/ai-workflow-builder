@@ -17,6 +17,8 @@
 ---
 ## [Unreleased]
 
+## [1.6.0] — 2026-11-11
+
 ### Added
 
 - **Final Performance & UX Fixes (v1.6.0 S8.2)**
@@ -38,7 +40,8 @@
   - **KI-383:** единый `USD_RUB_RATE` для бюджета и media-тарифов; старые
     `WORKFLOW_RUN_USD_RUB_RATE`/`MEDIA_USD_RUB_RATE` — legacy fallback.
   - **KI-124:** кнопки «Открыть»/«Скачать» в узле Image Generation (hover,
-    `nodrag`), download через blob с fallback в новую вкладку при CORS.
+    `nodrag`); в S8.2 скачивание переведено на same-origin прокси
+    `/media/download`.
 - **FinOps, Performance & UX Polish (v1.6.0 S8)**
   ([отчёт](development/reports/v1.6.0/S8-finops-ux.md)):
   - **LLM response cache:** `LLM_CACHE_ENABLED` (default `false`) и
