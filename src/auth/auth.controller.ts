@@ -20,7 +20,9 @@ import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import {
   clearRefreshCookie,
   readRefreshCookie,
+  resolveRefreshCookieOptions,
   setRefreshCookie,
+  type RefreshCookieOptions,
 } from './auth.cookie.js';
 import { AuthService, type AuthResult, type UserPublic } from './auth.service.js';
 import { CurrentUser } from './decorators/current-user.decorator.js';
@@ -49,6 +51,7 @@ export class AuthController {
    * `POST /auth/register` — регистрация, access в теле, refresh в cookie.
    *
    * @param dto - тело запроса, валидированное по RegisterSchema
+   * @param request - запрос Express (Origin для выбора SameSite, KI-664)
    * @param response - ответ Express (для `Set-Cookie`)
    * @returns токен доступа и публичные данные пользователя (201)
    */
@@ -56,11 +59,12 @@ export class AuthController {
   @HttpCode(HttpStatus.CREATED)
   async register(
     @Body(ZodValidationPipe.create(RegisterSchema)) dto: RegisterDto,
+    @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ): Promise<AuthResult> {
     const result = await this.authService.registerAsync(dto);
 
-    await this.issueRefreshCookieAsync(response, result.user.id);
+    await this.issueRefreshCookieAsync(response, result.user.id, request);
 
     return result;
   }
@@ -69,6 +73,7 @@ export class AuthController {
    * `POST /auth/login` — вход, access в теле, refresh в cookie.
    *
    * @param dto - тело запроса, валидированное по LoginSchema
+   * @param request - запрос Express (Origin для выбора SameSite, KI-664)
    * @param response - ответ Express (для `Set-Cookie`)
    * @returns токен доступа и публичные данные пользователя (200)
    */
@@ -79,11 +84,12 @@ export class AuthController {
   @Throttle({ default: LOGIN_THROTTLE })
   async login(
     @Body(ZodValidationPipe.create(LoginSchema)) dto: LoginDto,
+    @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ): Promise<AuthResult> {
     const result = await this.authService.loginAsync(dto);
 
-    await this.issueRefreshCookieAsync(response, result.user.id);
+    await this.issueRefreshCookieAsync(response, result.user.id, request);
 
     return result;
   }
@@ -121,7 +127,7 @@ export class AuthController {
       response,
       rotated.newRefresh.token,
       this.refreshTtlMs(),
-      this.isSecureCookie(),
+      this.refreshCookieOptions(request),
     );
 
     return { accessToken: rotated.accessToken, user: rotated.user };
@@ -157,7 +163,7 @@ export class AuthController {
       }
     }
 
-    clearRefreshCookie(response);
+    clearRefreshCookie(response, this.refreshCookieOptions(request));
   }
 
   /**
@@ -178,11 +184,13 @@ export class AuthController {
    *
    * @param response - ответ Express
    * @param userId - владелец токена
+   * @param request - запрос Express (Origin для выбора SameSite, KI-664)
    * @returns промис без значения
    */
   private async issueRefreshCookieAsync(
     response: Response,
     userId: string,
+    request: Request,
   ): Promise<void> {
     const refresh = await this.authService.createRefreshTokenAsync(userId);
 
@@ -190,8 +198,28 @@ export class AuthController {
       response,
       refresh.token,
       this.refreshTtlMs(),
-      this.isSecureCookie(),
+      this.refreshCookieOptions(request),
     );
+  }
+
+  /**
+   * Опции refresh-cookie для текущего запроса (v1.6.0 S6-B, KI-664).
+   *
+   * В production запрос с Capacitor-origin (`capacitor://localhost`,
+   * `https://localhost`) получает `SameSite=None; Secure`: WebView и API —
+   * разные origin'ы, и `Strict`-cookie туда не отправится. Остальные запросы
+   * используют `COOKIE_SAMESITE` (дефолт `Strict`).
+   *
+   * @param request - запрос Express
+   * @returns `sameSite` и `secure` для `Set-Cookie`
+   */
+  private refreshCookieOptions(request: Request): RefreshCookieOptions {
+    return resolveRefreshCookieOptions({
+      origin: request.headers.origin,
+      nodeEnv: this.config.get<string>('NODE_ENV'),
+      configuredSameSite: this.config.get<string>('COOKIE_SAMESITE'),
+      secure: this.isSecureCookie(),
+    });
   }
 
   /**

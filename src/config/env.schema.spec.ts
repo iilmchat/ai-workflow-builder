@@ -445,6 +445,32 @@ describe('COOKIE_SECURE в production (KI-220)', () => {
   });
 });
 
+describe('COOKIE_SAMESITE (v1.6.0 S6-B, KI-664)', () => {
+  it('дефолт — Strict', () => {
+    // toMatchObject: схема добавляет дефолты остальных переменных.
+    expect(validateEnv(baseEnv)).toMatchObject({ COOKIE_SAMESITE: 'Strict' });
+    // KI-084: пустая переменная в .env — «не задана», а не ошибка.
+    expect(validateEnv({ ...baseEnv, COOKIE_SAMESITE: '' })).toMatchObject({
+      COOKIE_SAMESITE: 'Strict',
+    });
+  });
+
+  it('принимает Strict/Lax/None', () => {
+    expect(
+      validateEnv({ ...baseEnv, COOKIE_SAMESITE: 'Lax' }),
+    ).toMatchObject({ COOKIE_SAMESITE: 'Lax' });
+    expect(
+      validateEnv({ ...baseEnv, COOKIE_SAMESITE: 'None' }),
+    ).toMatchObject({ COOKIE_SAMESITE: 'None' });
+  });
+
+  it('отклоняет неизвестное значение, а не подставляет Strict молча', () => {
+    expect(
+      EnvSchema.safeParse({ ...baseEnv, COOKIE_SAMESITE: 'strict' }).success,
+    ).toBe(false);
+  });
+});
+
 describe('staging / preprod считаются prod-подобными (KI-221)', () => {
   it('отклоняет AUTH_DISABLED=true при NODE_ENV=staging', () => {
     expect(() =>

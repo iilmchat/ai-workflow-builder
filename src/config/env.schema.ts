@@ -1282,6 +1282,24 @@ export const EnvSchema = z.object({
       .optional(),
   ),
   /**
+   * Значение `SameSite` для refresh-cookie по умолчанию (v1.6.0 S6-B, KI-664).
+   *
+   * В вебе нужен `Strict`: cross-site запросы с чужих сайтов cookie не
+   * приложат (CSRF). В Capacitor WebView сайт (`https://localhost` или
+   * `capacitor://localhost`) и API (`https://ai-workflow-builder.ru`) — разные
+   * origin'ы, поэтому `Strict`-cookie туда не отправляется. Для таких запросов
+   * в production код принудительно ставит `None` + `Secure`
+   * (`src/auth/auth.cookie.ts`); эта переменная задаёт значение для остальных
+   * случаев. `None` без `Secure` браузер отвергает — флаг `Secure` включается
+   * автоматически.
+   *
+   * Строгий enum, а не свободная строка: опечатка `StrictNone` не должна
+   * молча превращаться в «как получится» (RULES 4.35).
+   */
+  COOKIE_SAMESITE: z
+    .preprocess(emptyToUndefined, z.enum(['Strict', 'Lax', 'None']).optional())
+    .default('Strict'),
+  /**
    * Отключает проверку токена (dev/CI): запросы выполняются от системного
    * пользователя миграции 0004. В проде обязано быть `false`.
    */

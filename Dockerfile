@@ -63,6 +63,11 @@ COPY --from=builder --chown=node:node /app/web/dist ./web/dist
 COPY --from=builder --chown=node:node /app/drizzle ./drizzle
 COPY --from=builder --chown=node:node /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=builder --chown=node:node /app/docker-entrypoint.sh ./docker-entrypoint.sh
+# Единый реестр API-префиксов читается в рантайме: dist/common/api-prefixes.js
+# поднимается на два уровня (`/app`) и открывает `/app/api-prefixes.json`
+# (`src/common/api-prefixes.ts`). Без этого COPY прод падал на старте
+# «Не прочитан единый реестр API-префиксов» (S6-B, блокер первого деплоя).
+COPY --from=builder --chown=node:node /app/api-prefixes.json ./api-prefixes.json
 
 # MEDIA_STORAGE_BACKEND=local пишет в /app/data/media (см. .env.example).
 # Каталог создаём заранее и отдаём node: примонтированный volume наследует

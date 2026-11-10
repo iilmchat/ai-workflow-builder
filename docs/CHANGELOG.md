@@ -17,6 +17,30 @@
 ---
 ## [Unreleased]
 
+### Fixed
+
+- **Dockerfile: `api-prefixes.json` в runtime-стадии (v1.6.0 S6-B)**
+  ([отчёт](development/reports/v1.6.0/S6-B-post-deploy-fixes.md)):
+  `COPY --from=builder --chown=node:node /app/api-prefixes.json ./api-prefixes.json`
+  рядом с `dist`/`package.json`/`node_modules`, до `USER node`. Runtime-стадия
+  раньше не копировала файл, хотя `src/common/api-prefixes.ts` читает его при
+  импорте (`/app/api-prefixes.json`), поэтому образ из GHCR падал на старте
+  «Не прочитан единый реестр API-префиксов». На проде до пересборки файл
+  монтировался volume'ом (PRODUCTION.md § 13.1).
+
+### Changed
+
+- **Refresh-cookie `SameSite=None` для Capacitor WebView (v1.6.0 S6-B,
+  KI-664)** ([отчёт](development/reports/v1.6.0/S6-B-post-deploy-fixes.md)):
+  `src/auth/auth.cookie.ts` — `resolveRefreshCookieOptions`; в `production`
+  запрос с `Origin: capacitor://localhost` или `https://localhost` получает
+  `SameSite=None; Secure` (WebView и API — разные origin'ы), остальные —
+  `COOKIE_SAMESITE` из env (enum `Strict`/`Lax`/`None`, дефолт `Strict`).
+  `None` всегда включает `Secure`; `clearRefreshCookie` повторяет те же
+  атрибуты. `main.ts` — `credentials` в CORS только при точном allowlist'е
+  (production), чтобы браузер принял cross-origin `Set-Cookie`.
+  `.env.production.example` — комментарий для Android/Capacitor.
+
 ## [1.5.0] — 2026-11-09
 
 **Minor-релиз: Android Mobile App (Capacitor).**
