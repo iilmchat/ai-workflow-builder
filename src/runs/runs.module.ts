@@ -3,6 +3,13 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AgentService } from '../agent/agent.service.js';
 import { AuthModule } from '../auth/auth.module.js';
+// v1.6.0 S7 (KI-215): ежедневная очистка истёкших refresh-токенов.
+import {
+  REFRESH_TOKEN_CLEANUP_QUEUE,
+  REFRESH_TOKEN_CLEANUP_QUEUE_DB,
+  REFRESH_TOKEN_CLEANUP_QUEUE_PREFIX,
+  RefreshTokenCleanupProcessor,
+} from '../auth/refresh-token-cleanup.service.js';
 // v0.11 S14 (KI-434/435/478): безопасный HTTP-клиент узла `http` и
 // инструмента `http_request` агента — один экземпляр на приложение.
 import { SafeHttpClient } from '../common/http/safe-http.client.js';
@@ -101,6 +108,33 @@ import { RUNS_QUEUE_DB, RUNS_QUEUE_PREFIX } from './runs.worker-options.js';
         },
       }),
     }),
+    // v1.6.0 S7 (KI-215): отдельная очередь служебных задач аутентификации.
+    // Не переиспользуем `workflow-runs`: её воркер ждёт payload запуска, а
+    // очистка токенов — короткая независимая операция.
+    BullModule.registerQueueAsync({
+      name: REFRESH_TOKEN_CLEANUP_QUEUE,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        // KI-387: то же пространство ключей, что у очереди запусков.
+        prefix:
+          config.get<string>('BULLMQ_PREFIX') ??
+          REFRESH_TOKEN_CLEANUP_QUEUE_PREFIX,
+        connection: {
+          url: config.getOrThrow<string>('REDIS_URL'),
+          db:
+            config.get<number>('REDIS_QUEUE_DB') ??
+            REFRESH_TOKEN_CLEANUP_QUEUE_DB,
+        },
+        // Очистка идемпотентна: пары повторов достаточно, историю заданий не
+        // копим — раз в сутки нужен только факт успешного прохода.
+        defaultJobOptions: {
+          attempts: 2,
+          backoff: { type: 'exponential', delay: 60_000 },
+          removeOnComplete: { count: 30, age: 7 * 24 * 3600 },
+          removeOnFail: { count: 50, age: 30 * 24 * 3600 },
+        },
+      }),
+    }),
   ],
   // v0.14 S1 (DESIGN V014 § 3.1): `GET /workflow/:id/runs` — история запусков.
   // Отдельный контроллер, потому что у него другой префикс (`workflow/:id/runs`),
@@ -113,6 +147,9 @@ import { RUNS_QUEUE_DB, RUNS_QUEUE_PREFIX } from './runs.worker-options.js';
     // `GET /runs/:id/nodes` — проекция не может разойтись между транспортами.
     NodeRunSnapshotMapper,
     RunsProcessor,
+    // v1.6.0 S7 (KI-215): регистрирует ежедневное задание очистки
+    // `refresh_tokens` и выполняет его.
+    RefreshTokenCleanupProcessor,
     RunEventsService,
     // v0.11 S9 (KI-066): продление lease запуска. ExecutionEngineService
     // (ниже, в этом же модуле) запускает heartbeat, RunsProcessor — читает

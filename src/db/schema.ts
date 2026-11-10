@@ -14,7 +14,11 @@ import {
   uuid,
   vector,
 } from 'drizzle-orm/pg-core';
-import type { EdgeDto, GraphSnapshotDto, NodeDto } from '../engine/dto/index.js';
+import type {
+  EdgeDto,
+  GraphSnapshotDto,
+  NodeDto,
+} from '../engine/dto/index.js';
 
 /**
  * Значения колонки `workflow_runs.status` (KI-336).
@@ -182,18 +186,24 @@ export type NewUser = typeof users.$inferInsert;
  * Ротация не удаляет строку, а помечает `revokedAt` — так видно историю
  * использования токена (и повторное использование отозванного ловится).
  */
-export const refreshTokens = pgTable('refresh_tokens', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  tokenHash: text('token_hash').notNull().unique(),
-  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-  revokedAt: timestamp('revoked_at', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const refreshTokens = pgTable(
+  'refresh_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  // KI-215: ежедневная очистка ищет строки по `expires_at < now()`;
+  // без индекса каждый проход — seq scan по растущей таблице.
+  (table) => [index('refresh_tokens_expires_at_idx').on(table.expiresAt)],
+);
 
 /** Строка таблицы `refresh_tokens`. */
 export type RefreshToken = typeof refreshTokens.$inferSelect;
@@ -258,9 +268,11 @@ export const organizationInvitations = pgTable(
 );
 
 /** Строка таблицы `organization_invitations`. */
-export type OrganizationInvitation = typeof organizationInvitations.$inferSelect;
+export type OrganizationInvitation =
+  typeof organizationInvitations.$inferSelect;
 /** Значения для INSERT в `organization_invitations`. */
-export type NewOrganizationInvitation = typeof organizationInvitations.$inferInsert;
+export type NewOrganizationInvitation =
+  typeof organizationInvitations.$inferInsert;
 
 /**
  * Статусы строки `email_outbox` (v1.4.0 S3, KI-623).
@@ -425,10 +437,20 @@ export const workflows = pgTable(
     version: integer('version').notNull().default(1),
     // Задел под R6.2 (Share): публичная ссылка на граф.
     shareToken: uuid('share_token').unique(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
-  (table) => [index('workflows_organization_id_idx').on(table.organizationId)],
+  (table) => [
+    index('workflows_organization_id_idx').on(table.organizationId),
+    // KI-214: owner-фильтр (`WHERE user_id = $1`) в списке workflow и истории
+    // запусков раньше сканировал таблицу целиком. Отдельный индекс нужен
+    // именно по `user_id`: `organization_id` уже покрыт выше.
+    index('workflows_user_id_idx').on(table.userId),
+  ],
 );
 
 /**
@@ -442,7 +464,8 @@ export const workflows = pgTable(
 export const WORKFLOW_COLLABORATOR_ROLES = ['viewer', 'editor'] as const;
 
 /** Роль участника workflow (R7.6). */
-export type WorkflowCollaboratorRole = (typeof WORKFLOW_COLLABORATOR_ROLES)[number];
+export type WorkflowCollaboratorRole =
+  (typeof WORKFLOW_COLLABORATOR_ROLES)[number];
 
 /**
  * workflow_collaborators — участники workflow по id пользователя (R7.6).
@@ -465,7 +488,9 @@ export const workflowCollaborators = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     role: text('role').$type<WorkflowCollaboratorRole>().notNull(),
-    invitedAt: timestamp('invited_at', { withTimezone: true }).notNull().defaultNow(),
+    invitedAt: timestamp('invited_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     invitedBy: uuid('invited_by')
       .notNull()
       .references(() => users.id),
@@ -524,10 +549,7 @@ export const documentTemplates = pgTable(
     content: bytea('content').notNull(),
     bytes: integer('bytes').notNull(),
     sha256: text('sha256').notNull(),
-    placeholders: jsonb('placeholders')
-      .$type<string[]>()
-      .notNull()
-      .default([]),
+    placeholders: jsonb('placeholders').$type<string[]>().notNull().default([]),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -595,11 +617,19 @@ export const workflowVectors = pgTable(
      */
     content: jsonb('content').$type<Record<string, unknown>>().notNull(),
     /** Произвольные метаданные записи (фильтры, источник, теги). */
-    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    metadata: jsonb('metadata')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
-    index('workflow_vectors_collection_idx').on(table.workflowId, table.collection),
+    index('workflow_vectors_collection_idx').on(
+      table.workflowId,
+      table.collection,
+    ),
   ],
 );
 
@@ -623,7 +653,9 @@ export const workflowMemory = pgTable(
       .references(() => workflows.id, { onDelete: 'cascade' }),
     key: text('key').notNull(),
     value: jsonb('value').$type<unknown>().notNull(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.workflowId, table.key] })],
 );
@@ -643,11 +675,16 @@ export const workflowRuns = pgTable('workflow_runs', {
     .notNull()
     .references(() => workflows.id, { onDelete: 'cascade' }),
   status: text('status').notNull().default('pending').$type<RunStatus>(),
-  inputs: jsonb('inputs').$type<Record<string, unknown>>().notNull().default({}),
+  inputs: jsonb('inputs')
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default({}),
   outputs: jsonb('outputs').$type<Record<string, unknown>>().default({}),
   error: text('error'),
   snapshot: jsonb('snapshot').$type<GraphSnapshotDto>().notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
   startedAt: timestamp('started_at', { withTimezone: true }).defaultNow(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
   /**
@@ -830,13 +867,16 @@ export const workflowsRelations = relations(workflows, ({ many }) => ({
   runs: many(workflowRuns),
 }));
 
-export const workflowRunsRelations = relations(workflowRuns, ({ one, many }) => ({
-  workflow: one(workflows, {
-    fields: [workflowRuns.workflowId],
-    references: [workflows.id],
+export const workflowRunsRelations = relations(
+  workflowRuns,
+  ({ one, many }) => ({
+    workflow: one(workflows, {
+      fields: [workflowRuns.workflowId],
+      references: [workflows.id],
+    }),
+    nodeRuns: many(nodeRuns),
   }),
-  nodeRuns: many(nodeRuns),
-}));
+);
 
 export const nodeRunsRelations = relations(nodeRuns, ({ one }) => ({
   run: one(workflowRuns, {

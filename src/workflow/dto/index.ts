@@ -1,5 +1,6 @@
 export * from './create-workflow.dto.js';
 export * from './update-workflow.dto.js';
+export * from './workflow-graph.validation.js';
 export * from './list-workflows.query.js';
 export * from './share-workflow.dto.js';
 export * from './export-workflow.dto.js';

@@ -12,6 +12,11 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
  * `JwtModule` экспортируется вместе с guard'ом: гварды других модулей
  * (`WorkflowModule`, `RunsModule`) инжектят `JwtService`/`ConfigService` и
  * должны получать их из этого модуля.
+ *
+ * Очистка истёкших refresh-токенов (KI-215) живёт в `RunsModule`: там уже
+ * зарегистрированы BullMQ-очереди и прочитан `REDIS_URL`, поэтому `AuthModule`
+ * не тащит Redis-зависимость в каждый модуль, который импортирует его ради
+ * guard'а (например, `WebSearchModule`).
  */
 @Module({
   imports: [

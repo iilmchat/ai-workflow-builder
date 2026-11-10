@@ -17,6 +17,31 @@
 ---
 ## [Unreleased]
 
+### Added
+
+- **Tech Debt & Enterprise Foundations (v1.6.0 S7)**
+  ([отчёт](development/reports/v1.6.0/S7-tech-debt.md)):
+  - **KI-012:** глобальный `HttpExceptionFilter`
+    (`src/common/filters/http-exception.filter.ts`) — единый формат
+    `{ success: false, message, errorCode? }`, подключён в `main.ts`.
+  - **KI-017:** Zod-валидация формы графа в `CreateWorkflowSchema` и
+    `UpdateWorkflowSchema`: уникальность `node.id`, непустые
+    `edge.source`/`edge.target`, ссылки только на существующие узлы;
+    частичный PATCH проверяется против текущего графа в сервисе.
+  - **KI-019:** fail-fast Redis на старте — `RedisModule.onModuleInit`
+    делает `PING` с таймаутом 3 с и бросает `Error`, если Redis недоступен.
+
+### Fixed
+
+- **KI-018:** все `timestamp`-колонки — `timestamptz`; миграция `0022`
+  добавляет идемпотентный DO-блок для остаточного naive-drift'а
+  (`AT TIME ZONE 'UTC'`).
+- **KI-214:** индекс `workflows_user_id_idx` (миграция `0022`);
+  `workflows_organization_id_idx` сохранён.
+- **KI-215:** `AuthService.cleanupExpiredTokensAsync()` + ежедневный
+  BullMQ-job `auth-maintenance` (`0 4 * * *`) в `RunsModule`; индекс
+  `refresh_tokens_expires_at_idx`.
+
 ## [1.5.0] — 2026-11-10
 
 **Minor-релиз: Android Mobile App (Capacitor).**

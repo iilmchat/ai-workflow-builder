@@ -876,15 +876,21 @@
 ---
 
 ### KI-018 — Разнобой типов времени в таблицах
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Исправлено в:** v1.6.0 (S7) | **Обнаружено:** 2026-10-13
 - **Файлы:** `src/db/schema.ts`, `drizzle/`
 - **Описание:** `workflow_runs.created_at` — `timestamptz`, а
   `started_at`/`finished_at` — `timestamp without time zone`. Та же
   картина в `workflows.created_at/updated_at`, `node_runs`.
   Сравнения и сериализация будут расходиться.
 - **Решение:** отдельная миграция — привести всё к `timestamptz`.
+- **Fix (S7):** в `schema.ts` все `timestamp` уже объявлены с
+  `{ withTimezone: true }`; drift исторических колонок закрыла миграция
+  `0006_timestamptz_drift` (KI-293). В `0022_lyrical_midnight.sql` добавлен
+  идемпотентный DO-блок: он переводит в `timestamptz` только оставшиеся
+  `timestamp without time zone` через `AT TIME ZONE 'UTC'` и не сдвигает
+  значения у уже корректных колонок. Проверено на БД: naive-колонок — 0.
 - **Когда чинить:** до R4 (UI начнёт показывать даты).
-- **Связанные:** KI-015.
+- **Связанные:** KI-015, KI-293.
 
 ---
 
@@ -1772,12 +1778,16 @@
 ---
 
 ### KI-215 — `refresh_tokens` не чистится
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Исправлено в:** v1.6.0 (S7) | **Обнаружено:** 2026-10-15
 - **Файлы:** `src/db/schema.ts`, `src/runs/` (repeatable job)
 - **Описание:** Истёкшие и отозванные строки `refresh_tokens` копятся —
   нет периодической очистки по `expires_at`.
 - **Решение:** repeatable BullMQ job (раз в сутки) + индекс на
   `expires_at`.
+- **Fix (S7):** `AuthService.cleanupExpiredTokensAsync()` удаляет строки
+  `expires_at < now()`; очередь `auth-maintenance` в `RunsModule` регистрирует
+  ежедневное задание `0 4 * * *` через `upsertJobScheduler`. Индекс
+  `refresh_tokens_expires_at_idx` добавлен миграцией `0022`.
 - **Когда чинить:** v0.8.x.
 - **Связанные:** KI-201.
 
@@ -3020,7 +3030,7 @@
 ---
 
 ### KI-017 — CRUD не валидирует форму графа
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Исправлено в:** v1.6.0 (S7) | **Обнаружено:** 2026-10-13
 - **Файлы:** `src/workflow/dto/create-workflow.dto.ts`,
   `src/workflow/dto/update-workflow.dto.ts`,
   `src/workflow/workflow.service.ts`
@@ -3031,6 +3041,11 @@
 - **Решение:** валидировать граф на записи через `z.looseObject` /
   `.passthrough()`, чтобы не терять UI-поля React Flow (`selected`,
   `dragging`, `measured`).
+- **Fix (S7):** `z.array(z.unknown())` + `superRefine`: уникальность
+  `node.id`, непустые `edge.source`/`edge.target`, ссылки на существующие
+  узлы. UI-поля не вырезаются. Для частичного PATCH `updateAsync` проверяет
+  итоговый граф (переданные поля + текущие из БД); `createAsync` повторяет
+  проверку как вторая граница (RULES § 1.17).
 - **Когда чинить:** R4 (перед интеграцией с UI).
 - **Связанные:** KI-014.
 
@@ -4722,12 +4737,14 @@
 ---
 
 ### KI-214 — Нет индекса `workflows(user_id)`
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-15
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Исправлено в:** v1.6.0 (S7) | **Обнаружено:** 2026-10-15
 - **Файлы:** `src/db/schema.ts`, `drizzle/`
 - **Описание:** Owner-подзапрос в `getRunAsync` (`inArray(workflowId,
   select id from workflows where user_id = $1)`) сканирует таблицу —
   индекса на `workflows.user_id` нет.
 - **Решение:** partial или обычный индекс на `workflows(user_id)`.
+- **Fix (S7):** добавлен `workflows_user_id_idx` (миграция `0022`);
+  `workflows_organization_id_idx` уже существовал и сохранён.
 - **Когда чинить:** v0.8.x (при росте числа workflow).
 - **Связанные:** KI-202.
 
@@ -4759,12 +4776,16 @@
 ---
 
 ### KI-019 — RedisModule не проверяет доступность Redis на старте
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Исправлено в:** v1.6.0 (S7) | **Обнаружено:** 2026-10-13
 - **Файлы:** `src/redis/redis.module.ts`
 - **Описание:** ioredis ретраит в фоне, приложение поднимается при мёртвом
   Redis. Ошибка всплывёт только на первой публикации / первом job'е.
   Fail-fast сейчас только по env (validateEnv).
 - **Решение:** `onModuleInit` → `await redis.ping()` с таймаутом.
+- **Fix (S7):** `RedisModule.onModuleInit` вызывает
+  `pingRedisWithTimeoutAsync` (3 с); при ошибке/таймауте бросает `Error`,
+  и контейнер перезапускается. HTTP-клиент и строка подключения в лог не
+  попадают.
 - **Когда чинить:** R2.2 или вместе с KI-011 (e2e в CI).
 - **Связанные:** KI-011.
 
@@ -9118,15 +9139,17 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-012 — Глобальный `HttpExceptionFilter` отсутствует
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Исправлено в:** v1.6.0 (S7) | **Обнаружено:** 2026-10-13
 - **Файлы:** `src/main.ts`, `src/common/filters/` (нет)
 - **Описание:** RULES § 1.6 / § 4.7 требуют единый формат ошибок
   `{ success: false, message }` через глобальный `HttpExceptionFilter`.
   Сейчас работает дефолтный Nest-формат (`{ statusCode, message, error }`).
   `runs.controller.ts` рассчитывает на глобальный фильтр, но его нет —
   формат ошибок расходится с RULES.
-- **Fix:** создать `HttpExceptionFilter` + `app.useGlobalFilters(...)`
-  в `main.ts`. ~30 мин.
+- **Fix (S7):** создан `src/common/filters/http-exception.filter.ts`
+  (`{ success: false, message, errorCode? }`), подключён в `main.ts` через
+  `app.useGlobalFilters`. Для 500-х клиент получает общий текст, детали —
+  только в лог; query-строка не логируется.
 - **Когда чинить:** отдельным небольшим шагом до R4 (UI ждёт единый формат).
 - **Связанные:** —
 
@@ -10707,14 +10730,14 @@ staging/preprod — `Open`), KI-669 (IPv6-CIDR — `Open`) и KI-670
 (легенда `### KI-001` имеет строку статуса, поэтому входит в оба счётчика и
 «минус 1» не применяется); (2) сумма статусов в таблице ниже = 657.
 По базовым статусам (посчитано по строкам `**Статус:**`, без префиксного
-совпадения): Fixed 300 (288 + 12 «частично»), Open 286, Documented 60
+совпадения): Fixed 306 (294 + 12 «частично»), Open 280, Documented 60
 (59 + 1 «не воспроизводится»), Planned 3, Deferred 4, Won't Fix 4, In Progress 0.
 
 | Статус | Количество |
 |---|---:|
-| Fixed | 288 |
+| Fixed | 294 |
 | Fixed (частично) | 12 |
-| Open | 286 |
+| Open | 280 |
 | Documented | 59 |
 | Documented (не воспроизводится) | 1 |
 | Planned | 3 |
@@ -10733,5 +10756,11 @@ staging/preprod — `Open`), KI-669 (IPv6-CIDR — `Open`) и KI-670
 коммите `66a47d7` не меняло сводку (оба были `Fixed` раньше), поэтому таблица
 актуальна без правок. Открытых High — **1** (KI-667), остальные High —
 `Fixed` или `Documented`.
+
+**S7 Tech Debt (2026-11-10, v1.6.0):** KI-012, KI-017, KI-018, KI-019, KI-214 и
+KI-215 переведены из `Open` в `Fixed` (у каждого — заметка `Fix (S7)`).
+Счётчики: **657** записей, `Fixed` **294**, `Open` **280**, остальные статусы
+без изменений; сумма = 657, уникальных номеров = 657. Открытых High по-прежнему
+**1** (KI-667).
 
 

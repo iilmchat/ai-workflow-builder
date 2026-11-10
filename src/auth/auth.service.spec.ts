@@ -12,6 +12,7 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   organizationInvitations,
+  refreshTokens,
   type InvitableUserRole,
   type User,
   type UserRole,
@@ -60,6 +61,12 @@ describe('AuthService', () => {
   let deleteTable: ReturnType<typeof vi.fn>;
   /** `WHERE` удаления приглашения — проверяется, что удалена нужная строка. */
   let deleteWhere: ReturnType<typeof vi.fn>;
+  /** `DELETE FROM refresh_tokens` — очистка истёкших токенов (KI-215). */
+  let cleanupDelete: ReturnType<typeof vi.fn>;
+  /** `WHERE` очистки: проверяется условие по `expires_at`. */
+  let cleanupDeleteWhere: ReturnType<typeof vi.fn>;
+  /** `RETURNING` очистки: количество удалённых строк. */
+  let cleanupDeleteReturning: ReturnType<typeof vi.fn>;
   /** Режим регистрации (v1.6.0 S6-C). */
   let registrationMode: 'open' | 'invite';
 
@@ -75,6 +82,9 @@ describe('AuthService', () => {
     signAsync = vi.fn(() => Promise.resolve(TOKEN));
     deleteWhere = vi.fn(() => Promise.resolve());
     deleteTable = vi.fn(() => ({ where: deleteWhere }));
+    cleanupDeleteReturning = vi.fn(() => Promise.resolve([]));
+    cleanupDeleteWhere = vi.fn(() => ({ returning: cleanupDeleteReturning }));
+    cleanupDelete = vi.fn(() => ({ where: cleanupDeleteWhere }));
 
     const update = vi.fn(() => ({ set: updateSet }));
     const insert = vi.fn(() => ({ values: insertValues }));
@@ -100,6 +110,7 @@ describe('AuthService', () => {
       select,
       insert,
       update,
+      delete: cleanupDelete,
       transaction,
     };
 
@@ -209,7 +220,10 @@ describe('AuthService', () => {
     it('выдаёт токен с orgId созданной организации', async () => {
       mockRegisterInserts({ id: ORG_ID, name: ORG_NAME }, registeredUser());
 
-      const result = await service.registerAsync({ email: EMAIL, password: PASSWORD });
+      const result = await service.registerAsync({
+        email: EMAIL,
+        password: PASSWORD,
+      });
 
       expect(result.accessToken).toBe(TOKEN);
       expect(signAsync).toHaveBeenCalledWith(
@@ -221,7 +235,10 @@ describe('AuthService', () => {
     it('создаёт пользователя и возвращает токен', async () => {
       mockRegisterInserts({ id: ORG_ID, name: ORG_NAME }, registeredUser());
 
-      const result = await service.registerAsync({ email: EMAIL, password: PASSWORD });
+      const result = await service.registerAsync({
+        email: EMAIL,
+        password: PASSWORD,
+      });
 
       expect(result.accessToken).toBe(TOKEN);
       expect(result.user).toEqual({
@@ -237,7 +254,10 @@ describe('AuthService', () => {
     it('сохраняет email нормализованным, а пароль — только хэшем (RULES 5.3)', async () => {
       mockRegisterInserts({ id: ORG_ID, name: ORG_NAME }, registeredUser());
 
-      await service.registerAsync({ email: '  User@Example.COM ', password: PASSWORD });
+      await service.registerAsync({
+        email: '  User@Example.COM ',
+        password: PASSWORD,
+      });
 
       const values = userInsertValues();
 
@@ -257,7 +277,10 @@ describe('AuthService', () => {
         { ...baseUser, role: 'admin', passwordHash: 'scrypt$x$y' },
       ]);
 
-      const result = await service.registerAsync({ email: EMAIL, password: PASSWORD });
+      const result = await service.registerAsync({
+        email: EMAIL,
+        password: PASSWORD,
+      });
 
       // Пользователь создан сразу в организации пригласившего и с ролью
       // приглашения; личная организация не заводится (один INSERT).
@@ -389,7 +412,10 @@ describe('AuthService', () => {
       const passwordHash = await service.hashPasswordAsync(PASSWORD);
       selectLimit.mockResolvedValue([{ ...baseUser, passwordHash }]);
 
-      const result = await service.loginAsync({ email: EMAIL, password: PASSWORD });
+      const result = await service.loginAsync({
+        email: EMAIL,
+        password: PASSWORD,
+      });
 
       expect(result.accessToken).toBe(TOKEN);
       expect(result.user.email).toBe(EMAIL);
@@ -457,7 +483,9 @@ describe('AuthService', () => {
 
   describe('getMeAsync', () => {
     it('возвращает публичные данные пользователя', async () => {
-      selectLimit.mockResolvedValue([{ ...baseUser, passwordHash: 'scrypt$x$y' }]);
+      selectLimit.mockResolvedValue([
+        { ...baseUser, passwordHash: 'scrypt$x$y' },
+      ]);
 
       await expect(service.getMeAsync(USER_ID)).resolves.toEqual({
         id: USER_ID,
@@ -469,7 +497,9 @@ describe('AuthService', () => {
     });
 
     it('бросает UnauthorizedException, если пользователь удалён', async () => {
-      await expect(service.getMeAsync(USER_ID)).rejects.toThrow(UnauthorizedException);
+      await expect(service.getMeAsync(USER_ID)).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
   });
 
@@ -486,16 +516,24 @@ describe('AuthService', () => {
     it('проверяет верный и неверный пароль', async () => {
       const stored = await service.hashPasswordAsync(PASSWORD);
 
-      await expect(service.verifyPasswordAsync(PASSWORD, stored)).resolves.toBe(true);
-      await expect(service.verifyPasswordAsync('other', stored)).resolves.toBe(false);
+      await expect(service.verifyPasswordAsync(PASSWORD, stored)).resolves.toBe(
+        true,
+      );
+      await expect(service.verifyPasswordAsync('other', stored)).resolves.toBe(
+        false,
+      );
     });
 
     it('отвергает системный хэш-заглушку и битые значения', async () => {
       await expect(
         service.verifyPasswordAsync(PASSWORD, 'scrypt$disabled$disabled'),
       ).resolves.toBe(false);
-      await expect(service.verifyPasswordAsync(PASSWORD, 'plain')).resolves.toBe(false);
-      await expect(service.verifyPasswordAsync(PASSWORD, '')).resolves.toBe(false);
+      await expect(
+        service.verifyPasswordAsync(PASSWORD, 'plain'),
+      ).resolves.toBe(false);
+      await expect(service.verifyPasswordAsync(PASSWORD, '')).resolves.toBe(
+        false,
+      );
     });
   });
 
@@ -529,7 +567,9 @@ describe('AuthService', () => {
     it('verifyRefreshTokenAsync возвращает null для неизвестного/отозванного/истёкшего', async () => {
       selectLimit.mockResolvedValue([]);
 
-      await expect(service.verifyRefreshTokenAsync('opaque')).resolves.toBeNull();
+      await expect(
+        service.verifyRefreshTokenAsync('opaque'),
+      ).resolves.toBeNull();
     });
 
     it('rotateRefreshTokenAsync отзывает старый и выдаёт access + новый refresh', async () => {
@@ -578,12 +618,16 @@ describe('AuthService', () => {
       ]);
       updateReturning.mockResolvedValue([]);
 
-      await expect(service.rotateRefreshTokenAsync('opaque-old')).resolves.toBeNull();
+      await expect(
+        service.rotateRefreshTokenAsync('opaque-old'),
+      ).resolves.toBeNull();
       expect(insertValues).not.toHaveBeenCalled();
     });
 
     it('rotateRefreshTokenAsync возвращает null для неизвестного токена', async () => {
-      await expect(service.rotateRefreshTokenAsync('opaque-old')).resolves.toBeNull();
+      await expect(
+        service.rotateRefreshTokenAsync('opaque-old'),
+      ).resolves.toBeNull();
     });
 
     it('revokeRefreshTokenAsync помечает токен отозванным', async () => {
@@ -592,6 +636,31 @@ describe('AuthService', () => {
       expect(updateSet).toHaveBeenCalledWith(
         expect.objectContaining({ revokedAt: expect.any(Date) }),
       );
+    });
+  });
+
+  describe('cleanupExpiredTokensAsync (KI-215)', () => {
+    it('удаляет строки с expires_at < now и возвращает их количество', async () => {
+      cleanupDeleteReturning.mockResolvedValueOnce([{ id: 'a' }, { id: 'b' }]);
+      const now = new Date('2024-06-01T00:00:00.000Z');
+
+      const removed = await service.cleanupExpiredTokensAsync(now);
+
+      expect(removed).toBe(2);
+      expect(cleanupDelete).toHaveBeenCalledWith(refreshTokens);
+
+      const condition = cleanupDeleteWhere.mock.calls[0]?.[0] as SQL;
+      const query = new PgDialect().sqlToQuery(condition);
+
+      expect(query.sql).toContain('"refresh_tokens"."expires_at" <');
+      // PgDialect сериализует Date в ISO-строку параметра.
+      expect(query.params).toContain(now.toISOString());
+    });
+
+    it('возвращает 0, если истёкших токенов нет', async () => {
+      cleanupDeleteReturning.mockResolvedValueOnce([]);
+
+      await expect(service.cleanupExpiredTokensAsync()).resolves.toBe(0);
     });
   });
 });

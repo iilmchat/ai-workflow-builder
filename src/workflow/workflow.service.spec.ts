@@ -119,7 +119,8 @@ function renderSQL(node: unknown): string {
   // `queryChunks`, зато есть `getSQL()`. Отличаем его по имени конструктора:
   // у `SQL`/`StringChunk`/колонок `getSQL()` возвращает `this` или обёртку над
   // собой — общий признак `getSQL` дал бы бесконечную рекурсию.
-  const constructorName = (node as { constructor?: { name?: string } }).constructor?.name ?? '';
+  const constructorName =
+    (node as { constructor?: { name?: string } }).constructor?.name ?? '';
 
   if (
     !(node instanceof SQL) &&
@@ -169,7 +170,8 @@ function paramsOf(node: unknown): unknown[] {
 
   const wrapper = node as { queryChunks?: unknown[]; getSQL?: () => unknown };
 
-  const constructorName = (node as { constructor?: { name?: string } }).constructor?.name ?? '';
+  const constructorName =
+    (node as { constructor?: { name?: string } }).constructor?.name ?? '';
 
   if (
     !(node instanceof SQL) &&
@@ -179,16 +181,24 @@ function paramsOf(node: unknown): unknown[] {
     return paramsOf(wrapper.getSQL());
   }
 
-  return Array.isArray(wrapper.queryChunks) ? wrapper.queryChunks.flatMap(paramsOf) : [];
+  return Array.isArray(wrapper.queryChunks)
+    ? wrapper.queryChunks.flatMap(paramsOf)
+    : [];
 }
 
 /** Возвращает SQL-строку последнего условия WHERE, переданного в мок. */
-function whereSQL(spy: ReturnType<typeof vi.fn>, call = spy.mock.calls.length - 1): string {
+function whereSQL(
+  spy: ReturnType<typeof vi.fn>,
+  call = spy.mock.calls.length - 1,
+): string {
   return renderSQL(spy.mock.calls[call][0]).trim();
 }
 
 /** Возвращает значения параметров последнего условия WHERE, переданного в мок. */
-function whereParams(spy: ReturnType<typeof vi.fn>, call = spy.mock.calls.length - 1): unknown[] {
+function whereParams(
+  spy: ReturnType<typeof vi.fn>,
+  call = spy.mock.calls.length - 1,
+): unknown[] {
   return paramsOf(spy.mock.calls[call][0]);
 }
 
@@ -277,8 +287,11 @@ describe('WorkflowService', () => {
     });
 
     it('прокидывает description, nodes и edges без изменений', async () => {
-      const nodes = [{ id: 'n1', type: 'llm' }];
-      const edges = [{ from: 'n1', to: 'n2' }];
+      const nodes = [
+        { id: 'n1', type: 'llm' },
+        { id: 'n2', type: 'llm' },
+      ];
+      const edges = [{ id: 'e1', source: 'n1', target: 'n2' }];
 
       await service.createAsync(
         {
@@ -299,6 +312,21 @@ describe('WorkflowService', () => {
           edges,
         }),
       );
+    });
+
+    it('отклоняет битый граф до INSERT (KI-017)', async () => {
+      await expect(
+        service.createAsync(
+          {
+            name: 'Graph',
+            nodes: [{ id: 'n1' }],
+            edges: [{ source: 'n1', target: 'missing' }],
+          },
+          'user-2',
+        ),
+      ).rejects.toThrow('Связь #0 ссылается на несуществующий узел: missing');
+
+      expect(db.insert).not.toHaveBeenCalled();
     });
   });
 
@@ -371,7 +399,10 @@ describe('WorkflowService', () => {
       expect(result.map((item) => item.id)).toEqual([own.id, shared.id]);
       // Роль приходит из SQL-проекции `access_role`: owner — по user_id,
       // editor/viewer — из workflow_collaborators.
-      expect(result.map((item) => item.accessRole)).toEqual(['owner', 'editor']);
+      expect(result.map((item) => item.accessRole)).toEqual([
+        'owner',
+        'editor',
+      ]);
     });
 
     it('проецирует accessRole тем же запросом, без второго SELECT (KI-398)', async () => {
@@ -441,7 +472,11 @@ describe('WorkflowService', () => {
       expect(sql).toContain('exists');
       // S2: чужой арендатор неотличим от несуществующего workflow.
       expect(sql).toContain(`"workflows"."organization_id" = ${ORG_ID}`);
-      expect(whereParams(selectChain.where)).toEqual([WORKFLOW_ID, ORG_ID, 'user-1']);
+      expect(whereParams(selectChain.where)).toEqual([
+        WORKFLOW_ID,
+        ORG_ID,
+        'user-1',
+      ]);
     });
   });
 
@@ -471,7 +506,11 @@ describe('WorkflowService', () => {
       expect(sql).toContain(`"workflows"."id" = ${WORKFLOW_ID}`);
       expect(sql).toContain('exists');
       expect(sql).toContain(`"workflows"."organization_id" = ${ORG_ID}`);
-      expect(whereParams(selectChain.where)).toEqual([WORKFLOW_ID, ORG_ID, 'user-1']);
+      expect(whereParams(selectChain.where)).toEqual([
+        WORKFLOW_ID,
+        ORG_ID,
+        'user-1',
+      ]);
     });
 
     it('бросает NotFoundException, если workflow не найден или из другой организации', async () => {
@@ -485,7 +524,9 @@ describe('WorkflowService', () => {
 
   describe('updateAsync', () => {
     it('обновляет запись и возвращает результат', async () => {
-      const result = await service.updateAsync(WORKFLOW_ID, { name: 'Updated' });
+      const result = await service.updateAsync(WORKFLOW_ID, {
+        name: 'Updated',
+      });
 
       expect(db.update).toHaveBeenCalledWith(workflows);
       expect(updateChain.set).toHaveBeenCalledWith(
@@ -532,7 +573,10 @@ describe('WorkflowService', () => {
     it('PATCH только с name не инкрементирует version (метаданные)', async () => {
       await service.updateAsync(WORKFLOW_ID, { name: 'Переименовано' });
 
-      const setArg = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
+      const setArg = updateChain.set.mock.calls[0][0] as Record<
+        string,
+        unknown
+      >;
 
       expect(setArg).not.toHaveProperty('version');
       // Чтение текущей строки не нужно: инкремента для метаданных нет.
@@ -542,7 +586,10 @@ describe('WorkflowService', () => {
     it('PATCH только с description не инкрементирует version (метаданные)', async () => {
       await service.updateAsync(WORKFLOW_ID, { description: 'новое описание' });
 
-      const setArg = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
+      const setArg = updateChain.set.mock.calls[0][0] as Record<
+        string,
+        unknown
+      >;
 
       expect(setArg).not.toHaveProperty('version');
       expect(db.select).not.toHaveBeenCalled();
@@ -563,6 +610,17 @@ describe('WorkflowService', () => {
     });
 
     it('PATCH с изменёнными edges инкрементирует version в SQL (KI-300)', async () => {
+      // KI-017: сервис проверяет итоговый граф против текущих nodes из БД,
+      // поэтому связь n1→n2 должна ссылаться на существующие узлы.
+      selectChain.limit.mockImplementation(() => [
+        {
+          ...baseWorkflow,
+          nodes: [
+            { id: 'n1', type: 'llm' },
+            { id: 'n2', type: 'llm' },
+          ],
+        },
+      ]);
       const edges = [{ id: 'e1', source: 'n1', target: 'n2' }];
 
       await service.updateAsync(WORKFLOW_ID, { edges });
@@ -574,11 +632,50 @@ describe('WorkflowService', () => {
       expect(renderSQL(setArg.version)).toContain('"workflows"."version" + 1');
     });
 
+    it('PATCH отклоняет граф со ссылкой на несуществующий узел (KI-017)', async () => {
+      selectChain.limit.mockImplementation(() => [
+        { ...baseWorkflow, nodes: [{ id: 'n1', type: 'llm' }] },
+      ]);
+
+      await expect(
+        service.updateAsync(WORKFLOW_ID, {
+          edges: [{ id: 'e1', source: 'n1', target: 'missing' }],
+        }),
+      ).rejects.toThrow('Связь #0 ссылается на несуществующий узел: missing');
+
+      // Битый граф не должен дойти до UPDATE.
+      expect(db.update).not.toHaveBeenCalled();
+    });
+
+    it('PATCH отклоняет удаление узла, оставляющее висячие связи (KI-017)', async () => {
+      selectChain.limit.mockImplementation(() => [
+        {
+          ...baseWorkflow,
+          nodes: [
+            { id: 'n1', type: 'llm' },
+            { id: 'n2', type: 'llm' },
+          ],
+          edges: [{ id: 'e1', source: 'n1', target: 'n2' }],
+        },
+      ]);
+
+      await expect(
+        service.updateAsync(WORKFLOW_ID, {
+          nodes: [{ id: 'n1', type: 'llm' }],
+        }),
+      ).rejects.toThrow('Связь #0 ссылается на несуществующий узел: n2');
+
+      expect(db.update).not.toHaveBeenCalled();
+    });
+
     it('PATCH с идентичными nodes не инкрементирует version (идемпотентный Save)', async () => {
       // baseWorkflow.nodes === [], поэтому payload deep-equal текущей строке.
       await service.updateAsync(WORKFLOW_ID, { nodes: [] });
 
-      const setArg = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
+      const setArg = updateChain.set.mock.calls[0][0] as Record<
+        string,
+        unknown
+      >;
 
       expect(db.select).toHaveBeenCalledTimes(1);
       expect(setArg).not.toHaveProperty('version');
@@ -590,9 +687,14 @@ describe('WorkflowService', () => {
       selectChain.limit.mockImplementation(() => []);
       updateChain.returning.mockImplementation(() => []);
 
-      const result = await service.updateAsync(WORKFLOW_ID, { nodes: [{ id: 'n1' }] });
+      const result = await service.updateAsync(WORKFLOW_ID, {
+        nodes: [{ id: 'n1' }],
+      });
 
-      const setArg = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
+      const setArg = updateChain.set.mock.calls[0][0] as Record<
+        string,
+        unknown
+      >;
 
       expect(result).toBeNull();
       expect(setArg).not.toHaveProperty('version');
@@ -601,7 +703,9 @@ describe('WorkflowService', () => {
     it('возвращает null, если запись не найдена', async () => {
       updateChain.returning.mockImplementation(() => []);
 
-      const result = await service.updateAsync(WORKFLOW_ID, { name: 'Updated' });
+      const result = await service.updateAsync(WORKFLOW_ID, {
+        name: 'Updated',
+      });
 
       expect(result).toBeNull();
     });
@@ -635,14 +739,20 @@ describe('WorkflowService', () => {
       expect(sql).toContain('"workflows"."user_id" = user-1');
       // S2: удалить граф чужой организации нельзя.
       expect(sql).toContain(`"workflows"."organization_id" = ${ORG_ID}`);
-      expect(whereParams(deleteChain.where)).toEqual([WORKFLOW_ID, 'user-1', ORG_ID]);
+      expect(whereParams(deleteChain.where)).toEqual([
+        WORKFLOW_ID,
+        'user-1',
+        ORG_ID,
+      ]);
     });
 
     it('DELETE остаётся только у владельца: участники не учитываются (R7.6)', async () => {
       await service.removeAsync(WORKFLOW_ID, ACCESS);
 
       // Даже editor не удаляет workflow, поэтому EXISTS-подзапроса здесь нет.
-      expect(whereSQL(deleteChain.where)).not.toContain('workflow_collaborators');
+      expect(whereSQL(deleteChain.where)).not.toContain(
+        'workflow_collaborators',
+      );
       expect(whereSQL(deleteChain.where)).not.toContain('exists');
     });
 

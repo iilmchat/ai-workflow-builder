@@ -3,11 +3,17 @@ import cookieParser from 'cookie-parser';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter.js';
 import { resolveCorsOrigin } from './config/cors.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
+
+  // KI-012: единый формат ошибок API `{ success: false, message, errorCode? }`.
+  // Регистрируется до маршрутов и guard'ов: фильтр — самый внешний слой
+  // обработки исключений, поэтому покрывает и контроллеры, и пайпы, и guard'ы.
+  app.useGlobalFilters(new HttpExceptionFilter());
 
   // KI-419: за nginx/Caddy Express видит IP прокси, и ThrottlerGuard считает
   // один общий лимит на всех клиентов. `trust proxy` заставляет `req.ip` брать
@@ -20,7 +26,10 @@ async function bootstrap() {
   const httpAdapter = app.getHttpAdapter().getInstance() as {
     set: (setting: string, value: unknown) => void;
   };
-  httpAdapter.set('trust proxy', configService.get<boolean>('TRUST_PROXY') ?? false);
+  httpAdapter.set(
+    'trust proxy',
+    configService.get<boolean>('TRUST_PROXY') ?? false,
+  );
 
   // Capacitor: WebView грузится с https://localhost, CORS должен принимать этот origin.
   //

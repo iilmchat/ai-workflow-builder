@@ -17,17 +17,18 @@ import {
   type Workflow,
 } from '../db/schema.js';
 import type { EdgeDto, NodeDto } from '../engine/dto/index.js';
-import type {
-  CollaboratorResponse,
-  CreateWorkflowDto,
-  ExportWorkflowDto,
-  ImportWorkflowDto,
-  InviteCollaboratorDto,
-  ShareTokenDto,
-  SharedWorkflow,
-  UpdateCollaboratorRoleDto,
-  UpdateWorkflowDto,
-  WorkflowListItem,
+import {
+  collectGraphIssues,
+  type CollaboratorResponse,
+  type CreateWorkflowDto,
+  type ExportWorkflowDto,
+  type ImportWorkflowDto,
+  type InviteCollaboratorDto,
+  type ShareTokenDto,
+  type SharedWorkflow,
+  type UpdateCollaboratorRoleDto,
+  type UpdateWorkflowDto,
+  type WorkflowListItem,
 } from './dto/index.js';
 import {
   workflowAccessFilter,
@@ -108,6 +109,30 @@ export class WorkflowService {
   }
 
   /**
+   * Проверяет форму графа перед записью (KI-017, RULES § 1.17).
+   *
+   * Zod-схема уже валидирует HTTP-вход, но сервис — вторая граница: его
+   * вызывают напрямую импорт и внутренние сценарии, а в БД не должен попасть
+   * граф со ссылкой на несуществующий узел или дубликатом `id`.
+   *
+   * @param nodes - узлы графа
+   * @param edges - связи графа
+   * @throws BadRequestException если граф некорректен
+   */
+  private assertGraphValid(
+    nodes: readonly unknown[],
+    edges: readonly unknown[],
+  ): void {
+    const issues = collectGraphIssues(nodes, edges);
+
+    if (issues.length > 0) {
+      throw new BadRequestException(
+        issues.map((issue) => issue.message).join('; '),
+      );
+    }
+  }
+
+  /**
    * Создаёт новый workflow.
    *
    * Владелец приходит из access-токена (`userId`), организация-арендатор
@@ -124,6 +149,10 @@ export class WorkflowService {
   async createAsync(dto: CreateWorkflowDto, userId: string): Promise<Workflow> {
     const access = await this.resolveAccessAsync(userId);
 
+    // KI-017: defense in depth — прямой вызов сервиса не должен обходить
+    // валидацию графа из DTO.
+    this.assertGraphValid(dto.nodes, dto.edges);
+
     const [created] = await this.db
       .insert(workflows)
       .values({
@@ -131,12 +160,14 @@ export class WorkflowService {
         organizationId: access.orgId,
         name: dto.name,
         description: dto.description,
-        nodes: dto.nodes,
-        edges: dto.edges,
+        nodes: dto.nodes as NodeDto[],
+        edges: dto.edges as EdgeDto[],
       })
       .returning();
 
-    this.logger.debug(`Workflow создан: id=${created.id}, userId=${created.userId}`);
+    this.logger.debug(
+      `Workflow создан: id=${created.id}, userId=${created.userId}`,
+    );
 
     return created;
   }
@@ -214,7 +245,9 @@ export class WorkflowService {
     return this.db
       .select({ ...getTableColumns(workflows), accessRole })
       .from(workflows)
-      .where(access === undefined ? undefined : this.buildListAccessFilter(access))
+      .where(
+        access === undefined ? undefined : this.buildListAccessFilter(access),
+      )
       .orderBy(desc(workflows.createdAt))
       .limit(limit)
       .offset(offset);
@@ -228,7 +261,10 @@ export class WorkflowService {
    *   ищется с учётом принадлежности организации и роли (владелец/участник)
    * @returns найденный workflow или `null`
    */
-  async findOneAsync(id: string, access?: WorkflowAccess): Promise<Workflow | null> {
+  async findOneAsync(
+    id: string,
+    access?: WorkflowAccess,
+  ): Promise<Workflow | null> {
     const [found] = await this.db
       .select()
       .from(workflows)
@@ -257,7 +293,10 @@ export class WorkflowService {
    * @returns артефакт `{ version, name, nodes, edges, exportedAt }`
    * @throws NotFoundException если workflow не существует или недоступен
    */
-  async exportAsync(id: string, access: WorkflowAccess): Promise<ExportWorkflowDto> {
+  async exportAsync(
+    id: string,
+    access: WorkflowAccess,
+  ): Promise<ExportWorkflowDto> {
     const [found] = await this.db
       .select({
         name: workflows.name,
@@ -314,7 +353,9 @@ export class WorkflowService {
     access?: WorkflowAccess,
   ): Promise<Workflow | null> {
     if (Object.keys(dto).length === 0) {
-      throw new BadRequestException('Не передано ни одного поля для обновления');
+      throw new BadRequestException(
+        'Не передано ни одного поля для обновления',
+      );
     }
 
     let isGraphChanged = false;
@@ -322,23 +363,38 @@ export class WorkflowService {
     if (dto.nodes !== undefined || dto.edges !== undefined) {
       const current = await this.findOneAsync(id, access);
 
+      // KI-017: PATCH может прийти только с одним из массивов. Проверяем
+      // итоговый граф (переданное поле + текущее из БД), иначе удаление узла
+      // без edges оставило бы висячие связи.
+      if (current !== null) {
+        this.assertGraphValid(
+          dto.nodes ?? current.nodes,
+          dto.edges ?? current.edges,
+        );
+      }
+
       isGraphChanged =
         current !== null &&
-        ((dto.nodes !== undefined && !isDeepStrictEqual(dto.nodes, current.nodes)) ||
-          (dto.edges !== undefined && !isDeepStrictEqual(dto.edges, current.edges)));
+        ((dto.nodes !== undefined &&
+          !isDeepStrictEqual(dto.nodes, current.nodes)) ||
+          (dto.edges !== undefined &&
+            !isDeepStrictEqual(dto.edges, current.edges)));
     }
 
     // KI-014: колонки типизированы через `$type<NodeDto[]>()` / `$type<EdgeDto[]>()`,
     // а DTO обновления принимает `unknown[]`: узлы сохраняются «как есть»
     // (включая UI-поля React Flow), поэтому приведение сужено до двух полей
-    // и не меняет поведение. Валидация формы графа — на входе в engine.
+    // и не меняет поведение. Форма графа уже проверена выше (KI-017), а
+    // глубокая валидация параметров узлов остаётся на входе в engine.
     const [updated] = await this.db
       .update(workflows)
       .set({
         ...dto,
         nodes: dto.nodes as NodeDto[] | undefined,
         edges: dto.edges as EdgeDto[] | undefined,
-        ...(isGraphChanged ? { version: sql<number>`${workflows.version} + 1` } : {}),
+        ...(isGraphChanged
+          ? { version: sql<number>`${workflows.version} + 1` }
+          : {}),
         updatedAt: new Date(),
       })
       // R7.6: править граф может владелец или участник с ролью editor;
@@ -439,7 +495,10 @@ export class WorkflowService {
    * @returns токен и относительный путь ссылки
    * @throws NotFoundException если workflow не найден или принадлежит другому
    */
-  async createShareTokenAsync(id: string, access: WorkflowAccess): Promise<ShareTokenDto> {
+  async createShareTokenAsync(
+    id: string,
+    access: WorkflowAccess,
+  ): Promise<ShareTokenDto> {
     const [updated] = await this.db
       .update(workflows)
       .set({ shareToken: sql`gen_random_uuid()`, updatedAt: new Date() })
@@ -465,7 +524,10 @@ export class WorkflowService {
    * @returns промис без значения
    * @throws NotFoundException если workflow не найден или принадлежит другому
    */
-  async revokeShareTokenAsync(id: string, access: WorkflowAccess): Promise<void> {
+  async revokeShareTokenAsync(
+    id: string,
+    access: WorkflowAccess,
+  ): Promise<void> {
     const revoked = await this.db
       .update(workflows)
       .set({ shareToken: null, updatedAt: new Date() })
@@ -641,7 +703,9 @@ export class WorkflowService {
     }
 
     if (dto.userId === owner.ownerId) {
-      throw new BadRequestException('Владелец workflow не может быть участником');
+      throw new BadRequestException(
+        'Владелец workflow не может быть участником',
+      );
     }
 
     const [target] = await this.db
@@ -649,7 +713,9 @@ export class WorkflowService {
       .from(users)
       // S2: приглашать можно только «своих» — совпадение организации
       // обязательно, иначе 404 (как для несуществующего пользователя).
-      .where(and(eq(users.id, dto.userId), eq(users.organizationId, access.orgId)))
+      .where(
+        and(eq(users.id, dto.userId), eq(users.organizationId, access.orgId)),
+      )
       .limit(1);
 
     if (target === undefined) {

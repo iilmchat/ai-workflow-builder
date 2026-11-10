@@ -9,7 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { and, asc, eq, gt, isNull } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, lt } from 'drizzle-orm';
 import { parseDurationToMs } from '../common/utils/parse-duration.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
@@ -147,7 +147,10 @@ export class AuthService {
    * @param stored - значение `users.password_hash`
    * @returns `true`, если пароль совпал
    */
-  async verifyPasswordAsync(password: string, stored: string): Promise<boolean> {
+  async verifyPasswordAsync(
+    password: string,
+    stored: string,
+  ): Promise<boolean> {
     const [scheme, saltB64, hashB64] = stored.split('$');
 
     if (scheme !== HASH_SCHEME || !saltB64 || !hashB64) {
@@ -161,7 +164,9 @@ export class AuthService {
       expected.length,
     );
 
-    return expected.length === actual.length && timingSafeEqual(expected, actual);
+    return (
+      expected.length === actual.length && timingSafeEqual(expected, actual)
+    );
   }
 
   /**
@@ -259,7 +264,12 @@ export class AuthService {
 
       const [user] = await tx
         .insert(users)
-        .values({ email, passwordHash, organizationId: organization.id, role: 'owner' })
+        .values({
+          email,
+          passwordHash,
+          organizationId: organization.id,
+          role: 'owner',
+        })
         .returning();
 
       return user;
@@ -290,7 +300,10 @@ export class AuthService {
       throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
     }
 
-    const valid = await this.verifyPasswordAsync(dto.password, found.passwordHash);
+    const valid = await this.verifyPasswordAsync(
+      dto.password,
+      found.passwordHash,
+    );
 
     if (!valid) {
       throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
@@ -348,7 +361,8 @@ export class AuthService {
     };
 
     return this.jwt.signAsync(payload, {
-      expiresIn: this.config.getOrThrow<JwtSignOptions['expiresIn']>('JWT_EXPIRES_IN'),
+      expiresIn:
+        this.config.getOrThrow<JwtSignOptions['expiresIn']>('JWT_EXPIRES_IN'),
     });
   }
 
@@ -491,6 +505,27 @@ export class AuthService {
           isNull(refreshTokens.revokedAt),
         ),
       );
+  }
+
+  /**
+   * Удаляет истёкшие refresh-токены (KI-215).
+   *
+   * Ротация помечает старые токены `revoked_at`, но строки не удаляет: история
+   * нужна для расследования повторного использования. Истёкшие токены уже
+   * бесполезны (verify требует `expires_at > now()`), поэтому их можно
+   * удалять пачкой. Вызывается ежедневным BullMQ-job'ом
+   * (`RefreshTokenCleanupProcessor`), но пригоден и для ручного запуска.
+   *
+   * @param now - точка отсчёта (в тестах подменяется фиксированной датой)
+   * @returns сколько строк удалено
+   */
+  async cleanupExpiredTokensAsync(now: Date = new Date()): Promise<number> {
+    const removed = await this.db
+      .delete(refreshTokens)
+      .where(lt(refreshTokens.expiresAt, now))
+      .returning({ id: refreshTokens.id });
+
+    return removed.length;
   }
 
   /**
