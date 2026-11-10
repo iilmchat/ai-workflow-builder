@@ -72,8 +72,37 @@ describe('LlmNodeExecutor', () => {
     });
   });
 
-  it('возвращает метрики с null, если провайдер не отдал usage (KI-038)', async () => {
-    llm.generateAsync.mockResolvedValue({ text: 'без метрик', usage: null });
+  it('при cached-ответе не начисляет стоимость и кладёт флаг в outputs (S8)', async () => {
+    llm.generateAsync.mockResolvedValue({
+      text: 'из кэша',
+      usage: { inputTokens: 1000, outputTokens: 500, model: 'gpt-4o' },
+      cached: true,
+    });
+
+    const result = await executor.executeAsync(node({ model: 'gpt-4o' }), {
+      prompt: 'привет',
+    });
+
+    expect(result.outputs).toEqual({ text: 'из кэша', cached: true });
+    // Токены исходного вызова остаются, но повторный вызов бесплатен.
+    expect(result.metrics.costUsd).toBe(0);
+    expect(result.metrics.cached).toBe(true);
+  });
+
+  it('передаёт orgId в LlmService для tenant-кэша (S8)', async () => {
+    await executor.executeAsync(
+      node({ model: 'gpt-4o' }),
+      { prompt: 'привет' },
+      'run-1',
+      'org-1',
+    );
+
+    expect(llm.generateAsync).toHaveBeenCalledWith('привет', 'gpt-4o', {
+      orgId: 'org-1',
+    });
+  });
+
+  it('возвращает метрики с null, если провайдер не отдал usage (KI-038)', async () => {    llm.generateAsync.mockResolvedValue({ text: 'без метрик', usage: null });
 
     const result = await executor.executeAsync(node({ model: 'gpt-4o' }), {
       prompt: 'привет',

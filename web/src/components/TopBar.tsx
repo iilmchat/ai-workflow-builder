@@ -905,16 +905,30 @@ export function TopBar() {
             </button>
           )}
 
-          {/* KI-195: индикатор несохранённых изменений. Значение вычисляется
+          {/* KI-195 / S8: индикатор автосохранения. Значение вычисляется
               селектором (хэш графа против хэша последнего сохранения), а не
-              хранится полем: так его нельзя «забыть» обновить. */}
+              хранится полем: так его нельзя «забыть» обновить. Во время
+              запроса показывается «Сохранение...», после — «Сохранено». */}
           {currentWorkflowId !== null && (
             <span
-              data-dirty-indicator={isDirty ? 'dirty' : 'saved'}
-              title={isDirty ? t('topbar.dirty') : t('topbar.saved')}
-              className="hidden rounded-full bg-muted px-2 py-1 text-[11px] font-medium text-muted-foreground min-[1440px]:inline-block"
+              data-dirty-indicator={
+                isSaving ? 'saving' : isDirty ? 'dirty' : 'saved'
+              }
+              aria-live="polite"
+              title={
+                isSaving
+                  ? t('topbar.saving')
+                  : isDirty
+                    ? t('topbar.dirty')
+                    : t('topbar.saved')
+              }
+              className="rounded-full bg-muted px-2 py-1 text-[11px] font-medium text-muted-foreground"
             >
-              {isDirty ? t('topbar.dirty') : t('topbar.saved')}
+              {isSaving
+                ? t('topbar.saving')
+                : isDirty
+                  ? t('topbar.dirty')
+                  : t('topbar.saved')}
             </span>
           )}
 

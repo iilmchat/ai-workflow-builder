@@ -5,6 +5,7 @@ import { LlmHealthService } from './llm-health.service.js';
 import { LlmNodeExecutor } from './llm-node-executor.service.js';
 import { LlmProviderFactory } from './llm-provider.factory.js';
 import { LLM_PROVIDERS, LlmRegistryService } from './llm-registry.service.js';
+import { LlmResponseCacheService } from './llm-response-cache.service.js';
 import { LlmRouterService } from './llm-router.service.js';
 import { LlmService } from './llm.service.js';
 
@@ -44,6 +45,9 @@ import { LlmService } from './llm.service.js';
     // LLM_ROUTER_ENABLED: статус нужен и будущему UI-индикатору (DESIGN § 3.4).
     LlmHealthService,
     LlmRouterService,
+    // v1.6.0 S8 (FinOps): Redis-кэш ответов LLM. `REDIS_TOKEN` приходит из
+    // глобального RedisModule, `ConfigService` — из глобального ConfigModule.
+    LlmResponseCacheService,
     LlmService,
     LlmNodeExecutor,
   ],

@@ -4,6 +4,7 @@ import {
   type LlmGenerateOptions,
   type LlmGenerateResult,
 } from './llm-provider.interface.js';
+import { LlmResponseCacheService } from './llm-response-cache.service.js';
 import { LlmRouterService } from './llm-router.service.js';
 import { LlmService } from './llm.service.js';
 
@@ -109,5 +110,90 @@ describe('LlmService', () => {
 
     expect(options.system).toBe('ты кот');
     expect(options.signal).toBe(controller.signal);
+  });
+
+  describe('response cache (S8, FinOps)', () => {
+    /** Собирает LlmService с подставным кэшем. */
+    function serviceWithCache(cache: {
+      isEnabled: () => boolean;
+      buildKey: ReturnType<typeof vi.fn>;
+      getAsync: ReturnType<typeof vi.fn>;
+      setAsync: ReturnType<typeof vi.fn>;
+    }): LlmService {
+      return new LlmService(
+        { generateAsync: routerGenerateAsync } as unknown as LlmRouterService,
+        cache as unknown as LlmResponseCacheService,
+      );
+    }
+
+    it('при попадании возвращает сохранённый ответ с cached: true и не зовёт роутер', async () => {
+      const cache = {
+        isEnabled: () => true,
+        buildKey: vi.fn(() => 'cache-key'),
+        getAsync: vi.fn(() => Promise.resolve({ text: 'из кэша', usage: null })),
+        setAsync: vi.fn(() => Promise.resolve()),
+      };
+
+      const result = await serviceWithCache(cache).generateAsync(
+        'привет',
+        'fake-model',
+        { orgId: 'org-1' },
+      );
+
+      expect(result).toEqual({ text: 'из кэша', usage: null, cached: true });
+      expect(cache.getAsync).toHaveBeenCalledWith('cache-key');
+      expect(routerGenerateAsync).not.toHaveBeenCalled();
+      expect(cache.setAsync).not.toHaveBeenCalled();
+    });
+
+    it('при промахе вызывает провайдера и сохраняет ответ', async () => {
+      const cache = {
+        isEnabled: () => true,
+        buildKey: vi.fn(() => 'cache-key'),
+        getAsync: vi.fn(() => Promise.resolve(null)),
+        setAsync: vi.fn(() => Promise.resolve()),
+      };
+
+      const result = await serviceWithCache(cache).generateAsync(
+        'привет',
+        'fake-model',
+        { orgId: 'org-1' },
+      );
+
+      expect(routerGenerateAsync).toHaveBeenCalledTimes(1);
+      expect(cache.setAsync).toHaveBeenCalledWith('cache-key', result);
+      expect(result).not.toHaveProperty('cached');
+    });
+
+    it('при LLM_CACHE_ENABLED=false не обращается к кэшу', async () => {
+      const cache = {
+        isEnabled: () => false,
+        buildKey: vi.fn(),
+        getAsync: vi.fn(),
+        setAsync: vi.fn(),
+      };
+
+      await serviceWithCache(cache).generateAsync('привет', 'fake-model', {
+        orgId: 'org-1',
+      });
+
+      expect(cache.getAsync).not.toHaveBeenCalled();
+      expect(cache.setAsync).not.toHaveBeenCalled();
+      expect(routerGenerateAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('без orgId кэш не используется (tenant-изоляция)', async () => {
+      const cache = {
+        isEnabled: () => true,
+        buildKey: vi.fn(),
+        getAsync: vi.fn(),
+        setAsync: vi.fn(),
+      };
+
+      await serviceWithCache(cache).generateAsync('привет', 'fake-model');
+
+      expect(cache.getAsync).not.toHaveBeenCalled();
+      expect(routerGenerateAsync).toHaveBeenCalledTimes(1);
+    });
   });
 });

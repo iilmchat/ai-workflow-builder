@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   cancelRunAsync,
   fetchLlmHealthAsync,
@@ -8,6 +8,7 @@ import {
   type LlmHealthResponse,
 } from '@/lib/api';
 import { APP_VERSION } from '@/lib/app-version';
+import { computeGraphHash } from '@/lib/graph-hash';
 import { fetchOrganizationMembersAsync } from '@/lib/org-api';
 import ru from '@/i18n/ru.json';
 import { useAuthStore } from '@/stores/auth';
@@ -725,5 +726,59 @@ describe('TopBar — QR-сканер (v1.5.0 S1)', () => {
 
     await waitFor(() => expect(qr.scanQr).toHaveBeenCalledTimes(1));
     expect(useWorkflowStore.getState().notice).toBeNull();
+  });
+});
+
+describe('TopBar — индикатор автосохранения (KI-195, S8)', () => {
+  beforeEach(() => {
+    useWorkflowStore.getState().newWorkflow();
+  });
+
+  afterEach(() => {
+    useWorkflowStore.getState().newWorkflow();
+    useWorkflowStore.setState({ isSaving: false });
+  });
+
+  it('показывает «Сохранено», когда хэш графа совпадает с последним сохранением', () => {
+    useWorkflowStore.setState({
+      currentWorkflowId: 'wf-1',
+      lastSavedHash: computeGraphHash([], []),
+      isSaving: false,
+    });
+
+    const { container } = renderTopBar();
+    const indicator = container.querySelector('[data-dirty-indicator]');
+
+    expect(indicator).toHaveAttribute('data-dirty-indicator', 'saved');
+    expect(indicator).toHaveTextContent(ru['topbar.saved']);
+  });
+
+  it('показывает «Есть изменения» после правки графа', () => {
+    useWorkflowStore.setState({
+      currentWorkflowId: 'wf-1',
+      lastSavedHash: computeGraphHash([], []),
+      isSaving: false,
+    });
+    useWorkflowStore.getState().addNode('text', { x: 0, y: 0 });
+
+    const { container } = renderTopBar();
+    const indicator = container.querySelector('[data-dirty-indicator]');
+
+    expect(indicator).toHaveAttribute('data-dirty-indicator', 'dirty');
+    expect(indicator).toHaveTextContent(ru['topbar.dirty']);
+  });
+
+  it('показывает «Сохранение...», пока идёт запрос', () => {
+    useWorkflowStore.setState({
+      currentWorkflowId: 'wf-1',
+      lastSavedHash: computeGraphHash([], []),
+      isSaving: true,
+    });
+
+    const { container } = renderTopBar();
+    const indicator = container.querySelector('[data-dirty-indicator]');
+
+    expect(indicator).toHaveAttribute('data-dirty-indicator', 'saving');
+    expect(indicator).toHaveTextContent(ru['topbar.saving']);
   });
 });

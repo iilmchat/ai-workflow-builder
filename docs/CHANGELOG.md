@@ -19,6 +19,18 @@
 
 ### Added
 
+- **FinOps, Performance & UX Polish (v1.6.0 S8)**
+  ([отчёт](development/reports/v1.6.0/S8-finops-ux.md)):
+  - **LLM response cache:** `LLM_CACHE_ENABLED` (default `false`) и
+    `LLM_CACHE_TTL_SECONDS` (default `86400`) в `LlmRouterEnvSchema`;
+    `LlmResponseCacheService` хранит ответ в Redis по ключу
+    `sha256(orgId + modelId + system + prompt + options)`; попадание
+    возвращает `cached: true`, не вызывает провайдера и не начисляет
+    стоимость повторного вызова. Бейдж «Ответ из кэша» в панели результата.
+  - **Welcome screen (KI-232):** `web/src/components/WelcomeScreen.tsx` —
+    три карточки (Text→ImageGen, Text→LLM→ImageGen, HTTP→LLM), создающие
+    граф через `addNode`/`onConnect`; «Скрыть» и «Больше не показывать»
+    (`localStorage`).
 - **Tech Debt & Enterprise Foundations (v1.6.0 S7)**
   ([отчёт](development/reports/v1.6.0/S7-tech-debt.md)):
   - **KI-012:** глобальный `HttpExceptionFilter`
@@ -33,6 +45,12 @@
 
 ### Fixed
 
+- **Performance (KI-113):** `MediaRegistryService` кэширует карту
+  «модель → провайдер» на 5 минут; `LlmRegistryService` кэширует
+  `listModels()` и `getCapabilities()` (TTL 5 минут, `clearCache()`).
+- **Auto-save (KI-195):** индикатор в `TopBar` показывает «Есть изменения» /
+  «Сохранение...» / «Сохранено»; ручной Save сбрасывает дебаунс, ошибка
+  автосохранения больше не помечает граф сохранённым.
 - **KI-018:** все `timestamp`-колонки — `timestamptz`; миграция `0022`
   добавляет идемпотентный DO-блок для остаточного naive-drift'а
   (`AT TIME ZONE 'UTC'`).

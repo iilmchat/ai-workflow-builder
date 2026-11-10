@@ -75,6 +75,8 @@ export function RunResultPanel() {
   // R7.7 (KI-055): «Cache read: N токенов (экономия $X)». Токены и экономию
   // считает backend: событие несёт готовую экономию, снимок — пересчитанную.
   const cacheRead = formatCacheRead(metrics);
+  // v1.6.0 S8: ответ пришёл из Redis-кэша — провайдер не вызывался, стоимость 0.
+  const wasCached = outputs?.cached === true;
   // R7.4b: агент кладёт в выходы `steps`. Парсер терпим к форме: если шагов
   // нет или они не похожи на шаги агента, timeline просто не рисуется.
   const agentSteps = parseAgentSteps(outputs?.steps);
@@ -229,7 +231,7 @@ export function RunResultPanel() {
                 </Section>
               ) : null}
 
-              {formattedMetrics !== null || cacheRead !== null ? (
+              {formattedMetrics !== null || cacheRead !== null || wasCached ? (
                 <Section title={t('runResultPanel.section.metrics')}>
                   {formattedMetrics !== null ? (
                     <p className="text-xs text-muted-foreground">{formattedMetrics}</p>
@@ -240,6 +242,14 @@ export function RunResultPanel() {
                       className="mt-0.5 text-xs text-status-success-foreground"
                     >
                       {cacheRead}
+                    </p>
+                  ) : null}
+                  {wasCached ? (
+                    <p
+                      data-cache-hit=""
+                      className="mt-0.5 text-xs text-status-success-foreground"
+                    >
+                      {t('runResultPanel.metrics.cache_hit')}
                     </p>
                   ) : null}
                 </Section>

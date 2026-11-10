@@ -108,6 +108,13 @@ export interface LlmNodeMetrics {
   cacheSavingsUsd: number | null;
   /** Модель, фактически использованная провайдером. */
   model: string;
+  /**
+   * Ответ выдан из Redis-кэша (v1.6.0 S8).
+   *
+   * В `node_runs` отдельной колонки нет: флаг дублируется в `outputs.cached`
+   * и виден в панели результата, а стоимость повторного вызова — `0`.
+   */
+  cached: boolean;
 }
 
 /** Результат выполнения LLM-узла: выходы + метрики. */
@@ -145,6 +152,8 @@ export class LlmNodeExecutor {
    * @param inputs - нормализованные входы узла (после KI-034 ключ — `prompt`)
    * @param runId - uuid запуска: нужен предохранителю по стоимости (KI-048).
    *   Необязателен — тесты и прямой вызов исполнителя работают без бюджета.
+   * @param orgId - организация запуска для tenant-кэша ответов (S8);
+   *   необязательна — без неё кэш не используется
    * @returns выходы `{ text }` и метрики вызова (токены, стоимость, модель)
    * @throws LlmProviderException если prompt пуст, модель не найдена или вызов упал
    * @throws BudgetExceededException если бюджет запуска исчерпан (KI-048)
@@ -153,6 +162,7 @@ export class LlmNodeExecutor {
     node: NodeDto,
     inputs: Record<string, unknown>,
     runId?: string,
+    orgId?: string,
   ): Promise<LlmNodeExecutionResult> {
     // KI-180: prompt приходит по связи (`inputs.prompt`) либо вводится прямо
     // в узле (`data.prompt`). `data.value` — совместимость с workflow,
@@ -196,6 +206,8 @@ export class LlmNodeExecutor {
       ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
       ...(maxTokensOverride === undefined ? {} : { maxTokens: maxTokensOverride }),
       ...(promptCache ? { promptCache: true } : {}),
+      // v1.6.0 S8: организация нужна tenant-кэшу; провайдеру не уходит.
+      ...(orgId === undefined ? {} : { orgId }),
     });
     const usage = result.usage;
     const usedModel = usage?.model ?? model;
@@ -203,6 +215,22 @@ export class LlmNodeExecutor {
     // обычных входных, и стоимость считается по отдельным тарифам.
     const cacheReadTokens = usage?.cacheReadTokens ?? null;
     const cacheCreationTokens = usage?.cacheCreationTokens ?? null;
+    // S8: повторный ответ из Redis не стоит денег — провайдер не вызывался.
+    // Токены исходного вызова оставляем для контекста, но costUsd = 0.
+    const costUsd =
+      result.cached === true
+        ? 0
+        : calculateCostUsdForProvider(
+            { isLocal: result.isLocal },
+            usedModel,
+            usage?.inputTokens ?? null,
+            usage?.outputTokens ?? null,
+            {
+              cacheReadTokens,
+              cacheCreationTokens,
+              cacheTokensIncludedInInput: usage?.cacheTokensIncludedInInput,
+            },
+          );
     const metrics: LlmNodeMetrics = {
       inputTokens: usage?.inputTokens ?? null,
       outputTokens: usage?.outputTokens ?? null,
@@ -210,27 +238,26 @@ export class LlmNodeExecutor {
       cacheCreationTokens,
       // KI-148: у локальных провайдеров (LM Studio) стоимость — 0, а не null,
       // иначе панель показывала бы токены без цены.
-      costUsd: calculateCostUsdForProvider(
-        { isLocal: result.isLocal },
-        usedModel,
-        usage?.inputTokens ?? null,
-        usage?.outputTokens ?? null,
-        {
-          cacheReadTokens,
-          cacheCreationTokens,
-          cacheTokensIncludedInInput: usage?.cacheTokensIncludedInInput,
-        },
-      ),
+      costUsd,
       cacheSavingsUsd: calculateCacheSavingsUsd(usedModel, cacheReadTokens),
       model: usedModel,
+      cached: result.cached === true,
     };
 
     this.logger.log(
       `LLM-узел ${node.id}: tokens=${metrics.inputTokens ?? '?'}/` +
         `${metrics.outputTokens ?? '?'}, costUsd=${metrics.costUsd ?? '?'}` +
+        `, cached=${metrics.cached ? 'yes' : 'no'}` +
         (cacheReadTokens === null ? '' : `, cacheRead=${cacheReadTokens}`),
     );
 
-    return { outputs: { text: result.text }, metrics };
+    return {
+      outputs: {
+        text: result.text,
+        // Флаг виден в JSON-панели результата; отдельной колонки в БД нет.
+        ...(result.cached === true ? { cached: true } : {}),
+      },
+      metrics,
+    };
   }
 }

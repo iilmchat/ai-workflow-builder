@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | S8 | FinOps & UX: Redis-кэш ответов LLM (`LLM_CACHE_ENABLED`/`LLM_CACHE_TTL_SECONDS`, tenant-ключ, `cached: true`, cost 0, бейдж в панели), TTL-кэш каталога LLM и карты media-провайдеров (KI-113), индикатор автосохранения «Есть изменения/Сохранение.../Сохранено» + сброс дебаунса ручным Save (KI-195), WelcomeScreen с тремя шаблонами и localStorage (KI-232); backend 2119/26 skipped, web 587, KI 657 (Fixed 297, Open 277) | 2026-11-11 | [S8-finops-ux.md](v1.6.0/S8-finops-ux.md) |
 | v1.6.0 | S7 | Tech Debt: `HttpExceptionFilter` (KI-012), Zod-валидация графа в create/update + проверка merged-графа в сервисе (KI-017), fail-fast Redis `PING` 3 с (KI-019), индексы `workflows_user_id_idx`/`refresh_tokens_expires_at_idx` (KI-214/KI-215), ежедневная очистка `refresh_tokens` (`auth-maintenance`, `0 4 * * *`) в `RunsModule`, миграция `0022` с идемпотентным timestamptz-блоком (KI-018); тесты 2096/26 skipped, KI 657 (Fixed 294, Open 280) | 2026-11-10 | [S7-tech-debt.md](v1.6.0/S7-tech-debt.md) |
 | v1.5.0 | S6-D | Final docs sync релиза: `PROMPT_CURRENT` v12.2 (метрики 2065 backend / 577 web, KI 657, Open 286, Open High 1 — KI-667; факты прода — FirstVDS 4 vCPU / 8 ГБ RAM, Selectel S3 virtual-hosted, Prometheus/Grafana/blackbox, LM Studio через SSH-туннель + fallback; план v1.6.0), `KNOWN_ISSUES.md` — повторный grep-пересчёт (657 `### KI-` = 657 статусов = 657 сумма; исправлены fix-заметки KI-655/656), `CHANGELOG` — две секции `[1.5.0]` сведены в одну `[1.5.0] — 2026-11-10`, KI-664/656 актуализированы | 2026-11-10 | [S6-D-final-docs-sync.md](v1.5.0/S6-D-final-docs-sync.md) |
 | v1.6.0 | S6-C | Production hardening: `S3_FORCE_PATH_STYLE=false` (virtual-hosted Selectel, CORS для Android) + `S3MediaStorage` переподпись обоих форматов URL, `REGISTRATION_MODE=open\|invite` (проверка `organization_invitations`, 403 без приглашения), `LLM_FALLBACK_PROVIDER`/`LLM_FALLBACK_API_KEY` (провайдер из отдельного ключа), `PRODUCTION.md` — факты инфраструктуры, `--force-recreate` для Caddy/prometheus, offsite-бэкапы, `REGISTRATION_MODE=open` + fail2ban; тесты env/auth/media/factory, 2063 passed | 2026-11-10 | [S6-C-production-hardening.md](v1.6.0/S6-C-production-hardening.md) |
@@ -55,4 +56,5 @@
 | v0.11.0 | S16 | Dark theme: токены статусов узлов, UI polish (KI-448) | 2026-10-19 | [S16-dark-theme.md](v0.11.0/S16-dark-theme.md) |
 | v0.11.0 | S17 | Docs Sync (README, ARCHITECTURE, GETTING_STARTED, PROMPT v8.1, RELEASES) | 2026-10-19 | [S17-docs-sync.md](v0.11.0/S17-docs-sync.md) |
 | v0.11.0 | S17 | Release Prep (версии 0.11.0, USER_GUIDE/QA, CHANGELOG, метрики, гейты) | 2026-10-19 | [S17-release.md](v0.11.0/S17-release.md) |
+
 

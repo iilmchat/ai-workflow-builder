@@ -1039,6 +1039,31 @@ export const LlmRouterEnvSchema = z.object({
     z.string().trim().min(1).max(200).optional(),
   ).default('gpt-4o-mini'),
   /**
+   * Кэш ответов LLM в Redis (v1.6.0 S8, FinOps).
+   *
+   * `false` (default) сохраняет прежнее поведение: каждый вызов уходит
+   * провайдеру. `true` включает tenant-aware кэш в `LlmService`: одинаковый
+   * запрос одной организации не оплачивается дважды. Разбор boolean строгий —
+   * `z.coerce.boolean()` превратил бы `'false'` в `true` (RULES 4.35).
+   */
+  LLM_CACHE_ENABLED: z.preprocess(
+    emptyToUndefined,
+    z
+      .union([z.boolean(), z.enum(['true', 'false'])])
+      .transform((value) => value === true || value === 'true')
+      .optional(),
+  ).default(false),
+  /**
+   * TTL кэша ответов LLM в секундах (v1.6.0 S8, default 86400 — сутки).
+   *
+   * Ограничение сверху — 31 день: более долгий кэш для генеративных ответов
+   * редко оправдан и усложняет инвалидацию при смене модели/промпта.
+   */
+  LLM_CACHE_TTL_SECONDS: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(2_678_400).optional(),
+  ).default(86_400),
+  /**
    * Облачный провайдер аварийного fallback'а (v1.6.0 S6-C).
    *
    * Прод работает на локальном LM Studio через reverse-SSH: если рабочая

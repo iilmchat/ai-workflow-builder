@@ -1620,12 +1620,22 @@ export class ExecutionEngineService {
       // JSON-строками — по одной на шаг. KI-433: `usage` (токены и стоимость
       // цикла) возвращается отдельно и пишется в `node_runs` веткой `agent`.
       case 'agent': {
-        const { outputs, steps, metrics } = await executeAgentNodeAsync(
-          node,
-          inputs,
-          runId,
-          this.agentService,
-        );
+        const agentOrgId = subContext.rootOrgId ?? undefined;
+        const { outputs, steps, metrics } =
+          agentOrgId === undefined
+            ? await executeAgentNodeAsync(
+                node,
+                inputs,
+                runId,
+                this.agentService,
+              )
+            : await executeAgentNodeAsync(
+                node,
+                inputs,
+                runId,
+                this.agentService,
+                agentOrgId,
+              );
 
         return {
           kind: 'agent',
@@ -1635,7 +1645,11 @@ export class ExecutionEngineService {
         };
       }
       case 'llm': {
-        const result = await this.llmExecutor.executeAsync(node, inputs, runId);
+        const orgId = subContext.rootOrgId ?? undefined;
+        const result =
+          orgId === undefined
+            ? await this.llmExecutor.executeAsync(node, inputs, runId)
+            : await this.llmExecutor.executeAsync(node, inputs, runId, orgId);
 
         return {
           kind: 'llm',
@@ -1754,10 +1768,13 @@ export class ExecutionEngineService {
    * Создаёт контекст под-воркфлоу для запуска (R6.7, KI-200).
    *
    * Владелец и организация запуска читаются из БД **только** если в графе есть
-   * узел `sub_workflow`: для обычных графов лишний запрос не нужен. Если пару
+   * узел `sub_workflow`, `llm` или `agent`: для обычных графов лишний запрос не
+   * нужен. `sub_workflow` использует пару для проверки доступа к подграфу, а
+   * `llm`/`agent` — `orgId` для tenant-кэша ответов (v1.6.0 S8). Если пару
    * определить не удалось, контекст получает `rootUserId: null` и
    * `rootOrgId: null` — тогда любой подграф будет отвергнут как чужой (404), а
-   * сам запуск не упадёт из-за проблемы с правами на одном узле.
+   * сам запуск не упадёт из-за проблемы с правами на одном узле; LLM-узлы
+   * просто не используют кэш.
    *
    * @param runId - uuid запуска
    * @param graph - граф запуска
@@ -1767,8 +1784,14 @@ export class ExecutionEngineService {
     runId: string,
     graph: GraphDto,
   ): Promise<SubWorkflowContext> {
-    const hasSubWorkflow = graph.nodes.some((node) => node.type === 'sub_workflow');
-    const access = hasSubWorkflow ? await this.findRootAccessAsync(runId) : null;
+    const hasAccessDependentNode = graph.nodes.some(
+      (node) =>
+        node.type === 'sub_workflow' ||
+        // v1.6.0 S8: LLM-узлам и агенту нужна организация для tenant-кэша.
+        node.type === 'llm' ||
+        node.type === 'agent',
+    );
+    const access = hasAccessDependentNode ? await this.findRootAccessAsync(runId) : null;
 
     return {
       lookup: this.workflowService,

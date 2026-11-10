@@ -13,6 +13,14 @@ import {
 export const MEDIA_PROVIDERS = 'MEDIA_PROVIDERS';
 
 /**
+ * TTL кэша маршрутов «id модели → провайдер» (KI-113).
+ *
+ * Каталоги провайдеров обновляются редко; пять минут повторяют TTL кэша
+ * провайдеров и убирают N вызовов `listModelsAsync` на каждый task.
+ */
+export const MEDIA_REGISTRY_ROUTES_TTL_MS = 5 * 60 * 1000;
+
+/**
  * Реестр media-провайдеров (v0.6.0b.2.1, мультипровайдерность — R7.3).
  *
  * R7.3 (KI-363, DESIGN v0.9 § 3.3) добавил прямые провайдеры Replicate, FAL и
@@ -40,6 +48,12 @@ export class MediaRegistryService {
 
   /** Все media-провайдеры в порядке приоритета. */
   private readonly providers: readonly IMediaProvider[];
+
+  /** Кэш «id модели → провайдер» (KI-113); `null` — ещё не построен. */
+  private modelRoutes: Map<string, IMediaProvider> | null = null;
+
+  /** Момент истечения кэша маршрутов, мс. */
+  private modelRoutesExpiresAt = 0;
 
   /**
    * @param providers - media-провайдеры **в порядке приоритета** (его задаёт
@@ -236,6 +250,38 @@ export class MediaRegistryService {
    *   сконфигурированным провайдером (или провайдеров нет вовсе)
    */
   async resolveByModelAsync(modelId: string): Promise<IMediaProvider> {
+    const routes = await this.modelRoutesAsync();
+    const provider = routes.get(modelId);
+
+    if (provider !== undefined) {
+      return provider;
+    }
+
+    throw new MediaProviderException(
+      'media',
+      `Модель не поддерживается ни одним media-провайдером: ${modelId}`,
+    );
+  }
+
+  /**
+   * Строит/отдаёт кэш «id модели → провайдер» (KI-113).
+   *
+   * Раньше каждый `createTaskAsync`/`getTaskAsync` перебирал провайдеров и
+   * звал `listModelsAsync()` (в лучшем случае — кэш провайдера, в худшем —
+   * upstream). Map строится один раз на TTL; при коллизии id побеждает первый
+   * провайдер в порядке приоритета, как и в {@link deduplicate}.
+   *
+   * @returns карта маршрутов
+   * @throws MediaProviderException если нет сконфигурированных провайдеров
+   */
+  private async modelRoutesAsync(): Promise<Map<string, IMediaProvider>> {
+    if (
+      this.modelRoutes !== null &&
+      Date.now() < this.modelRoutesExpiresAt
+    ) {
+      return this.modelRoutes;
+    }
+
     const configured = this.configuredProviders();
 
     if (configured.length === 0) {
@@ -245,18 +291,35 @@ export class MediaRegistryService {
       );
     }
 
+    const routes = new Map<string, IMediaProvider>();
+
     for (const provider of configured) {
       const models = await provider.listModelsAsync();
 
-      if (models.some((model) => model.id === modelId)) {
-        return provider;
+      for (const model of models) {
+        // Приоритет — первый провайдер: id всегда уходит в один upstream.
+        if (!routes.has(model.id)) {
+          routes.set(model.id, provider);
+        }
       }
     }
 
-    throw new MediaProviderException(
-      'media',
-      `Модель не поддерживается ни одним media-провайдером: ${modelId}`,
-    );
+    this.modelRoutes = routes;
+    this.modelRoutesExpiresAt = Date.now() + MEDIA_REGISTRY_ROUTES_TTL_MS;
+
+    return routes;
+  }
+
+  /**
+   * Сбрасывает кэш маршрутов (KI-113).
+   *
+   * Нужен тестам, которые меняют каталоги провайдеров между кейсами.
+   *
+   * @returns ничего
+   */
+  clearRoutesCache(): void {
+    this.modelRoutes = null;
+    this.modelRoutesExpiresAt = 0;
   }
 
   /**

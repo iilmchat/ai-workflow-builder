@@ -1096,6 +1096,30 @@ describe('LLM Router env (v1.2 S1, DESIGN V120 § 3.1)', () => {
         .LLM_ROUTER_FALLBACK_MODEL,
     ).toBe('gpt-4o');
   });
+
+  it('кэш LLM: по умолчанию выключен, TTL — сутки (S8)', () => {
+    const parsed = EnvSchema.parse(baseEnv);
+
+    expect(parsed.LLM_CACHE_ENABLED).toBe(false);
+    expect(parsed.LLM_CACHE_TTL_SECONDS).toBe(86_400);
+  });
+
+  it('кэш LLM: строгий boolean и положительный TTL (S8)', () => {
+    expect(
+      LlmRouterEnvSchema.parse({ LLM_CACHE_ENABLED: 'true' }).LLM_CACHE_ENABLED,
+    ).toBe(true);
+    expect(
+      LlmRouterEnvSchema.parse({ LLM_CACHE_ENABLED: 'false' }).LLM_CACHE_ENABLED,
+    ).toBe(false);
+    expect(
+      LlmRouterEnvSchema.parse({ LLM_CACHE_TTL_SECONDS: '120' })
+        .LLM_CACHE_TTL_SECONDS,
+    ).toBe(120);
+    expect(() => LlmRouterEnvSchema.parse({ LLM_CACHE_TTL_SECONDS: '0' })).toThrow();
+    expect(() =>
+      LlmRouterEnvSchema.parse({ LLM_CACHE_TTL_SECONDS: 'abc' }),
+    ).toThrow();
+  });
 });
 
 describe('LLM fallback env (v1.6.0 S6-C)', () => {

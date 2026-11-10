@@ -2854,6 +2854,7 @@ export interface AgentRunner {
     inputs: unknown,
     runId: string,
     nodeId?: string,
+    orgId?: string,
   ): Promise<AgentRunResult>;
 }
 
@@ -2888,9 +2889,13 @@ export async function executeAgentNodeAsync(
   inputs: Record<string, unknown>,
   runId: string,
   runner: AgentRunner,
+  orgId?: string,
 ): Promise<AgentNodeExecution> {
   const data = parseNodeData('agent', AgentNodeDataSchema, node.data);
-  const result = await runner.runAgentAsync(data, inputs, runId, node.id);
+  const result =
+    orgId === undefined
+      ? await runner.runAgentAsync(data, inputs, runId, node.id)
+      : await runner.runAgentAsync(data, inputs, runId, node.id, orgId);
 
   return {
     outputs: { result: result.answer, steps: result.steps },

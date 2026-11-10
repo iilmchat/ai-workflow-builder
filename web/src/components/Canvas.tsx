@@ -17,6 +17,7 @@ import {
 } from '@/components/edges/InsertableEdge';
 import { nodeTypes } from '@/components/nodes';
 import { NodeCatalogPopover } from '@/components/NodeCatalogPopover';
+import { WelcomeScreen } from '@/components/WelcomeScreen';
 import { useDebouncedEffect } from '@/hooks/use-debounced-effect';
 import { useHotkeys } from '@/hooks/use-hotkeys';
 import { FIT_SELECTION_OPTIONS, FIT_VIEW_OPTIONS } from '@/lib/fit-view-options';
@@ -126,7 +127,6 @@ function CanvasInner({ onReady }: CanvasProps) {
   const selectedNodeId = useWorkflowStore((state) => state.selectedNodeId);
   const currentWorkflowId = useWorkflowStore((state) => state.currentWorkflowId);
   const lastSavedHash = useWorkflowStore((state) => state.lastSavedHash);
-  const markSaved = useWorkflowStore((state) => state.markSaved);
   const saveWorkflowAsync = useWorkflowStore((state) => state.saveWorkflowAsync);
   // KI-186: режим холста, видимость миникарты и общий каталог узлов живут в
   // сторе — их меняют и горячие клавиши, и кнопки панели режимов, и `Toolbar`.
@@ -438,7 +438,12 @@ function CanvasInner({ onReady }: CanvasProps) {
 
   // KI-195: автосохранение через 3 секунды после последней правки. Сохраняем
   // только сохранённый workflow и только если граф реально отличается от
-  // последнего сохранённого состояния.
+  // последнего сохранённого состояния. `saveWorkflowAsync` сам обновляет
+  // `lastSavedHash` только при успехе — при ошибке индикатор остаётся «есть
+  // изменения», а повторная правка снова запустит таймер.
+  //
+  // Ручное «Сохранить» меняет `lastSavedHash`, поэтому этот эффект
+  // перезапускается и сбрасывает уже запланированный автосейв (S8).
   useDebouncedEffect(
     () => {
       if (currentWorkflowId === null) {
@@ -451,7 +456,7 @@ function CanvasInner({ onReady }: CanvasProps) {
         return;
       }
 
-      void saveWorkflowAsync().then(() => markSaved(hash));
+      void saveWorkflowAsync();
     },
     [nodes, edges, currentWorkflowId, lastSavedHash],
     AUTO_SAVE_DELAY_MS,
@@ -462,7 +467,7 @@ function CanvasInner({ onReady }: CanvasProps) {
       {/* KI-188: курсор контейнера повторяет режим холста — «рука» в pan,
           обычная стрелка в select. */}
       <div
-        className={`h-full w-full ${
+        className={`relative h-full w-full ${
           canvasMode === 'pan' ? 'cursor-grab' : 'cursor-default'
         }`}
       >
@@ -618,6 +623,10 @@ function CanvasInner({ onReady }: CanvasProps) {
           )}
         </ReactFlow>
         </Suspense>
+        {/* KI-232: welcome-экран пустого редактора. Компонент сам решает,
+            показываться ли (нет узлов и нет сохранённого workflow), поэтому
+            Canvas не дублирует это условие. */}
+        <WelcomeScreen />
       </div>
 
       {/* KI-188/KI-190: панель режимов холста. Живёт вне `<ReactFlow>`, но внутри

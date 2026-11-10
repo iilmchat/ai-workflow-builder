@@ -555,9 +555,11 @@ export class LlmRouterService {
   ): Promise<LlmAttempt> {
     const startedAt = Date.now();
     const signal = options.signal ?? AbortSignal.timeout(LLM_TIMEOUT_MS);
+    // v1.6.0 S8: `orgId` — метаданные кэша, провайдеру не отправляем.
+    const { orgId: _orgId, ...providerOptions } = options;
 
     const result = await this.semaphores.runAsync(provider.name, () =>
-      provider.generateAsync(prompt, { ...options, signal, model }),
+      provider.generateAsync(prompt, { ...providerOptions, signal, model }),
     );
 
     return { result, waitMs: Date.now() - startedAt };

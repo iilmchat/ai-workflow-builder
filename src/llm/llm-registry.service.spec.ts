@@ -128,10 +128,12 @@ describe('LlmRegistryService', () => {
     anthropic = providers.anthropic;
     openai = providers.openai;
     registry = await createRegistry([anthropic, openai]);
+    registry.clearCache();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it('находит Anthropic по id модели claude-*', () => {
@@ -406,6 +408,48 @@ describe('LlmRegistryService', () => {
       expect(
         local.findCompatibleRoute(toolsRequirements, { local: false })?.model.id,
       ).toBe('gpt-4o');
+    });
+  });
+
+  describe('in-memory cache (KI-113)', () => {
+    it('listModels повторно отдаёт тот же массив в пределах TTL', () => {
+      const first = registry.listModels();
+      const second = registry.listModels();
+
+      expect(second).toBe(first);
+    });
+
+    it('listModels пересобирается после 5 минут', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+
+      const first = registry.listModels();
+
+      vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+
+      const second = registry.listModels();
+
+      expect(second).not.toBe(first);
+      expect(second).toEqual(first);
+    });
+
+    it('clearCache сбрасывает список и паспорта моделей', () => {
+      const firstModels = registry.listModels();
+      const firstCapabilities = registry.getCapabilities('gpt-4o');
+
+      registry.clearCache();
+
+      expect(registry.listModels()).not.toBe(firstModels);
+      expect(registry.getCapabilities('gpt-4o')).not.toBe(firstCapabilities);
+    });
+
+    it('getCapabilities кэшируется по id модели', () => {
+      const first = registry.getCapabilities('gpt-4o');
+
+      expect(registry.getCapabilities('gpt-4o')).toBe(first);
+      // Неизвестная модель тоже кэшируется — повторный поиск не нужен.
+      expect(registry.getCapabilities('unknown')).toBeUndefined();
+      expect(registry.getCapabilities('unknown')).toBeUndefined();
     });
   });
 });

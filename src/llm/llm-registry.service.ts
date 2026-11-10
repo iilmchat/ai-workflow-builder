@@ -15,6 +15,16 @@ import {
 /** Токен DI со списком сконфигурированных провайдеров (см. `LlmModule`). */
 export const LLM_PROVIDERS = 'LLM_PROVIDERS';
 
+/**
+ * TTL in-memory кэша каталога моделей (KI-113).
+ *
+ * Провайдеры и их модели не меняются на лету: список собирается один раз при
+ * старте из env. Пять минут — компромисс между свежестью (ручное обновление
+ * каталога в будущем) и отсутствием повторной сборки массива на каждый
+ * `GET /llm/models`/резолв возможностей.
+ */
+export const LLM_REGISTRY_CACHE_TTL_MS = 5 * 60 * 1000;
+
 /** Модель с указанием провайдера (для UI). */
 export interface LlmModelInfo {
   /** Идентификатор провайдера. */
@@ -53,6 +63,18 @@ export class LlmRegistryService {
   private readonly providers: ReadonlyArray<ILlmProvider>;
   /** id модели → провайдер, который её обслуживает. */
   private readonly byModelId = new Map<string, ILlmProvider>();
+
+  /** Кэш `listModels` (KI-113); `null` — ещё не собран/сброшен. */
+  private modelsCache: LlmModelInfo[] | null = null;
+
+  /** Момент истечения кэша `listModels`, мс (0 — кэш пуст). */
+  private modelsCacheExpiresAt = 0;
+
+  /** Кэш паспортов моделей: `getCapabilities` вызывается на каждый LLM-вызов. */
+  private readonly capabilitiesCache = new Map<
+    string,
+    { value: LlmModelCapabilities | undefined; expiresAt: number }
+  >();
 
   /**
    * Регистрирует модели всех провайдеров.
@@ -144,19 +166,31 @@ export class LlmRegistryService {
    * @returns паспорт либо `undefined`, если модель не объявлена
    */
   getCapabilities(modelId: string): LlmModelCapabilities | undefined {
+    const cached = this.capabilitiesCache.get(modelId);
+
+    if (cached !== undefined && Date.now() < cached.expiresAt) {
+      return cached.value;
+    }
+
     const provider = this.byModelId.get(modelId);
+    let value: LlmModelCapabilities | undefined;
 
-    if (provider === undefined) {
-      return undefined;
+    if (provider !== undefined) {
+      const model = provider.models.find((candidate) => candidate.id === modelId);
+
+      if (model !== undefined) {
+        value = buildModelCapabilities(provider.name, model);
+      }
     }
 
-    const model = provider.models.find((candidate) => candidate.id === modelId);
+    // Кэшируем и `undefined`: неизвестная модель не должна каждый раз искать
+    // по массивам провайдеров (KI-113).
+    this.capabilitiesCache.set(modelId, {
+      value,
+      expiresAt: Date.now() + LLM_REGISTRY_CACHE_TTL_MS,
+    });
 
-    if (model === undefined) {
-      return undefined;
-    }
-
-    return buildModelCapabilities(provider.name, model);
+    return value;
   }
 
   /**
@@ -243,7 +277,11 @@ export class LlmRegistryService {
    *   массив, если ни один провайдер не сконфигурирован
    */
   listModels(): LlmModelInfo[] {
-    return this.providers
+    if (this.modelsCache !== null && Date.now() < this.modelsCacheExpiresAt) {
+      return this.modelsCache;
+    }
+
+    const models = this.providers
       .filter((provider) => provider.isConfigured)
       .flatMap((provider) =>
         provider.models.map((model) => ({
@@ -264,6 +302,26 @@ export class LlmRegistryService {
             : { defaultMaxTokens: model.defaultMaxTokens }),
         })),
       );
+
+    this.modelsCache = models;
+    this.modelsCacheExpiresAt = Date.now() + LLM_REGISTRY_CACHE_TTL_MS;
+
+    return models;
+  }
+
+  /**
+   * Сбрасывает in-memory кэш каталога моделей и паспортов (KI-113).
+   *
+   * Нужен тестам (провайдеры подменяются между кейсами) и сценариям ручного
+   * обновления каталога: без сброса изменения провайдеров не видны до истечения
+   * TTL или рестарта процесса.
+   *
+   * @returns ничего
+   */
+  clearCache(): void {
+    this.modelsCache = null;
+    this.modelsCacheExpiresAt = 0;
+    this.capabilitiesCache.clear();
   }
 
   /**

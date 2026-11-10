@@ -205,6 +205,24 @@ describe('MediaRegistryService', () => {
     );
   });
 
+  it('resolveByModelAsync кэширует карту «модель → провайдер» (KI-113)', async () => {
+    const creativelab = stubProvider('creativelab', [model('flux-schnell')]);
+    const replicate = stubProvider('replicate', [model('replicate:flux-dev')]);
+    const registry = await createRegistry([creativelab, replicate]);
+
+    await registry.resolveByModelAsync('flux-schnell');
+    await registry.resolveByModelAsync('replicate:flux-dev');
+
+    // Оба каталога прочитаны ровно один раз на TTL, а не на каждый резолв.
+    expect(creativelab.listModelsAsync).toHaveBeenCalledTimes(1);
+    expect(replicate.listModelsAsync).toHaveBeenCalledTimes(1);
+
+    registry.clearRoutesCache();
+    await registry.resolveByModelAsync('flux-schnell');
+
+    expect(creativelab.listModelsAsync).toHaveBeenCalledTimes(2);
+  });
+
   it('findModelAsync возвращает модель, объявленную в каталоге', async () => {
     const creativelab = stubProvider('creativelab', [model('flux-schnell')]);
     const registry = await createRegistry([creativelab]);

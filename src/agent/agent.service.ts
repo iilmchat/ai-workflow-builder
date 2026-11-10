@@ -639,6 +639,7 @@ export class AgentService {
     inputs: unknown,
     runId: string,
     nodeId = '',
+    orgId?: string,
   ): Promise<AgentRunResult> {
     const maxIterations = clampInteger(
       node.maxIterations,
@@ -677,7 +678,7 @@ export class AgentService {
     await this.mcp.prepareAsync(mcpToolRefs.map((ref) => ref.server));
 
     const tools = await this.resolveToolsAsync(node.tools, mcpToolRefs);
-    const context = await this.createToolContextAsync(node, runId, nodeId);
+    const context = await this.createToolContextAsync(node, runId, nodeId, orgId);
     const messages: AgentMessage[] = [
       { role: 'system', content: buildSystemPrompt(node.systemPrompt, tools) },
       { role: 'user', content: JSON.stringify(inputs ?? null) },
@@ -754,6 +755,8 @@ export class AgentService {
                 // v1.3 S1 (KI-617): агентский шаг использует инструменты, и
                 // роутер не должен подменять модель на ту, что их не умеет.
                 requiresTools: true,
+                // v1.6.0 S8: tenant-кэш ответов; без orgId кэш не используется.
+                ...(orgId === undefined ? {} : { orgId }),
               });
               // v1.1.0 S4 (KI-576): успешный шаг. `status` отделяет таймауты и
               // отказы провайдера от нормальных ответов в той же гистограмме.
@@ -794,7 +797,8 @@ export class AgentService {
               `Агент ${nodeId || '(без id)'}: итерация ${iteration}/${maxIterations}, ` +
                 `promptLen=${prompt.length}, answerLen=${response.text.length}, ` +
                 `tokens=${stepUsage.inputTokens ?? '?'}/${stepUsage.outputTokens ?? '?'}, ` +
-                `costUsd=${stepCostUsd ?? '?'}`,
+                `costUsd=${stepCostUsd ?? '?'}` +
+                `, cached=${response.cached === true ? 'yes' : 'no'}`,
             );
 
             // KI-407: бюджет проверяется после платного вызова — до ответа
@@ -1188,9 +1192,14 @@ export class AgentService {
    *   провайдер не отдал usage (KI-052)
    */
   private calculateStepCostUsd(
-    response: { readonly isLocal?: boolean },
+    response: { readonly isLocal?: boolean; readonly cached?: boolean },
     usage: LlmUsage,
   ): number | null {
+    // v1.6.0 S8: ответ из Redis-кэша не стоил денег — провайдер не вызывался.
+    if (response.cached === true) {
+      return 0;
+    }
+
     if (response.isLocal === true) {
       return 0;
     }
@@ -1242,6 +1251,7 @@ export class AgentService {
    * @param node - данные узла (модель и набор инструментов)
    * @param runId - uuid запуска
    * @param nodeId - id узла в графе
+   * @param orgId - организация для tenant-кэша LLM (v1.6.0 S8)
    * @returns контекст для `AgentTool.executeAsync`
    * @throws Error если строка запуска не найдена (для workflow-scoped tools)
    */
@@ -1249,6 +1259,7 @@ export class AgentService {
     node: AgentNodeData,
     runId: string,
     nodeId: string,
+    orgId?: string,
   ): Promise<AgentToolContext> {
     const needsWorkflow = node.tools.some((name) =>
       WORKFLOW_SCOPED_TOOLS.has(name),
@@ -1272,7 +1283,11 @@ export class AgentService {
         prompt,
         model,
       ): Promise<{ text: string; usage: LlmUsage | null }> => {
-        const result = await this.llm.generateAsync(prompt, model);
+        const result = await this.llm.generateAsync(
+          prompt,
+          model,
+          orgId === undefined ? {} : { orgId },
+        );
 
         return { text: result.text, usage: result.usage };
       },

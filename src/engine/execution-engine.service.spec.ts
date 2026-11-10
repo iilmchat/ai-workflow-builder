@@ -751,6 +751,8 @@ describe('ExecutionEngineService', () => {
       expect.objectContaining({ id: 'B', type: 'llm' }),
       { prompt: 'привет' },
       RUN_ID,
+      // v1.6.0 S8: четвёртый аргумент — организация для tenant-кэша.
+      RUN_OWNER_ORG_ID,
     );
 
     // Запуск переведён в running и закрыт completed.
@@ -2766,6 +2768,8 @@ describe('ExecutionEngineService', () => {
         expect.objectContaining({ id: 'sub_sub-1__S2' }),
         { prompt: 'под-' },
         RUN_ID,
+        // v1.6.0 S8: организация для tenant-кэша ответов LLM.
+        RUN_OWNER_ORG_ID,
       );
 
       // Подграф загружен у владельца запуска и в его организации: фильтр по
