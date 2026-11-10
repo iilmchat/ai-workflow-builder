@@ -534,6 +534,53 @@ describe('S3MediaStorage: загрузка в бакет (R7.8, KI-412)', () => 
     expect(days).toBeLessThan(31 * 24 * 60 * 60 * 1000);
   });
 
+  it('virtual-hosted: прямой URL публичного бакета (KI-4xx)', async () => {
+    const body = new Uint8Array([1, 2, 3]);
+    stubFetch(body, {
+      headers: {
+        'content-type': 'image/png',
+        'content-length': String(body.byteLength),
+      },
+    });
+
+    const send = vi.fn(async (command: PutObjectCommand) => {
+      await readCommandBodyAsync(command.input.Body);
+
+      return {};
+    });
+    const storage = new S3MediaStorage({
+      ...optionsWith(send),
+      publicBucket: true,
+      forcePathStyle: false,
+    });
+    const saved = await storage.uploadAsync({
+      runId: 'run-1',
+      nodeId: 'node-a',
+      sourceUrl: 'https://provider.test/out.png',
+    });
+
+    expect(saved?.storedUrl).toBe('https://media.s3.test/run-1/node-a.png');
+  });
+
+  it('virtual-hosted: ключ восстанавливается из presigned URL (KI-4xx)', async () => {
+    const send = vi.fn(() => Promise.resolve({}));
+    const storage = new S3MediaStorage({
+      ...optionsWith(send),
+      forcePathStyle: false,
+    });
+
+    const refreshed = await storage.refreshStoredUrlAsync(
+      'https://media.s3.test/run-1/node-a.png?X-Amz-Signature=old&X-Amz-Expires=3600',
+    );
+
+    expect(refreshed?.storedUrl).toContain(
+      'https://media.s3.test/run-1/node-a.png?',
+    );
+    expect(refreshed?.storedUrl).toContain('X-Amz-Signature=');
+    // Переподпись локальная: ни одной команды в S3 не отправлено.
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('getSignedUrlAsync подписывает GetObject на час (KI-425)', async () => {
     const send = vi.fn(() => Promise.resolve({}));
     const storage = new S3MediaStorage(optionsWith(send));

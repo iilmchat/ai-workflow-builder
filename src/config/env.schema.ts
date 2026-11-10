@@ -490,6 +490,29 @@ export const MediaStorageEnvSchema = z.object({
         .optional(),
     )
     .default(false),
+  /**
+   * Адресация бакета: path-style или virtual-hosted (KI-4xx).
+   *
+   * `true` (по умолчанию) — path-style `<endpoint>/<bucket>/<key>`: подходит
+   * для MinIO, R2, Yandex Object Storage и сохраняет совместимость с уже
+   * записанными `stored_url`.
+   *
+   * `false` — virtual-hosted `<bucket>.<endpoint>/<key>`: нужен для бакетов
+   * Selectel/AWS, где CORS отдаётся только для virtual-hosted адресации
+   * (Android-клиент скачивает presigned URL через `fetch`, без CORS падает).
+   *
+   * Булево строго, как `S3_PUBLIC_BUCKET` (RULES 4.35): `'false'` не должен
+   * превращаться в `true` через `z.coerce.boolean()`.
+   */
+  S3_FORCE_PATH_STYLE: z
+    .preprocess(
+      emptyToUndefined,
+      z
+        .union([z.boolean(), z.enum(['true', 'false'])])
+        .transform((value) => value === true || value === 'true')
+        .optional(),
+    )
+    .default(true),
 });
 
 /** Валидированные настройки хранилища media-результатов (R7.8). */

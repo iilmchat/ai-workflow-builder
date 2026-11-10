@@ -17,6 +17,17 @@
 ---
 ## [Unreleased]
 
+### Added
+
+- **`S3_FORCE_PATH_STYLE` — адресация S3-бакета (KI-4xx).** По умолчанию
+  `true`: path-style `<endpoint>/<bucket>/<key>` (MinIO, R2, Yandex Object
+  Storage). `false` включает virtual-hosted `<bucket>.<endpoint>/<key>` —
+  он нужен для бакетов Selectel/AWS, где CORS отдаётся только для
+  virtual-hosted адресации; без этого Android-клиент не может скачать
+  presigned URL через `fetch`. `storageKeyFromUrl` теперь понимает оба
+  формата, поэтому ранее сохранённые `stored_url` продолжают
+  переподписываться.
+
 ### Fixed
 
 - **Dockerfile: `api-prefixes.json` в runtime-стадии (v1.6.0 S6-B)**
