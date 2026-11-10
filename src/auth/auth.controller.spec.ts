@@ -47,9 +47,14 @@ describe('AuthController', () => {
   };
   let verifyAsync: ReturnType<typeof vi.fn>;
   let authDisabled: boolean;
+  // S6-B (KI-664): env, от которых зависит SameSite refresh-cookie.
+  let nodeEnv: string | undefined;
+  let cookieSameSite: string | undefined;
 
   beforeEach(async () => {
     authDisabled = false;
+    nodeEnv = undefined;
+    cookieSameSite = undefined;
     verifyAsync = vi.fn(() =>
       Promise.resolve({ sub: USER_ID, email: EMAIL, orgId: ORG_ID }),
     );
@@ -89,9 +94,18 @@ describe('AuthController', () => {
         {
           provide: ConfigService,
           useValue: {
-            get: vi.fn((key: string) =>
-              key === 'AUTH_DISABLED' ? authDisabled : undefined,
-            ),
+            get: vi.fn((key: string) => {
+              switch (key) {
+                case 'AUTH_DISABLED':
+                  return authDisabled;
+                case 'NODE_ENV':
+                  return nodeEnv;
+                case 'COOKIE_SAMESITE':
+                  return cookieSameSite;
+                default:
+                  return undefined;
+              }
+            }),
             getOrThrow: vi.fn(() => '7d'),
           },
         },
@@ -167,6 +181,58 @@ describe('AuthController', () => {
       expect(cookie).toContain('SameSite=Strict');
       // В теле refresh-токена быть не должно (RULES 5.9).
       expect(response.body).not.toHaveProperty('refreshToken');
+    });
+
+    it('ставит SameSite=None; Secure для Capacitor WebView в production (KI-664)', async () => {
+      nodeEnv = 'production';
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .set('Origin', 'capacitor://localhost')
+        .send({ email: EMAIL, password: 'test1234' })
+        .expect(200);
+
+      const cookie = String(response.headers['set-cookie']);
+
+      expect(cookie).toContain('SameSite=None');
+      expect(cookie).toContain('Secure');
+      expect(cookie).toContain('HttpOnly');
+    });
+
+    it('оставляет SameSite=Strict для обычного origin (KI-664)', async () => {
+      nodeEnv = 'production';
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .set('Origin', 'https://ai-workflow-builder.ru')
+        .send({ email: EMAIL, password: 'test1234' })
+        .expect(200);
+
+      const cookie = String(response.headers['set-cookie']);
+
+      expect(cookie).toContain('SameSite=Strict');
+      expect(cookie).not.toContain('SameSite=None');
+    });
+
+    it('не переключает SameSite на None вне production (KI-664)', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .set('Origin', 'https://localhost')
+        .send({ email: EMAIL, password: 'test1234' })
+        .expect(200);
+
+      expect(String(response.headers['set-cookie'])).toContain('SameSite=Strict');
+    });
+
+    it('уважает COOKIE_SAMESITE=Lax (KI-664)', async () => {
+      cookieSameSite = 'Lax';
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: EMAIL, password: 'test1234' })
+        .expect(200);
+
+      expect(String(response.headers['set-cookie'])).toContain('SameSite=Lax');
     });
 
     it('отвечает 401 при неверном пароле', async () => {

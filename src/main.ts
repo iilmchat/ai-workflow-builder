@@ -38,11 +38,22 @@ async function bootstrap() {
   const nodeEnv = configService.get<string>('NODE_ENV');
 
   try {
+    const corsOrigin = resolveCorsOrigin(
+      nodeEnv,
+      configService.get<string>('CORS_ALLOWED_ORIGINS'),
+    );
+
     app.enableCors({
-      origin: resolveCorsOrigin(
-        nodeEnv,
-        configService.get<string>('CORS_ALLOWED_ORIGINS'),
-      ),
+      origin: corsOrigin,
+      // Refresh-cookie — httpOnly и cross-origin для Capacitor WebView
+      // (`https://localhost` → домен API). Без `Access-Control-Allow-
+      // Credentials` браузер отбросит ответ с `Set-Cookie`, даже когда cookie
+      // стоит `SameSite=None; Secure` (S6-B, KI-664).
+      //
+      // Только вместе с точным allowlist'ом: при `origin: true` (dev/staging)
+      // credentials отражали бы любой Origin и разрешали credentialed CORS
+      // с произвольного сайта. В dev cookie и так same-origin через Vite-proxy.
+      credentials: Array.isArray(corsOrigin),
     });
   } catch (error: unknown) {
     // Fail-fast по конфигурации: `console.error`, потому что Nest-логгер на этом

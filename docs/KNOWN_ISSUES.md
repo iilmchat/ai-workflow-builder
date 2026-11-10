@@ -10575,24 +10575,39 @@ KI-656, ограничение Maven-репозиториев SDK — KI-657.
   [S5-B-release-finalization.md](development/reports/v1.5.0/S5-B-release-finalization.md).
 
 ### KI-664 — Refresh-cookie не отправляется из Capacitor WebView
-- **Приоритет:** 🟠 Medium | **Статус:** Open | **Обнаружено:** 2026-11-09 (S5-B) | **Запланировано:** S6+
-- **Файлы:** `src/auth/auth.cookie.ts`, `src/main.ts`,
-  `web/src/lib/api.ts`, `web/src/lib/auth-api.ts`
-- **Описание:** refresh-токен ставится httpOnly-cookie с `SameSite=Strict`
+- **Приоритет:** 🟠 Medium | **Статус:** Fixed | **Обнаружено:** 2026-11-09 (S5-B) | **Исправлено в:** v1.6.0 (S6-B)
+- **Файлы:** `src/auth/auth.cookie.ts`, `src/auth/auth.controller.ts`,
+  `src/auth/auth.cookie.spec.ts` (новый), `src/main.ts`,
+  `src/config/env.schema.ts`, `src/config/env.schema.spec.ts`,
+  `web/src/lib/api.ts`, `web/src/lib/auth-api.ts`, `.env.production.example`
+- **Описание:** refresh-токен ставился httpOnly-cookie с `SameSite=Strict`
   (`src/auth/auth.cookie.ts`), а в native-сборке сайты разные:
   WebView (`https://localhost`) → backend (`https://api.example.com`).
-  Cross-site cookie со `SameSite=Strict` не отправляется, а `fetch` с
-  `credentials: 'same-origin'` (default) не передаёт cookie на другой origin.
-  Поэтому `POST /auth/refresh` из приложения не восстановит сессию: после
-  истечения access-токена (`JWT_EXPIRES_IN`, в примере 24h) пользователю нужен
-  повторный вход. Вход и API-запросы в пределах жизни access-токена работают
-  (auth — `Authorization: Bearer`), альфа-тестирование это не блокирует.
-- **Решение:** S6+: либо `SameSite=None; Secure` + `enableCors({ origin: true,
-  credentials: true })` и `credentials: 'include'` в клиенте, либо отдавать
-  refresh-токен в теле и хранить в защищённом хранилище натива. Вариант с
-  cookie требует проверки CSRF и точного allowlist origin'ов.
-- **Связанные:** KI-658, отчёт
-  [S5-B-release-finalization.md](development/reports/v1.5.0/S5-B-release-finalization.md).
+  Cross-site cookie со `SameSite=Strict` не отправлялась, поэтому
+  `POST /auth/refresh` из приложения не восстанавливал сессию: после
+  истечения access-токена (`JWT_EXPIRES_IN`, в примере 24h) требовался
+  повторный вход. Вход и API-запросы в пределах жизни access-токена работали
+  (auth — `Authorization: Bearer`).
+- **Fix (S6-B):** `resolveRefreshCookieOptions` в `src/auth/auth.cookie.ts` —
+  в `NODE_ENV=production` запрос с `Origin: capacitor://localhost` или
+  `https://localhost` получает `SameSite=None; Secure`; остальные —
+  `COOKIE_SAMESITE` (enum `Strict`/`Lax`/`None`, дефолт `Strict`). `None`
+  всегда включает `Secure`; `clearRefreshCookie` повторяет атрибуты.
+  `main.ts` — `enableCors({ ..., credentials: Array.isArray(corsOrigin) })`:
+  с точным allowlist'ом (production) включается
+  `Access-Control-Allow-Credentials`, без которого браузер отбрасывает
+  `Set-Cookie` cross-origin; при `origin: true` (dev/staging) credentials
+  остаются выключены, чтобы не разрешать credentialed CORS любому сайту.
+  Клиент уже отправляет `credentials: 'include'` на
+  login/register/refresh/logout (`web/src/lib/auth-api.ts`). Тесты:
+  `src/auth/auth.cookie.spec.ts` (мок `request.headers.origin`),
+  сценарии в `auth.controller.spec.ts`, env-тест `COOKIE_SAMESITE`.
+- **Остаточное ограничение:** `SameSite=None` требует HTTPS и точного
+  CORS-allowlist'а (`CORS_ALLOWED_ORIGINS`); в `staging`/`preprod` CORS всё ещё
+  `origin: true` — KI-668.
+- **Связанные:** KI-658, KI-668, отчёты
+  [S5-B-release-finalization.md](development/reports/v1.5.0/S5-B-release-finalization.md),
+  [S6-B-post-deploy-fixes.md](development/reports/v1.6.0/S6-B-post-deploy-fixes.md).
 
 ### KI-665 — QR без GMS: кнопка молча ничего не делает
 - **Приоритет:** 🟡 Low | **Статус:** Open | **Обнаружено:** 2026-11-09 (S5-B) | **Запланировано:** S6+
@@ -10678,27 +10693,29 @@ KI-656, ограничение Maven-репозиториев SDK — KI-657.
 
 ## Сводка по статусам
 
-**Пересчитано grep'ом на 2026-11-10 (v1.6.0 S6-A, RULES 3.20):** после S5-B было
-652 вхождения. В S6-A заведены KI-666 (WAL/PITR — `Deferred`), KI-667
-(автобэкапы — `Open`), KI-668 (CORS в staging/preprod — `Open`), KI-669
-(IPv6-CIDR — `Open`) и KI-670 (`!reset`/Compose < 2.24 — `Documented`). Всего
+**Пересчитано grep'ом на 2026-11-10 (v1.6.0 S6-B, RULES 3.20):** в S6-A заведены
+KI-666 (WAL/PITR — `Deferred`), KI-667 (автобэкапы — `Open`), KI-668 (CORS в
+staging/preprod — `Open`), KI-669 (IPv6-CIDR — `Open`) и KI-670
+(`!reset`/Compose < 2.24 — `Documented`). В S6-B **KI-664 переведён из `Open` в
+`Fixed`** (refresh-cookie в Capacitor WebView). Новых KI в S6-B нет. Всего
 **657** вхождений `### KI-`, **657** строк статуса, **уникальных номеров —
 657**: все три цифры сходятся.
 
 Проверка RULES 3.20: (1) вхождений `### KI-` = 657, строк статуса = 657
 (легенда `### KI-001` имеет строку статуса, поэтому входит в оба счётчика и
 «минус 1» не применяется); (2) сумма статусов в таблице ниже = 657.
-По базовым статусам: Fixed 297 (285 + 12 «частично»), Open 287, Documented 60
-(59 + 1 «не воспроизводится»), Planned 5, Deferred 4, Won't Fix 4, In Progress 0.
+По базовым статусам (посчитано по строкам `**Статус:**`, без префиксного
+совпадения): Fixed 300 (288 + 12 «частично»), Open 286, Documented 60
+(59 + 1 «не воспроизводится»), Planned 3, Deferred 4, Won't Fix 4, In Progress 0.
 
 | Статус | Количество |
 |---|---:|
-| Fixed | 285 |
+| Fixed | 288 |
 | Fixed (частично) | 12 |
-| Open | 287 |
+| Open | 286 |
 | Documented | 59 |
 | Documented (не воспроизводится) | 1 |
-| Planned | 5 |
+| Planned | 3 |
 | Deferred | 4 |
 | Won't Fix | 4 |
 | **Итого** | **657** |
