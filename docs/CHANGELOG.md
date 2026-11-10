@@ -17,6 +17,17 @@
 ---
 ## [Unreleased]
 
+### Fixed
+
+- **Docker-образ не содержал `api-prefixes.json`.** Финальная стадия
+  `Dockerfile` копировала `dist`, `web/dist`, `drizzle`, `drizzle.config.ts`
+  и entrypoint, но не реестр API-префиксов, который читается в рантайме
+  (`src/common/api-prefixes.ts`, fail-fast). Контейнер из опубликованного
+  образа падал на старте:
+  `Не прочитан единый реестр API-префиксов: /app/api-prefixes.json`.
+  Добавлен `COPY` в стадию `runner`; в `docker-publish.yml` добавлена
+  проверка обязательных runtime-файлов до публикации digest'а.
+
 ## [1.5.0] — 2026-11-09
 
 **Minor-релиз: Android Mobile App (Capacitor).**
