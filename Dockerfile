@@ -62,6 +62,9 @@ COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/web/dist ./web/dist
 COPY --from=builder --chown=node:node /app/drizzle ./drizzle
 COPY --from=builder --chown=node:node /app/drizzle.config.ts ./drizzle.config.ts
+# Реестр API-префиксов читается в рантайме (src/common/api-prefixes.ts,
+# fail-fast), поэтому обязан попасть в финальный образ, а не только в builder.
+COPY --from=builder --chown=node:node /app/api-prefixes.json ./api-prefixes.json
 COPY --from=builder --chown=node:node /app/docker-entrypoint.sh ./docker-entrypoint.sh
 # Единый реестр API-префиксов читается в рантайме: dist/common/api-prefixes.js
 # поднимается на два уровня (`/app`) и открывает `/app/api-prefixes.json`

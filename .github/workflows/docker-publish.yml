@@ -68,7 +68,28 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          # load нужен, чтобы шаг ниже проверил содержимое образа до релиза.
+          load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Регресс-проверка состава runtime-образа: файлы, которые читаются в
+      # рантайме, но не участвуют в сборке (api-prefixes.json), легко забыть
+      # скопировать в стадию runner — тогда контейнер падает на старте.
+      - name: Verify runtime files in image
+        run: |
+          SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+          IMAGE="${REGISTRY}/${IMAGE_NAME}:sha-${SHORT_SHA}"
+          echo "Проверяем ${IMAGE}"
+          docker run --rm --entrypoint sh "${IMAGE}" -c '
+            set -e
+            for f in /app/api-prefixes.json /app/dist/main.js /app/dist/migrate.js /app/drizzle /app/web/dist/index.html; do
+              if [ ! -e "$f" ]; then
+                echo "missing in image: $f"
+                exit 1
+              fi
+            done
+            echo "runtime files: ok"
+          '
