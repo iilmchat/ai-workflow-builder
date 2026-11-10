@@ -3,6 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import { eq, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { nodeRuns } from '../db/schema.js';
+import {
+  DEFAULT_USD_RUB_RATE,
+  resolveUsdRubRate,
+} from '../config/usd-rub-rate.js';
 import type {
   MediaModelInfo,
   MediaPricing,
@@ -17,7 +21,7 @@ export const DEFAULT_MAX_COST_USD = 5;
 /** Дефолтный лимит запуска в рублях (совпадает с дефолтом env-схемы). */
 export const DEFAULT_MAX_COST_RUB = 500;
 /** Дефолтный курс RUB→USD для нормализации лимитов в одну валюту. */
-export const DEFAULT_USD_RUB_RATE = 100;
+export { DEFAULT_USD_RUB_RATE };
 /** Дефолтный режим бюджета. */
 export const DEFAULT_BUDGET_MODE: BudgetMode = 'hard';
 
@@ -597,8 +601,7 @@ export class CostBudgetService {
       config.get<number>('WORKFLOW_RUN_MAX_COST_RUB') ?? DEFAULT_MAX_COST_RUB;
     this.mode =
       config.get<BudgetMode>('WORKFLOW_RUN_BUDGET_MODE') ?? DEFAULT_BUDGET_MODE;
-    this.usdRubRate =
-      config.get<number>('WORKFLOW_RUN_USD_RUB_RATE') ?? DEFAULT_USD_RUB_RATE;
+    this.usdRubRate = resolveUsdRubRate(config);
   }
 
   /**

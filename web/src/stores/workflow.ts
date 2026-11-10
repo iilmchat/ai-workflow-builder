@@ -125,6 +125,7 @@ import {
 } from '@/lib/graph-payload';
 import { invalidateWorkflowListCache } from '@/lib/workflow-list-cache';
 import type {
+  CostStatus,
   NodeRunSnapshot,
   NodeRunStatus,
   RunEventMessage,
@@ -374,6 +375,8 @@ function mapsFromNodes(nodes: readonly NodeRunSnapshot[]): NodeRunMaps {
       tokensIn: node.tokensIn,
       tokensOut: node.tokensOut,
       costUsd: node.costUsd,
+      // S8.1 (KI-152): причина стоимости из снимка (LLM/agent).
+      costStatus: node.costStatus ?? null,
       // Поле в снимке необязательное (backend пока его не отдаёт, KI-114).
       costRub: node.costRub ?? null,
       cacheReadTokens: node.cacheReadTokens ?? null,
@@ -416,6 +419,12 @@ export interface NodeRunMetrics {
   /** Стоимость в USD строкой (как отдаёт backend `numeric`). */
   costUsd: string | null;
   /**
+   * Причина стоимости LLM-узла (S8.1, KI-152).
+   *
+   * `null` — узел не LLM/media или старый прогон без поля.
+   */
+  costStatus: CostStatus | null;
+  /**
    * Стоимость media-генерации в рублях строкой.
    *
    * `null` для LLM-узлов, а также пока backend не передаёт `cost_rub` в
@@ -454,6 +463,7 @@ const EMPTY_METRICS: NodeRunMetrics = {
   tokensIn: null,
   tokensOut: null,
   costUsd: null,
+  costStatus: null,
   costRub: null,
   cacheReadTokens: null,
   cacheCreationTokens: null,
@@ -2777,6 +2787,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
                 tokensIn: event.tokensIn ?? null,
                 tokensOut: event.tokensOut ?? null,
                 costUsd: event.costUsd ?? null,
+                // S8.1 (KI-152): причина стоимости из события.
+                costStatus: event.costStatus ?? null,
                 cacheReadTokens: event.cacheReadTokens ?? null,
                 cacheCreationTokens: event.cacheCreationTokens ?? null,
                 cacheSavingsUsd: event.cacheSavingsUsd ?? null,
@@ -2807,6 +2819,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
               tokensIn: event.tokensIn ?? null,
               tokensOut: event.tokensOut ?? null,
               costUsd: event.costUsd ?? null,
+              // На падении стоимости нет — статус сбрасываем.
+              costStatus: null,
               // R7.7/R7.8: на падении кэш-метрик и своей ссылки нет — не
               // оставляем значения предыдущей попытки (ср. обработку ошибки
               // в node_completed выше).

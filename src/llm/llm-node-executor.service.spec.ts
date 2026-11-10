@@ -57,7 +57,7 @@ describe('LlmNodeExecutor', () => {
 
     expect(llm.generateAsync).toHaveBeenCalledWith('привет', 'gpt-4o', {});
     expect(result).toMatchObject({
-      outputs: { text: 'ответ модели' },
+      outputs: { text: 'ответ модели', costStatus: 'exact' },
       // gpt-4o: 1000 входных токенов * 2.5/1M + 500 выходных * 10/1M = 0.0075
       metrics: {
         inputTokens: 1000,
@@ -68,6 +68,7 @@ describe('LlmNodeExecutor', () => {
         cacheCreationTokens: null,
         cacheSavingsUsd: null,
         model: 'gpt-4o',
+        costStatus: 'exact',
       },
     });
   });
@@ -83,10 +84,15 @@ describe('LlmNodeExecutor', () => {
       prompt: 'привет',
     });
 
-    expect(result.outputs).toEqual({ text: 'из кэша', cached: true });
+    expect(result.outputs).toEqual({
+      text: 'из кэша',
+      cached: true,
+      costStatus: 'cached',
+    });
     // Токены исходного вызова остаются, но повторный вызов бесплатен.
     expect(result.metrics.costUsd).toBe(0);
     expect(result.metrics.cached).toBe(true);
+    expect(result.metrics.costStatus).toBe('cached');
   });
 
   it('передаёт orgId в LlmService для tenant-кэша (S8)', async () => {
@@ -100,6 +106,34 @@ describe('LlmNodeExecutor', () => {
     expect(llm.generateAsync).toHaveBeenCalledWith('привет', 'gpt-4o', {
       orgId: 'org-1',
     });
+  });
+
+  it('при локальном провайдере ставит costStatus=local и стоимость 0 (S8.1)', async () => {
+    llm.generateAsync.mockResolvedValue({
+      text: 'локальный ответ',
+      usage: { inputTokens: 10, outputTokens: 5, model: 'qwen2.5' },
+      isLocal: true,
+    });
+
+    const result = await executor.executeAsync(node({ model: 'qwen2.5' }), {
+      prompt: 'привет',
+    });
+
+    expect(result.metrics.costStatus).toBe('local');
+    expect(result.metrics.costUsd).toBe(0);
+    expect(result.outputs).toMatchObject({ costStatus: 'local' });
+  });
+
+  it('без usage ставит costStatus=unknown (S8.1)', async () => {
+    llm.generateAsync.mockResolvedValue({ text: 'без метрик', usage: null });
+
+    const result = await executor.executeAsync(node({ model: 'gpt-4o' }), {
+      prompt: 'привет',
+    });
+
+    expect(result.metrics.costStatus).toBe('unknown');
+    expect(result.metrics.costUsd).toBeNull();
+    expect(result.outputs).toMatchObject({ costStatus: 'unknown' });
   });
 
   it('возвращает метрики с null, если провайдер не отдал usage (KI-038)', async () => {    llm.generateAsync.mockResolvedValue({ text: 'без метрик', usage: null });

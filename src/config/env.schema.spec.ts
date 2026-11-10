@@ -1226,3 +1226,28 @@ describe('Push о завершении запуска (v1.5.0 S5-B, KI-659)', ()
     ).toBe(false);
   });
 });
+
+describe('USD_RUB_RATE (S8.1, KI-383)', () => {
+  it('дефолт 100', () => {
+    expect(EnvSchema.parse(baseEnv).USD_RUB_RATE).toBe(100);
+  });
+
+  it('читает единый курс и не требует legacy-переменные', () => {
+    const parsed = EnvSchema.parse({ ...baseEnv, USD_RUB_RATE: '92' });
+
+    expect(parsed.USD_RUB_RATE).toBe(92);
+    expect(parsed.WORKFLOW_RUN_USD_RUB_RATE).toBeUndefined();
+    expect(parsed.MEDIA_USD_RUB_RATE).toBeUndefined();
+  });
+
+  it('legacy-переменные остаются валидными (fallback)', () => {
+    expect(
+      EnvSchema.parse({ ...baseEnv, WORKFLOW_RUN_USD_RUB_RATE: '80' })
+        .WORKFLOW_RUN_USD_RUB_RATE,
+    ).toBe(80);
+    expect(
+      EnvSchema.parse({ ...baseEnv, MEDIA_USD_RUB_RATE: '75' })
+        .MEDIA_USD_RUB_RATE,
+    ).toBe(75);
+  });
+});

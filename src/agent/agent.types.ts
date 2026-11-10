@@ -13,7 +13,7 @@
  */
 import type { ZodType } from 'zod';
 import type { SafeHttpClient } from '../common/http/safe-http.client.js';
-import type { LlmUsage } from '../llm/llm-provider.interface.js';
+import type { CostStatus, LlmUsage } from '../llm/llm-provider.interface.js';
 import type { McpToolRef } from '../mcp/mcp.types.js';
 import type {
   VectorMatch,
@@ -318,6 +318,8 @@ export interface AgentNodeMetrics {
   readonly cacheReadTokens: number | null;
   /** Суммарные кэш-токены записи (`null` — метрики не было). */
   readonly cacheCreationTokens: number | null;
+  /** Явный статус стоимости цикла (v1.6.0 S8.1, KI-152). */
+  readonly costStatus: CostStatus;
 }
 
 /**
@@ -395,6 +397,14 @@ export interface AgentRunResult {
    * @see cacheReadTokens
    */
   readonly cacheCreationTokens: number | null;
+  /**
+   * Явный статус стоимости цикла (v1.6.0 S8.1, KI-152).
+   *
+   * `cached` — все LLM-шаги обслужены кэшем; `local` — все локальным
+   * провайдером; `unknown` — ни один шаг не отдал usage; `exact` — остальные
+   * случаи, включая смешанный маршрут.
+   */
+  readonly costStatus: CostStatus;
 }
 
 /**

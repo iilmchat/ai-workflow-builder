@@ -790,6 +790,7 @@ describe('useWorkflowStore — восстановление запуска по�
       tokensIn: 10,
       tokensOut: 20,
       costUsd: '0.000300',
+      costStatus: null,
       costRub: '0.600000',
       cacheReadTokens: null,
       cacheCreationTokens: null,

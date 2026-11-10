@@ -1,4 +1,13 @@
 import { z } from 'zod';
+
+/**
+ * Zod-схема статуса стоимости LLM-вызова (v1.6.0 S8.1, KI-152).
+ *
+ * `exact` — цена посчитана по usage облачного провайдера; `cached` — ответ из
+ * Redis-кэша; `local` — локальный провайдер; `unknown` — usage нет, цена
+ * неизвестна.
+ */
+export const CostStatusSchema = z.enum(['exact', 'cached', 'local', 'unknown']);
 import { TERMINAL_WORKFLOW_RUN_STATUSES } from '../../db/schema.js';
 
 /**
@@ -46,6 +55,8 @@ export const RunEventSchema = z.discriminatedUnion('type', [
     tokensOut: z.number().int().nonnegative().nullable().optional(),
     /** Стоимость LLM в долларах (v0.6.0b.2.2). */
     costUsd: z.string().nullable().optional(),
+    /** Причина стоимости (S8.1, KI-152); `null`/нет — узел без LLM-цены. */
+    costStatus: CostStatusSchema.nullable().optional(),
     /**
      * Кэш-токены чтения (R7.7, KI-055): панель показывает «Cache read: N».
      * Необязательное — старые события из Redis остаются валидными.

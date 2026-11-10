@@ -76,8 +76,8 @@ import {
   type MediaParam,
   type MediaType,
 } from '../media-provider.interface.js';
+import { resolveUsdRubRate } from '../../config/usd-rub-rate.js';
 import {
-  DEFAULT_USD_RUB_RATE,
   filterByType,
   toDirectModelInfo,
   type DirectModelSpec,
@@ -265,8 +265,7 @@ export class OpenAiImagesProvider implements IMediaProvider {
     ).replace(/\/+$/, '');
 
     this.client = apiKey.length > 0 ? { apiKey, baseUrl } : null;
-    this.usdRubRate =
-      config.get<number>('MEDIA_USD_RUB_RATE') ?? DEFAULT_USD_RUB_RATE;
+    this.usdRubRate = resolveUsdRubRate(config);
     this.cacheTtlMs = DEFAULT_CACHE_TTL_MS;
 
     if (!this.client) {

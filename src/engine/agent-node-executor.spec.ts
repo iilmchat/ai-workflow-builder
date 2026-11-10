@@ -58,6 +58,7 @@ describe('executeAgentNodeAsync (R7.4b)', () => {
       costUsd: null,
       cacheReadTokens: 7,
       cacheCreationTokens: 3,
+      costStatus: 'exact',
     };
     const runAgentAsync = vi.fn(() => Promise.resolve(result));
     const runner: AgentRunner = { runAgentAsync };
@@ -86,6 +87,7 @@ describe('executeAgentNodeAsync (R7.4b)', () => {
     expect(execution.outputs).toEqual({
       result: 'готовый ответ',
       steps: result.steps,
+      costStatus: 'exact',
     });
     // Шаги продублированы отдельным полем: движок пишет их в node_runs.logs.
     expect(execution.steps).toBe(result.steps);
@@ -97,6 +99,7 @@ describe('executeAgentNodeAsync (R7.4b)', () => {
       costUsd: null,
       cacheReadTokens: 7,
       cacheCreationTokens: 3,
+      costStatus: 'exact',
     });
   });
 
@@ -134,6 +137,7 @@ describe('executeAgentNodeAsync (R7.4b)', () => {
         costUsd: null,
         cacheReadTokens: null,
         cacheCreationTokens: null,
+        costStatus: 'unknown',
       } satisfies AgentRunResult),
     );
     const runner: AgentRunner = { runAgentAsync };

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 import { BaseNode } from '@/components/nodes/BaseNode';
@@ -85,6 +85,9 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
   }, [loadMediaModels]);
 
   const prompt = data.prompt ?? '';
+  // v1.6.0 S8.1 (KI-124): скачивание может занять время/упасть по CORS —
+  // блокируем кнопку, чтобы повторный клик не запустил второй fetch.
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // KI-157: промпт пишется в хранилище на каждый символ — сохраняем курсор.
   // KI-166: дублирование в `data.value` больше не нужно — backend читает
@@ -110,6 +113,64 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
     storedUrl: nodeMetrics?.storedUrl ?? null,
     storedExpiresAt: nodeMetrics?.storedExpiresAt ?? null,
   });
+
+  // S8.1 (KI-124): имя файла из URL (без query) либо безопасный дефолт.
+  const downloadFileName =
+    mediaSource.src === null
+      ? `image-${id}.png`
+      : mediaSource.src.split('?')[0]?.split('/').pop() || `image-${id}.png`;
+
+  /**
+   * Открывает результат в новой вкладке (KI-124).
+   *
+   * @returns ничего
+   */
+  const handleOpen = useCallback(() => {
+    if (mediaSource.src !== null) {
+      window.open(mediaSource.src, '_blank', 'noopener,noreferrer');
+    }
+  }, [mediaSource.src]);
+
+  /**
+   * Скачивает результат через blob (KI-124).
+   *
+   * Если CDN провайдера не отдал CORS-заголовки, `fetch` падает — тогда
+   * открываем картинку в новой вкладке: пользователь сохранит её сам. Тот же
+   * fallback — при любой сетевой ошибке: кнопка не должна молча ничего делать.
+   *
+   * @returns промис без значения
+   */
+  const handleDownload = useCallback(async () => {
+    if (mediaSource.src === null || isDownloading) {
+      return;
+    }
+
+    setIsDownloading(true);
+
+    try {
+      const response = await fetch(mediaSource.src);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+
+      link.href = objectUrl;
+      link.download = downloadFileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      // Освобождаем blob после того, как браузер начал скачивание.
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    } catch {
+      window.open(mediaSource.src, '_blank', 'noopener,noreferrer');
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [downloadFileName, isDownloading, mediaSource.src]);
 
   const aspectRatioParam = selected?.params.find(
     (param) => param.key === ASPECT_RATIO_KEY,
@@ -230,11 +291,39 @@ export function ImageGenNode({ id, data }: NodeProps<ImageGenFlowNode>) {
           ) : mediaSource.expired ? (
             <ExpiredMediaPlaceholder />
           ) : mediaSource.src !== null ? (
-            <img
-              src={mediaSource.src}
-              alt={t('node.image.alt')}
-              className="w-full rounded-lg border border-border"
-            />
+            <div className="group relative">
+              <img
+                src={mediaSource.src}
+                alt={t('node.image.alt')}
+                className="w-full rounded-lg border border-border"
+              />
+              {/* S8.1 (KI-124): действия поверх картинки. `nodrag` — иначе
+                  клик по кнопке тащит узел; на тач-устройствах кнопки видны
+                  после фокуса (`focus-within`), на десктопе — по hover. */}
+              <div className="nodrag absolute right-1 top-1 flex gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                <button
+                  type="button"
+                  data-image-open=""
+                  onClick={handleOpen}
+                  aria-label={t('node.image.open')}
+                  title={t('node.image.open')}
+                  className="cursor-pointer rounded-md bg-background/90 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow ring-1 ring-border hover:bg-muted"
+                >
+                  {t('node.image.open')}
+                </button>
+                <button
+                  type="button"
+                  data-image-download=""
+                  onClick={() => void handleDownload()}
+                  disabled={isDownloading}
+                  aria-label={t('node.image.download')}
+                  title={t('node.image.download')}
+                  className="cursor-pointer rounded-md bg-background/90 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow ring-1 ring-border hover:bg-muted disabled:cursor-wait disabled:opacity-60"
+                >
+                  {t('node.image.download')}
+                </button>
+              </div>
+            </div>
           ) : mediaSource.invalid ? (
             <div className="flex min-h-20 items-center justify-center rounded-lg border border-dashed border-status-warning-border px-2 text-center text-[10px] text-status-warning-foreground">
               {t('node.image.invalid_url')}

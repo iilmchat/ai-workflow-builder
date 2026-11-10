@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { NodeDto } from '../engine/dto/index.js';
 import { CostBudgetService } from '../runs/cost-budget.service.js';
 import { calculateCacheSavingsUsd, calculateCostUsdForProvider } from './model-pricing.js';
-import { LlmProviderException, type ReasoningEffort } from './llm-provider.interface.js';
+import { LlmProviderException, type CostStatus, type ReasoningEffort } from './llm-provider.interface.js';
 import { LlmService } from './llm.service.js';
 
 /** Модель по умолчанию, если узел не задал свою. */
@@ -115,6 +115,13 @@ export interface LlmNodeMetrics {
    * и виден в панели результата, а стоимость повторного вызова — `0`.
    */
   cached: boolean;
+  /**
+   * Явный статус стоимости (v1.6.0 S8.1, KI-152).
+   *
+   * `0 USD` сам по себе неоднозначен (локальная модель, кэш, округление),
+   * поэтому UI получает причину, а не догадывается по числу.
+   */
+  costStatus: CostStatus;
 }
 
 /** Результат выполнения LLM-узла: выходы + метрики. */
@@ -231,6 +238,17 @@ export class LlmNodeExecutor {
               cacheTokensIncludedInInput: usage?.cacheTokensIncludedInInput,
             },
           );
+    // S8.1 (KI-152): явный статус стоимости. Порядок важен: кэш и локальный
+    // провайдер тоже дают `0`, но причины разные; `unknown` — провайдер не
+    // отдал usage, и цена не может быть посчитана.
+    const costStatus: CostStatus =
+      result.cached === true
+        ? 'cached'
+        : result.isLocal === true
+          ? 'local'
+          : usage === null
+            ? 'unknown'
+            : 'exact';
     const metrics: LlmNodeMetrics = {
       inputTokens: usage?.inputTokens ?? null,
       outputTokens: usage?.outputTokens ?? null,
@@ -242,6 +260,7 @@ export class LlmNodeExecutor {
       cacheSavingsUsd: calculateCacheSavingsUsd(usedModel, cacheReadTokens),
       model: usedModel,
       cached: result.cached === true,
+      costStatus,
     };
 
     this.logger.log(
@@ -254,7 +273,9 @@ export class LlmNodeExecutor {
     return {
       outputs: {
         text: result.text,
-        // Флаг виден в JSON-панели результата; отдельной колонки в БД нет.
+        // S8.1: статус стоимости рядом с текстом; snapshot читает его из
+        // `node_runs.outputs`, поэтому поле переживает F5 без новой колонки.
+        costStatus,
         ...(result.cached === true ? { cached: true } : {}),
       },
       metrics,

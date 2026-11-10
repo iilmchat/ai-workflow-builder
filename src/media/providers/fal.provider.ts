@@ -41,9 +41,9 @@ import {
   type MediaModelInfo,
   type MediaType,
 } from '../media-provider.interface.js';
+import { resolveUsdRubRate } from '../../config/usd-rub-rate.js';
 import {
   ASPECT_RATIO_PARAM,
-  DEFAULT_USD_RUB_RATE,
   IMAGE_INPUT,
   SEED_PARAM,
   filterByType,
@@ -215,8 +215,7 @@ export class FalProvider implements IMediaProvider {
     this.baseUrl = (
       config.get<string>('FAL_BASE_URL') ?? DEFAULT_BASE_URL
     ).replace(/\/+$/, '');
-    this.usdRubRate =
-      config.get<number>('MEDIA_USD_RUB_RATE') ?? DEFAULT_USD_RUB_RATE;
+    this.usdRubRate = resolveUsdRubRate(config);
     this.cacheTtlMs = DEFAULT_CACHE_TTL_MS;
 
     if (!this.apiKey) {

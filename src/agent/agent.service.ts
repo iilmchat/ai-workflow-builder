@@ -29,6 +29,7 @@ import { performance } from 'node:perf_hooks';
 import { SafeHttpClient } from '../common/http/safe-http.client.js';
 import { NodeDataValidationException } from '../engine/errors.js';
 import type {
+  CostStatus,
   LlmGenerateResult,
   LlmUsage,
 } from '../llm/llm-provider.interface.js';
@@ -696,10 +697,42 @@ export class AgentService {
     // KI-407: стоимость копится по шагам и уходит в `AgentRunResult`, чтобы
     // исполнитель узла записал её в `node_runs.cost_usd`.
     let costUsd: number | null = null;
+    // S8.1 (KI-152): счётчики причин нулевой/неизвестной стоимости.
+    let cachedSteps = 0;
+    let localSteps = 0;
+    let unknownSteps = 0;
     // v0.11 S7 (DESIGN § 3.3.2): если во время цикла уже был побочный эффект,
     // повтор узла небезопасен — ошибка оборачивается в non-retryable
     // `AgentRunException`.
     let sideEffectPerformed = false;
+
+    /**
+     * Определяет статус стоимости цикла (S8.1, KI-152).
+     *
+     * @returns `cached`/`local`/`unknown` только если такими были все
+     *   LLM-шаги; смешанный маршрут — `exact`
+     */
+    const costStatusOf = (): CostStatus => {
+      const llmSteps = steps.filter((step) => step.kind === 'llm').length;
+
+      if (llmSteps === 0) {
+        return 'unknown';
+      }
+
+      if (cachedSteps === llmSteps) {
+        return 'cached';
+      }
+
+      if (localSteps === llmSteps) {
+        return 'local';
+      }
+
+      if (unknownSteps === llmSteps) {
+        return 'unknown';
+      }
+
+      return 'exact';
+    };
 
     /**
      * Собирает результат запуска (KI-407).
@@ -724,6 +757,7 @@ export class AgentService {
       // Сумма уже округлённых шагов может дать артефакт float — для
       // `numeric(12, 6)` в БД и сравнения с бюджетом округляем ещё раз.
       costUsd: costUsd === null ? null : Number(costUsd.toFixed(6)),
+      costStatus: costStatusOf(),
     });
 
     this.logger.log(
@@ -784,6 +818,20 @@ export class AgentService {
               outputTokens: null,
               model: node.model,
             };
+
+            // S8.1 (KI-152): причина стоимости шага. Для смешанного маршрута
+            // итог цикла будет `exact`, поэтому счётчики не взаимоисключающие
+            // на уровне шага — важны только при полном совпадении.
+            if (response.cached === true) {
+              cachedSteps += 1;
+            } else if (response.isLocal === true) {
+              localSteps += 1;
+            } else if (
+              stepUsage.inputTokens === null &&
+              stepUsage.outputTokens === null
+            ) {
+              unknownSteps += 1;
+            }
 
             this.addUsage(usage, stepUsage);
             steps.push({ kind: 'llm', prompt, usage: stepUsage });

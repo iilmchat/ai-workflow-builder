@@ -2898,7 +2898,13 @@ export async function executeAgentNodeAsync(
       : await runner.runAgentAsync(data, inputs, runId, node.id, orgId);
 
   return {
-    outputs: { result: result.answer, steps: result.steps },
+    outputs: {
+      result: result.answer,
+      steps: result.steps,
+      // S8.1 (KI-152): статус стоимости виден в JSON-панели и переживает F5
+      // через `node_runs.outputs`.
+      costStatus: result.costStatus,
+    },
     steps: result.steps,
     // KI-433/v0.11 S11: токены, стоимость и кэш-метрики цикла доходят до
     // движка отдельным полем и пишутся в `node_runs` наравне с
@@ -2909,6 +2915,7 @@ export async function executeAgentNodeAsync(
       costUsd: result.costUsd,
       cacheReadTokens: result.cacheReadTokens,
       cacheCreationTokens: result.cacheCreationTokens,
+      costStatus: result.costStatus,
     },
   };
 }

@@ -180,12 +180,21 @@ export const CostBudgetEnvSchema = z.object({
    */
   WORKFLOW_RUN_BUDGET_MODE: z.enum(['hard', 'soft']).default('hard'),
   /**
-   * Курс RUB→USD для нормализации лимитов в одну шкалу (сколько рублей в
-   * долларе). Нужен, потому что лимиты заданы в двух валютах, а UI и текст
-   * ошибки показывают одну цифру. Дефолт 100 — грубая оценка; в проде
-   * значение задаётся из окружения.
+   * Единый курс USD→RUB (v1.6.0 S8.1, KI-383).
+   *
+   * Используется и бюджетом запуска, и каталогом media-провайдеров, чтобы
+   * `costUsd`/`costRub` и лимиты считались по одной шкале. Дефолт 100 — грубая
+   * оценка; в проде значение задаётся из окружения.
    */
-  WORKFLOW_RUN_USD_RUB_RATE: z.coerce.number().positive().default(100),
+  USD_RUB_RATE: z.coerce.number().positive().default(100),
+  /**
+   * @deprecated Legacy-алиас `USD_RUB_RATE` (KI-383).
+   *
+   * Оставлен, чтобы старые `.env` не меняли поведение. Новый код читает
+   * `USD_RUB_RATE`; `resolveUsdRubRate` использует это значение только как
+   * fallback.
+   */
+  WORKFLOW_RUN_USD_RUB_RATE: z.coerce.number().positive().optional(),
 });
 
 /** Валидированные настройки бюджета запуска. */
@@ -243,12 +252,12 @@ export const MediaDirectEnvSchema = z.object({
     .default('creativelab,replicate,fal,openai_images'),
 
   /**
-   * Курс USD→RUB для оценки стоимости моделей Replicate/FAL: их каталог
-   * тарифицируется в долларах, а бюджет и тарифы media-узлов считаются в
-   * рублях (R7.1, KI-048). Без пересчёта такие модели получали бы нулевую
-   * оценку и обходили предохранитель бюджета.
+   * @deprecated Legacy-алиас `USD_RUB_RATE` (KI-383).
+   *
+   * До S8.1 media-провайдеры читали отдельный курс. Оставлен как fallback,
+   * чтобы старые `.env` работали; новый код использует единый `USD_RUB_RATE`.
    */
-  MEDIA_USD_RUB_RATE: z.coerce.number().positive().default(100),
+  MEDIA_USD_RUB_RATE: z.coerce.number().positive().optional(),
 });
 
 /** Валидированные настройки прямых image-провайдеров (R7.3). */

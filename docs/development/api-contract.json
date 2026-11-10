@@ -14,7 +14,7 @@
     "McpServersResponse": ["enabled", "maxToolsPerNode", "servers"],
     "McpToolSummary": ["description", "destructiveHint", "idempotentHint", "name", "readOnlyHint", "title"],
     "NodeDiff": ["cost1", "cost2", "duration1", "duration2", "nodeId", "outputsDiff", "status1", "status2"],
-    "NodeRunSnapshot": ["cacheCreationTokens", "cacheReadTokens", "cacheSavingsUsd", "costRub", "costUsd", "durationMs", "error", "finishedAt", "inputs", "logs", "nodeId", "nodeType", "outputs", "startedAt", "status", "storedExpiresAt", "storedUrl", "tokensIn", "tokensOut"],
+    "NodeRunSnapshot": ["cacheCreationTokens", "cacheReadTokens", "cacheSavingsUsd", "costRub", "costStatus", "costUsd", "durationMs", "error", "finishedAt", "inputs", "logs", "nodeId", "nodeType", "outputs", "startedAt", "status", "storedExpiresAt", "storedUrl", "tokensIn", "tokensOut"],
     "OrganizationInvitationSummary": ["email", "invitedAt", "invitedBy", "role"],
     "OrganizationMemberSummary": ["email", "joinedAt", "role", "userId"],
     "OrganizationMembersResponse": ["invitations", "members"],

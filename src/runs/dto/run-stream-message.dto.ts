@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { NODE_RUN_STATUSES, WORKFLOW_RUN_STATUSES } from '../../db/schema.js';
-import { RunEventSchema } from './run-event.dto.js';
+import { RunEventSchema, CostStatusSchema } from './run-event.dto.js';
 
 /**
  * Zod-схемы SSE-сообщений запуска (R4.1a).
@@ -70,6 +70,11 @@ export const NodeRunSnapshotSchema = z.object({
   tokensIn: z.number().int().nullable(),
   tokensOut: z.number().int().nullable(),
   costUsd: z.string().nullable(),
+  /**
+   * Причина стоимости (S8.1, KI-152). Приходит из `outputs.costStatus`;
+   * необязательное — старые снимки остаются валидными.
+   */
+  costStatus: CostStatusSchema.nullable().optional(),
   /**
    * Стоимость media-генерации в рублях (v0.6.0b.2.2, колонка `cost_rub`).
    *

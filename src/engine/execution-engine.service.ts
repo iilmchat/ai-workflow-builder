@@ -43,6 +43,7 @@ import { withSpanAsync } from '../observability/tracing.js';
 import { AgentService } from '../agent/agent.service.js';
 import type { AgentNodeMetrics } from '../agent/agent.types.js';
 import { LlmNodeExecutor, type LlmNodeMetrics } from '../llm/llm-node-executor.service.js';
+import type { CostStatus } from '../llm/llm-provider.interface.js';
 import { LlmRegistryService } from '../llm/llm-registry.service.js';
 import {
   MediaNodeExecutor,
@@ -294,6 +295,12 @@ interface NodeRunMetrics {
   storedExpiresAt: Date | null;
   /** Ключ объекта в хранилище (KI-451/KI-464) либо `null`. */
   storageKey: string | null;
+  /**
+   * Причина стоимости (S8.1, KI-152): `exact`/`cached`/`local`/`unknown`.
+   *
+   * `null` — у типа узла нет LLM-стоимости (media/plain).
+   */
+  costStatus: CostStatus | null;
 }
 
 /**
@@ -321,6 +328,7 @@ function toNodeRunMetrics(step: NodeStepResult): NodeRunMetrics {
         storedUrl: null,
         storedExpiresAt: null,
         storageKey: step.storageKey ?? null,
+        costStatus: step.metrics.costStatus,
       };
     case 'agent':
       return {
@@ -333,6 +341,7 @@ function toNodeRunMetrics(step: NodeStepResult): NodeRunMetrics {
         storedUrl: null,
         storedExpiresAt: null,
         storageKey: step.storageKey ?? null,
+        costStatus: step.metrics.costStatus,
       };
     case 'media':
       return {
@@ -345,6 +354,7 @@ function toNodeRunMetrics(step: NodeStepResult): NodeRunMetrics {
         storedUrl: step.metrics.storedUrl,
         storedExpiresAt: step.metrics.storedExpiresAt,
         storageKey: step.metrics.storageKey,
+        costStatus: null,
       };
     case 'plain':
       return {
@@ -357,6 +367,7 @@ function toNodeRunMetrics(step: NodeStepResult): NodeRunMetrics {
         storedUrl: null,
         storedExpiresAt: null,
         storageKey: step.storageKey ?? null,
+        costStatus: null,
       };
   }
 }
@@ -1227,6 +1238,9 @@ export class ExecutionEngineService {
           // кэш-токены есть и у LLM, и у агента. Имена полей у вариантов
           // разные, но дальше их никто не разбирает.
           const metrics = toNodeRunMetrics(step);
+          // S8.1: `costStatus` — не колонка БД (источник правды — outputs),
+          // поэтому в UPDATE уходят только метрики-колонки.
+          const { costStatus, ...metricColumns } = metrics;
 
           await this.db
             .update(nodeRuns)
@@ -1240,7 +1254,7 @@ export class ExecutionEngineService {
               // преобразования обе колонки остаются NULL (RULES 4.23).
               // KI-433/v0.11 S11: у узла `agent` те же USD-колонки и кэш-токены
               // заполняются суммой по шагам цикла.
-              ...metrics,
+              ...metricColumns,
               finishedAt: new Date(),
             })
             .where(eq(nodeRuns.id, nodeRun.id));
@@ -1267,6 +1281,8 @@ export class ExecutionEngineService {
             cacheCreationTokens: metrics.cacheCreationTokens,
             cacheSavingsUsd:
               step.kind === 'llm' ? step.metrics.cacheSavingsUsd : null,
+            // S8.1 (KI-152): причина стоимости; `null` у media/plain.
+            costStatus,
             // R7.8 (KI-362): своя ссылка на результат media-узла.
             storedUrl: metrics.storedUrl,
             storedExpiresAt: metrics.storedExpiresAt?.toISOString() ?? null,

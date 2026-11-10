@@ -19,6 +19,16 @@
 
 ### Added
 
+- **FinOps Polish & UX Quick Wins (v1.6.0 S8.1)**
+  ([отчёт](development/reports/v1.6.0/S8.1-finops-ux.md)):
+  - **KI-152:** явный `costStatus` (`exact` | `cached` | `local` | `unknown`)
+    в `outputs`, SSE `node_completed` и snapshot; панель показывает
+    «Из кэша (0 ₽)» / «Локально (0 ₽)» / «Стоимость неизвестна» вместо
+    неоднозначного `$0.00`.
+  - **KI-383:** единый `USD_RUB_RATE` для бюджета и media-тарифов; старые
+    `WORKFLOW_RUN_USD_RUB_RATE`/`MEDIA_USD_RUB_RATE` — legacy fallback.
+  - **KI-124:** кнопки «Открыть»/«Скачать» в узле Image Generation (hover,
+    `nodrag`), download через blob с fallback в новую вкладку при CORS.
 - **FinOps, Performance & UX Polish (v1.6.0 S8)**
   ([отчёт](development/reports/v1.6.0/S8-finops-ux.md)):
   - **LLM response cache:** `LLM_CACHE_ENABLED` (default `false`) и
@@ -45,6 +55,8 @@
 
 ### Fixed
 
+- **KI-152/124/383 (S8.1):** `costStatus` в метриках/выходах, единый курс
+  USD→RUB, кнопки скачивания/открытия изображения.
 - **Performance (KI-113):** `MediaRegistryService` кэширует карту
   «модель → провайдер» на 5 минут; `LlmRegistryService` кэширует
   `listModels()` и `getCapabilities()` (TTL 5 минут, `clearCache()`).

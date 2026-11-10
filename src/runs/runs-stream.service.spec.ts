@@ -364,6 +364,8 @@ describe('RunsStreamService', () => {
           tokensOut: null,
           costUsd: null,
           costRub: null,
+          // S8.1: причина стоимости (null — у строки нет outputs.costStatus).
+          costStatus: null,
           // R7.7/R7.8: новые колонки присутствуют в снимке (null без данных).
           cacheReadTokens: null,
           cacheCreationTokens: null,

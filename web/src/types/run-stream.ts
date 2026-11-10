@@ -55,6 +55,11 @@ export const RunSnapshotSchema = z.object({
   error: z.string().nullable(),
 });
 
+/** Статус стоимости LLM-вызова (S8.1, KI-152). */
+export const CostStatusSchema = z.enum(['exact', 'cached', 'local', 'unknown']);
+/** Статус стоимости LLM-вызова. */
+export type CostStatus = z.infer<typeof CostStatusSchema>;
+
 /** Снимок состояния узла запуска. */
 export const NodeRunSnapshotSchema = z.object({
   nodeId: z.string(),
@@ -68,6 +73,11 @@ export const NodeRunSnapshotSchema = z.object({
   tokensIn: z.number().int().nullable(),
   tokensOut: z.number().int().nullable(),
   costUsd: z.string().nullable(),
+  /**
+   * Причина стоимости (S8.1, KI-152): `exact`/`cached`/`local`/`unknown`.
+   * Необязательное — старые снимки остаются валидными.
+   */
+  costStatus: CostStatusSchema.nullable().optional(),
   /**
    * Стоимость media-генерации в рублях (v0.6.0b.2.2, колонка `node_runs.cost_rub`).
    *
@@ -137,6 +147,8 @@ export const RunEventSchema = z.discriminatedUnion('type', [
     tokensIn: z.number().int().nonnegative().nullable().optional(),
     tokensOut: z.number().int().nonnegative().nullable().optional(),
     costUsd: z.string().nullable().optional(),
+    /** Причина стоимости (S8.1, KI-152). */
+    costStatus: CostStatusSchema.nullable().optional(),
     // R7.7 (KI-055/KI-150): кэш-токены и экономия — панель показывает их
     // сразу, не дожидаясь F5. R7.8 (KI-362): своя ссылка на media-результат.
     cacheReadTokens: z.number().int().nonnegative().nullable().optional(),

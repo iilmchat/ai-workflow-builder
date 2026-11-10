@@ -96,9 +96,18 @@ export interface LlmUsage {
   model: string;
 }
 
+/**
+ * Статус стоимости вызова LLM (v1.6.0 S8.1, KI-152).
+ *
+ * `exact` — облачный вызов с известными токенами: `costUsd` посчитан по прайсу;
+ * `cached` — ответ из Redis-кэша, провайдер не вызывался, стоимость `0`;
+ * `local` — локальный провайдер (LM Studio), стоимость `0`;
+ * `unknown` — провайдер не отдал usage, цену посчитать нельзя.
+ */
+export type CostStatus = 'exact' | 'cached' | 'local' | 'unknown';
+
 /** Результат вызова LLM. */
-export interface LlmGenerateResult {
-  /** Текст ответа. */
+export interface LlmGenerateResult {  /** Текст ответа. */
   text: string;
   /** Метрики вызова (null, если провайдер их не отдал). */
   usage: LlmUsage | null;

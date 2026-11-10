@@ -76,7 +76,18 @@ export function RunResultPanel() {
   // считает backend: событие несёт готовую экономию, снимок — пересчитанную.
   const cacheRead = formatCacheRead(metrics);
   // v1.6.0 S8: ответ пришёл из Redis-кэша — провайдер не вызывался, стоимость 0.
-  const wasCached = outputs?.cached === true;
+  // v1.6.0 S8.1: причина стоимости приходит явно (`costStatus`), чтобы не
+  // угадывать по `$0.0000`. Сначала метрика, затем outputs (старые снимки).
+  const outputCostStatus = outputs?.costStatus;
+  const costStatus =
+    metrics?.costStatus ??
+    (outputCostStatus === 'exact' ||
+    outputCostStatus === 'cached' ||
+    outputCostStatus === 'local' ||
+    outputCostStatus === 'unknown'
+      ? outputCostStatus
+      : null);
+  const wasCached = costStatus === 'cached' || outputs?.cached === true;
   // R7.4b: агент кладёт в выходы `steps`. Парсер терпим к форме: если шагов
   // нет или они не похожи на шаги агента, timeline просто не рисуется.
   const agentSteps = parseAgentSteps(outputs?.steps);
@@ -231,7 +242,9 @@ export function RunResultPanel() {
                 </Section>
               ) : null}
 
-              {formattedMetrics !== null || cacheRead !== null || wasCached ? (
+              {formattedMetrics !== null ||
+              cacheRead !== null ||
+              costStatus !== null ? (
                 <Section title={t('runResultPanel.section.metrics')}>
                   {formattedMetrics !== null ? (
                     <p className="text-xs text-muted-foreground">{formattedMetrics}</p>
@@ -247,9 +260,26 @@ export function RunResultPanel() {
                   {wasCached ? (
                     <p
                       data-cache-hit=""
+                      data-cost-status="cached"
                       className="mt-0.5 text-xs text-status-success-foreground"
                     >
                       {t('runResultPanel.metrics.cache_hit')}
+                    </p>
+                  ) : null}
+                  {costStatus === 'local' ? (
+                    <p
+                      data-cost-status="local"
+                      className="mt-0.5 text-xs text-status-success-foreground"
+                    >
+                      {t('runResultPanel.metrics.local')}
+                    </p>
+                  ) : null}
+                  {costStatus === 'unknown' ? (
+                    <p
+                      data-cost-status="unknown"
+                      className="mt-0.5 text-xs text-status-warning-foreground"
+                    >
+                      {t('runResultPanel.metrics.unknown')}
                     </p>
                   ) : null}
                 </Section>

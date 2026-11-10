@@ -169,6 +169,8 @@ describe('NodeRunSnapshotMapper (v0.11 S12, DESIGN § 3.4.2)', () => {
         tokensOut: 20,
         costUsd: '0.000300',
         costRub: '0.600000',
+        // S8.1: у старых/не-LLM строк outputs без costStatus — `null`.
+        costStatus: null,
         cacheReadTokens: null,
         cacheCreationTokens: 7,
         // Модели в графе нет — экономию посчитать нельзя.
@@ -192,8 +194,29 @@ describe('NodeRunSnapshotMapper (v0.11 S12, DESIGN § 3.4.2)', () => {
       expect(snapshot.cacheSavingsUsd).toBe(0.00125);
     });
 
-    it('cacheSavingsUsd = null, если узла нет в снимке графа (удалён после запуска)', async () => {
+    it('отдаёт costStatus из outputs (S8.1, KI-152)', async () => {
       const { mapper } = await createMapper();
+      const row = nodeRun({
+        outputs: { text: 'из кэша', cached: true, costStatus: 'cached' },
+        costUsd: '0.000000',
+      });
+
+      const snapshot = await mapper.toSnapshotAsync(row, graphWithModel('gpt-4o'));
+
+      expect(snapshot.costStatus).toBe('cached');
+      expect(snapshot.outputs).toMatchObject({ costStatus: 'cached' });
+    });
+
+    it('игнорирует чужой costStatus в outputs', async () => {
+      const { mapper } = await createMapper();
+      const row = nodeRun({ outputs: { text: 'ok', costStatus: 'free' } });
+
+      const snapshot = await mapper.toSnapshotAsync(row, graphWithModel());
+
+      expect(snapshot.costStatus).toBeNull();
+    });
+
+    it('cacheSavingsUsd = null, если узла нет в снимке графа (удалён после запуска)', async () => {      const { mapper } = await createMapper();
       const row = nodeRun({ nodeId: 'removed', cacheReadTokens: 1000 });
 
       const snapshot = await mapper.toSnapshotAsync(row, graphWithModel('gpt-4o'));

@@ -20,6 +20,28 @@ import type { NodeRunSnapshot } from './dto/index.js';
 type CacheSavingsUsd = number | null;
 
 /**
+ * Достаёт `costStatus` из `node_runs.outputs` (S8.1, KI-152).
+ *
+ * Отдельной колонки нет: LLM/agent кладут статус в outputs, а снимок отдаёт
+ * его как есть. Неизвестное/чужое значение — `null` (старые прогоны).
+ *
+ * @param outputs - выходы узла из БД
+ * @returns валидный статус либо `null`
+ */
+function readCostStatus(
+  outputs: Record<string, unknown> | null,
+): NodeRunSnapshot['costStatus'] {
+  const value = outputs?.costStatus;
+
+  return value === 'exact' ||
+    value === 'cached' ||
+    value === 'local' ||
+    value === 'unknown'
+    ? value
+    : null;
+}
+
+/**
  * Единый маппер строк `node_runs` в публичный снимок узла (DESIGN v0.11 § 2.6,
  * § 3.4.2).
  *
@@ -86,6 +108,8 @@ export class NodeRunSnapshotMapper {
       tokensOut: row.tokensOut,
       costUsd: row.costUsd,
       costRub: row.costRub ?? null,
+      // S8.1 (KI-152): причина стоимости из outputs (LLM/agent).
+      costStatus: readCostStatus(row.outputs ?? null),
       cacheReadTokens: row.cacheReadTokens,
       cacheCreationTokens: row.cacheCreationTokens,
       cacheSavingsUsd: this.calculateCacheSavings(model, row.cacheReadTokens),

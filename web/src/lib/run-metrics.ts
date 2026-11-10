@@ -1,4 +1,5 @@
 import i18n from '@/i18n';
+import type { CostStatus } from '@/types/run-stream';
 
 /**
  * Форматирование метрик узла для панели результата (R4.3b; кэш — R7.7).
@@ -82,6 +83,8 @@ export interface RunMetricsInput {
   tokensOut: number | null;
   /** Стоимость LLM в USD строкой (как отдаёт backend `numeric`). */
   costUsd: string | null;
+  /** Причина стоимости (S8.1, KI-152); `null`/нет — обычный вывод. */
+  costStatus?: CostStatus | null;
   /** Стоимость media в рублях строкой. */
   costRub: string | null;
   /** Кэш-токены чтения (R7.7). */
@@ -119,7 +122,15 @@ export function formatMetrics(metrics: RunMetricsInput | undefined): string | nu
     );
   }
 
-  if (metrics.costUsd !== null) {
+  // S8.1 (KI-152): `$0.0000` у кэша/локальной модели/неизвестной цены
+  // неоднозначен, поэтому стоимость показывает только `exact`; остальные
+  // случаи объясняет отдельный бейдж в панели.
+  if (
+    metrics.costUsd !== null &&
+    (metrics.costStatus === undefined ||
+      metrics.costStatus === null ||
+      metrics.costStatus === 'exact')
+  ) {
     parts.push(formatUsd(metrics.costUsd));
   }
 
