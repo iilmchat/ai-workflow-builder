@@ -44,10 +44,10 @@
 
 ### Спринт 04 (Medium)
 
-- [ ] **KI-050** 🟡 — `isDeepStrictEqual` тянет и сравнивает весь JSONB inputs — `src/engine/execution-engine.service.ts,`
-- [ ] **KI-053** 🟡 — Стоимость неудачных попыток теряется — `src/engine/execution-engine.service.ts,`
-- [ ] **KI-056** 🟡 — `listModels()` недостижим снаружи — `src/llm/llm-registry.service.ts, src/llm/llm.controller.ts (нет)`
-- [ ] **KI-060** 🟡 — Нет докачки событий при переподключении — `src/runs/runs-stream.service.ts`
+- [x] **KI-050** 🟡 — `isDeepStrictEqual` тянет и сравнивает весь JSONB inputs — `src/engine/execution-engine.service.ts,` (Deferred)
+- [x] **KI-053** 🟡 — Стоимость неудачных попыток теряется — `src/engine/execution-engine.service.ts,` (Deferred)
+- [x] **KI-056** 🟡 — `listModels()` недостижим снаружи — `src/llm/llm-registry.service.ts, src/llm/llm.controller.ts (нет)` (уже исправлено)
+- [x] **KI-060** 🟡 — Нет докачки событий при переподключении — `src/runs/runs-stream.service.ts` (Won't Fix)
 
 ### Спринт 05 (Medium)
 
@@ -503,4 +503,5 @@
 |--------|----|-----------|--------|
 | 01 | KI-667, KI-011, KI-024, KI-025 | 4 Fixed; 2135 тестов зелёные | `70f4224` |
 | 02 | KI-026, KI-027, KI-033, KI-035 | 2 Fixed, 2 Won't Fix; 162 теста зелёные | `5dc320d` |
-| 03 | KI-038, KI-041, KI-042, KI-049 | 4 Fixed (верификация, код не менялся) | (текущий) |
+| 03 | KI-038, KI-041, KI-042, KI-049 | 4 Fixed (верификация, код не менялся) | `f2f816a` |
+| 04 | KI-050, KI-053, KI-056, KI-060 | 1 Fixed, 1 Won't Fix, 2 Deferred | (текущий) |
