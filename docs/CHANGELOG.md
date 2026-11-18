@@ -39,6 +39,10 @@
 
 ### Changed
 
+- **KI-спринт 09** ([отчёт](development/reports/v1.6.0/KI-S09-a11y-hotkeys.md)):
+  KI-191 закрыт по факту (Ctrl+D уже работает), KI-145/KI-170 — `Deferred`
+  (a11y-проход), KI-184 — `Documented` (нужен ответ GPTunnel по кодам ошибок).
+
 - **KI-спринт 08** ([отчёт](development/reports/v1.6.0/KI-S08-ui-message-deferred.md)):
   KI-106/KI-107/KI-131 — `Deferred` (нужны жалобы на биллинг, реальные лимиты
   upstream и type-level гейт соответственно); KI-119 закрыт правкой TopBar и i18n.

@@ -79,10 +79,10 @@
 
 ### Спринт 09 (Medium)
 
-- [ ] **KI-145** 🟡 — Каталог узлов: a11y неполный — `web/src/components/NodeCatalogPopover.tsx`
-- [ ] **KI-170** 🟡 — `<MiniMap />` не локализуется через `ariaLabelConfig` — `web/src/components/Canvas.tsx`
-- [ ] **KI-184** 🟡 — Media-ошибка upstream не различает «наш запрос» и «сбой провайдера» — `src/media/dto/media-task.mapper.ts,`
-- [ ] **KI-191** 🟡 — Дублировать узел (Ctrl+D) — `web/src/stores/workflow.ts, web/src/components/Canvas.tsx`
+- [x] **KI-145** 🟡 — Каталог узлов: a11y неполный — `web/src/components/NodeCatalogPopover.tsx` (Deferred)
+- [x] **KI-170** 🟡 — `<MiniMap />` не локализуется через `ariaLabelConfig` — `web/src/components/Canvas.tsx` (Deferred)
+- [x] **KI-184** 🟡 — Media-ошибка upstream не различает «наш запрос» и «сбой провайдера» — `src/media/dto/media-task.mapper.ts,` (Documented)
+- [x] **KI-191** 🟡 — Дублировать узел (Ctrl+D) — `web/src/stores/workflow.ts, web/src/components/Canvas.tsx` (уже исправлено)
 
 ### Спринт 10 (Medium)
 
@@ -508,4 +508,5 @@
 | 05 | KI-061, KI-062, KI-063, KI-064 | 2 Fixed, 1 Deferred, 1 Won't Fix; +3 теста | `b244d19` |
 | 06 | KI-068, KI-087, KI-092, KI-094 | 1 Fixed, 2 Documented, 1 Won't Fix | `5ff30a2` |
 | 07 | KI-096, KI-097, KI-099, KI-101 | 1 Deferred, 2 Documented, 1 Won't Fix | `0553d7f` |
-| 08 | KI-106, KI-107, KI-119, KI-131 | 1 Fixed (UI+i18n), 3 Deferred | (текущий) |
+| 08 | KI-106, KI-107, KI-119, KI-131 | 1 Fixed (UI+i18n), 3 Deferred | `e2303a7` |
+| 09 | KI-145, KI-170, KI-184, KI-191 | 1 Fixed, 2 Deferred, 1 Documented | (текущий) |
