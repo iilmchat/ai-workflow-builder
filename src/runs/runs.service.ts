@@ -212,7 +212,9 @@ export class RunsService {
       .values({
         workflowId: workflow.id,
         status: 'pending',
-        inputs: {},
+        // KI-027: входы запуска сохраняются в снимке и позже прокидываются
+        // в узлы-источники воркером.
+        inputs: dto.inputs ?? {},
         // Копия графа на момент запуска: последующие правки workflow
         // не меняют историю запусков.
         snapshot: { nodes: workflow.nodes, edges: workflow.edges },

@@ -663,6 +663,8 @@ export class ExecutionEngineService {
    *
    * @param runId - uuid запуска (строка в workflow_runs уже создана)
    * @param graph - граф из `workflow_runs.snapshot`
+   * @param runInputs - входные значения запуска (KI-027), подмешиваются в
+   *   узлы без предшественников
    * @returns итог выполнения: статус, число отработавших узлов, outputs
    * @throws Error если узел исчерпал попытки (KI-036) либо не удалось завершить запуск
    * @throws InternalServerErrorException если не удалось обновить запись запуска в БД
@@ -671,7 +673,11 @@ export class ExecutionEngineService {
    * зависит от того, сделает ли BullMQ ещё попытку, а это знает только
    * `RunsProcessor` — он и публикует событие после возврата или проброса.
    */
-  async executeAsync(runId: string, graph: GraphDto): Promise<ExecutionResult> {
+  async executeAsync(
+    runId: string,
+    graph: GraphDto,
+    runInputs: Record<string, unknown> = {},
+  ): Promise<ExecutionResult> {
     // R7.7 (KI-365): корневой span запуска. `node.execute`, `llm.call` и
     // `media.createTask` создаются внутри и становятся его детьми
     // (`startActiveSpan` в OTel-адаптере).
@@ -682,7 +688,7 @@ export class ExecutionEngineService {
         let result: ExecutionResult;
 
         try {
-          result = await this.executeRunAsync(runId, graph);
+          result = await this.executeRunAsync(runId, graph, runInputs);
         } catch (error: unknown) {
           span.setAttribute('run.status', 'failed');
           throw error;
@@ -705,11 +711,13 @@ export class ExecutionEngineService {
    *
    * @param runId - uuid запуска
    * @param graph - граф из `workflow_runs.snapshot`
+   * @param runInputs - входные значения запуска (KI-027)
    * @returns итог выполнения запуска
    */
   private async executeRunAsync(
     runId: string,
     graph: GraphDto,
+    runInputs: Record<string, unknown>,
   ): Promise<ExecutionResult> {
     let plan: ExecutionPlanDto;
 
@@ -762,7 +770,7 @@ export class ExecutionEngineService {
     // heartbeat обязан остановиться и на успехе, и при исключении (включая
     // KI-036-проброс упавшего узла).
     try {
-      return await this.executePlannedGraphAsync(runId, graph, plan);
+      return await this.executePlannedGraphAsync(runId, graph, plan, runInputs);
     } finally {
       this.runLease.stop(runId);
     }
@@ -778,6 +786,7 @@ export class ExecutionEngineService {
    * @param runId - uuid запуска
    * @param graph - граф из `workflow_runs.snapshot`
    * @param plan - план выполнения, построенный `EngineService`
+   * @param runInputs - входные значения запуска (KI-027)
    * @returns итог выполнения: статус, число отработавших узлов, outputs
    * @throws Error если узел исчерпал попытки (KI-036)
    */
@@ -785,6 +794,7 @@ export class ExecutionEngineService {
     runId: string,
     graph: GraphDto,
     plan: ExecutionPlanDto,
+    runInputs: Record<string, unknown>,
   ): Promise<ExecutionResult> {
     const outputs: Record<string, Record<string, unknown>> = {};
     const failures: Array<{ nodeId: string; error: string; reason: unknown }> = [];
@@ -836,7 +846,7 @@ export class ExecutionEngineService {
 
       const results = await Promise.allSettled(
         activeLevel.map((nodeId) =>
-          this.executeNodeAsync(runId, nodeId, graph, plan, subContext),
+          this.executeNodeAsync(runId, nodeId, graph, plan, subContext, runInputs),
         ),
       );
 
@@ -1134,6 +1144,7 @@ export class ExecutionEngineService {
    * @param graph - граф запуска
    * @param plan - план выполнения графа
    * @param subContext - контекст под-воркфлоу (R6.7): владелец, стек, глубина
+   * @param runInputs - входные значения запуска (KI-027), только для источников
    * @returns выходы узла (свежие либо переиспользованные)
    * @throws Error если узел отсутствует в графе, исчерпал попытки или не удалось записать статус
    */
@@ -1143,6 +1154,7 @@ export class ExecutionEngineService {
     graph: GraphDto,
     plan: ExecutionPlanDto,
     subContext: SubWorkflowContext,
+    runInputs: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     const node = graph.nodes.find((candidate) => candidate.id === nodeId);
 
@@ -1174,6 +1186,7 @@ export class ExecutionEngineService {
             node,
             plan,
             subContext,
+            runInputs,
           );
 
           span.setAttribute('node.status', 'completed');
@@ -1219,6 +1232,7 @@ export class ExecutionEngineService {
    * @param node - узел графа (уже найден)
    * @param plan - план выполнения графа
    * @param subContext - контекст под-воркфлоу (R6.7): владелец, стек, глубина
+   * @param runInputs - входные значения запуска (KI-027), только для источников
    * @returns выходы узла (свежие либо переиспользованные)
    * @throws Error если узел исчерпал попытки или не удалось записать статус
    */
@@ -1228,8 +1242,9 @@ export class ExecutionEngineService {
     node: NodeDto,
     plan: ExecutionPlanDto,
     subContext: SubWorkflowContext,
+    runInputs: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
-    const inputs = await this.collectInputsAsync(runId, nodeId, plan);
+    const inputs = await this.collectInputsAsync(runId, nodeId, plan, runInputs);
 
     // KI-046: узел, успешно завершившийся в предыдущей попытке запуска с теми
     // же входами, не выполняется повторно — берём сохранённые outputs. Для
@@ -1481,14 +1496,23 @@ export class ExecutionEngineService {
    * @param runId - uuid запуска
    * @param nodeId - `id` узла, для которого собираются входы
    * @param plan - план выполнения графа (даёт `executionMap`)
+   * @param runInputs - входные значения запуска (KI-027)
    * @returns словарь «входной порт → значение»
    */
   private async collectInputsAsync(
     runId: string,
     nodeId: string,
     plan: ExecutionPlanDto,
+    runInputs: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     const refs = plan.executionMap[nodeId]?.inputs ?? {};
+
+    // KI-027: узлы без входящих рёбер — источники графа. В их входы
+    // подмешиваются значения из POST /runs.inputs; явные связи имеют приоритет
+    // (если источник уже получает вход по ребру, run-вход его не перекрывает).
+    if (Object.keys(refs).length === 0 && Object.keys(runInputs).length > 0) {
+      return { ...runInputs };
+    }
 
     // Ссылки независимы друг от друга — читаем параллельно (RULES 4.17).
     const entries = await Promise.all(
@@ -2063,7 +2087,9 @@ export class ExecutionEngineService {
 
       const results = await Promise.allSettled(
         activeLevel.map((subNodeId) =>
-          this.executeNodeAsync(runId, subNodeId, prefixed, subPlan, branchContext),
+          // Внутри подграфа run-level входы не действуют: узел sub_workflow
+          // получает свои входы по рёбрам родительского графа (KI-027).
+          this.executeNodeAsync(runId, subNodeId, prefixed, subPlan, branchContext, {}),
         ),
       );
 

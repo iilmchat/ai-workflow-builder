@@ -30,10 +30,10 @@
 
 ### Спринт 02 (Medium)
 
-- [ ] **KI-026** 🟡 — Нет таймаута и отмены выполнения — `src/engine/execution-engine.service.ts, src/engine/node-executors.ts`
-- [ ] **KI-027** 🟡 — Run-level inputs игнорируются — `src/runs/runs.service.ts, src/engine/execution-engine.service.ts`
-- [ ] **KI-033** 🟡 — Неизвестный `sourceHandle` подменяется дефолтом по типу узла — `src/engine/engine.service.ts, src/engine/node-ports.ts`
-- [ ] **KI-035** 🟡 — Нормализация входов сворачивает multi-input — `src/engine/node-ports.ts, src/engine/engine.service.ts`
+- [x] **KI-026** 🟡 — Нет таймаута и отмены выполнения — `src/engine/execution-engine.service.ts, src/engine/node-executors.ts` (Fixed: фактически закрыт отменой v1.4.0)
+- [x] **KI-027** 🟡 — Run-level inputs игнорируются — `src/runs/runs.service.ts, src/engine/execution-engine.service.ts`
+- [x] **KI-033** 🟡 — Неизвестный `sourceHandle` подменяется дефолтом по типу узла — `src/engine/engine.service.ts, src/engine/node-ports.ts` (Won't Fix)
+- [x] **KI-035** 🟡 — Нормализация входов сворачивает multi-input — `src/engine/node-ports.ts, src/engine/engine.service.ts` (Won't Fix)
 
 ### Спринт 03 (Medium)
 
@@ -501,4 +501,5 @@
 
 | Спринт | KI | Результат | Коммит |
 |--------|----|-----------|--------|
-| 01 | KI-667, KI-011, KI-024, KI-025 | 4 Fixed; 88 тестов движка зелёные | (текущий) |
+| 01 | KI-667, KI-011, KI-024, KI-025 | 4 Fixed; 2135 тестов зелёные | `70f4224` |
+| 02 | KI-026, KI-027, KI-033, KI-035 | 2 Fixed, 2 Won't Fix; 162 теста зелёные | (текущий) |

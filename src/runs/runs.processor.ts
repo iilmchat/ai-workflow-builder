@@ -33,6 +33,8 @@ function toMessage(error: unknown): string {
 interface RunForExecution {
   status: RunStatus;
   snapshot: GraphSnapshotDto;
+  /** Входные значения запуска (KI-027), заданные в POST /runs. */
+  inputs: Record<string, unknown> | null;
   /** Время старта выполнения — fallback для строк без аренды (KI-023). */
   startedAt: Date | null;
   /** Срок аренды (v0.11 S9): `NULL` у строк, созданных до миграции 0013. */
@@ -232,7 +234,14 @@ export class RunsProcessor extends WorkerHost {
         `Запуск ${runId}: старт выполнения (узлов: ${snapshot.data.nodes.length})`,
       );
 
-      const result = await this.executionEngine.executeAsync(runId, snapshot.data);
+      // KI-027: входы запуска прокидываются в движок; там они подмешиваются
+      // в узлы-источники (без предшественников). Граница БД — Zod-валидация.
+      const parsedInputs = z.record(z.string(), z.unknown()).safeParse(run.inputs);
+      const result = await this.executionEngine.executeAsync(
+        runId,
+        snapshot.data,
+        parsedInputs.success ? parsedInputs.data : {},
+      );
 
       // KI-060: исключение не проброшено — повторять запуск нечего (успех либо
       // детерминированный провал фазы планирования, KI-037), это финал.
@@ -433,6 +442,7 @@ export class RunsProcessor extends WorkerHost {
       .select({
         status: workflowRuns.status,
         snapshot: workflowRuns.snapshot,
+        inputs: workflowRuns.inputs,
         startedAt: workflowRuns.startedAt,
         leaseExpiresAt: workflowRuns.leaseExpiresAt,
         leaseExpired: sql<boolean>`

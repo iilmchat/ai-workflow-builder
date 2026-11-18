@@ -972,6 +972,23 @@ describe('ExecutionEngineService', () => {
     expect(JSON.stringify(summary)).toContain('B');
   });
 
+  it('KI-027: входы запуска подмешиваются только в узлы-источники', async () => {
+    const graph: GraphDto = {
+      nodes: [node('A', 'text', { value: 'a' }), node('B', 'text', { value: 'b' })],
+      edges: [edge('ab', 'A', 'B', 'text-output', 'text-input')],
+    };
+
+    await service.executeAsync(RUN_ID, graph, { prompt: 'из запуска', limit: 42 });
+
+    // Источник получил значения из POST /runs.inputs.
+    const rowA = fake.rows.find((row) => row.nodeId === 'A');
+    expect(rowA?.inputs).toEqual({ prompt: 'из запуска', limit: 42 });
+
+    // Узел со входящей связью читает только выходы предшественника.
+    const rowB = fake.rows.find((row) => row.nodeId === 'B');
+    expect(rowB?.inputs).toEqual({ text: 'a' });
+  });
+
   it('KI-288: ветвление A→(B,C) — падение B не мешает независимому C', async () => {
     // Оба узла — потомки A, но друг от друга не зависят: B падает, C обязан
     // выполниться (RULES 4.16), а не превратиться в `skipped`.

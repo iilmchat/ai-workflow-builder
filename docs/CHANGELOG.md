@@ -28,8 +28,17 @@
   - **KI-011:** в CI job `build` добавлен service-контейнер Redis и
     `REDIS_URL` для `validateEnv()` при подъёме `AppModule` в e2e.
 
+### Changed
+
+- **KI-спринт 02:** KI-033 и KI-035 помечены `Won't Fix` — предлагаемые правки
+  (строгая проверка хэндлов, разложение входов по `targetHandle`) сломали бы
+  обратную совместимость графов и семантику одиночного порта (см. отчёт
+  [KI-S02](development/reports/v1.6.0/KI-S02-run-inputs-triage.md)).
+
 ### Added
 
+- **KI-027:** `POST /runs { workflowId, inputs }` — входные значения запуска
+  сохраняются в `workflow_runs.inputs` и подмешиваются в узлы-источники.
 - **KI-667:** `scripts/backup-db.sh` и `scripts/restore-drill.sh` — автоматический
   дамп БД с шифрованием `age`, offsite в S3 и ежемесячное учебное
   восстановление; метрики свежести и алерты в `docs/development/PRODUCTION.md` § 8.

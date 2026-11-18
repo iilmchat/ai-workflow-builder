@@ -161,6 +161,19 @@ describe('RunsProcessor', () => {
     expect(executor.executeAsync).toHaveBeenCalledWith(RUN_ID, {
       nodes: [{ id: 'A', type: 'text', data: { value: 'x' } }],
       edges: [],
+    }, {});
+  });
+
+  it('KI-027: прокидывает inputs запуска в движок', async () => {
+    selectChain.limit.mockImplementation(() => [
+      { status: 'pending', snapshot, inputs: { prompt: 'из запуска', n: 7 } },
+    ]);
+
+    await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
+
+    expect(executor.executeAsync).toHaveBeenCalledWith(RUN_ID, snapshot, {
+      prompt: 'из запуска',
+      n: 7,
     });
   });
 
@@ -223,6 +236,7 @@ describe('RunsProcessor', () => {
     expect(executor.executeAsync).toHaveBeenCalledWith(
       RUN_ID,
       expect.objectContaining({ nodes: expect.any(Array) }),
+      {},
     );
   });
 
@@ -241,7 +255,7 @@ describe('RunsProcessor', () => {
 
     await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
 
-    expect(executor.executeAsync).toHaveBeenCalledWith(RUN_ID, snapshot);
+    expect(executor.executeAsync).toHaveBeenCalledWith(RUN_ID, snapshot, {});
   });
 
   it('v0.11 S9: живая аренда блокирует переигрывание даже при старом started_at', async () => {
@@ -279,7 +293,7 @@ describe('RunsProcessor', () => {
 
     await expect(processor.process(job({ runId: RUN_ID }))).resolves.toBeUndefined();
 
-    expect(executor.executeAsync).toHaveBeenCalledWith(RUN_ID, snapshot);
+    expect(executor.executeAsync).toHaveBeenCalledWith(RUN_ID, snapshot, {});
   });
 
   it('v0.11 S9: legacy-строка без аренды и со свежим started_at не переигрывается', async () => {
@@ -352,6 +366,7 @@ describe('RunsProcessor', () => {
     expect(executor.executeAsync).toHaveBeenCalledWith(
       RUN_ID,
       expect.objectContaining({ nodes: expect.any(Array) }),
+      {},
     );
   });
 
@@ -484,6 +499,7 @@ describe('RunsProcessor', () => {
       expect(executor.executeAsync).toHaveBeenCalledWith(
         RUN_ID,
         expect.objectContaining({ nodes: expect.any(Array) }),
+        {},
       );
     });
 

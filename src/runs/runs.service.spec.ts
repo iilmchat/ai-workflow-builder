@@ -293,6 +293,19 @@ describe('RunsService', () => {
       });
     });
 
+    it('KI-027: сохраняет входные значения запуска', async () => {
+      await service.createRunAsync({
+        workflowId: WORKFLOW_ID,
+        inputs: { prompt: 'из запроса', n: 5 },
+      });
+
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inputs: { prompt: 'из запроса', n: 5 },
+        }),
+      );
+    });
+
     it('сохраняет в snapshot копию графа workflow', async () => {
       await service.createRunAsync({ workflowId: WORKFLOW_ID });
 
