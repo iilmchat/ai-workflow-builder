@@ -93,10 +93,10 @@
 
 ### Спринт 11 (Medium)
 
-- [ ] **KI-224** 🟡 — Logout best-effort без отзыва refresh-токена — `web/src/components/TopBar.tsx (handleLogout)`
-- [ ] **KI-231** 🟡 — Multi-tab не координирует refresh-rotation — `web/src/lib/api.ts (refreshSessionAsync)`
-- [ ] **KI-239** 🟡 — Модалка не предупреждает о перевыпуске share-токена — `web/src/components/ShareModal.tsx`
-- [ ] **KI-240** 🟡 — Read-only страница рендерит редакторные node-компоненты — `web/src/components/ShareViewPage.tsx,`
+- [x] **KI-224** 🟡 — Logout best-effort без отзыва refresh-токена — `web/src/components/TopBar.tsx (handleLogout)`
+- [x] **KI-231** 🟡 — Multi-tab не координирует refresh-rotation — `web/src/lib/api.ts (refreshSessionAsync)`
+- [x] **KI-239** 🟡 — Модалка не предупреждает о перевыпуске share-токена — `web/src/components/ShareModal.tsx` (Deferred)
+- [x] **KI-240** 🟡 — Read-only страница рендерит редакторные node-компоненты — `web/src/components/ShareViewPage.tsx,` (Deferred)
 
 ### Спринт 12 (Medium)
 
@@ -510,4 +510,5 @@
 | 07 | KI-096, KI-097, KI-099, KI-101 | 1 Deferred, 2 Documented, 1 Won't Fix | `0553d7f` |
 | 08 | KI-106, KI-107, KI-119, KI-131 | 1 Fixed (UI+i18n), 3 Deferred | `e2303a7` |
 | 09 | KI-145, KI-170, KI-184, KI-191 | 1 Fixed, 2 Deferred, 1 Documented | `da82928` |
-| 10 | KI-203, KI-209, KI-216, KI-223 | 3 Fixed (2 с кодом), 1 Deferred | (текущий) |
+| 10 | KI-203, KI-209, KI-216, KI-223 | 3 Fixed (2 с кодом), 1 Deferred | `f3e53ab` |
+| 11 | KI-224, KI-231, KI-239, KI-240 | 2 Fixed (frontend), 2 Deferred | (текущий) |

@@ -466,6 +466,31 @@ export async function refreshSessionAsync(): Promise<boolean> {
  * @returns `true`, если сессия восстановлена
  */
 async function runRefreshAsync(): Promise<boolean> {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
+
+  try {
+    // KI-231: Web Locks сериализует ротацию между табами одного origin.
+    // Без этого F5 в двух табах отправлял бы один и тот же refresh-токен
+    // дважды; второй вызвал бы отзыв всего семейства (KI-216).
+    if (locks !== undefined && typeof locks.request === 'function') {
+      return await locks.request(REFRESH_LOCK_NAME, () => performRefreshAsync());
+    }
+
+    return await performRefreshAsync();
+  } finally {
+    refreshPromise = null;
+  }
+}
+
+/** Имя кросс-табного лока ротации refresh-токена (KI-231). */
+const REFRESH_LOCK_NAME = 'workflow-builder-auth-refresh';
+
+/**
+ * Выполняет один refresh и обновляет состояние сессии (KI-223/KI-231).
+ *
+ * @returns `true`, если сессия восстановлена
+ */
+async function performRefreshAsync(): Promise<boolean> {
   try {
     const result = await refreshAsync();
 
@@ -473,7 +498,7 @@ async function runRefreshAsync(): Promise<boolean> {
 
     return true;
   } catch (error: unknown) {
-    // KI-223: 401 —cookie нет/истекла/отозвана, сессии больше нет.
+    // KI-223: 401 — cookie нет/истекла/отозвана, сессии больше нет.
     // Сетевой сбой или 5xx не говорят о состоянии сессии: очищать её
     // нельзя, иначе при недоступном backend пользователя выкинет на /login.
     if (error instanceof ApiError && error.status !== 401) {
@@ -485,8 +510,6 @@ async function runRefreshAsync(): Promise<boolean> {
     useAuthStore.getState().clearSession();
 
     return false;
-  } finally {
-    refreshPromise = null;
   }
 }
 

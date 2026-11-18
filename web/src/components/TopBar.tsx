@@ -254,10 +254,18 @@ export function TopBar() {
    * локальную сессию сбрасываем в любом случае (R6.1b.2).
    */
   const handleLogout = async () => {
+    // KI-224: один ретрай перед локальным выходом — кратковременный сбой
+    // сети не должен оставлять refresh-токен валидным на сервере до 7 дней.
     try {
       await logoutAsync();
     } catch {
-      // backend недоступен — выходим локально
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      try {
+        await logoutAsync();
+      } catch {
+        // backend недоступен — выходим локально (R6.1b.2)
+      }
     }
 
     useAuthStore.getState().clearSession();
