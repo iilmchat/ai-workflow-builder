@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { requestAsync } from './api';
+import { ApiEdgeSchema, ApiNodeSchema, requestAsync } from './api';
 
 /** Ответ `POST /workflow/:id/share` (R6.2.1). */
 export const ShareTokenSchema = z.object({
@@ -11,8 +11,10 @@ export const ShareTokenSchema = z.object({
 export const SharedWorkflowSchema = z.object({
   id: z.string(),
   name: z.string(),
-  nodes: z.array(z.unknown()),
-  edges: z.array(z.unknown()),
+  // KI-241: валидируем форму узлов и связей на границе API — некорректный
+  // граф с бэкенда не должен ронять страницу просмотра.
+  nodes: z.array(ApiNodeSchema),
+  edges: z.array(ApiEdgeSchema),
   createdAt: z.string(),
 });
 

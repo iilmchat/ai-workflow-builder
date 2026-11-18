@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S12 | KI-269 /engine/sort исключает аннотации (+тест), KI-241 валидация share-графа Zod; KI-244 Deferred, KI-275 Documented | 2026-11-19 | [KI-S12-split-validation.md](v1.6.0/KI-S12-split-validation.md) |
 | v1.6.0 | KI-S11 | KI-231 Web Lock для кросс-табной ротации refresh, KI-224 повтор logout; KI-239/KI-240 Deferred (share-контракт и read-only карточки) | 2026-11-19 | [KI-S11-multitab-logout.md](v1.6.0/KI-S11-multitab-logout.md) |
 | v1.6.0 | KI-S10 | KI-216 family-revocation refresh-токенов (+тест), KI-223 bootstrap не очищает сессию при сетевой ошибке; KI-203 Deferred, KI-209 Fixed | 2026-11-19 | [KI-S10-auth-fk-bootstrap.md](v1.6.0/KI-S10-auth-fk-bootstrap.md) |
 | v1.6.0 | KI-S09 | KI-191 Fixed (Ctrl+D уже работает), KI-145/KI-170 Deferred (a11y-проход), KI-184 Documented (нужен ответ GPTunnel по кодам ошибок) — docs-only | 2026-11-19 | [KI-S09-a11y-hotkeys.md](v1.6.0/KI-S09-a11y-hotkeys.md) |

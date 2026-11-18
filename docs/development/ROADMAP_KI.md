@@ -100,10 +100,10 @@
 
 ### Спринт 12 (Medium)
 
-- [ ] **KI-241** 🟡 — `nodes as unknown as AppNode[]` без валидации — `web/src/components/ShareViewPage.tsx`
-- [ ] **KI-244** 🟡 — Anthropic-модели захардкожены в провайдере — `src/llm/providers/anthropic.provider.ts`
-- [ ] **KI-269** 🟡 — /engine/sort не исключает аннотации — `src/engine/engine.service.ts (topologicalSortAsync)`
-- [ ] **KI-275** 🟡 — CDP-смоук: hidden-страница молча отбрасывает OS-ввод — `временные скрипты смоука`
+- [x] **KI-241** 🟡 — `nodes as unknown as AppNode[]` без валидации — `web/src/components/ShareViewPage.tsx`
+- [x] **KI-244** 🟡 — Anthropic-модели захардкожены в провайдере — `src/llm/providers/anthropic.provider.ts` (Deferred)
+- [x] **KI-269** 🟡 — /engine/sort не исключает аннотации — `src/engine/engine.service.ts (topologicalSortAsync)`
+- [x] **KI-275** 🟡 — CDP-смоук: hidden-страница молча отбрасывает OS-ввод — `временные скрипты смоука` (Documented)
 
 ### Спринт 13 (Medium)
 
@@ -511,4 +511,5 @@
 | 08 | KI-106, KI-107, KI-119, KI-131 | 1 Fixed (UI+i18n), 3 Deferred | `e2303a7` |
 | 09 | KI-145, KI-170, KI-184, KI-191 | 1 Fixed, 2 Deferred, 1 Documented | `da82928` |
 | 10 | KI-203, KI-209, KI-216, KI-223 | 3 Fixed (2 с кодом), 1 Deferred | `f3e53ab` |
-| 11 | KI-224, KI-231, KI-239, KI-240 | 2 Fixed (frontend), 2 Deferred | (текущий) |
+| 11 | KI-224, KI-231, KI-239, KI-240 | 2 Fixed (frontend), 2 Deferred | `0903ec7` |
+| 12 | KI-241, KI-244, KI-269, KI-275 | 2 Fixed (2 с кодом), 1 Deferred, 1 Documented | (текущий) |

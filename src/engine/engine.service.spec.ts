@@ -706,6 +706,15 @@ describe('EngineService', () => {
       expect(Object.keys(plan.executionMap)).toEqual(['A', 'B']);
     });
 
+    it('исключает аннотации из topologicalSortAsync (KI-269)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A', 'text'), node('NOTE', 'comment')],
+        edges: [],
+      };
+
+      await expect(service.topologicalSortAsync(graph)).resolves.toEqual(['A']);
+    });
+
     it('игнорирует связи с аннотациями при построении уровней (KI-266)', async () => {
       const graph: GraphDto = {
         nodes: [node('A', 'text'), node('NOTE', 'comment')],

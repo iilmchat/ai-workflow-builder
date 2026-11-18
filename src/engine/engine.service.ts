@@ -130,10 +130,22 @@ export class EngineService {
   async topologicalSortAsync(graph: GraphDto): Promise<string[]> {
     this.assertExecutable(graph);
 
-    const index = this.buildIndex(graph);
+    // KI-269: /engine/sort должен согласовываться с /engine/plan — заметки
+    // (comment) не являются шагами выполнения и не попадают в порядок.
+    const executableIds = new Set(
+      graph.nodes
+        .filter((node) => !ANNOTATION_NODE_TYPES.has(node.type))
+        .map((node) => node.id),
+    );
+    const index = this.buildIndex({
+      nodes: graph.nodes.filter((node) => executableIds.has(node.id)),
+      edges: graph.edges.filter(
+        (edge) => executableIds.has(edge.source) && executableIds.has(edge.target),
+      ),
+    });
     const order = this.kahnOrder(index);
 
-    if (order.length !== graph.nodes.length) {
+    if (order.length !== index.nodes.length) {
       throw new BadRequestException(this.cycleError(graph, index));
     }
 
