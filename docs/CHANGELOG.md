@@ -36,6 +36,11 @@
 
 ### Changed
 
+- **KI-спринт 06** ([отчёт](development/reports/v1.6.0/KI-S06-web-catalog-triage.md)):
+  KI-068 закрыт по факту (vitest + web-job в CI уже есть, lint остаётся за
+  KI-333), KI-087 и KI-094 — `Documented` (legacy env и непроверенная
+  модальность Yandex), KI-092 — `Won't Fix` (каталоги LLM и media разделены).
+
 - **KI-спринт 05** ([отчёт](development/reports/v1.6.0/KI-S05-provider-history.md)):
   KI-061 закрыт (`GET /workflow/:id/runs` вместо глобального списка), KI-063 —
   Deferred (финальность требует миграции, SSE закрывается по статусу), KI-064 —

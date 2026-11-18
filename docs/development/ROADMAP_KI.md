@@ -58,10 +58,10 @@
 
 ### Спринт 06 (Medium)
 
-- [ ] **KI-068** 🟡 — У фронтенда нет тестовой инфраструктуры и lint-скрипта (частично) — `web/package.json, .github/workflows/ci.yml`
-- [ ] **KI-087** 🟡 — `OPENAI_BASE_URL` дублирует `ROUTERAI_*` — `src/llm/llm-provider.factory.ts, .env.example`
-- [ ] **KI-092** 🟡 — Группировка в UI знает только text / vision — `web/src/lib/llm-models.ts`
-- [ ] **KI-094** 🟡 — Yandex: `text+vision` не подтверждён документацией — `src/llm/llm-provider.factory.ts (YANDEX_MODELS)`
+- [x] **KI-068** 🟡 — У фронтенда нет тестовой инфраструктуры и lint-скрипта (частично) — `web/package.json, .github/workflows/ci.yml` (Fixed: инфраструктура есть)
+- [x] **KI-087** 🟡 — `OPENAI_BASE_URL` дублирует `ROUTERAI_*` — `src/llm/llm-provider.factory.ts, .env.example` (Documented)
+- [x] **KI-092** 🟡 — Группировка в UI знает только text / vision — `web/src/lib/llm-models.ts` (Won't Fix)
+- [x] **KI-094** 🟡 — Yandex: `text+vision` не подтверждён документацией — `src/llm/llm-provider.factory.ts (YANDEX_MODELS)` (Documented)
 
 ### Спринт 07 (Medium)
 
@@ -505,4 +505,5 @@
 | 02 | KI-026, KI-027, KI-033, KI-035 | 2 Fixed, 2 Won't Fix; 162 теста зелёные | `5dc320d` |
 | 03 | KI-038, KI-041, KI-042, KI-049 | 4 Fixed (верификация, код не менялся) | `f2f816a` |
 | 04 | KI-050, KI-053, KI-056, KI-060 | 1 Fixed, 1 Won't Fix, 2 Deferred | `15be954` |
-| 05 | KI-061, KI-062, KI-063, KI-064 | 2 Fixed, 1 Deferred, 1 Won't Fix; +3 теста | (текущий) |
+| 05 | KI-061, KI-062, KI-063, KI-064 | 2 Fixed, 1 Deferred, 1 Won't Fix; +3 теста | `b244d19` |
+| 06 | KI-068, KI-087, KI-092, KI-094 | 1 Fixed, 2 Documented, 1 Won't Fix | (текущий) |
