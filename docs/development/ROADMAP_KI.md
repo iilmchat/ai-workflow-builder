@@ -37,10 +37,10 @@
 
 ### Спринт 03 (Medium)
 
-- [ ] **KI-038** 🟡 — `tokensIn` / `tokensOut` / `costUsd` / `logs` не заполняются — `src/engine/execution-engine.service.ts,`
-- [ ] **KI-041** 🟡 — Node-level retry повторяет узел целиком, а не только вызов провайдера — `src/engine/execution-engine.service.ts`
-- [ ] **KI-042** 🟡 — Retry-After из 429 игнорируется, backoff не настраивается — `src/engine/execution-engine.service.ts`
-- [ ] **KI-049** 🟡 — Переиспользованные узлы не видны в потоке событий — `src/runs/run-events.service.ts,`
+- [x] **KI-038** 🟡 — `tokensIn` / `tokensOut` / `costUsd` / `logs` не заполняются — `src/engine/execution-engine.service.ts,` (уже исправлено)
+- [x] **KI-041** 🟡 — Node-level retry повторяет узел целиком, а не только вызов провайдера — `src/engine/execution-engine.service.ts` (уже исправлено)
+- [x] **KI-042** 🟡 — Retry-After из 429 игнорируется, backoff не настраивается — `src/engine/execution-engine.service.ts` (уже исправлено)
+- [x] **KI-049** 🟡 — Переиспользованные узлы не видны в потоке событий — `src/runs/run-events.service.ts,` (уже исправлено)
 
 ### Спринт 04 (Medium)
 
@@ -502,4 +502,5 @@
 | Спринт | KI | Результат | Коммит |
 |--------|----|-----------|--------|
 | 01 | KI-667, KI-011, KI-024, KI-025 | 4 Fixed; 2135 тестов зелёные | `70f4224` |
-| 02 | KI-026, KI-027, KI-033, KI-035 | 2 Fixed, 2 Won't Fix; 162 теста зелёные | (текущий) |
+| 02 | KI-026, KI-027, KI-033, KI-035 | 2 Fixed, 2 Won't Fix; 162 теста зелёные | `5dc320d` |
+| 03 | KI-038, KI-041, KI-042, KI-049 | 4 Fixed (верификация, код не менялся) | (текущий) |
