@@ -65,10 +65,10 @@
 
 ### Спринт 07 (Medium)
 
-- [ ] **KI-096** 🟡 — Env-список моделей описывает только входные модальности — `src/llm/llm-provider.factory.ts, .env.example`
-- [ ] **KI-097** 🟡 — GPTunnel-модели не валидируются на старте — `src/llm/llm-provider.factory.ts`
-- [ ] **KI-099** 🟡 — Кэш media-моделей живёт в памяти процесса — `src/media/providers/creativelab.provider.ts`
-- [ ] **KI-101** 🟡 — Ошибки upstream не различаются по `code` в теле — `src/media/providers/creativelab.provider.ts`
+- [x] **KI-096** 🟡 — Env-список моделей описывает только входные модальности — `src/llm/llm-provider.factory.ts, .env.example` (Won't Fix)
+- [x] **KI-097** 🟡 — GPTunnel-модели не валидируются на старте — `src/llm/llm-provider.factory.ts` (Documented)
+- [x] **KI-099** 🟡 — Кэш media-моделей живёт в памяти процесса — `src/media/providers/creativelab.provider.ts` (Deferred)
+- [x] **KI-101** 🟡 — Ошибки upstream не различаются по `code` в теле — `src/media/providers/creativelab.provider.ts` (Documented)
 
 ### Спринт 08 (Medium)
 
@@ -506,4 +506,5 @@
 | 03 | KI-038, KI-041, KI-042, KI-049 | 4 Fixed (верификация, код не менялся) | `f2f816a` |
 | 04 | KI-050, KI-053, KI-056, KI-060 | 1 Fixed, 1 Won't Fix, 2 Deferred | `15be954` |
 | 05 | KI-061, KI-062, KI-063, KI-064 | 2 Fixed, 1 Deferred, 1 Won't Fix; +3 теста | `b244d19` |
-| 06 | KI-068, KI-087, KI-092, KI-094 | 1 Fixed, 2 Documented, 1 Won't Fix | (текущий) |
+| 06 | KI-068, KI-087, KI-092, KI-094 | 1 Fixed, 2 Documented, 1 Won't Fix | `5ff30a2` |
+| 07 | KI-096, KI-097, KI-099, KI-101 | 1 Deferred, 2 Documented, 1 Won't Fix | (текущий) |

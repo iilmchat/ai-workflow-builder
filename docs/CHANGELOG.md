@@ -36,6 +36,11 @@
 
 ### Changed
 
+- **KI-спринт 07** ([отчёт](development/reports/v1.6.0/KI-S07-media-catalog-triage.md)):
+  KI-096 `Won't Fix` (LLM и media каталоги разделены), KI-097/KI-101
+  `Documented` (нужны живые ключи провайдеров), KI-099 `Deferred` (Redis-кэш
+  каталога только при multi-instance).
+
 - **KI-спринт 06** ([отчёт](development/reports/v1.6.0/KI-S06-web-catalog-triage.md)):
   KI-068 закрыт по факту (vitest + web-job в CI уже есть, lint остаётся за
   KI-333), KI-087 и KI-094 — `Documented` (legacy env и непроверенная
