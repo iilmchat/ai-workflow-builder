@@ -77,7 +77,13 @@ export function isRetryableProviderError(error: unknown, signal: AbortSignal): b
 
   if (
     error instanceof Error &&
-    (error.name === 'AbortError' || error.name === 'APIUserAbortError')
+    (error.name === 'AbortError' ||
+      error.name === 'APIUserAbortError' ||
+      // KI-062: SDK Anthropic/OpenAI сетевой сбой приходит как
+      // `APIConnectionError` без системного `code` — по одному имени класса.
+      error.name === 'APIConnectionError' ||
+      error.name === 'ConnectionError' ||
+      error.name === 'NetworkError')
   ) {
     return true;
   }

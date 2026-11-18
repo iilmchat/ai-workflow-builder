@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S05 | KI-062: `APIConnectionError` и сетевые классы SDK retryable (+3 теста); KI-061 Fixed (GET /workflow/:id/runs), KI-063 Deferred, KI-064 Won't Fix | 2026-11-19 | [KI-S05-provider-history.md](v1.6.0/KI-S05-provider-history.md) |
 | v1.6.0 | KI-S04 | KI-056 Fixed (GET /llm/models уже есть), KI-060 Won't Fix (снимок при reconnect), KI-050/KI-053 Deferred (миграция inputs_hash / таблица node_run_attempts) — код не менялся | 2026-11-19 | [KI-S04-llm-stream-triage.md](v1.6.0/KI-S04-llm-stream-triage.md) |
 | v1.6.0 | KI-S03 | Верификация 4 устаревших KI движка: метрики `node_runs` (KI-038), retry side-effecting узлов (KI-041), Retry-After + env backoff (KI-042), SSE-снимок из `node_runs` (KI-049) — всё уже реализовано, код не менялся | 2026-11-19 | [KI-S03-engine-verification.md](v1.6.0/KI-S03-engine-verification.md) |
 | v1.6.0 | KI-S02 | Входы запуска `POST /runs.inputs` → `workflow_runs.inputs` → движок → узлы-источники (KI-027); KI-026 закрыт как устаревший (отмена + таймауты уже есть), KI-033/KI-035 — Won't Fix (правки ухудшили бы совместимость и семантику портов); 162 теста зелёные | 2026-11-19 | [KI-S02-run-inputs-triage.md](v1.6.0/KI-S02-run-inputs-triage.md) |

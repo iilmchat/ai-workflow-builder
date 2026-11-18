@@ -28,7 +28,18 @@
   - **KI-011:** в CI job `build` добавлен service-контейнер Redis и
     `REDIS_URL` для `validateEnv()` при подъёме `AppModule` в e2e.
 
+### Fixed
+
+- **KI-062:** сетевые ошибки SDK (`APIConnectionError`, `ConnectionError`,
+  `NetworkError`) теперь классифицируются как retryable по имени класса
+  (+3 теста в `src/llm/provider-errors.spec.ts`).
+
 ### Changed
+
+- **KI-спринт 05** ([отчёт](development/reports/v1.6.0/KI-S05-provider-history.md)):
+  KI-061 закрыт (`GET /workflow/:id/runs` вместо глобального списка), KI-063 —
+  Deferred (финальность требует миграции, SSE закрывается по статусу), KI-064 —
+  Won't Fix (инвариант процессора зафиксирован, дублирование события опасно).
 
 - **KI-спринт 04** ([отчёт](development/reports/v1.6.0/KI-S04-llm-stream-triage.md)):
   KI-056 закрыт (`GET /llm/models` уже отдаёт список моделей), KI-060 —

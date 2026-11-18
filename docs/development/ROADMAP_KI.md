@@ -51,10 +51,10 @@
 
 ### Спринт 05 (Medium)
 
-- [ ] **KI-061** 🟡 — Нет `GET /runs` (список запусков) — `src/runs/runs.controller.ts, src/runs/runs.service.ts`
-- [ ] **KI-062** 🟡 — `APIConnectionError` классифицируется как неповторяемая — `src/llm/provider-errors.ts`
-- [ ] **KI-063** 🟡 — Финальность не попадает в snapshot — `src/runs/runs-stream.service.ts, src/db/schema.ts`
-- [ ] **KI-064** 🟡 — `run_completed` публикуется только процессором (скрытый контракт) — `src/engine/execution-engine.service.ts,`
+- [x] **KI-061** 🟡 — Нет `GET /runs` (список запусков) — `src/runs/runs.controller.ts, src/runs/runs.service.ts` (уже исправлено)
+- [x] **KI-062** 🟡 — `APIConnectionError` классифицируется как неповторяемая — `src/llm/provider-errors.ts`
+- [x] **KI-063** 🟡 — Финальность не попадает в snapshot — `src/runs/runs-stream.service.ts, src/db/schema.ts` (Deferred)
+- [x] **KI-064** 🟡 — `run_completed` публикуется только процессором (скрытый контракт) — `src/engine/execution-engine.service.ts,` (Won't Fix)
 
 ### Спринт 06 (Medium)
 
@@ -504,4 +504,5 @@
 | 01 | KI-667, KI-011, KI-024, KI-025 | 4 Fixed; 2135 тестов зелёные | `70f4224` |
 | 02 | KI-026, KI-027, KI-033, KI-035 | 2 Fixed, 2 Won't Fix; 162 теста зелёные | `5dc320d` |
 | 03 | KI-038, KI-041, KI-042, KI-049 | 4 Fixed (верификация, код не менялся) | `f2f816a` |
-| 04 | KI-050, KI-053, KI-056, KI-060 | 1 Fixed, 1 Won't Fix, 2 Deferred | (текущий) |
+| 04 | KI-050, KI-053, KI-056, KI-060 | 1 Fixed, 1 Won't Fix, 2 Deferred | `15be954` |
+| 05 | KI-061, KI-062, KI-063, KI-064 | 2 Fixed, 1 Deferred, 1 Won't Fix; +3 теста | (текущий) |
