@@ -86,10 +86,10 @@
 
 ### Спринт 10 (Medium)
 
-- [ ] **KI-203** 🟡 — Нет FK workflows.user_id → users.id — `src/db/schema.ts, drizzle/`
-- [ ] **KI-209** 🟡 — KI-номера в CHANGELOG `[0.1.0] → ### Planned` — не ссылки на реестр — `docs/CHANGELOG.md`
-- [ ] **KI-216** 🟡 — Нет family-revocation при reuse refresh-токена — `src/auth/auth.service.ts`
-- [ ] **KI-223** 🟡 — Bootstrap не различает 401 и сетевую ошибку — `web/src/lib/api.ts (runRefreshAsync),`
+- [x] **KI-203** 🟡 — Нет FK workflows.user_id → users.id — `src/db/schema.ts, drizzle/` (Deferred)
+- [x] **KI-209** 🟡 — KI-номера в CHANGELOG `[0.1.0] → ### Planned` — не ссылки на реестр — `docs/CHANGELOG.md` (уже исправлено)
+- [x] **KI-216** 🟡 — Нет family-revocation при reuse refresh-токена — `src/auth/auth.service.ts`
+- [x] **KI-223** 🟡 — Bootstrap не различает 401 и сетевую ошибку — `web/src/lib/api.ts (runRefreshAsync),`
 
 ### Спринт 11 (Medium)
 
@@ -509,4 +509,5 @@
 | 06 | KI-068, KI-087, KI-092, KI-094 | 1 Fixed, 2 Documented, 1 Won't Fix | `5ff30a2` |
 | 07 | KI-096, KI-097, KI-099, KI-101 | 1 Deferred, 2 Documented, 1 Won't Fix | `0553d7f` |
 | 08 | KI-106, KI-107, KI-119, KI-131 | 1 Fixed (UI+i18n), 3 Deferred | `e2303a7` |
-| 09 | KI-145, KI-170, KI-184, KI-191 | 1 Fixed, 2 Deferred, 1 Documented | (текущий) |
+| 09 | KI-145, KI-170, KI-184, KI-191 | 1 Fixed, 2 Deferred, 1 Documented | `da82928` |
+| 10 | KI-203, KI-209, KI-216, KI-223 | 3 Fixed (2 с кодом), 1 Deferred | (текущий) |

@@ -460,6 +460,21 @@ export class AuthService {
         .returning({ id: refreshTokens.id });
 
       if (revoked.length === 0) {
+        // KI-216: условие `revoked_at IS NULL` не сработало — значит токен
+        // уже ротирован кем-то другим. По OAuth 2.0 BCP это сигнал кражи:
+        // отзываем ВСЕ активные refresh-токены пользователя, а не только
+        // предъявленный; без этого атакующий продолжает пользоваться
+        // ранее выданной парой.
+        await tx
+          .update(refreshTokens)
+          .set({ revokedAt: new Date() })
+          .where(
+            and(
+              eq(refreshTokens.userId, verified.userId),
+              isNull(refreshTokens.revokedAt),
+            ),
+          );
+
         return null;
       }
 

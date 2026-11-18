@@ -472,8 +472,16 @@ async function runRefreshAsync(): Promise<boolean> {
     useAuthStore.getState().setSession(result.user, result.accessToken);
 
     return true;
-  } catch {
-    // Refresh упал (cookie нет/истекла/отозвана) — сессии больше нет.
+  } catch (error: unknown) {
+    // KI-223: 401 —cookie нет/истекла/отозвана, сессии больше нет.
+    // Сетевой сбой или 5xx не говорят о состоянии сессии: очищать её
+    // нельзя, иначе при недоступном backend пользователя выкинет на /login.
+    if (error instanceof ApiError && error.status !== 401) {
+      useAuthStore.getState().setStatus('unknown');
+
+      return false;
+    }
+
     useAuthStore.getState().clearSession();
 
     return false;

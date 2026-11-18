@@ -30,6 +30,10 @@
 
 ### Fixed
 
+- **KI-216:** при повторном использовании уже ротированного refresh-токена
+  отзываются все активные токены пользователя (family revocation).
+- **KI-223:** bootstrap не очищает сессию при сетевой ошибке/5xx — только при
+  явном 401 от `/auth/refresh`.
 - **KI-119:** при пустом/незагруженном каталоге медиамоделей Run больше не
   блокируется сообщением «Выберите image-модель» — добавляется отдельный текст
   `topbar.media_catalog_unavailable` (RULES 1.14, оба i18n-файла).
@@ -38,6 +42,10 @@
   (+3 теста в `src/llm/provider-errors.spec.ts`).
 
 ### Changed
+
+- **KI-спринт 10** ([отчёт](development/reports/v1.6.0/KI-S10-auth-fk-bootstrap.md)):
+  KI-203 `Deferred` (FK требует проверки historical строк и решения по
+  cascade), KI-209 закрыт по факту (оговорка в CHANGELOG уже есть).
 
 - **KI-спринт 09** ([отчёт](development/reports/v1.6.0/KI-S09-a11y-hotkeys.md)):
   KI-191 закрыт по факту (Ctrl+D уже работает), KI-145/KI-170 — `Deferred`

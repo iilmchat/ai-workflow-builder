@@ -622,6 +622,9 @@ describe('AuthService', () => {
         service.rotateRefreshTokenAsync('opaque-old'),
       ).resolves.toBeNull();
       expect(insertValues).not.toHaveBeenCalled();
+      // KI-216: повторное использование ротированного токена отзывает
+      // весь семейный набор — второй UPDATE поверх отзыва конкретной строки.
+      expect(updateSet).toHaveBeenCalledTimes(2);
     });
 
     it('rotateRefreshTokenAsync возвращает null для неизвестного токена', async () => {
