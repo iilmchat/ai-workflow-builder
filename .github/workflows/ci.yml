@@ -25,6 +25,19 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      # KI-011: REDIS_URL обязателен в validateEnv(). Unit-тесты не поднимают
+      # AppModule, но e2e (test/app.e2e-spec.ts) — поднимают: без Redis сервиса
+      # любой e2e-прогон на CI падал бы на валидации env до первого теста.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -70,6 +83,8 @@ jobs:
           # R6.1a: env валидируется Zod при старте приложения, JWT_SECRET обязателен.
           JWT_SECRET: ci-secret-at-least-32-characters-long
           AUTH_DISABLED: 'false'
+          # KI-011: обязателен для validateEnv() при подъёме AppModule в e2e.
+          REDIS_URL: redis://127.0.0.1:6379
 
   web:
     runs-on: ubuntu-latest

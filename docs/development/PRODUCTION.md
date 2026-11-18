@@ -313,8 +313,9 @@ git, `git diff`/`git checkout` на хосте, затем `up -d` для `.env`
 
 **Текущий прод:** ежедневный логический дамп, зашифрованный `age`, в **03:30
 MSK**, retention **30 дней**: локальная копия в `/var/backups/workflow-builder`
-**и offsite-выгрузка в S3 (Selectel)**. Скрипт и cron живут на хосте (в
-репозитории их пока нет — KI-667):
+**и offsite-выгрузка в S3 (Selectel)**. Скрипты зафиксированы в репозитории
+(KI-667): `scripts/backup-db.sh` и `scripts/restore-drill.sh`. Ниже —
+эквивалентный код для справки; на хосте установленные копии берутся из репо:
 
 ```bash
 #!/usr/bin/env bash
@@ -357,8 +358,65 @@ Cron (TZ сервера — Europe/Moscow; `03:30` — ночное окно б�
     | docker compose -f docker-compose.prod.yml -f docker-compose.prod.override.yml \
         exec -T db pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists
   ```
-- Раз в месяц — **учебное восстановление** в отдельный compose-проект и
-  проверка `GET /health` + входа в UI. Непроверенный бэкап бэкапом не считается.
+- Раз в месяц — **учебное восстановление** и проверка `GET /health` + входа в UI.
+  Непроверенный бэкап бэкапом не считается. Команда (KI-667):
+  `scripts/restore-drill.sh` — расшифровывает свежий дамп, поднимает временный
+  `pgvector/pgvector:pg17`, делает `pg_restore` и проверяет наличие таблиц;
+  прод не трогает. Результат — метрика `backup_restore_drill_timestamp`.
+
+#### Свежесть и алерты (KI-667)
+
+`scripts/backup-db.sh` пишет в каталог node_exporter textfile
+(`TEXTFILE_DIR`, по умолчанию `/var/lib/node_exporter/textfile_collector`)
+две метрики:
+
+- `backup_last_success_timestamp` — время последнего успешного дампа;
+- `backup_restore_drill_timestamp` — время последнего успешного drill'а
+  (пишет `scripts/restore-drill.sh`).
+
+Правила Prometheus (бэкап раз в сутки в 03:30 MSK, запас 2 ч; drill раз в месяц):
+
+```yaml
+groups:
+  - name: workflow-builder-backup
+    rules:
+      - alert: WorkflowBackupStale
+        expr: time() - backup_last_success_timestamp > 93600  # 26 ч
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: Бэкап БД workflow-builder не создавался более 26 часов
+      - alert: WorkflowRestoreDrillStale
+        expr: time() - backup_restore_drill_timestamp > 2764800  # 32 дня
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: Учебное восстановление не выполнялось более 32 дней
+```
+
+Systemd-timer как альтернатива cron (включить один из двух механизмов, не оба):
+
+```ini
+# /etc/systemd/system/wb-backup-db.timer
+[Unit]
+Description=Daily PostgreSQL backup (workflow-builder)
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=300
+[Install]
+WantedBy=timers.target
+```
+
+```ini
+# /etc/systemd/system/wb-backup-db.service
+[Unit]
+Description=PostgreSQL backup (workflow-builder)
+[Service]
+Type=oneshot
+EnvironmentFile=/srv/workflow-builder/.env
+ExecStart=/usr/local/bin/wb-backup-db.sh
+```
 
 ### Медиа (Selectel S3)
 

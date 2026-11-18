@@ -35,6 +35,7 @@ import {
 // v1.0.0 S4 (DESIGN V100 § 3.4): метрики Prometheus — длительность узлов и
 // стоимость вызовов. `MetricsModule` глобальный, отдельная проводка не нужна.
 import { MetricsService } from '../metrics/metrics.service.js';
+import type { RunEventDto } from '../runs/dto/index.js';
 import { RunEventsService } from '../runs/run-events.service.js';
 // v0.11 S9 (DESIGN § 3.3.1, KI-066): heartbeat аренды запуска. Движок
 // запускает его после перевода запуска в `running` и гасит в `finally`.
@@ -387,6 +388,85 @@ export interface ExecutionResult {
 }
 
 /**
+ * Потолок размера `workflow_runs.outputs` (КИ-025, 1 МиБ в UTF-8).
+ *
+ * Выходы каждого узла уже есть в `node_runs.outputs`; сводка в `workflow_runs`
+ * нужна только для быстрого предпросмотра. Без лимита большой граф с
+ * image/video-узлами раздувает одну строку JSONB до десятков мегабайт.
+ */
+const MAX_RUN_OUTPUTS_BYTES = 1_048_576;
+
+/** Ключ-маркер в `workflow_runs.outputs`, что часть выходов исключена. */
+const RUN_OUTPUTS_TRUNCATED_KEY = '__truncated__';
+
+/**
+ * Ограничивает сводный размер выходов запуска (KI-025).
+ *
+ * Узлы добавляются в порядке выполнения, пока укладываются в лимит. Полные
+ * выходы остаются в `node_runs.outputs`, поэтому потеря предпросмотра не
+ * теряет данные. Исключённые узлы перечисляются в маркере `__truncated__`.
+ *
+ * @param outputs - выходы завершившихся узлов (`nodeId` → outputs)
+ * @returns усечённая копия и список исключённых узлов
+ */
+function boundRunOutputs(
+  outputs: Record<string, Record<string, unknown>>,
+): {
+  outputs: Record<string, Record<string, unknown>>;
+  omittedNodes: string[];
+} {
+  if (Buffer.byteLength(JSON.stringify(outputs), 'utf8') <= MAX_RUN_OUTPUTS_BYTES) {
+    return { outputs, omittedNodes: [] };
+  }
+
+  const bounded: Record<string, Record<string, unknown>> = {};
+  const omittedNodes: string[] = [];
+  let bytes = 2; // "{}"
+
+  for (const [nodeId, nodeOutputs] of Object.entries(outputs)) {
+    const entry = JSON.stringify({ [nodeId]: nodeOutputs });
+    // entry включает внешние фигурные скобки; прибавляем запятую между записями.
+    const addition = Buffer.byteLength(entry, 'utf8') - 2 + (Object.keys(bounded).length > 0 ? 1 : 0);
+    const marker = JSON.stringify({
+      [RUN_OUTPUTS_TRUNCATED_KEY]: { omittedNodes: [...omittedNodes, nodeId] },
+    });
+    const markerCost = Buffer.byteLength(marker, 'utf8') - 2;
+
+    if (bytes + addition + markerCost > MAX_RUN_OUTPUTS_BYTES) {
+      omittedNodes.push(nodeId);
+      continue;
+    }
+
+    bounded[nodeId] = nodeOutputs;
+    bytes += addition;
+  }
+
+  bounded[RUN_OUTPUTS_TRUNCATED_KEY] = {
+    omittedNodes,
+    reason: `outputs запуска обрезаны до ${MAX_RUN_OUTPUTS_BYTES} байт (KI-025)`,
+  };
+
+  // Маркер мог вырасти больше зарезервированного места: снимаем последние
+  // принятые узлы, пока итоговый JSON гарантированно не уложится в лимит.
+  const accepted = Object.keys(bounded).filter((key) => key !== RUN_OUTPUTS_TRUNCATED_KEY);
+  while (
+    Buffer.byteLength(JSON.stringify(bounded), 'utf8') > MAX_RUN_OUTPUTS_BYTES &&
+    accepted.length > 0
+  ) {
+    const last = accepted.pop();
+    if (last === undefined) break;
+    delete bounded[last];
+    omittedNodes.unshift(last);
+  }
+  bounded[RUN_OUTPUTS_TRUNCATED_KEY] = {
+    omittedNodes,
+    reason: `outputs запуска обрезаны до ${MAX_RUN_OUTPUTS_BYTES} байт (KI-025)`,
+  };
+
+  return { outputs: bounded, omittedNodes };
+}
+
+/**
  * Executor графа workflow: реально выполняет узлы уровнями и пишет прогресс.
  *
  * Работает внутри BullMQ-worker'а (RULES 4.21), поэтому не знает про HTTP.
@@ -641,7 +721,9 @@ export class ExecutionEngineService {
       // выше, `startAsync` сразу продлевает её и планирует heartbeat. Если
       // строка уже не `running` (запуск успели отменить), таймер не появится.
       await this.runLease.startAsync(runId);
-      await this.runEvents.publishAsync(runId, {
+      // KI-024: публикация события — best-effort. Недоступность Redis не должна
+      // ронять сам запуск: SSE-клиент потеряет одно событие, но граф выполнится.
+      await this.publishEventBestEffortAsync(runId, {
         type: 'run_started',
         runId,
         startedAt: new Date().toISOString(),
@@ -1214,7 +1296,8 @@ export class ExecutionEngineService {
     let failure: unknown = null;
 
     try {
-      await this.runEvents.publishAsync(runId, {
+      // KI-024: сбой публикации не должен помечать узел failed.
+      await this.publishEventBestEffortAsync(runId, {
         type: 'node_started',
         runId,
         nodeId,
@@ -1259,7 +1342,8 @@ export class ExecutionEngineService {
             })
             .where(eq(nodeRuns.id, nodeRun.id));
 
-          await this.runEvents.publishAsync(runId, {
+          // KI-024: узел уже записан как completed — сбой Redis только логируется.
+          await this.publishEventBestEffortAsync(runId, {
             type: 'node_completed',
             runId,
             nodeId,
@@ -1335,8 +1419,8 @@ export class ExecutionEngineService {
         }
       }
     } catch (error: unknown) {
-      // Сбой до цикла (публикация node_started) или иная инфраструктурная
-      // ошибка: фиксируем как падение узла.
+      // Инфраструктурная ошибка до/вне цикла (кроме публикации событий — та
+      // best-effort, KI-024): фиксируем как падение узла.
       failure = error;
     }
 
@@ -2196,10 +2280,19 @@ export class ExecutionEngineService {
     outputs: Record<string, Record<string, unknown>>,
     error: string | null,
   ): Promise<void> {
+    const bounded = boundRunOutputs(outputs);
+
+    if (bounded.omittedNodes.length > 0) {
+      this.logger.warn(
+        `Запуск ${runId}: workflow_runs.outputs обрезан до ${MAX_RUN_OUTPUTS_BYTES} байт, ` +
+          `исключено узлов: ${bounded.omittedNodes.join(', ')} (KI-025)`,
+      );
+    }
+
     try {
       await this.db
         .update(workflowRuns)
-        .set({ status, outputs, error, finishedAt: new Date() })
+        .set({ status, outputs: bounded.outputs, error, finishedAt: new Date() })
         .where(eq(workflowRuns.id, runId));
     } catch (dbError: unknown) {
       throw new InternalServerErrorException(
@@ -2262,6 +2355,32 @@ export class ExecutionEngineService {
     } catch (error: unknown) {
       this.logger.error(
         `Не удалось пометить узел ${nodeRunId} как failed: ${toMessage(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Публикует событие запуска «по возможности» (KI-024).
+   *
+   * Redis — не источник правды о состоянии запуска: истина в БД
+   * (`node_runs`/`workflow_runs`). Поэтому недоступность брокера событий не
+   * должна менять статус узла или запуска — теряется только SSE-уведомление.
+   * Все вызовы публикации из движка идут через этот метод, чтобы поведение
+   * было единым (RULES 1.7: ошибка логируется, стек не гасится молча).
+   *
+   * @param runId - uuid запуска
+   * @param event - событие для публикации
+   * @returns промис без значения
+   */
+  private async publishEventBestEffortAsync(
+    runId: string,
+    event: RunEventDto,
+  ): Promise<void> {
+    try {
+      await this.runEvents.publishAsync(runId, event);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Не удалось опубликовать событие ${event.type} запуска ${runId}: ${toMessage(error)}`,
       );
     }
   }

@@ -17,6 +17,23 @@
 ---
 ## [Unreleased]
 
+### Fixed
+
+- **KI-спринт 01** ([отчёт](development/reports/v1.6.0/KI-S01-backup-engine-ci.md)):
+  - **KI-024:** публикация SSE-событий движка (`run_started`, `node_started`,
+    `node_completed`) стала best-effort — недоступность Redis больше не
+    помечает успешно отработавший узел как `failed`.
+  - **KI-025:** `workflow_runs.outputs` ограничен 1 МиБ с маркером
+    `__truncated__`; полные выходы остаются в `node_runs.outputs`.
+  - **KI-011:** в CI job `build` добавлен service-контейнер Redis и
+    `REDIS_URL` для `validateEnv()` при подъёме `AppModule` в e2e.
+
+### Added
+
+- **KI-667:** `scripts/backup-db.sh` и `scripts/restore-drill.sh` — автоматический
+  дамп БД с шифрованием `age`, offsite в S3 и ежемесячное учебное
+  восстановление; метрики свежести и алерты в `docs/development/PRODUCTION.md` § 8.
+
 ## [1.6.0] — 2026-11-11
 
 ### Added

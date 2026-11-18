@@ -920,6 +920,58 @@ describe('ExecutionEngineService', () => {
     expect(eventTypes()).not.toContain('run_completed');
   });
 
+  it('KI-024: сбой публикации node_started/node_completed не роняет узел', async () => {
+    const graph: GraphDto = {
+      nodes: [node('A', 'text', { value: 'a' })],
+      edges: [],
+    };
+
+    // Redis недоступен: и старт узла, и завершение не могут быть опубликованы.
+    publish.mockImplementation((_runId: string, event: RunEventDto) =>
+      event.type === 'node_started' || event.type === 'node_completed'
+        ? Promise.reject(new Error('redis down'))
+        : Promise.resolve(),
+    );
+
+    await expect(service.executeAsync(RUN_ID, graph)).resolves.toMatchObject({
+      status: 'completed',
+      executedNodes: 1,
+    });
+
+    // Узел отработал и записан как completed, несмотря на сбой брокера.
+    expect(fake.rows[0]?.status).toBe('completed');
+    expect(fake.rows[0]?.outputs).toEqual({ text: 'a' });
+    expect(fake.run.outputs).toEqual({ A: { text: 'a' } });
+    expect(publish).toHaveBeenCalledWith(
+      RUN_ID,
+      expect.objectContaining({ type: 'node_completed', nodeId: 'A' }),
+    );
+  });
+
+  it('KI-025: очень большие outputs обрезаются в workflow_runs, но не в node_runs', async () => {
+    const huge = 'x'.repeat(1_100_000);
+    const graph: GraphDto = {
+      nodes: [
+        node('A', 'text', { value: 'a' }),
+        node('B', 'text', { value: huge }),
+      ],
+      edges: [edge('ab', 'A', 'B', 'text', 'value')],
+    };
+
+    await service.executeAsync(RUN_ID, graph);
+
+    // Полный результат остаётся в истории узла...
+    const rowB = fake.rows.find((row) => row.nodeId === 'B');
+    expect(Buffer.byteLength(JSON.stringify(rowB?.outputs), 'utf8')).toBeGreaterThan(1_000_000);
+
+    // ...а сводка запуска ограничена и помечает исключённый узел.
+    const summary = fake.run.outputs;
+    expect(summary).not.toBeNull();
+    expect(Buffer.byteLength(JSON.stringify(summary), 'utf8')).toBeLessThanOrEqual(1_048_576);
+    expect(summary?.['__truncated__']).toBeDefined();
+    expect(JSON.stringify(summary)).toContain('B');
+  });
+
   it('KI-288: ветвление A→(B,C) — падение B не мешает независимому C', async () => {
     // Оба узла — потомки A, но друг от друга не зависят: B падает, C обязан
     // выполниться (RULES 4.16), а не превратиться в `skipped`.

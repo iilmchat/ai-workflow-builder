@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S01 | RoadMapKI: 272 открытых KI → 68 спринтов; бэкапы (скрипты + метрики + алерты, KI-667), best-effort SSE (KI-024), лимит `workflow_runs.outputs` 1 МиБ (KI-025), Redis в CI (KI-011); 88 тестов движка зелёные | 2026-11-19 | [KI-S01-backup-engine-ci.md](v1.6.0/KI-S01-backup-engine-ci.md) |
 | v1.6.0 | S9 | Release Prep: версии `1.6.0` (`package.json`, `web/package.json`, Android `versionName`), `CHANGELOG` `[Unreleased]` → `[1.6.0] — 2026-11-11`, `PROMPT_CURRENT` v12.3 (2133 backend / 598 web, KI 657 Fixed 302 / Open 272, Open High 1 — KI-667), `KNOWN_ISSUES` пересчёт; отчёт и git status | 2026-11-11 | [S9-release-prep.md](v1.6.0/S9-release-prep.md) |
 | v1.6.0 | S8.2 | Final Performance & UX: индекс `workflow_runs_workflow_id_created_at_idx` (KI-540, миграция `0023`), прокси-скачивание `GET /media/download` через `SafeHttpClient` с `Content-Disposition` и SSRF-защитой (KI-466), кнопки ImageGen/DocumentGen через прокси; backend 2133, web 598, KI 657 (Fixed 302, Open 272) | 2026-11-11 | [S8.2-final-fixes.md](v1.6.0/S8.2-final-fixes.md) |
 | v1.6.0 | S8.1 | FinOps Polish & UX Quick Wins: явный `costStatus` (`exact`/`cached`/`local`/`unknown`) в outputs/SSE/snapshot + бейджи панели (KI-152), единый `USD_RUB_RATE` с legacy-алиасами (KI-383), кнопки «Открыть»/«Скачать» в Image Generation с CORS-fallback (KI-124); backend 2131, web 599, KI 657 (Fixed 300, Open 274) | 2026-11-11 | [S8.1-finops-ux.md](v1.6.0/S8.1-finops-ux.md) |

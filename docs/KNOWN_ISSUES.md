@@ -2086,7 +2086,7 @@
 ---
 
 ### KI-011 — `REDIS_URL` обязателен в `validateEnv()`, но в CI нет Redis
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Исправлено в:** v1.6.0 (KI-спринт 01) | **Обнаружено:** 2026-10-13
 - **Файлы:** `src/config/env.schema.ts`, `.github/workflows/ci.yml`,
   `test/app.e2e-spec.ts`
 - **Описание:** `EnvSchema.REDIS_URL` объявлен как `z.url()` без default.
@@ -2099,6 +2099,12 @@
   2. Service-контейнер Redis в GitHub Actions (правильно, но +30 сек CI).
   3. Мок `ConfigService` в e2e.
 - **Когда чинить:** при добавлении e2e в CI (R2/R4).
+- **Fix:** в job `build` `.github/workflows/ci.yml` добавлен service-контейнер
+  `redis:7-alpine` с health-check и `REDIS_URL: redis://127.0.0.1:6379` в env
+  шага `Run tests`. `validateEnv()` на CI больше не упадёт при подъёме
+  `AppModule` в e2e. Сам e2e-прогон в CI по-прежнему не включён (требует
+  отдельного шага инициализации БД), поэтому вариант 1 (default в схеме) и
+  вариант 3 (мок ConfigService) не применялись — fail-fast сохранён.
 - **Связанные:** KI-012.
 
 ---
@@ -3711,11 +3717,18 @@
 ---
 
 ### KI-025 — `workflow_runs.outputs` дублирует выходы всех узлов
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Исправлено в:** v1.6.0 (KI-спринт 01) | **Обнаружено:** 2026-10-13
 - **Файлы:** `src/engine/execution-engine.service.ts`
 - **Описание:** При больших графах раздувает jsonb и дублирует
   `node_runs.outputs`. Решить: хранить только терминальные выходы или ссылки.
 - **Когда чинить:** до R4.
+- **Fix:** `finishRunAsync` ограничивает сводку `workflow_runs.outputs`
+  лимитом 1 МиБ (UTF-8): узлы добавляются в порядке выполнения, при
+  превышении — исключаются с маркером `__truncated__`. Полные выходы
+  остаются в `node_runs.outputs`, поэтому данные не теряются; в лог пишется
+  список исключённых узлов. Тест: большой выход (>1 МБ) обрезается в сводке,
+  но остаётся полным в истории узла. Вариант «только терминальные выходы»
+  отвергнут: он ломает частичный результат при падении графа (см. KI-290).
 - **Связанные:** —
 
 ---
@@ -3752,13 +3765,19 @@
 ---
 
 ### KI-024 — Сбой публикации события роняет узел
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-13
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Исправлено в:** v1.6.0 (KI-спринт 01) | **Обнаружено:** 2026-10-13
 - **Файлы:** `src/engine/execution-engine.service.ts`
 - **Описание:** `publishAsync(node_started/node_completed)` внутри try —
   недоступность Redis помечает узел failed, хотя сам узел отработал.
 - **Решение:** события — best-effort. Разделить «ошибка выполнения» и
   «ошибка публикации». Узел → completed; publish — только лог.
 - **Когда чинить:** до R4.
+- **Fix:** добавлен `publishEventBestEffortAsync` — единый best-effort мост
+  к `RunEventsService.publishAsync` (ошибка логируется, статус узла/запуска
+  не меняется). Через него идут `run_started`, `node_started`,
+  `node_completed`; `publishNodeFailedAsync`/`publishNodeSkippedAsync` уже
+  работают по той же схеме. Тест: отказ публикации node_started и
+  node_completed — узел completed, выходы записаны.
 - **Связанные:** —
 
 ---
@@ -10702,7 +10721,7 @@ KI-656, ограничение Maven-репозиториев SDK — KI-657.
 - **Связанные:** KI-667, KI-575.
 
 ### KI-667 — Бэкапы и restore-drill не автоматизированы в репозитории
-- **Приоритет:** 🟠 High | **Статус:** Open | **Обнаружено:** 2026-11-10 (S6-A)
+- **Приоритет:** 🟠 High | **Статус:** Fixed | **Исправлено в:** v1.6.0 (KI-спринт 01) | **Обнаружено:** 2026-11-10 (S6-A)
 - **Файлы:** `docs/development/PRODUCTION.md` (§ 8), `.github/workflows/` (нет job)
 - **Описание:** S6-A описывает скрипт `pg_dump` → S3 и восстановление, но
   расписание (cron/systemd timer) и проверка свежести бэкапа остаются на
@@ -10713,6 +10732,14 @@ KI-656, ограничение Maven-репозиториев SDK — KI-657.
 - **Решение:** скрипт `scripts/backup-db.sh` в репозитории, systemd timer на
   хосте, метрика/алерт в Prometheus, restore-drill в отдельный compose-проект
   раз в месяц с записью результата.
+- **Fix:** добавлены `scripts/backup-db.sh` (pg_dump → age → локальный каталог
+  + S3, retention, атомарная публикация, отказ при пустом дампе) и
+  `scripts/restore-drill.sh` (временный `pgvector/pgvector:pg17`, pg_restore,
+  проверка таблиц, прод не трогает). `docs/development/PRODUCTION.md` § 8
+  обновлён: systemd-timer, метрики `backup_last_success_timestamp` /
+  `backup_restore_drill_timestamp`, правила `WorkflowBackupStale` (26 ч) и
+  `WorkflowRestoreDrillStale` (32 дня). Покрытия юнит-тестами нет: скрипты
+  инфраструктурные, проверяются на хосте при внедрении.
 - **Связанные:** KI-666.
 
 ### KI-668 — CORS_ALLOWED_ORIGINS действует только в production

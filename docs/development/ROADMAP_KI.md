@@ -23,10 +23,10 @@
 
 ### Спринт 01 (High/Medium)
 
-- [ ] **KI-667** 🟠 — Бэкапы и restore-drill не автоматизированы в репозитории — `docs/development/PRODUCTION.md (§ 8), .github/workflows/ (нет job)`
-- [ ] **KI-011** 🟡 — `REDIS_URL` обязателен в `validateEnv()`, но в CI нет Redis — `src/config/env.schema.ts, .github/workflows/ci.yml,`
-- [ ] **KI-024** 🟡 — Сбой публикации события роняет узел — `src/engine/execution-engine.service.ts`
-- [ ] **KI-025** 🟡 — `workflow_runs.outputs` дублирует выходы всех узлов — `src/engine/execution-engine.service.ts`
+- [x] **KI-667** 🟠 — Бэкапы и restore-drill не автоматизированы в репозитории — `docs/development/PRODUCTION.md (§ 8), .github/workflows/ (нет job)`
+- [x] **KI-011** 🟡 — `REDIS_URL` обязателен в `validateEnv()`, но в CI нет Redis — `src/config/env.schema.ts, .github/workflows/ci.yml,`
+- [x] **KI-024** 🟡 — Сбой публикации события роняет узел — `src/engine/execution-engine.service.ts`
+- [x] **KI-025** 🟡 — `workflow_runs.outputs` дублирует выходы всех узлов — `src/engine/execution-engine.service.ts`
 
 ### Спринт 02 (Medium)
 
@@ -501,4 +501,4 @@
 
 | Спринт | KI | Результат | Коммит |
 |--------|----|-----------|--------|
-| — | — | ожидание | — |
+| 01 | KI-667, KI-011, KI-024, KI-025 | 4 Fixed; 88 тестов движка зелёные | (текущий) |
