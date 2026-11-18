@@ -72,10 +72,10 @@
 
 ### Спринт 08 (Medium)
 
-- [ ] **KI-106** 🟡 — Идемпотентность работает только при повторе с тем же runId — `src/media/media-node-executor.service.ts`
-- [ ] **KI-107** 🟡 — Параллельные media-узлы могут упереться в rate limit — `src/engine/execution-engine.service.ts`
-- [ ] **KI-119** 🟡 — Пустой каталог media блокирует Run с некорректным текстом — `web/src/components/TopBar.tsx`
-- [ ] **KI-131** 🟡 — Связь `NodeType ↔ data.kind` не проверяется tsc — `web/src/types/graph.ts, web/src/lib/node-registry.ts`
+- [x] **KI-106** 🟡 — Идемпотентность работает только при повторе с тем же runId — `src/media/media-node-executor.service.ts` (Deferred)
+- [x] **KI-107** 🟡 — Параллельные media-узлы могут упереться в rate limit — `src/engine/execution-engine.service.ts` (Deferred)
+- [x] **KI-119** 🟡 — Пустой каталог media блокирует Run с некорректным текстом — `web/src/components/TopBar.tsx`
+- [x] **KI-131** 🟡 — Связь `NodeType ↔ data.kind` не проверяется tsc — `web/src/types/graph.ts, web/src/lib/node-registry.ts` (Deferred)
 
 ### Спринт 09 (Medium)
 
@@ -507,4 +507,5 @@
 | 04 | KI-050, KI-053, KI-056, KI-060 | 1 Fixed, 1 Won't Fix, 2 Deferred | `15be954` |
 | 05 | KI-061, KI-062, KI-063, KI-064 | 2 Fixed, 1 Deferred, 1 Won't Fix; +3 теста | `b244d19` |
 | 06 | KI-068, KI-087, KI-092, KI-094 | 1 Fixed, 2 Documented, 1 Won't Fix | `5ff30a2` |
-| 07 | KI-096, KI-097, KI-099, KI-101 | 1 Deferred, 2 Documented, 1 Won't Fix | (текущий) |
+| 07 | KI-096, KI-097, KI-099, KI-101 | 1 Deferred, 2 Documented, 1 Won't Fix | `0553d7f` |
+| 08 | KI-106, KI-107, KI-119, KI-131 | 1 Fixed (UI+i18n), 3 Deferred | (текущий) |

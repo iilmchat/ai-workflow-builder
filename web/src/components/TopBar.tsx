@@ -546,11 +546,20 @@ export function TopBar() {
     const nodesWithoutMediaModel = findImageNodesWithoutModel();
 
     if (nodesWithoutMediaModel.length > 0) {
+      // KI-119: пустой/незагруженный каталог — не вина пользователя.
+      // Сообщение «выберите модель» вводило в заблуждение: выбирать неоткуда.
+      const { mediaModels, mediaModelsLoaded } = useWorkflowStore.getState();
+      const catalogUnavailable = !mediaModelsLoaded || mediaModels.length === 0;
+
       setNotice({
         kind: 'error',
-        text: t('topbar.image_models_missing', {
-          nodes: nodesWithoutMediaModel.join(', '),
-        }),
+        text: catalogUnavailable
+          ? t('topbar.media_catalog_unavailable', {
+              nodes: nodesWithoutMediaModel.join(', '),
+            })
+          : t('topbar.image_models_missing', {
+              nodes: nodesWithoutMediaModel.join(', '),
+            }),
       });
 
       return;

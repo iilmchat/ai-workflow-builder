@@ -473,6 +473,7 @@
   "topbar.gpu.online": "GPU: online",
   "topbar.history": "History",
   "topbar.image_models_missing": "Choose an image model in nodes: {{nodes}}. The model list is in the Image Generation node select.",
+  "topbar.media_catalog_unavailable": "Media model catalog is empty or unavailable (nodes: {{nodes}}). Check the media provider configuration.",
   "topbar.import": "Import",
   "topbar.lang.toggle": "Switch language",
   "topbar.load": "Load",

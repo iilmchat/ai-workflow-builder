@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S08 | KI-119: отдельное сообщение при пустом каталоге медиамоделей (TopBar + i18n ru/en); KI-106/107/131 Deferred с триггерами возврата | 2026-11-19 | [KI-S08-ui-message-deferred.md](v1.6.0/KI-S08-ui-message-deferred.md) |
 | v1.6.0 | KI-S07 | KI-096 Won't Fix (каталоги разделены), KI-097/KI-101 Documented (нет живых ключей), KI-099 Deferred (кэш каталога при multi-instance) — docs-only | 2026-11-19 | [KI-S07-media-catalog-triage.md](v1.6.0/KI-S07-media-catalog-triage.md) |
 | v1.6.0 | KI-S06 | KI-068 Fixed (vitest + web-job CI уже есть; lint за KI-333), KI-087/KI-094 Documented, KI-092 Won't Fix (каталоги LLM и media разделены); пояснение legacy OPENAI_BASE_URL в .env.example | 2026-11-19 | [KI-S06-web-catalog-triage.md](v1.6.0/KI-S06-web-catalog-triage.md) |
 | v1.6.0 | KI-S05 | KI-062: `APIConnectionError` и сетевые классы SDK retryable (+3 теста); KI-061 Fixed (GET /workflow/:id/runs), KI-063 Deferred, KI-064 Won't Fix | 2026-11-19 | [KI-S05-provider-history.md](v1.6.0/KI-S05-provider-history.md) |

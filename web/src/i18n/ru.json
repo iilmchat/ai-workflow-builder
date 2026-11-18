@@ -473,6 +473,7 @@
   "topbar.gpu.online": "GPU: online",
   "topbar.history": "История",
   "topbar.image_models_missing": "Выберите image-модель в узлах: {{nodes}}. Список моделей — в селекте узла Image Generation.",
+  "topbar.media_catalog_unavailable": "Каталог медиамоделей пуст или недоступен (узлы: {{nodes}}). Проверьте настройки провайдера медиа.",
   "topbar.import": "Импорт",
   "topbar.lang.toggle": "Переключить язык",
   "topbar.load": "Загрузить",

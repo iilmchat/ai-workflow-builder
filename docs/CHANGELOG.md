@@ -30,11 +30,18 @@
 
 ### Fixed
 
+- **KI-119:** при пустом/незагруженном каталоге медиамоделей Run больше не
+  блокируется сообщением «Выберите image-модель» — добавляется отдельный текст
+  `topbar.media_catalog_unavailable` (RULES 1.14, оба i18n-файла).
 - **KI-062:** сетевые ошибки SDK (`APIConnectionError`, `ConnectionError`,
   `NetworkError`) теперь классифицируются как retryable по имени класса
   (+3 теста в `src/llm/provider-errors.spec.ts`).
 
 ### Changed
+
+- **KI-спринт 08** ([отчёт](development/reports/v1.6.0/KI-S08-ui-message-deferred.md)):
+  KI-106/KI-107/KI-131 — `Deferred` (нужны жалобы на биллинг, реальные лимиты
+  upstream и type-level гейт соответственно); KI-119 закрыт правкой TopBar и i18n.
 
 - **KI-спринт 07** ([отчёт](development/reports/v1.6.0/KI-S07-media-catalog-triage.md)):
   KI-096 `Won't Fix` (LLM и media каталоги разделены), KI-097/KI-101
