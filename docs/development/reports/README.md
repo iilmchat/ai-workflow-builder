@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S18 | KI-426 Documented: lifecycle Expiration для S3-медиа в PRODUCTION.md; KI-403/404/408 Deferred (масштаб, контракты) — docs-only | 2026-11-19 | [KI-S18-vector-agent-s3.md](v1.6.0/KI-S18-vector-agent-s3.md) |
 | v1.6.0 | KI-S17 | KI-386: passthrough метаданных media-результата (+292 теста media); KI-392 Documented, KI-393/KI-402 Deferred | 2026-11-19 | [KI-S17-media-metadata.md](v1.6.0/KI-S17-media-metadata.md) |
 | v1.6.0 | KI-S16 | KI-372/379/381 Deferred (курс, media-реестр, idempotency), KI-385 Documented (TTS-фолбэк) — docs-only | 2026-11-19 | [KI-S16-budget-media.md](v1.6.0/KI-S16-budget-media.md) |
 | v1.6.0 | KI-S15 | KI-349: target-handle `text-input` у TextNode (визуальный дефект связей); KI-356/357/370 Deferred | 2026-11-19 | [KI-S15-text-handle-contracts.md](v1.6.0/KI-S15-text-handle-contracts.md) |

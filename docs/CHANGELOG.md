@@ -56,6 +56,10 @@
 
 ### Changed
 
+- **KI-спринт 18** ([отчёт](development/reports/v1.6.0/KI-S18-vector-agent-s3.md)):
+  KI-426 `Documented` — требование lifecycle `Expiration` для S3 зафиксировано
+  в `PRODUCTION.md`; KI-403/KI-404/KI-408 `Deferred`.
+
 - **KI-спринт 17** ([отчёт](development/reports/v1.6.0/KI-S17-media-metadata.md)):
   KI-393/KI-402 `Deferred`, KI-392 `Documented` — тарифы и каталоги требуют
   подтверждения upstream.

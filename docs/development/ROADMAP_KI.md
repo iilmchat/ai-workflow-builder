@@ -142,10 +142,10 @@
 
 ### Спринт 18 (Medium)
 
-- [ ] **KI-403** 🟡 — фильтрованный HNSW recall на масштабе — `src/db/schema.ts, src/vector/vector-store.service.ts`
-- [ ] **KI-404** 🟡 — семантика VectorUpsert → VectorQuery — `src/engine/node-executors.ts`
-- [ ] **KI-408** 🟡 — `node_runs.logs` агента дублирует транскрипт — `src/agent/agent.service.ts`
-- [ ] **KI-426** 🟡 — `S3_TTL_DAYS` не удаляет объекты из бакета — `src/media/media-storage.service.ts`
+- [x] **KI-403** 🟡 — фильтрованный HNSW recall на масштабе — `src/db/schema.ts, src/vector/vector-store.service.ts` (Deferred)
+- [x] **KI-404** 🟡 — семантика VectorUpsert → VectorQuery — `src/engine/node-executors.ts` (Deferred)
+- [x] **KI-408** 🟡 — `node_runs.logs` агента дублирует транскрипт — `src/agent/agent.service.ts` (Deferred)
+- [x] **KI-426** 🟡 — `S3_TTL_DAYS` не удаляет объекты из бакета — `src/media/media-storage.service.ts` (Documented)
 
 ### Спринт 19 (Medium)
 
@@ -517,4 +517,5 @@
 | 14 | KI-322, KI-338, KI-340, KI-344 | 2 Fixed (по факту), 2 Deferred | `54e4175` |
 | 15 | KI-349, KI-356, KI-357, KI-370 | 1 Fixed (UI), 3 Deferred | `aafa9b2` |
 | 16 | KI-372, KI-379, KI-381, KI-385 | 3 Deferred, 1 Documented | `b60a6aa` |
-| 17 | KI-386, KI-392, KI-393, KI-402 | 1 Fixed (код), 2 Deferred, 1 Documented | (текущий) |
+| 17 | KI-386, KI-392, KI-393, KI-402 | 1 Fixed (код), 2 Deferred, 1 Documented | `72e7c8b` |
+| 18 | KI-403, KI-404, KI-408, KI-426 | 1 Documented (docs), 3 Deferred | (текущий) |
