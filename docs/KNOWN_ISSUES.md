@@ -6045,10 +6045,12 @@
 - **Файлы:** `web/package.json`
 - **Описание:** `cd web && pnpm exec oxlint --type-aware src/` падает; фронт вне линт-гейта.
 - **Решение:** добавить `lint`-скрипт и oxlint в devDependencies `web/`, включить в CI.
-- **Fix:** в `web/package.json` добавлены `lint: oxlint --type-aware src/` и
-  `oxlint` в devDependencies, обновлён `web/pnpm-lock.yaml`; job `web` в CI
-  получил шаг `Lint` перед Build. Pre-existing warning'ы фронта не блокируют
-  гейт (exit 0), errors нет.
+- **Fix:** в `web/package.json` добавлены `lint: oxlint --type-aware src/`,
+  `oxlint` и `oxlint-tsgolint` (исполняемый модуль для `--type-aware`) в
+  devDependencies, обновлён `web/pnpm-lock.yaml`; job `web` в CI получил шаг
+  `Lint` перед Build. Pre-existing warning'ы фронта не блокируют гейт (exit 0),
+  errors нет. Без `oxlint-tsgolint` CI падал с «Failed to find type-aware linter
+  executable» — зафиксировано при первом прогоне.
 - **Связанные:** KI-317.
 
 ---

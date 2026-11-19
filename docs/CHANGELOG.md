@@ -38,7 +38,8 @@
 - **KI-343:** e2e-спек в typecheck и отдельный шаг `pnpm test:e2e` в CI.
 - **KI-345:** `test:parity` использует `dotenv/config` вместо `--env-file`.
 - **KI-332:** кэш списка workflow сбрасывается при фокусе/возврате во вкладку.
-- **KI-333:** web получил `lint`-скрипт, oxlint в devDependencies и шаг Lint в CI.
+- **KI-333:** web получил `lint`-скрипт, oxlint + oxlint-tsgolint в
+  devDependencies и шаг Lint в CI.
 - **KI-335:** верификация уточнённой формулы покрытия в KI-314 (docs-only).
 - **KI-339:** `node_runs.error` и `node_skipped.reason` называют id упавшего
   предшественника.
