@@ -3,7 +3,7 @@
 # =============================================================================
 # Stage 1 — builder: ставим зависимости и собираем backend + frontend.
 # =============================================================================
-FROM node:22-alpine AS builder
+FROM node:22.19-alpine AS builder
 
 # Версия pnpm зафиксирована по `packageManager` в package.json: мажор должен
 # совпадать с pnpm-lock.yaml, иначе `--frozen-lockfile` может ругаться на
@@ -45,7 +45,7 @@ RUN pnpm prune --prod
 # =============================================================================
 # Stage 2 — runner: только runtime-артефакты, непривилегированный пользователь.
 # =============================================================================
-FROM node:22-alpine AS runner
+FROM node:22.19-alpine AS runner
 
 ENV NODE_ENV=production
 ENV PORT=3000

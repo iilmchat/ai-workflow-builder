@@ -8,7 +8,11 @@
  */
 import type { ConfigService } from '@nestjs/config';
 import { z } from 'zod';
-import { MCP_SERVER_NAME, MCP_TOKEN_ENV_PATTERN } from './mcp.types.js';
+import {
+  MCP_MAX_TOOLS_PER_NODE_LIMIT,
+  MCP_SERVER_NAME,
+  MCP_TOKEN_ENV_PATTERN,
+} from './mcp.types.js';
 
 /**
  * URL MCP-сервера: только `http`/`https`.
@@ -377,6 +381,26 @@ export function readIntegerConfig(
   }
 
   return Math.min(Math.max(Math.trunc(numeric), min), max);
+}
+
+/**
+ * Действующий лимит MCP-инструментов на agent-узел (KI-521).
+ *
+ * Единственная точка чтения `MCP_MAX_TOOLS_PER_NODE`: и контроллер каталога
+ * (значение в API), и `AgentService` (проверка при запуске) обязаны видеть
+ * одно и то же число с одними границами.
+ *
+ * @param config - конфигурация Nest
+ * @returns лимит в диапазоне `[1, MCP_MAX_TOOLS_PER_NODE_LIMIT]`
+ */
+export function readMaxToolsPerNode(config: ConfigService): number {
+  return readIntegerConfig(
+    config,
+    'MCP_MAX_TOOLS_PER_NODE',
+    MCP_MAX_TOOLS_PER_NODE_LIMIT,
+    1,
+    MCP_MAX_TOOLS_PER_NODE_LIMIT,
+  );
 }
 
 /**

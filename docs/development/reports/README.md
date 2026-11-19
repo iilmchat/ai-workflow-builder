@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | S64 | KI-521: общий читатель MCP_MAX_TOOLS_PER_NODE, KI-517: Node 22.19 в Dockerfile, KI-519 по факту, KI-516 Deferred | 2026-11-19 | [KI-S64-mcp-docker-ci.md](v1.6.0/KI-S64-mcp-docker-ci.md) |
 | v1.6.0 | S63 | Throttler: локальный тип, валидация Lua, lazy Redis; токен рамки pending (KI-512–515) | 2026-11-19 | [KI-S63-throttler-theme.md](v1.6.0/KI-S63-throttler-theme.md) |
 | v1.6.0 | KI-S62 | 4 KI (1 Fixed, 3 Documented): тесты API-обёрток; сессия завершена (web 650) | 2026-11-19 | [KI-S62-api-wrappers.md](v1.6.0/KI-S62-api-wrappers.md) |
 | v1.6.0 | KI-S59–S61 | 12 KI (6 Fixed, 6 Documented): аренда запуска, link-checker, late-response guard (backend 2159 / web 648) | 2026-11-19 | [KI-S59-S61-lease-and-links.md](v1.6.0/KI-S59-S61-lease-and-links.md) |

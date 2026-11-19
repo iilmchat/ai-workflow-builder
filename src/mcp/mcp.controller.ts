@@ -22,15 +22,12 @@ import {
   type McpToolSummary,
 } from './dto/mcp-servers.dto.js';
 import { McpClientService } from './mcp-client.service.js';
-import { readIntegerConfig } from './mcp.config.js';
+import { readMaxToolsPerNode } from './mcp.config.js';
 import {
   McpServerRegistry,
   type McpServerEntry,
 } from './mcp-server.registry.js';
-import {
-  MCP_MAX_TOOLS_PER_NODE_LIMIT,
-  type McpToolDescriptor,
-} from './mcp.types.js';
+import type { McpToolDescriptor } from './mcp.types.js';
 
 /**
  * Безопасный текст ошибки сервера для API.
@@ -118,13 +115,7 @@ export class McpController {
    */
   @Get('servers')
   async listServersAsync(): Promise<McpServersResponse> {
-    const maxToolsPerNode = readIntegerConfig(
-      this.config,
-      'MCP_MAX_TOOLS_PER_NODE',
-      MCP_MAX_TOOLS_PER_NODE_LIMIT,
-      1,
-      MCP_MAX_TOOLS_PER_NODE_LIMIT,
-    );
+    const maxToolsPerNode = readMaxToolsPerNode(this.config);
 
     if (!this.registry.isEnabled()) {
       return McpServersResponseSchema.parse({

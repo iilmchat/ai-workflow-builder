@@ -38,12 +38,9 @@ import { calculateCostUsd } from '../llm/model-pricing.js';
 import { LlmRegistryService } from '../llm/llm-registry.service.js';
 import { LlmService } from '../llm/llm.service.js';
 import { McpClientService } from '../mcp/mcp-client.service.js';
-import { readIntegerConfig } from '../mcp/mcp.config.js';
+import { readIntegerConfig, readMaxToolsPerNode } from '../mcp/mcp.config.js';
 import { McpToolAdapter } from '../mcp/mcp-tool.adapter.js';
-import {
-  MCP_MAX_TOOLS_PER_NODE_LIMIT,
-  type McpToolRef,
-} from '../mcp/mcp.types.js';
+import type { McpToolRef } from '../mcp/mcp.types.js';
 import {
   MetricsService,
   type MetricOperationStatus,
@@ -602,13 +599,7 @@ export class AgentService {
       1,
       AGENT_MAX_TOKENS_PER_STEP_LIMIT,
     );
-    this.maxMcpToolsPerNode = readIntegerConfig(
-      config,
-      'MCP_MAX_TOOLS_PER_NODE',
-      MCP_MAX_TOOLS_PER_NODE_LIMIT,
-      1,
-      MCP_MAX_TOOLS_PER_NODE_LIMIT,
-    );
+    this.maxMcpToolsPerNode = readMaxToolsPerNode(config);
   }
 
   /**

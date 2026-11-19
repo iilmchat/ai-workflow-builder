@@ -25,6 +25,12 @@
 
 ### Fixed
 
+- **KI-спринт 64** ([отчёт](development/reports/v1.6.0/KI-S64-mcp-docker-ci.md)):
+  - **KI-517:** `Dockerfile` закреплён на `node:22.19-alpine` (оба этапа).
+  - **KI-519:** метрики в `RELEASES.md` не дублируются (сверено по факту).
+  - **KI-521:** единый читатель лимита MCP для каталога и агента.
+  - **KI-516** `Deferred` — CI-гейт на два инстанса требует e2e-стенда.
+
 - **KI-спринт 63** ([отчёт](development/reports/v1.6.0/KI-S63-throttler-theme.md)):
   - **KI-512:** отдельный токен рамки `pending` — контраст в тёмной теме.
   - **KI-513:** локальный `ThrottlerStorageRecord` вместо deep-import пакета.
