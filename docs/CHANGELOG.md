@@ -17,6 +17,12 @@
 ---
 ## [Unreleased]
 
+### Fixed
+
+- **KI-спринт 69 (Final)** ([отчёт](development/reports/v1.6.0/KI-S69-registry-gate-final.md)):
+  - **KI-671:** гейт реестра сверяет все строки сводки, включая нулевые счёты
+    (Open = 0 больше не может расходиться с фактом незаметно).
+
 ### Changed
 
 - **RoadMap KI** ([`ROADMAP_KI.md`](development/ROADMAP_KI.md)): зафиксирован факт

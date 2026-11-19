@@ -49,11 +49,19 @@ if (summaryStart === -1) {
     problems.push(`в сводке ${totalMatch[1]}, фактически ${statusSum}`);
   }
 
-  for (const [status, count] of Object.entries(counts)) {
-    const escaped = status.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const row = summary.match(new RegExp(`^\\| ${escaped} \\| (\\d+) \\|$`, 'm'));
-    if (row && Number(row[1]) !== count) {
-      problems.push(`строка «${status}»: ${row[1]} в сводке, фактически ${count}`);
+  // KI-671: проверяем ВСЕ строки сводки, включая статусы с нулевым счётом.
+  // Раньше итерация шла по факту (counts), поэтому «Open | 4» при Open=0
+  // оставалась незамеченной.
+  const summaryRows = [...summary.matchAll(/^\| ([^|*][^|]*?) \| (\d+) \|$/gm)];
+
+  for (const [, rawStatus, rawCount] of summaryRows) {
+    const status = rawStatus.trim();
+    const actual = counts[status] ?? 0;
+
+    if (Number(rawCount) !== actual) {
+      problems.push(
+        `строка «${status}»: ${rawCount} в сводке, фактически ${actual}`,
+      );
     }
   }
 }
