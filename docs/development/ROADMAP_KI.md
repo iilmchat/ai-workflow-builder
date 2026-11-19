@@ -240,10 +240,10 @@
 
 ### Спринт 32 (Low)
 
-- [ ] **KI-178** 🟢 — Формат `YANDEX_MODELS` / `LMSTUDIO_MODELS` не валидируется Zod — `src/config/env.schema.ts`
-- [ ] **KI-194** 🟢 — Note / Compare узлы — `web/src/types/graph.ts, web/src/lib/node-registry.ts`
-- [ ] **KI-207** 🟢 — Параметры scrypt не фиксированы в хэше — `src/auth/auth.service.ts`
-- [ ] **KI-208** 🟢 — @nestjs/passport в deps не используется — `package.json`
+- [x] **KI-178** 🟢 — Формат `YANDEX_MODELS` / `LMSTUDIO_MODELS` не валидируется Zod — `src/config/env.schema.ts` (Deferred)
+- [x] **KI-194** 🟢 — Note / Compare узлы — `web/src/types/graph.ts, web/src/lib/node-registry.ts` (уже исправлено)
+- [x] **KI-207** 🟢 — Параметры scrypt не фиксированы в хэше — `src/auth/auth.service.ts` (Deferred)
+- [x] **KI-208** 🟢 — @nestjs/passport в deps не используется — `package.json`
 
 ### Спринт 33 (Low)
 
@@ -531,4 +531,5 @@
 | 28 | KI-117, KI-133, KI-135, KI-136 | 2 Documented, 2 Deferred | `6c78437` |
 | 29 | KI-138, KI-139, KI-140, KI-143 | 1 Fixed (скрипт), 1 Documented, 2 Deferred | `af506b5` |
 | 30 | KI-144, KI-146, KI-153, KI-161 | 2 Documented, 2 Deferred | `46463de` |
-| 31 | KI-171, KI-172, KI-173, KI-177 | 2 Fixed (1 код+тест), 2 Deferred | (текущий) |
+| 31 | KI-171, KI-172, KI-173, KI-177 | 2 Fixed (1 код+тест), 2 Deferred | `bf45116` |
+| 32 | KI-178, KI-194, KI-207, KI-208 | 2 Fixed (1 по факту), 2 Deferred | (текущий) |

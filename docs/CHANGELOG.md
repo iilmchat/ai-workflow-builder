@@ -30,6 +30,7 @@
 
 ### Fixed
 
+- **KI-208:** удалён неиспользуемый `@nestjs/passport` из зависимостей (−5 пакетов).
 - **KI-173:** `pickDefaultMediaModel` пропускает `deprecated`-модели (+тест,
   599 web-тестов зелёные).
 - **KI-013:** `DbModule` и `main.ts` читают env через `ConfigService` (RULES 4.6).
@@ -73,6 +74,10 @@
   по образу job `web` в CI (проверено: 598 тестов зелёные).
 
 ### Changed
+
+- **KI-спринт 32** ([отчёт](development/reports/v1.6.0/KI-S32-deps-nodes.md)):
+  KI-194 закрыт проверкой (comment/compare уже в реестре), KI-178/KI-207
+  `Deferred`.
 
 - **KI-спринт 31** ([отчёт](development/reports/v1.6.0/KI-S31-model-defaults.md)):
   KI-172 закрыт по факту (версия Yandex задаётся в `YANDEX_MODELS`), KI-171/
