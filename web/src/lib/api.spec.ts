@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   deleteDocumentTemplateAsync,
+  fetchRunAsync,
+  fetchRunNodesAsync,
   fetchWebSearchProvidersAsync,
   fetchWorkflowRunsAsync,
   listDocumentTemplatesAsync,
@@ -136,6 +138,30 @@ describe('requestAsync: Content-Type (KI-479)', () => {
     });
 
     expect(headersOf(fetchMock).get('Content-Type')).toBe('application/octet-stream');
+  });
+
+  it('KI-508: fetchRunAsync кодирует runId и разбирает ApiRun', async () => {
+    const fetchMock = stubFetch(() =>
+      jsonResponse({
+        id: 'run-1',
+        workflowId: 'wf-1',
+        status: 'running',
+        createdAt: '2026-11-19T00:00:00.000Z',
+        error: null,
+      }),
+    );
+
+    const run = await fetchRunAsync('run 1/欧');
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/runs/run%201%2F%E6%AC%A7');
+    expect(run).toMatchObject({ id: 'run-1', status: 'running', error: null });
+  });
+
+  it('KI-508: fetchRunNodesAsync ходит на /nodes и разбирает массив', async () => {
+    const fetchMock = stubFetch(() => jsonResponse([]));
+
+    await expect(fetchRunNodesAsync('run-1')).resolves.toEqual([]);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/runs/run-1/nodes');
   });
 
   it('FormData с токеном: Authorization ставится, Content-Type — нет', async () => {

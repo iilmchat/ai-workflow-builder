@@ -450,10 +450,10 @@
 
 ### Спринт 62 (Low)
 
-- [ ] **KI-506** 🟢 — `NodeRunSnapshot` гейтуется двумя файлами — `sse-contract.json, api-contract.json`
-- [ ] **KI-507** 🟢 — Нет автоматического UI-гейта на F5 — `.smoke/s12-s13-smoke.mjs`
-- [ ] **KI-508** 🟢 — Нет теста API-обёрток `fetchRunAsync`/`fetchRunNodesAsync` — `web/src/lib/api.spec.ts`
-- [ ] **KI-510** 🟢 — Глобальные поверхности (Toast, модалки, логин) — светлые литералы (Low) — `web/src/components/Toast.tsx,`
+- [x] **KI-506** 🟢 — `NodeRunSnapshot` гейтуется двумя файлами — `sse-contract.json, api-contract.json` (Documented)
+- [x] **KI-507** 🟢 — Нет автоматического UI-гейта на F5 — `.smoke/s12-s13-smoke.mjs` (Documented)
+- [x] **KI-508** 🟢 — Нет теста API-обёрток `fetchRunAsync`/`fetchRunNodesAsync` — `web/src/lib/api.spec.ts`
+- [x] **KI-510** 🟢 — Глобальные поверхности (Toast, модалки, логин) — светлые литералы (Low) — `web/src/components/Toast.tsx,` (Documented)
 
 ### Спринт 63 (Low)
 
@@ -561,4 +561,5 @@
 | 58 | KI-487, KI-488, KI-489, KI-490 | 3 Fixed, 1 Documented; env-кросс-чек, ошибки шаблонов, variables | (текущий) |
 | 59 | KI-491, KI-492, KI-493, KI-494 | 3 Fixed, 1 Documented; refresh шаблонов, lease-гонка и очистка | (текущий) |
 | 60 | KI-495, KI-496, KI-498, KI-499 | 2 Fixed (1 по факту), 2 Documented; link-checker в CI | (текущий) |
-| 61 | KI-502, KI-503, KI-504, KI-505 | 1 Fixed, 3 Documented; guard late-response restore | (текущий) |
+| 61 | KI-502, KI-503, KI-504, KI-505 | 1 Fixed, 3 Documented; guard late-response restore | `7a35eaa` |
+| 62 | KI-506, KI-507, KI-508, KI-510 | 1 Fixed, 3 Documented; тесты API-обёрток; сессия завершена | (текущий) |

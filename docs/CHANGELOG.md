@@ -30,6 +30,7 @@
 
 ### Fixed
 
+- **KI-508:** тесты API-обёрток `fetchRunAsync`/`fetchRunNodesAsync` (URL + Zod).
 - **KI-505:** `restoreRunAsync` игнорирует поздние ответы чужого workflow.
 - **KI-499:** проверка markdown-ссылок добавлена в CI (`pnpm check:links`).
 - **KI-491:** список шаблонов обновляется при возврате во вкладку.
@@ -190,6 +191,8 @@
 
 ### Documented
 
+- **KI-506/507/510:** два контрактных гейта, отсутствующий CDP-скрипт и
+  тёмная тема глобальных поверхностей зафиксированы с триггерами возврата.
 - **KI-502/503/504:** integration-спек кэш-колонок, agent cache в SSE и
   фабрика провайдеров retry отложены с триггерами возврата.
 - **KI-496:** SQL-флаги «зависшего» запуска остаются под unit-тестами.
@@ -226,6 +229,9 @@
   в [памятке](development/SMOKE_CDP.md); скрипты остаются вне репо.
 
 ### Changed
+
+- **KI-спринт 62** ([отчёт](development/reports/v1.6.0/KI-S62-api-wrappers.md)):
+  4 KI (1 Fixed, 3 Documented); сессия завершена по просьбе пользователя.
 
 - **KI-спринты 59–61** ([отчёт](development/reports/v1.6.0/KI-S59-S61-lease-and-links.md)):
   12 KI закрыты (6 Fixed, 6 Documented) — heartbeat-генерация, очистка lease,
