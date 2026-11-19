@@ -212,10 +212,10 @@
 
 ### Спринт 28 (Low)
 
-- [ ] **KI-117** 🟢 — Каталог media кэшируется на сессию без инвалидации — `web/src/stores/workflow.ts`
-- [ ] **KI-133** 🟢 — Статусные/notice-цвета вне узлов остаются палитрой Tailwind — `web/src/components/TopBar.tsx`
-- [ ] **KI-135** 🟢 — CDP-фокус требует `Emulation.setFocusEmulationEnabled` — `—`
-- [ ] **KI-136** 🟢 — `:focus` vs `:focus-visible` в инпутах узлов — `web/src/components/nodes/*.tsx,`
+- [x] **KI-117** 🟢 — Каталог media кэшируется на сессию без инвалидации — `web/src/stores/workflow.ts` (Deferred)
+- [x] **KI-133** 🟢 — Статусные/notice-цвета вне узлов остаются палитрой Tailwind — `web/src/components/TopBar.tsx` (Deferred)
+- [x] **KI-135** 🟢 — CDP-фокус требует `Emulation.setFocusEmulationEnabled` — `—` (Documented)
+- [x] **KI-136** 🟢 — `:focus` vs `:focus-visible` в инпутах узлов — `web/src/components/nodes/*.tsx,` (Documented)
 
 ### Спринт 29 (Low)
 
@@ -527,4 +527,5 @@
 | 24 | KI-051, KI-054, KI-057, KI-058 | 4 Deferred | `b74d121` |
 | 25 | KI-073, KI-076, KI-089, KI-090 | 1 Fixed (по факту), 1 Documented, 2 Deferred | `1b0eecd` |
 | 26 | KI-093, KI-095, KI-098, KI-100 | 1 Documented, 1 Won't Fix, 2 Deferred | `1fa02b1` |
-| 27 | KI-102, KI-103, KI-115, KI-116 | 1 Fixed (по факту), 1 Documented, 2 Deferred | (текущий) |
+| 27 | KI-102, KI-103, KI-115, KI-116 | 1 Fixed (по факту), 1 Documented, 2 Deferred | `b840f50` |
+| 28 | KI-117, KI-133, KI-135, KI-136 | 2 Documented, 2 Deferred | (текущий) |

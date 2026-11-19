@@ -67,6 +67,10 @@
 
 ### Changed
 
+- **KI-спринт 28** ([отчёт](development/reports/v1.6.0/KI-S28-ui-theme-a11y.md)):
+  KI-117/KI-133 `Deferred`, KI-135/KI-136 `Documented` — косметика тем,
+  кэш каталога и нюансы CDP/focus.
+
 - **KI-спринт 27** ([отчёт](development/reports/v1.6.0/KI-S27-media-dto.md)):
   KI-103 закрыт проверкой (поле `provider` уже есть), KI-102 `Documented`,
   KI-115/KI-116 `Deferred`.

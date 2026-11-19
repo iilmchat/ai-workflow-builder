@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S28 | KI-117/KI-133 Deferred, KI-135/KI-136 Documented: темы, focus, кэш каталога — docs-only | 2026-11-19 | [KI-S28-ui-theme-a11y.md](v1.6.0/KI-S28-ui-theme-a11y.md) |
 | v1.6.0 | KI-S27 | KI-103 Fixed по факту (поле provider уже есть), KI-102 Documented, KI-115/KI-116 Deferred — docs-only | 2026-11-19 | [KI-S27-media-dto.md](v1.6.0/KI-S27-media-dto.md) |
 | v1.6.0 | KI-S26 | KI-093 Won't Fix, KI-098 Documented, KI-095/KI-100 Deferred — docs-only | 2026-11-19 | [KI-S26-model-badges.md](v1.6.0/KI-S26-model-badges.md) |
 | v1.6.0 | KI-S25 | KI-090 Fixed по факту (Headers нормализуется), KI-089 Documented, KI-073/KI-076 Deferred — docs-only | 2026-11-19 | [KI-S25-lint-sse-ux.md](v1.6.0/KI-S25-lint-sse-ux.md) |
