@@ -30,6 +30,12 @@
 
 ### Fixed
 
+- **KI-323:** инкремент `version` вычисляется в SQL (`CASE WHEN … IS DISTINCT
+  FROM`), конкурентные identical PATCH больше не дают `+2`.
+- **KI-324:** хэш графа учитывает тип узла (паритет с backend deep-equal).
+- **KI-325:** идемпотентный PATCH графа не двигает `updatedAt`.
+- **KI-327:** `POST /auth/refresh` автологинит системного пользователя при
+  `AUTH_DISABLED=true` (dev/CI).
 - **KI-311:** верифицирован парсер `@Controller()` (корневой путь, объектная
   форма), комментарий обновлён после удаления `nodes`.
 - **KI-313:** уточнено в памятке: `/unknown/foo → 404` верен только для fetch.
@@ -151,6 +157,10 @@
   в [памятке](development/SMOKE_CDP.md); скрипты остаются вне репо.
 
 ### Changed
+
+- **KI-спринты 44–46** ([отчёт](development/reports/v1.6.0/KI-S44-S46-patch-auth-parity.md)):
+  12 KI закрыты (11 Fixed, 1 Documented) — авто-панорама, удаление мёртвого
+  модуля, префикс-гейт и tsconfig спеков, SQL-условие версии и dev-автологин.
 
 - **KI-спринты 41–43** ([отчёт](development/reports/v1.6.0/KI-S41-S43-backend-contracts.md)):
   12 KI закрыты (11 Fixed, 1 Documented) — типы условия, явные порты, экспорт,

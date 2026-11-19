@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S44–S46 | 12 KI (11 Fixed, 1 Documented): холст, удалённый nodes, префикс-гейт, tsconfig.spec, SQL CASE version, dev-автологин; отчёт на 3 спринта (backend 2158 / web 645) | 2026-11-19 | [KI-S44-S46-patch-auth-parity.md](v1.6.0/KI-S44-S46-patch-auth-parity.md) |
 | v1.6.0 | KI-S41–S43 | 12 KI (11 Fixed, 1 Documented): типы условия, явные порты, экспорт graphVersion, Async-суффиксы, inputsMap и пустой подграф; отчёт на 3 спринта (backend 2159 / web 643) | 2026-11-19 | [KI-S41-S43-backend-contracts.md](v1.6.0/KI-S41-S43-backend-contracts.md) |
 | v1.6.0 | KI-S38–S40 | 12 KI (11 Fixed, 1 Documented): кэш хэша, Ctrl+D, Handle-гейт, диагностика Load, DTO, fatal SSE, хоткеи, слоты compare; отчёт на 3 спринта (backend 2154 / web 641) | 2026-11-19 | [KI-S38-S40-graph-ui-hotkeys.md](v1.6.0/KI-S38-S40-graph-ui-hotkeys.md) |
 | v1.6.0 | KI-S37 | KI-249: 6 режимов reasoning + паритет-гейт; KI-250 подписанный плейсхолдер, KI-251 тесты LLM-Load, KI-252 сетка 8×8 (backend 2150 / web 607) | 2026-11-19 | [KI-S37-reasoning-llm-ui-grid.md](v1.6.0/KI-S37-reasoning-llm-ui-grid.md) |

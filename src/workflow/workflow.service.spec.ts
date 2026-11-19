@@ -695,7 +695,11 @@ describe('WorkflowService', () => {
       >;
 
       expect(db.select).toHaveBeenCalledTimes(1);
-      expect(setArg).not.toHaveProperty('version');
+      // KI-323: решение принимает SQL, но ветка THEN не срабатывает.
+      expect(renderSQL(setArg.version)).toContain('CASE WHEN');
+      expect(renderSQL(setArg.version)).toContain('IS DISTINCT FROM');
+      // KI-325: идентичный граф не двигает и updatedAt.
+      expect(setArg).not.toHaveProperty('updatedAt');
     });
 
     it('PATCH с nodes для несуществующего workflow возвращает null без инкремента', async () => {
@@ -714,7 +718,9 @@ describe('WorkflowService', () => {
       >;
 
       expect(result).toBeNull();
-      expect(setArg).not.toHaveProperty('version');
+      // Условие изменения живёт в SQL; строка UPDATE не найдена,
+      // поэтому результат null (инкремент не применяется).
+      expect(renderSQL(setArg.version)).toContain('CASE WHEN');
     });
 
     it('возвращает null, если запись не найдена', async () => {

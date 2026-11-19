@@ -341,8 +341,10 @@ export class WorkflowService {
    *
    * Текущая строка читается **только** если в DTO есть `nodes`/`edges`: для
    * PATCH одних метаданных лишний SELECT не нужен — инкремента там нет по
-   * определению. Сам инкремент выполняется в SQL (`version + 1`), поэтому
-   * конкурентные обновления графа не теряют версии (lost update).
+   * определению. Решение об инкременте принимается в самом UPDATE через
+   * `CASE WHEN ... IS DISTINCT FROM ...` (KI-323): два конкурентных PATCH с
+   * одинаковым payload не дадут `+2`. Идентичный граф не двигает `updatedAt`
+   * (KI-325).
    *
    * @param id - uuid workflow
    * @param dto - валидированные поля для обновления (все необязательные)
@@ -362,9 +364,10 @@ export class WorkflowService {
       );
     }
 
-    let isGraphChanged = false;
+    const hasGraphFields = dto.nodes !== undefined || dto.edges !== undefined;
+    let graphChanged = false;
 
-    if (dto.nodes !== undefined || dto.edges !== undefined) {
+    if (hasGraphFields) {
       const current = await this.findOneAsync(id, access);
 
       // KI-017: PATCH может прийти только с одним из массивов. Проверяем
@@ -377,13 +380,36 @@ export class WorkflowService {
         );
       }
 
-      isGraphChanged =
+      graphChanged =
         current !== null &&
         ((dto.nodes !== undefined &&
           !isDeepStrictEqual(dto.nodes, current.nodes)) ||
           (dto.edges !== undefined &&
             !isDeepStrictEqual(dto.edges, current.edges)));
     }
+
+    // KI-323: два конкурентных PATCH с одинаковым payload раньше оба видели
+    // «изменилось» по SELECT и давали +2. Теперь решение принимает сам UPDATE:
+    // jsonb-сравнение с текущей строкой выполняется атомарно в SQL.
+    const graphChangedSql = sql<boolean>`(
+      ${
+        dto.nodes === undefined
+          ? sql`FALSE`
+          : sql`(${JSON.stringify(dto.nodes)}::jsonb IS DISTINCT FROM ${workflows.nodes})`
+      }
+      OR ${
+        dto.edges === undefined
+          ? sql`FALSE`
+          : sql`(${JSON.stringify(dto.edges)}::jsonb IS DISTINCT FROM ${workflows.edges})`
+      }
+    )`;
+    // KI-325: идентичный граф без правки метаданных — это не изменение,
+    // поэтому не двигаем ни version, ни updatedAt.
+    const idempotentGraph =
+      hasGraphFields &&
+      !graphChanged &&
+      dto.name === undefined &&
+      dto.description === undefined;
 
     // KI-014: колонки типизированы через `$type<NodeDto[]>()` / `$type<EdgeDto[]>()`,
     // а DTO обновления принимает `unknown[]`: узлы сохраняются «как есть»
@@ -396,10 +422,12 @@ export class WorkflowService {
         ...dto,
         nodes: dto.nodes as NodeDto[] | undefined,
         edges: dto.edges as EdgeDto[] | undefined,
-        ...(isGraphChanged
-          ? { version: sql<number>`${workflows.version} + 1` }
+        ...(hasGraphFields
+          ? {
+              version: sql<number>`CASE WHEN ${graphChangedSql} THEN ${workflows.version} + 1 ELSE ${workflows.version} END`,
+            }
           : {}),
-        updatedAt: new Date(),
+        ...(idempotentGraph ? {} : { updatedAt: new Date() }),
       })
       // R7.6: править граф может владелец или участник с ролью editor;
       // viewer получает пустую выборку → 404, как чужой workflow. S2: плюс

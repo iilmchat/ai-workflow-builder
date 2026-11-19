@@ -44,6 +44,9 @@ export function computeGraphHash(
   const canonical = JSON.stringify([
     nodes.map((node) => ({
       id: node.id,
+      // KI-324: backend deep-equal различает тип узла — хэш должен тоже,
+      // иначе смена `type` при том же `data`/позиции не отправит PATCH.
+      t: node.type,
       p: node.position,
       d: node.data,
     })),

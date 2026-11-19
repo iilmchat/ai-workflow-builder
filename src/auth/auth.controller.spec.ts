@@ -40,6 +40,7 @@ describe('AuthController', () => {
   let service: {
     registerAsync: ReturnType<typeof vi.fn>;
     loginAsync: ReturnType<typeof vi.fn>;
+    devSignInAsync: ReturnType<typeof vi.fn>;
     getMeAsync: ReturnType<typeof vi.fn>;
     createRefreshTokenAsync: ReturnType<typeof vi.fn>;
     rotateRefreshTokenAsync: ReturnType<typeof vi.fn>;
@@ -62,6 +63,7 @@ describe('AuthController', () => {
     service = {
       registerAsync: vi.fn(() => Promise.resolve(authResult)),
       loginAsync: vi.fn(() => Promise.resolve(authResult)),
+      devSignInAsync: vi.fn(() => Promise.resolve(authResult)),
       getMeAsync: vi.fn(() =>
         Promise.resolve({
           id: USER_ID,
@@ -303,6 +305,21 @@ describe('AuthController', () => {
   });
 
   describe('POST /auth/refresh', () => {
+    it('KI-327: AUTH_DISABLED=true автологинит без cookie', async () => {
+      authDisabled = true;
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .expect(200);
+
+      expect(response.body).toEqual(expect.objectContaining({ accessToken: TOKEN }));
+      expect(service.devSignInAsync).toHaveBeenCalledTimes(1);
+      expect(service.createRefreshTokenAsync).toHaveBeenCalledTimes(1);
+      expect(String(response.headers['set-cookie'])).toContain(
+        `${REFRESH_COOKIE}=${REFRESH_TOKEN};`,
+      );
+    });
+
     it('отвечает 401 без cookie', async () => {
       await request(app.getHttpServer()).post('/auth/refresh').expect(401);
       expect(service.rotateRefreshTokenAsync).not.toHaveBeenCalled();

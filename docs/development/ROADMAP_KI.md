@@ -338,10 +338,10 @@
 
 ### Спринт 46 (Low)
 
-- [ ] **KI-323** 🟢 — TOCTOU: два конкурентных PATCH → `version +2` — `src/workflow/workflow.service.ts`
-- [ ] **KI-324** 🟢 — Frontend hash vs backend deep-equal (type) — `web/src/lib/graph-hash.ts, src/workflow/workflow.service.ts`
-- [ ] **KI-325** 🟢 — `updatedAt` меняется на идемпотентном PATCH — `src/workflow/workflow.service.ts`
-- [ ] **KI-327** 🟢 — `AUTH_DISABLED=true` не обходит `POST /auth/refresh` — `src/auth/auth.controller.ts,`
+- [x] **KI-323** 🟢 — TOCTOU: два конкурентных PATCH → `version +2` — `src/workflow/workflow.service.ts`
+- [x] **KI-324** 🟢 — Frontend hash vs backend deep-equal (type) — `web/src/lib/graph-hash.ts, src/workflow/workflow.service.ts`
+- [x] **KI-325** 🟢 — `updatedAt` меняется на идемпотентном PATCH — `src/workflow/workflow.service.ts`
+- [x] **KI-327** 🟢 — `AUTH_DISABLED=true` не обходит `POST /auth/refresh` — `src/auth/auth.controller.ts,`
 
 ### Спринт 47 (Low)
 
@@ -545,4 +545,5 @@
 | 42 | KI-286, KI-291, KI-292, KI-294 | 3 Fixed (1 по факту), 1 Documented; экспорт graphVersion, лимит имени, SMOKE_CDP | `00f9301` |
 | 43 | KI-295, KI-297, KI-303, KI-305 | 4 Fixed (Async-суффиксы, findShared, inputsMap, пустой подграф); backend 2159 / web 643 | `3c3156a` |
 | 44 | KI-307, KI-308, KI-309, KI-310 | 4 Fixed (autoPan, удалён nodes, конкатенация в спеке, tsconfig.spec); web 644 | `dc1d795` |
-| 45 | KI-311, KI-313, KI-320, KI-321 | 3 Fixed (1 по факту), 1 Documented; SMOKE_CDP § 7, карта типов гейта | (текущий) |
+| 45 | KI-311, KI-313, KI-320, KI-321 | 3 Fixed (1 по факту), 1 Documented; SMOKE_CDP § 7, карта типов гейта | `261577a` |
+| 46 | KI-323, KI-324, KI-325, KI-327 | 4 Fixed (SQL CASE version, хэш типа, updatedAt, dev-автологин); web 645 | (текущий) |

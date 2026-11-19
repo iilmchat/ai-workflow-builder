@@ -24,6 +24,7 @@ import {
   setRefreshCookie,
   type RefreshCookieOptions,
 } from './auth.cookie.js';
+import { DEMO_USER_ID } from './auth.constants.js';
 import { AuthService, type AuthResult, type UserPublic } from './auth.service.js';
 import { CurrentUser } from './decorators/current-user.decorator.js';
 import { LoginSchema, type LoginDto } from './dto/login.dto.js';
@@ -112,6 +113,17 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<AuthResult> {
     const token = readRefreshCookie(request.cookies);
+
+    // KI-327: при AUTH_DISABLED=true (dev/CI) гард уже пускает всех под
+    // системным пользователем, но без cookie этот метод давал 401 и
+    // AuthProvider уводил на /login. Выдаём токены системного пользователя.
+    if (token === undefined && this.config.get<boolean>('AUTH_DISABLED') === true) {
+      const result = await this.authService.devSignInAsync(DEMO_USER_ID);
+
+      await this.issueRefreshCookieAsync(response, DEMO_USER_ID, request);
+
+      return result;
+    }
 
     if (token === undefined) {
       throw new UnauthorizedException('Нет refresh-токена');

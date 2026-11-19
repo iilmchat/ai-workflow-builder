@@ -55,6 +55,15 @@ describe('computeGraphHash (KI-195)', () => {
     expect(computeGraphHash([selected], [])).toBe(computeGraphHash([plain], []));
   });
 
+  it('меняется при смене типа узла (KI-324)', () => {
+    const plain = node('a', 'x');
+    const retyped = { ...plain, type: 'llm' } as AppNode;
+
+    expect(computeGraphHash([plain], [])).not.toBe(
+      computeGraphHash([retyped], []),
+    );
+  });
+
   it('кэширует хэш по ссылкам на nodes/edges (KI-253)', () => {
     const nodes = [node('a', 'x')];
     const edges = [edge('e1')];

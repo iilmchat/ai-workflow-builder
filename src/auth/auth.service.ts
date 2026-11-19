@@ -316,6 +316,33 @@ export class AuthService {
   }
 
   /**
+   * Выдаёт access-токен системному пользователю без пароля (KI-327).
+   *
+   * Только для `AUTH_DISABLED=true` (dev/CI): в production эта конфигурация
+   * запрещена env-схемой. Refresh-cookie выставляет контроллер.
+   *
+   * @param userId - uuid системного пользователя
+   * @returns токен и публичные данные пользователя
+   * @throws UnauthorizedException если пользователь удалён
+   */
+  async devSignInAsync(userId: string): Promise<AuthResult> {
+    const [found] = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!found) {
+      throw new UnauthorizedException('Пользователь не найден');
+    }
+
+    return {
+      accessToken: await this.generateAccessTokenAsync(found),
+      user: toPublic(found),
+    };
+  }
+
+  /**
    * Возвращает публичные данные пользователя по id из токена.
    *
    * @param userId - `sub` access-токена
