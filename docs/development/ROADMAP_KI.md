@@ -184,10 +184,10 @@
 
 ### Спринт 24 (Low)
 
-- [ ] **KI-051** 🟢 — Кэш ограничен одним `runId` — `src/engine/execution-engine.service.ts`
-- [ ] **KI-054** 🟢 — Нет агрегата по запуску — `src/db/schema.ts (workflow_runs),`
-- [ ] **KI-057** 🟢 — `isConfigured` не подхватывает смену ключа без перезапуска — `src/llm/providers/*.provider.ts`
-- [ ] **KI-058** 🟢 — `isConfigured` — это «ключ задан», а не «ключ работает» — `src/llm/providers/*.provider.ts`
+- [x] **KI-051** 🟢 — Кэш ограничен одним `runId` — `src/engine/execution-engine.service.ts` (Deferred)
+- [x] **KI-054** 🟢 — Нет агрегата по запуску — `src/db/schema.ts (workflow_runs),` (Deferred)
+- [x] **KI-057** 🟢 — `isConfigured` не подхватывает смену ключа без перезапуска — `src/llm/providers/*.provider.ts` (Deferred)
+- [x] **KI-058** 🟢 — `isConfigured` — это «ключ задан», а не «ключ работает» — `src/llm/providers/*.provider.ts` (Deferred)
 
 ### Спринт 25 (Low)
 
@@ -523,4 +523,5 @@
 | 20 | KI-475, KI-497, KI-509, KI-520 | 1 Fixed (CI-гейт), 3 Deferred | `7a99759` |
 | 21 | KI-533, KI-537, KI-538, KI-661 | 1 Fixed (код+тест), 3 Deferred | `23871ec` |
 | 22 | KI-013, KI-020, KI-021, KI-028 | 3 Fixed, 1 Deferred | `ffc1755` |
-| 23 | KI-029, KI-043, KI-044, KI-045 | 1 Fixed (по факту), 3 Deferred | (текущий) |
+| 23 | KI-029, KI-043, KI-044, KI-045 | 1 Fixed (по факту), 3 Deferred | `141a210` |
+| 24 | KI-051, KI-054, KI-057, KI-058 | 4 Deferred | (текущий) |

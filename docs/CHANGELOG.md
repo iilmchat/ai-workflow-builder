@@ -67,6 +67,10 @@
 
 ### Changed
 
+- **KI-спринт 24** ([отчёт](development/reports/v1.6.0/KI-S24-provider-cache.md)):
+  KI-051/054/057/058 `Deferred` — кэш между запусками, агрегаты стоимости и
+  «горячая» ротация ключей меняют семантику или требуют миграций.
+
 - **KI-спринт 23** ([отчёт](development/reports/v1.6.0/KI-S23-hooks-logs.md)):
   KI-045 закрыт проверкой (Husky уже игнорирует `.husky/_`); KI-029, KI-043,
   KI-044 `Deferred`.
