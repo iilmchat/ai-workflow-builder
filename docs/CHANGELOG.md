@@ -17,6 +17,12 @@
 ---
 ## [Unreleased]
 
+### Changed
+
+- **RoadMap KI** ([`ROADMAP_KI.md`](development/ROADMAP_KI.md)): зафиксирован факт
+  на HEAD `103bdf3` — 62 спринта закрыты, спринты 63–68 сформированы из 24
+  оставшихся Open KI (все Low); логи спринтов 47–62 дополнены коммитами.
+
 ### Fixed
 
 - **KI-спринт 01** ([отчёт](development/reports/v1.6.0/KI-S01-backup-engine-ci.md)):

@@ -1,7 +1,9 @@
 # RoadMap: проверка и исправление открытых KI
 
-> Сгенерировано фактом из `docs/KNOWN_ISSUES.md` на HEAD `16d506f` (v1.6.0).
-> Делайн: **06:00 МСК, 19.11.2026**. Старт: 00:26 МСК.
+> Факт на HEAD `103bdf3` (v1.6.0, 19.11.2026 09:50 МСК): реестр
+> `docs/KNOWN_ISSUES.md` — 657 KI, из них **24 Open** (все 🟢 Low).
+> Выполнено **62 спринта**; спринты **63–68** — оставшиеся Open KI, ждут
+> команды старта. Новых номеров KI после 670 не заведено.
 > Правила: `docs/development/RULES.md` v1.10.0.
 
 ## Порядок и ритм
@@ -15,9 +17,12 @@
 
 ## Сводка
 
-- Всего открытых KI: **272** (🟠 High — 1, 🟡 Medium — 83, 🟢 Low — 188).
-- Спринтов: **68** по 4 KI.
+- Изначально открытых KI: **272** → осталось **24** (все 🟢 Low).
+- Спринтов: **68** по 4 KI; **62 закрыты**, **6 в плане** (63–68).
+- Статусы (grep, RULES 3.20): Fixed 427 (+12 частично), Documented 104
+  (+1 не воспроизводится), Deferred 75, Open 24, Won't Fix 11, Planned 3.
 - Прогресс отмечается галочками в списке ниже; исполнение фиксируется в «Логе спринтов».
+- Спринты 63–68 сформированы из фактически оставшихся Open KI на HEAD `103bdf3`.
 
 ## Спринты
 
@@ -547,19 +552,23 @@
 | 44 | KI-307, KI-308, KI-309, KI-310 | 4 Fixed (autoPan, удалён nodes, конкатенация в спеке, tsconfig.spec); web 644 | `dc1d795` |
 | 45 | KI-311, KI-313, KI-320, KI-321 | 3 Fixed (1 по факту), 1 Documented; SMOKE_CDP § 7, карта типов гейта | `261577a` |
 | 46 | KI-323, KI-324, KI-325, KI-327 | 4 Fixed (SQL CASE version, хэш типа, updatedAt, dev-автологин); web 645 | `40b5e55` |
-| 47 | KI-332, KI-333, KI-335, KI-339 | 4 Fixed (1 по факту; focus-инвалидация, lint, id предшественника); web 646 | (текущий) |
-| 48 | KI-341, KI-342, KI-343, KI-345 | 4 Fixed (outputs {}, Drizzle-ловушка, e2e в CI, dotenv в parity) | (текущий) |
+| 47 | KI-332, KI-333, KI-335, KI-339 | 4 Fixed (1 по факту; focus-инвалидация, lint, id предшественника); web 646 | `3291b0f` |
+| 48 | KI-341, KI-342, KI-343, KI-345 | 4 Fixed (outputs {}, Drizzle-ловушка, e2e в CI, dotenv в parity) | `3291b0f` |
 | 49 | KI-346, KI-350, KI-351, KI-354 | 2 Fixed, 2 Documented; typecheck scripts/drizzle, строгий SSE-зеркало | `3291b0f` |
-| 50 | KI-355, KI-358, KI-359, KI-360 | 1 Fixed, 3 Documented; TerminalRunStatus канонизирован | (текущий) |
-| 51 | KI-374, KI-375, KI-376, KI-388 | 2 Fixed (1 по факту), 2 Documented; бюджет после финала | (текущий) |
-| 52 | KI-389, KI-394, KI-395, KI-396 | 2 Fixed, 2 Documented; DESIGN и памятки по факту | (текущий) |
-| 53 | KI-400, KI-411, KI-422, KI-423 | 4 Fixed (invite 409, runError, env throttle, auth-лимиты); web 647 | (текущий) |
-| 54 | KI-428, KI-429, KI-430, KI-431 | 3 Fixed, 1 Documented; зазор вставки, URI, env-порог кэша | (текущий) |
-| 55 | KI-432, KI-438, KI-441, KI-447 | 2 Fixed, 2 Documented; lipsync-блок, lazy-роуты | (текущий) |
-| 56 | KI-458, KI-473, KI-476, KI-477 | 3 Fixed (1 по факту), 1 Documented; source-only контракт | (текущий) |
-| 57 | KI-480, KI-484, KI-485, KI-486 | 3 Fixed, 1 Documented; env-граница, SQL-тип, имя узла | (текущий) |
-| 58 | KI-487, KI-488, KI-489, KI-490 | 3 Fixed, 1 Documented; env-кросс-чек, ошибки шаблонов, variables | (текущий) |
-| 59 | KI-491, KI-492, KI-493, KI-494 | 3 Fixed, 1 Documented; refresh шаблонов, lease-гонка и очистка | (текущий) |
-| 60 | KI-495, KI-496, KI-498, KI-499 | 2 Fixed (1 по факту), 2 Documented; link-checker в CI | (текущий) |
+| 50 | KI-355, KI-358, KI-359, KI-360 | 1 Fixed, 3 Documented; TerminalRunStatus канонизирован | `7b7b7b0` |
+| 51 | KI-374, KI-375, KI-376, KI-388 | 2 Fixed (1 по факту), 2 Documented; бюджет после финала | `7b7b7b0` |
+| 52 | KI-389, KI-394, KI-395, KI-396 | 2 Fixed, 2 Documented; DESIGN и памятки по факту | `7b7b7b0` |
+| 53 | KI-400, KI-411, KI-422, KI-423 | 4 Fixed (invite 409, runError, env throttle, auth-лимиты); web 647 | `ae12f2a` |
+| 54 | KI-428, KI-429, KI-430, KI-431 | 3 Fixed, 1 Documented; зазор вставки, URI, env-порог кэша | `ae12f2a` |
+| 55 | KI-432, KI-438, KI-441, KI-447 | 2 Fixed, 2 Documented; lipsync-блок, lazy-роуты | `ae12f2a` |
+| 56 | KI-458, KI-473, KI-476, KI-477 | 3 Fixed (1 по факту), 1 Documented; source-only контракт | `ec732fc` |
+| 57 | KI-480, KI-484, KI-485, KI-486 | 3 Fixed, 1 Documented; env-граница, SQL-тип, имя узла | `ec732fc` |
+| 58 | KI-487, KI-488, KI-489, KI-490 | 3 Fixed, 1 Documented; env-кросс-чек, ошибки шаблонов, variables | `ec732fc` |
+| 59 | KI-491, KI-492, KI-493, KI-494 | 3 Fixed, 1 Documented; refresh шаблонов, lease-гонка и очистка | `7a35eaa` |
+| 60 | KI-495, KI-496, KI-498, KI-499 | 2 Fixed (1 по факту), 2 Documented; link-checker в CI | `7a35eaa` |
 | 61 | KI-502, KI-503, KI-504, KI-505 | 1 Fixed, 3 Documented; guard late-response restore | `7a35eaa` |
-| 62 | KI-506, KI-507, KI-508, KI-510 | 1 Fixed, 3 Documented; тесты API-обёрток; сессия завершена | (текущий) |
+| 62 | KI-506, KI-507, KI-508, KI-510 | 1 Fixed, 3 Documented; тесты API-обёрток; сессия завершена | `103bdf3` |
+
+> **Спринты 63–68 не начинались.** Это 24 оставшихся Open KI (все Low),
+> сформированные в разделе «Спринты» по факту на HEAD `103bdf3`. Старт — по
+> команде; дедлайн следующего окна — **06:00 МСК**.
