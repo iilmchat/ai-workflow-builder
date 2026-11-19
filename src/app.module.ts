@@ -44,7 +44,6 @@ import { OrgMembersModule } from './organizations/org-members.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { WorkflowModule } from './workflow/workflow.module.js';
 import { EngineModule } from './engine/engine.module.js';
-import { NodesModule } from './nodes/nodes.module.js';
 // R7.7 (KI-365): OTel-трейсы — @Global(), SDK стартует только при
 // OTEL_ENABLED=true.
 import { ObservabilityModule } from './observability/observability.module.js';
@@ -165,7 +164,6 @@ const WEB_DIST_PATH = join(
     McpModule,
     WorkflowModule,
     EngineModule,
-    NodesModule,
     CostBudgetModule,
     RunsModule,
     // R6.6.1: шаблоны (GET /templates, POST /templates/:id/instantiate).

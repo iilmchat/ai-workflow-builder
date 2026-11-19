@@ -11,7 +11,6 @@
     { "prefix": "mcp" },
     { "prefix": "media" },
     { "prefix": "metrics" },
-    { "prefix": "nodes" },
     { "prefix": "notifications" },
     { "prefix": "runs", "sse": true },
     { "prefix": "templates" },

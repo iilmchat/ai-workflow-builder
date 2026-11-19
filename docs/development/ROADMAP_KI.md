@@ -324,10 +324,10 @@
 
 ### Спринт 44 (Low)
 
-- [ ] **KI-307** 🟢 — `autoPanOnNodeDrag` усиливает координаты узла при drag за край — `web/src/components/Canvas.tsx`
-- [ ] **KI-308** 🟢 — `NodesController` без маршрутов (мёртвый модуль) — `src/nodes/nodes.controller.ts`
-- [ ] **KI-309** 🟢 — Frontend-спек ловит литералы, не конкатенацию — `web/src/lib/api-prefixes.spec.ts`
-- [ ] **KI-310** 🟢 — `web/tsconfig.app.json` (`types: ["vite/client"]`) блокирует `node:*` — `web/tsconfig.app.json`
+- [x] **KI-307** 🟢 — `autoPanOnNodeDrag` усиливает координаты узла при drag за край — `web/src/components/Canvas.tsx`
+- [x] **KI-308** 🟢 — `NodesController` без маршрутов (мёртвый модуль) — `src/nodes/nodes.controller.ts` (удалён)
+- [x] **KI-309** 🟢 — Frontend-спек ловит литералы, не конкатенацию — `web/src/lib/api-prefixes.spec.ts`
+- [x] **KI-310** 🟢 — `web/tsconfig.app.json` (`types: ["vite/client"]`) блокирует `node:*` — `web/tsconfig.app.json` (отдельный tsconfig.spec.json)
 
 ### Спринт 45 (Low)
 
@@ -543,4 +543,5 @@
 | 40 | KI-273, KI-276, KI-277, KI-279 | 4 Fixed (хоткеи, Ctrl+Z, история Load, слоты compare); backend 2154 / web 641 зелёные | `6414e2a` |
 | 41 | KI-281, KI-282, KI-283, KI-285 | 4 Fixed (1 по факту, типы evaluated, явные порты, UI-раскладка); web 643 зелёных | `613908f` |
 | 42 | KI-286, KI-291, KI-292, KI-294 | 3 Fixed (1 по факту), 1 Documented; экспорт graphVersion, лимит имени, SMOKE_CDP | `00f9301` |
-| 43 | KI-295, KI-297, KI-303, KI-305 | 4 Fixed (Async-суффиксы, findShared, inputsMap, пустой подграф); backend 2159 / web 643 | (текущий) |
+| 43 | KI-295, KI-297, KI-303, KI-305 | 4 Fixed (Async-суффиксы, findShared, inputsMap, пустой подграф); backend 2159 / web 643 | `3c3156a` |
+| 44 | KI-307, KI-308, KI-309, KI-310 | 4 Fixed (autoPan, удалён nodes, конкатенация в спеке, tsconfig.spec); web 644 | (текущий) |

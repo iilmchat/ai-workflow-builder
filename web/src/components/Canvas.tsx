@@ -540,6 +540,12 @@ function CanvasInner({ onReady }: CanvasProps) {
           // поэтому `panOnDrag` и `selectionOnDrag` взаимоисключающие.
           panOnDrag={canvasMode === 'pan'}
           selectionOnDrag={canvasMode === 'select'}
+          // KI-307: дефолтный autoPan при перетаскивании узла за край холста
+          // прибавлял к flow-координатам смещение вьюпорта (drag 500 px
+          // превращался в −1300), а при длинном drag значения росли до −21888.
+          // Ограничиваем только autoPan во время drag: ручная панорама
+          // (режим «Рука» и колесо) остаётся доступной.
+          autoPanOnNodeDrag={false}
           // KI-189: привязка к сетке 8×8, направляющие — поверх (см. ниже).
           snapToGrid
           snapGrid={SNAP_GRID}

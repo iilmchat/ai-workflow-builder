@@ -18,6 +18,12 @@ import { API_PREFIXES } from './api-prefixes';
 /** Первый сегмент относительного пути: `'/auth/refresh'`, `` `/runs/${id}` ``. */
 const PATH_SEGMENT_RE = /['"`]\/([a-z][a-z0-9_-]*)(?=[/'"?$`])/g;
 
+/** Комментарии: не являются кодом и не должны создавать «префиксы» (KI-309). */
+const LINE_COMMENT_RE = /(^|\s)\/\/[^\r\n]*/g;
+const BLOCK_COMMENT_RE = /\/\*[\s\S]*?\*\//g;
+/** Склейка строковых литералов: `'/work' + 'flow/items'` → `'/workflow/items'`. */
+const CONCATENATION_RE = /(['"`])([^'"`\r\n]+)\1(?:\s*\+\s*(['"`])([^'"`\r\n]+)\3)+/g;
+
 /** Исходники `web/src/lib` (кроме spec'ов): имя файла → сырой текст. */
 function readLibSources(): Map<string, string> {
   const raw = import.meta.glob('./*.ts', {
@@ -58,13 +64,25 @@ function readViteConfigSource(): string {
  * Служебные и внешние пути не попадают: `/index.html` и `/favicon.ico`
  * отсекаются lookahead'ом (после сегмента идёт `.`, а не `/`, кавычка, `?`
  * или `${`), `https://…` и `./модуль` — тем, что перед `/` нет кавычки или
- * первой идёт точка.
+ * первой идёт точка. Комментарии отбрасываются, а склейка литералов через
+ * `+` нормализуется в одну строку (KI-309).
  *
  * @param source - текст TS-файла
  * @returns список сегментов в порядке появления (с повторами)
  */
 function extractSegments(source: string): string[] {
-  return [...source.matchAll(PATH_SEGMENT_RE)].map((match) => match[1]);
+  const code = source
+    .replace(BLOCK_COMMENT_RE, '')
+    .replace(LINE_COMMENT_RE, '$1')
+    .replace(CONCATENATION_RE, (concatenation) => {
+      const parts = [...concatenation.matchAll(/(['"`])([^'"`]*)\1/g)].map(
+        (match) => match[2] ?? '',
+      );
+
+      return `'${parts.join('')}'`;
+    });
+
+  return [...code.matchAll(PATH_SEGMENT_RE)].map((match) => match[1]);
 }
 
 /** Множество префиксов из реестра. */
@@ -138,6 +156,16 @@ describe('API_PREFIXES (KI-299/072/120)', () => {
       [],
     );
     expect(extractSegments("import { x } from './api'")).toEqual([]);
+    // KI-309: конкатенация литералов — это тот же путь, а комментарии — нет.
+    expect(extractSegments("fetch('/work' + 'flow/items')")).toEqual([
+      'workflow',
+    ]);
+    expect(extractSegments("// fetch('/legacy/items')\nfetch('/runs')")).toEqual(
+      ['runs'],
+    );
+    expect(extractSegments("/* fetch('/legacy/items') */ fetch('/llm')")).toEqual(
+      ['llm'],
+    );
     expect(known.has('llm')).toBe(true);
     expect(known.has('unknown')).toBe(false);
   });

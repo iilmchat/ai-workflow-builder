@@ -27,5 +27,8 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  // KI-310: спекы вынесены в tsconfig.spec.json (там есть @types/node),
+  // чтобы приложение не получило node:* в основной граф типов.
+  "exclude": ["src/**/*.spec.ts", "src/**/*.spec.tsx"]
 }
