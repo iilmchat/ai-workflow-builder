@@ -408,6 +408,19 @@ describe('useWorkflowStore — SSE-события статуса узла (KI-28
     expect(state().nodeErrors.C).toBe(SKIP_REASON);
   });
 
+  it('KI-411: run_started очищает runError прошлой попытки', () => {
+    useWorkflowStore.setState({ runError: 'ошибка первой попытки' });
+
+    state().applyEvent({
+      type: 'run_started',
+      runId: 'run-1',
+      startedAt: ISO_AT,
+    });
+
+    expect(state().runError).toBeNull();
+    expect(state().runStatus).toBe('running');
+  });
+
   it('node_skipped не перетирает ошибку запуска от упавшего узла', () => {
     state().applyEvent({
       type: 'node_failed',

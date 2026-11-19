@@ -247,6 +247,8 @@ describe('isRenderableMediaUrl (KI-378)', () => {
   it.each([
     'http://cdn.example.com/image.png',
     'https://cdn.example.com/image.webp',
+    // KI-430: схема URI регистронезависима.
+    'HTTPS://cdn.example.com/image.png',
   ])('пропускает http(s)-ссылку: %s', (url) => {
     expect(isRenderableMediaUrl(url)).toBe(true);
   });

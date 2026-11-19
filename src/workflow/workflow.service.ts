@@ -768,15 +768,32 @@ export class WorkflowService {
       throw new ConflictException('Пользователь уже участвует в workflow');
     }
 
-    const [created] = await this.db
-      .insert(workflowCollaborators)
-      .values({
-        workflowId: id,
-        userId: dto.userId,
-        role: dto.role,
-        invitedBy: access.userId,
-      })
-      .returning();
+    let created: typeof workflowCollaborators.$inferSelect | undefined;
+
+    try {
+      [created] = await this.db
+        .insert(workflowCollaborators)
+        .values({
+          workflowId: id,
+          userId: dto.userId,
+          role: dto.role,
+          invitedBy: access.userId,
+        })
+        .returning();
+    } catch (error: unknown) {
+      // KI-400: pre-check и INSERT не в транзакции — два параллельных инвайта
+      // могут оба пройти проверку; второй упирается в PK (23505). Для клиента
+      // это тот же конфликт, что и «уже участвует», а не 500.
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === '23505'
+      ) {
+        throw new ConflictException('Пользователь уже участвует в workflow');
+      }
+
+      throw error;
+    }
 
     this.logger.debug(
       `Участник приглашён: workflow=${id}, userId=${dto.userId}, role=${dto.role}`,

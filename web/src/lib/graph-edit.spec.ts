@@ -153,10 +153,10 @@ describe('insertPositionOnEdge: сдвиг в тесной раскладке (K
     );
 
     // Центр связи: x = (240 + 280) / 2 = 260, y = 50.
-    // Сдвиг по Y = 100 / 2 + 40 = 90.
+    // KI-429: сдвиг по Y = 100 / 2 + 100 / 2 (сосед) + 40 = 140.
     expect(position).toEqual({
       x: 260 - 120,
-      y: 50 - 50 + 100 / 2 + INSERT_PERPENDICULAR_GAP,
+      y: 50 - 50 + 100 / 2 + 100 / 2 + INSERT_PERPENDICULAR_GAP,
     });
   });
 
@@ -168,9 +168,9 @@ describe('insertPositionOnEdge: сдвиг в тесной раскладке (K
     );
 
     // Центр связи: x = 120, y = (50 + 250) / 2 = 150.
-    // Сдвиг по X = 240 / 2 + 40 = 160.
+    // KI-429: сдвиг по X = 240/2 + 240/2 (сосед) + 40 = 280.
     expect(position).toEqual({
-      x: 120 - 120 + 240 / 2 + INSERT_PERPENDICULAR_GAP,
+      x: 120 - 120 + 240 / 2 + 240 / 2 + INSERT_PERPENDICULAR_GAP,
       y: 150 - 50,
     });
   });

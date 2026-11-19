@@ -1,9 +1,18 @@
-import { useCallback, useEffect } from 'react';
+import { lazy, Suspense, useCallback, useEffect } from 'react';
 import { Route, Routes, useSearchParams } from 'react-router-dom';
-import { Canvas } from '@/components/Canvas';
 import { LoginPage } from '@/components/auth/LoginPage';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
-import { ShareViewPage } from '@/components/ShareViewPage';
+
+// KI-447: холст и share-страница грузятся по маршруту — на /login они не нужны
+// и не должны тянуть @xyflow/react в стартовый чанк.
+const Canvas = lazy(() =>
+  import('@/components/Canvas').then((module) => ({ default: module.Canvas })),
+);
+const ShareViewPage = lazy(() =>
+  import('@/components/ShareViewPage').then((module) => ({
+    default: module.ShareViewPage,
+  })),
+);
 import { RunResultPanel } from '@/components/RunResultPanel';
 import { useAuthStore } from '@/stores/auth';
 import { Toast } from '@/components/Toast';
@@ -106,7 +115,14 @@ export function App() {
   );
 
   return (
-    <Routes>
+    <Suspense
+      fallback={
+        <div className="flex h-screen w-screen items-center justify-center text-sm text-muted-foreground">
+          …
+        </div>
+      }
+    >
+      <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route
         path="/"
@@ -127,7 +143,8 @@ export function App() {
         }
       />
       {/* R6.2.2: публичный просмотр по share-ссылке — без ProtectedRoute. */}
-      <Route path="/workflow/share/:token" element={<ShareViewPage />} />
-    </Routes>
+        <Route path="/workflow/share/:token" element={<ShareViewPage />} />
+      </Routes>
+    </Suspense>
   );
 }

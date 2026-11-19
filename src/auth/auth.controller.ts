@@ -14,7 +14,11 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
-import { LOGIN_THROTTLE } from '../common/http-throttle.constants.js';
+import {
+  LOGIN_THROTTLE,
+  REFRESH_THROTTLE,
+  REGISTER_THROTTLE,
+} from '../common/http-throttle.constants.js';
 import { parseDurationToMs } from '../common/utils/parse-duration.js';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import {
@@ -58,6 +62,8 @@ export class AuthController {
    */
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
+  // KI-423: 3 регистрации в час с одного IP.
+  @Throttle({ default: REGISTER_THROTTLE })
   async register(
     @Body(ZodValidationPipe.create(RegisterSchema)) dto: RegisterDto,
     @Req() request: Request,
@@ -108,6 +114,8 @@ export class AuthController {
    */
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
+  // KI-423: 30 ротаций в минуту с одного IP.
+  @Throttle({ default: REFRESH_THROTTLE })
   async refresh(
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,

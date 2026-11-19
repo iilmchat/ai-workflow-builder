@@ -387,24 +387,24 @@
 
 ### Спринт 53 (Low)
 
-- [ ] **KI-400** 🟢 — Гонка duplicate-invite → 500 — `src/workflow/workflow.service.ts (inviteCollaboratorAsync)`
-- [ ] **KI-411** 🟢 — `runError` не сбрасывается при успешном retry — `web/src/stores/workflow.ts`
-- [ ] **KI-422** 🟢 — Лимиты @Throttle статические — `src/http-throttle.constants.ts`
-- [ ] **KI-423** 🟢 — POST /auth/register и /auth/refresh без строгого лимита — `src/auth/auth.controller.ts`
+- [x] **KI-400** 🟢 — Гонка duplicate-invite → 500 — `src/workflow/workflow.service.ts (inviteCollaboratorAsync)`
+- [x] **KI-411** 🟢 — `runError` не сбрасывается при успешном retry — `web/src/stores/workflow.ts`
+- [x] **KI-422** 🟢 — Лимиты @Throttle статические — `src/http-throttle.constants.ts`
+- [x] **KI-423** 🟢 — POST /auth/register и /auth/refresh без строгого лимита — `src/auth/auth.controller.ts`
 
 ### Спринт 54 (Low)
 
-- [ ] **KI-428** 🟢 — Cron-очистка media покрыта только unit-тестами — `src/media/media-cleanup.service.spec.ts`
-- [ ] **KI-429** 🟢 — Неполная формула зазора при вставке узла — `web/src/lib/graph-edit.ts`
-- [ ] **KI-430** 🟢 — Регистрозависимость схемы URL — `web/src/types/media.ts`
-- [ ] **KI-431** 🟢 — `PROMPT_CACHE_MIN_TOKENS` не объявлена в `EnvSchema` — `src/config/env.schema.ts`
+- [x] **KI-428** 🟢 — Cron-очистка media покрыта только unit-тестами — `src/media/media-cleanup.service.spec.ts` (Documented)
+- [x] **KI-429** 🟢 — Неполная формула зазора при вставке узла — `web/src/lib/graph-edit.ts`
+- [x] **KI-430** 🟢 — Регистрозависимость схемы URL — `web/src/types/media.ts`
+- [x] **KI-431** 🟢 — `PROMPT_CACHE_MIN_TOKENS` не объявлена в `EnvSchema` — `src/config/env.schema.ts`
 
 ### Спринт 55 (Low)
 
-- [ ] **KI-432** 🟢 — Порог промпт-кэша считается в символах, а не в токенах — `src/llm/providers/anthropic.provider.ts`
-- [ ] **KI-438** 🟢 — Пустой `audioUrl` у lipsync не блокирует Run — `web/src/lib/image-tool-node.ts`
-- [ ] **KI-441** 🟢 — `TRUST_PROXY` не задаёт число хопов / подсети — `src/config/env.schema.ts`
-- [ ] **KI-447** 🟢 — Route-level lazy для Canvas/ShareViewPage — `web/src/App.tsx`
+- [x] **KI-432** 🟢 — Порог промпт-кэша считается в символах, а не в токенах — `src/llm/providers/anthropic.provider.ts` (Documented)
+- [x] **KI-438** 🟢 — Пустой `audioUrl` у lipsync не блокирует Run — `web/src/lib/image-tool-node.ts`
+- [x] **KI-441** 🟢 — `TRUST_PROXY` не задаёт число хопов / подсети — `src/config/env.schema.ts` (Documented)
+- [x] **KI-447** 🟢 — Route-level lazy для Canvas/ShareViewPage — `web/src/App.tsx`
 
 ### Спринт 56 (Low)
 
@@ -553,3 +553,6 @@
 | 50 | KI-355, KI-358, KI-359, KI-360 | 1 Fixed, 3 Documented; TerminalRunStatus канонизирован | (текущий) |
 | 51 | KI-374, KI-375, KI-376, KI-388 | 2 Fixed (1 по факту), 2 Documented; бюджет после финала | (текущий) |
 | 52 | KI-389, KI-394, KI-395, KI-396 | 2 Fixed, 2 Documented; DESIGN и памятки по факту | (текущий) |
+| 53 | KI-400, KI-411, KI-422, KI-423 | 4 Fixed (invite 409, runError, env throttle, auth-лимиты); web 647 | (текущий) |
+| 54 | KI-428, KI-429, KI-430, KI-431 | 3 Fixed, 1 Documented; зазор вставки, URI, env-порог кэша | (текущий) |
+| 55 | KI-432, KI-438, KI-441, KI-447 | 2 Fixed, 2 Documented; lipsync-блок, lazy-роуты | (текущий) |

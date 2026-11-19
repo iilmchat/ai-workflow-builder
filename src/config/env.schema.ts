@@ -945,6 +945,13 @@ export const ThrottlerEnvSchema = z.object({
   THROTTLER_STORAGE: z.enum(['redis', 'memory']).default('redis'),
   /** Префикс ключей счётчиков в Redis (default `throttle:v1`). */
   THROTTLER_KEY_PREFIX: z.string().min(1).default('throttle:v1'),
+  /**
+   * Общий лимит запросов в минуту на маршрут (KI-422, default 300).
+   *
+   * `@Throttle` на конкретных ручках остаётся статическим — он вычисляется
+   * на этапе объявления класса, и его менять из env нельзя.
+   */
+  HTTP_THROTTLE_DEFAULT_LIMIT: z.coerce.number().int().min(1).max(100_000).default(300),
 });
 
 /** Валидированные настройки общего throttler'а (v0.11 S5). */
@@ -1098,6 +1105,13 @@ export const LlmRouterEnvSchema = z.object({
     emptyToUndefined,
     z.string().trim().min(1).max(512).optional(),
   ),
+  /**
+   * Порог промпт-кэша Anthropic в токенах (KI-431, default 1024).
+   *
+   * Раньше переменную читали напрямую через `config.get`, и опечатка в имени
+   * молча откатывала к дефолту. Теперь значение валидируется Zod (RULES 4.5).
+   */
+  PROMPT_CACHE_MIN_TOKENS: z.coerce.number().int().positive().default(1024),
 });
 
 /** Валидированные настройки LLM-роутера (v1.2 S1). */

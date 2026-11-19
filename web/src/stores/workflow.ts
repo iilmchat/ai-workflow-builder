@@ -2885,6 +2885,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       case 'run_started':
         set((state) => ({
           runStatus: 'running',
+          // KI-411: новая попытка начинается с пустого runError — текст прошлого
+          // падения не должен оставаться в сторе после успешного retry.
+          runError: null,
           // Первый старт — попытка 1. Дальше номер уточняется из run_completed
           // (`attemptsMade`): run_started не несёт этой информации, и первое
           // событие может быть пропущено, если клиент подписался позже старта.

@@ -410,6 +410,23 @@ export function TopBar() {
   };
 
   /**
+   * Ищет `lipsync`-узлы без аудио (KI-438). Пустое значение форматной
+   * валидацией KI-424 не считается ошибкой, но backend (KI-369) такой узел
+   * уронит — поэтому блокируем Run заранее.
+   *
+   * @returns подписи узлов без `audioUrl` (пусто — запускать можно)
+   */
+  const findLipsyncNodesWithoutAudio = (): string[] => {
+    const { nodes } = useWorkflowStore.getState();
+
+    return nodes
+      .filter((node): node is ImageToolFlowNode => node.data.kind === 'image_tool')
+      .filter((node) => node.data.operation === 'lipsync')
+      .filter((node) => (readToolAudioUrl(node.data.params) ?? '').trim() === '')
+      .map((node) => nodeLabelOf(node, node.id));
+  };
+
+  /**
    * Сохраняет граф. После первого сохранения id попадает в URL, чтобы
    * страницу можно было перезагрузить и вернуться к тому же workflow.
    */
@@ -583,6 +600,20 @@ export function TopBar() {
         kind: 'error',
         text: t('topbar.audio_url_invalid', {
           nodes: nodesWithInvalidAudioUrl.join(', '),
+        }),
+      });
+
+      return;
+    }
+
+    // KI-438: lipsync без аудио упадёт уже в прогоне — блокируем Run.
+    const lipsyncWithoutAudio = findLipsyncNodesWithoutAudio();
+
+    if (lipsyncWithoutAudio.length > 0) {
+      setNotice({
+        kind: 'error',
+        text: t('topbar.audio_url_missing', {
+          nodes: lipsyncWithoutAudio.join(', '),
         }),
       });
 

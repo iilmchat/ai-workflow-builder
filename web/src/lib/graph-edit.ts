@@ -112,11 +112,15 @@ export function insertPositionOnEdge(
 
   if (Math.hypot(deltaX, deltaY) < TIGHT_EDGE_DISTANCE) {
     if (Math.abs(deltaX) >= Math.abs(deltaY)) {
-      // Горизонтальная связь: уходим вниз, под линию.
-      offsetY = size.height / 2 + INSERT_PERPENDICULAR_GAP;
+      // KI-429: учитываем половину высоты соседа — иначе высокий узел всё
+      // равно перекрывается вставленным.
+      const neighborHalf = Math.max(sourceHeight, targetHeight) / 2;
+
+      offsetY = size.height / 2 + neighborHalf + INSERT_PERPENDICULAR_GAP;
     } else {
-      // Вертикальная связь: уходим вправо, в сторону от линии.
-      offsetX = size.width / 2 + INSERT_PERPENDICULAR_GAP;
+      const neighborHalf = Math.max(sourceWidth, targetWidth) / 2;
+
+      offsetX = size.width / 2 + neighborHalf + INSERT_PERPENDICULAR_GAP;
     }
   }
 

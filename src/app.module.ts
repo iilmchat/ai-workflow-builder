@@ -116,7 +116,8 @@ const WEB_DIST_PATH = join(
           {
             name: 'default',
             ttl: HTTP_THROTTLE_TTL_MS,
-            limit: HTTP_THROTTLE_DEFAULT_LIMIT,
+            // KI-422: общий лимит настраивается из env, без пересборки.
+            limit: config.get<number>('HTTP_THROTTLE_DEFAULT_LIMIT') ?? HTTP_THROTTLE_DEFAULT_LIMIT,
           },
         ],
         // undefined → `@nestjs/throttler` создаст in-memory ThrottlerStorageService.

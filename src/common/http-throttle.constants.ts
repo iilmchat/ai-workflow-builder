@@ -59,3 +59,19 @@ export const SHARE_THROTTLE: HttpThrottleLimit = {
   limit: 5,
   ttl: HTTP_THROTTLE_TTL_MS,
 };
+
+/**
+ * Строгий лимит `POST /auth/register` — 3 регистрации в час с одного IP (KI-423).
+ */
+export const REGISTER_THROTTLE: HttpThrottleLimit = {
+  limit: 3,
+  ttl: 60 * 60 * 1000,
+};
+
+/**
+ * Строгий лимит `POST /auth/refresh` — 30 ротаций в минуту с одного IP (KI-423).
+ */
+export const REFRESH_THROTTLE: HttpThrottleLimit = {
+  limit: 30,
+  ttl: HTTP_THROTTLE_TTL_MS,
+};

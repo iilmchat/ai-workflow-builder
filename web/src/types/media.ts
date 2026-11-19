@@ -178,9 +178,13 @@ const DATA_IMAGE_URL_PREFIX = /^data:image\/(?:png|jpeg|webp|gif);base64,/i;
  * @returns `true`, если это `http(s)`-ссылка или разрешённый `data:image`
  */
 export function isRenderableMediaUrl(url: string): boolean {
+  // KI-430: схема URI регистронезависима (RFC 3986) — `HTTPS://...` тоже
+  // валидная https-ссылка. Данные сравниваем после нормализации префикса.
+  const lower = url.toLowerCase();
+
   return (
-    url.startsWith('https://') ||
-    url.startsWith('http://') ||
+    lower.startsWith('https://') ||
+    lower.startsWith('http://') ||
     DATA_IMAGE_URL_PREFIX.test(url)
   );
 }
