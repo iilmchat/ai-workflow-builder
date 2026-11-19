@@ -149,10 +149,10 @@
 
 ### Спринт 19 (Medium)
 
-- [ ] **KI-436** 🟡 — Agent: hard-cap превышается на один шаг — `src/agent/agent.service.ts`
-- [ ] **KI-449** 🟡 — UI не различает «результат не сохранён» и «ссылка истекла» — `web/src/lib/media-source.ts`
-- [ ] **KI-462** 🟡 — `document_gen` не проверяет лимит 500 блоков (Medium) — `v0.10.x`
-- [ ] **KI-474** 🟡 — UI-селекты форматов у файловых узлов не применяются — `src/engine/node-executors.ts, web/src/components/nodes/*.tsx`
+- [x] **KI-436** 🟡 — Agent: hard-cap превышается на один шаг — `src/agent/agent.service.ts` (Deferred)
+- [x] **KI-449** 🟡 — UI не различает «результат не сохранён» и «ссылка истекла» — `web/src/lib/media-source.ts` (Deferred)
+- [x] **KI-462** 🟡 — `document_gen` не проверяет лимит 500 блоков (Medium) — `v0.10.x` (Deferred)
+- [x] **KI-474** 🟡 — UI-селекты форматов у файловых узлов не применяются — `src/engine/node-executors.ts, web/src/components/nodes/*.tsx` (Deferred)
 
 ### Спринт 20 (Medium)
 
@@ -518,4 +518,5 @@
 | 15 | KI-349, KI-356, KI-357, KI-370 | 1 Fixed (UI), 3 Deferred | `aafa9b2` |
 | 16 | KI-372, KI-379, KI-381, KI-385 | 3 Deferred, 1 Documented | `b60a6aa` |
 | 17 | KI-386, KI-392, KI-393, KI-402 | 1 Fixed (код), 2 Deferred, 1 Documented | `72e7c8b` |
-| 18 | KI-403, KI-404, KI-408, KI-426 | 1 Documented (docs), 3 Deferred | (текущий) |
+| 18 | KI-403, KI-404, KI-408, KI-426 | 1 Documented (docs), 3 Deferred | `4f816ef` |
+| 19 | KI-436, KI-449, KI-462, KI-474 | 4 Deferred | (текущий) |

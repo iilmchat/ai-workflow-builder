@@ -56,6 +56,11 @@
 
 ### Changed
 
+- **KI-спринт 19** ([отчёт](development/reports/v1.6.0/KI-S19-agent-ui-limits.md)):
+  все четыре KI (`KI-436`, `KI-449`, `KI-462`, `KI-474`) `Deferred` — требуют
+  оценок бюджета, расширения контракта `MediaSource`, лимита блоков документа
+  и правок `FilesystemService` соответственно.
+
 - **KI-спринт 18** ([отчёт](development/reports/v1.6.0/KI-S18-vector-agent-s3.md)):
   KI-426 `Documented` — требование lifecycle `Expiration` для S3 зафиксировано
   в `PRODUCTION.md`; KI-403/KI-404/KI-408 `Deferred`.
