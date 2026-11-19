@@ -4,5 +4,15 @@
     "noEmit": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*.spec.ts", "test/**/*.spec.ts"]
+  // KI-343: `-spec.ts` не матчится шаблоном `*.spec.ts`.
+  "include": [
+    "src/**/*.spec.ts",
+    "test/**/*.spec.ts",
+    "test/**/*.e2e-spec.ts",
+    // KI-346: корневые скрипты и сгенерированные миграции тоже проверяются
+    // `pnpm typecheck`.
+    "migrate.ts",
+    "drizzle.config.ts",
+    "drizzle/**/*.ts"
+  ]
 }

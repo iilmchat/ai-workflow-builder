@@ -345,24 +345,24 @@
 
 ### Спринт 47 (Low)
 
-- [ ] **KI-332** 🟢 — TTL кэша workflow-list не видит изменений из другой вкладки — `web/src/lib/workflow-list-cache.ts`
-- [ ] **KI-333** 🟢 — web/ без lint-скрипта и без oxlint в package.json — `web/package.json`
-- [ ] **KI-335** 🟢 — Формула покрытия в KI-314 неточна — `docs/KNOWN_ISSUES.md (KI-314), web/src/components/Canvas.tsx`
-- [ ] **KI-339** 🟢 — `node_runs.error` skipped не называет упавшего предшественника — `src/engine/execution-engine.service.ts`
+- [x] **KI-332** 🟢 — TTL кэша workflow-list не видит изменений из другой вкладки — `web/src/lib/workflow-list-cache.ts`
+- [x] **KI-333** 🟢 — web/ без lint-скрипта и без oxlint в package.json — `web/package.json`
+- [x] **KI-335** 🟢 — Формула покрытия в KI-314 неточна — `docs/KNOWN_ISSUES.md (KI-314), web/src/components/Canvas.tsx` (Fixed по факту)
+- [x] **KI-339** 🟢 — `node_runs.error` skipped не называет упавшего предшественника — `src/engine/execution-engine.service.ts`
 
 ### Спринт 48 (Low)
 
-- [ ] **KI-341** 🟢 — «нет выходов» у узла: `null` у skipped vs `{}` у failed — `src/engine/execution-engine.service.ts`
-- [ ] **KI-342** 🟢 — Двойник Drizzle в тестах не thenable — `src/engine/*.spec.ts, тестовые двойники db`
-- [ ] **KI-343** 🟢 — `tsconfig.spec.json` не покрывает `app.e2e-spec.ts` — `tsconfig.spec.json, test/app.e2e-spec.ts`
-- [ ] **KI-345** 🟢 — `--env-file=.env` на Node 24/Windows даёт `.env: not found` — `package.json (test:parity)`
+- [x] **KI-341** 🟢 — «нет выходов» у узла: `null` у skipped vs `{}` у failed — `src/engine/execution-engine.service.ts`
+- [x] **KI-342** 🟢 — Двойник Drizzle в тестах не thenable — `src/engine/*.spec.ts, тестовые двойники db`
+- [x] **KI-343** 🟢 — `tsconfig.spec.json` не покрывает `app.e2e-spec.ts` — `tsconfig.spec.json, test/app.e2e-spec.ts`
+- [x] **KI-345** 🟢 — `--env-file=.env` на Node 24/Windows даёт `.env: not found` — `package.json (test:parity)`
 
 ### Спринт 49 (Low)
 
-- [ ] **KI-346** 🟢 — `typecheck` не покрывает drizzle/** и корневые скрипты — `tsconfig.spec.json, tsconfig.build.json, drizzle/**`
-- [ ] **KI-350** 🟢 — Фронт-SSE-зеркало мягче бэкенда — `web/src/types/run-stream.ts`
-- [ ] **KI-351** 🟢 — 401-шум в консоли при заходе гостем — `web/src/components/auth/AuthProvider.tsx`
-- [ ] **KI-354** 🟢 — дублирование обхода уровней в engine — `src/engine/execution-engine.service.ts`
+- [x] **KI-346** 🟢 — `typecheck` не покрывает drizzle/** и корневые скрипты — `tsconfig.spec.json, tsconfig.build.json, drizzle/**`
+- [x] **KI-350** 🟢 — Фронт-SSE-зеркало мягче бэкенда — `web/src/types/run-stream.ts`
+- [x] **KI-351** 🟢 — 401-шум в консоли при заходе гостем — `web/src/components/auth/AuthProvider.tsx` (Documented)
+- [x] **KI-354** 🟢 — дублирование обхода уровней в engine — `src/engine/execution-engine.service.ts` (Documented)
 
 ### Спринт 50 (Low)
 
@@ -546,4 +546,7 @@
 | 43 | KI-295, KI-297, KI-303, KI-305 | 4 Fixed (Async-суффиксы, findShared, inputsMap, пустой подграф); backend 2159 / web 643 | `3c3156a` |
 | 44 | KI-307, KI-308, KI-309, KI-310 | 4 Fixed (autoPan, удалён nodes, конкатенация в спеке, tsconfig.spec); web 644 | `dc1d795` |
 | 45 | KI-311, KI-313, KI-320, KI-321 | 3 Fixed (1 по факту), 1 Documented; SMOKE_CDP § 7, карта типов гейта | `261577a` |
-| 46 | KI-323, KI-324, KI-325, KI-327 | 4 Fixed (SQL CASE version, хэш типа, updatedAt, dev-автологин); web 645 | (текущий) |
+| 46 | KI-323, KI-324, KI-325, KI-327 | 4 Fixed (SQL CASE version, хэш типа, updatedAt, dev-автологин); web 645 | `40b5e55` |
+| 47 | KI-332, KI-333, KI-335, KI-339 | 4 Fixed (1 по факту; focus-инвалидация, lint, id предшественника); web 646 | (текущий) |
+| 48 | KI-341, KI-342, KI-343, KI-345 | 4 Fixed (outputs {}, Drizzle-ловушка, e2e в CI, dotenv в parity) | (текущий) |
+| 49 | KI-346, KI-350, KI-351, KI-354 | 2 Fixed, 2 Documented; typecheck scripts/drizzle, строгий SSE-зеркало | (текущий) |

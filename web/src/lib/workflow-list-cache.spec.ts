@@ -3,6 +3,7 @@ import { listWorkflowsAsync, type ApiWorkflow } from './api';
 import {
   getCachedWorkflowList,
   getWorkflowListRevision,
+  installWorkflowListFocusInvalidation,
   invalidateWorkflowListCache,
   loadWorkflowListAsync,
   subscribeWorkflowList,
@@ -46,6 +47,16 @@ describe('workflow-list-cache (KI-302)', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('KI-332: фокус вкладки инвалидирует кэш сразу, без ожидания TTL', () => {
+    installWorkflowListFocusInvalidation();
+    const before = getWorkflowListRevision();
+
+    window.dispatchEvent(new Event('focus'));
+
+    expect(getWorkflowListRevision()).toBe(before + 1);
+    expect(getCachedWorkflowList()).toBeNull();
   });
 
   it('второй вызов берёт список из кэша, а не из сети', async () => {

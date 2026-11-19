@@ -192,7 +192,10 @@ function readRetryOption(
  * Один и тот же текст уходит в `node_runs.error` и в событие `node_skipped`
  * (`reason`), чтобы UI показывал состояние одинаково и из снимка, и из потока.
  */
-const NODE_SKIPPED_ERROR = 'Пропущен: упал предшественник';
+/** KI-339: текст ошибки skipped называет конкретного упавшего предшественника. */
+function skippedError(predecessorId: string): string {
+  return `Пропущен: упал предшественник ${predecessorId}`;
+}
 
 /**
  * Пауза перед повтором узла.
@@ -1982,7 +1985,8 @@ export class ExecutionEngineService {
    * как уровни корневого графа (KI-287/KI-288). Падение узла не прерывает обход:
    * независимые ветки подграфа доигрываются (RULES 4.16), потомки упавшего узла
    * получают `node_runs.status='skipped'` и событие `node_skipped` — с тем же
-   * текстом («Пропущен: упал предшественник»), что и в корневом графе, только с
+   * текстом («Пропущен: упал предшественник <id>», KI-339), что и в корневом
+   * графе, только с
    * префиксованным id (`sub_<nodeId>__<originalId>`, DESIGN v0.8 § 5.3). До
    * KI-337 исключение бросалось на первом же падении, и непройденные узлы
    * подграфа не попадали в `node_runs` вовсе.
@@ -2404,7 +2408,16 @@ export class ExecutionEngineService {
     try {
       await this.db
         .update(nodeRuns)
-        .set({ status: 'failed', error: reason, logs, durationMs, finishedAt: new Date() })
+        // KI-341: «нет выходов» — тот же пустой объект, что у skipped, и не
+        // остатки вывода от предыдущей попытки (KI-047).
+        .set({
+          status: 'failed',
+          error: reason,
+          logs,
+          outputs: {},
+          durationMs,
+          finishedAt: new Date(),
+        })
         .where(eq(nodeRuns.id, nodeRunId));
     } catch (error: unknown) {
       this.logger.error(
@@ -2528,8 +2541,8 @@ export class ExecutionEngineService {
           // колонки по умолчанию) лучше `null` — `collectInputsAsync` и UI
           // работают с `inputs` как с объектом.
           inputs: {},
-          outputs: null,
-          error: NODE_SKIPPED_ERROR,
+          outputs: {},
+          error: skippedError(predecessorId),
           logs: [],
           durationMs: 0,
           startedAt: now,
@@ -2540,8 +2553,8 @@ export class ExecutionEngineService {
           set: {
             status: skippedStatus,
             inputs: {},
-            outputs: null,
-            error: NODE_SKIPPED_ERROR,
+            outputs: {},
+            error: skippedError(predecessorId),
             logs: [],
             durationMs: 0,
             // KI-038: метрики прошлой попытки не должны «прилипать» к пропуску.
@@ -2564,7 +2577,7 @@ export class ExecutionEngineService {
       );
     }
 
-    await this.publishNodeSkippedAsync(runId, node);
+    await this.publishNodeSkippedAsync(runId, node, predecessorId);
   }
 
   /**
@@ -2575,16 +2588,21 @@ export class ExecutionEngineService {
    *
    * @param runId - uuid запуска
    * @param node - пропущенный узел графа
+   * @param predecessorId - id упавшего предшественника (KI-339)
    * @returns промис без значения
    */
-  private async publishNodeSkippedAsync(runId: string, node: NodeDto): Promise<void> {
+  private async publishNodeSkippedAsync(
+    runId: string,
+    node: NodeDto,
+    predecessorId: string,
+  ): Promise<void> {
     try {
       await this.runEvents.publishAsync(runId, {
         type: 'node_skipped',
         runId,
         nodeId: node.id,
         nodeType: node.type,
-        reason: NODE_SKIPPED_ERROR,
+        reason: skippedError(predecessorId),
         skippedAt: new Date().toISOString(),
       });
     } catch (error: unknown) {

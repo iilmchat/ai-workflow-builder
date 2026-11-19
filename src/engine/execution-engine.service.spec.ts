@@ -7,7 +7,7 @@ import {
 } from '../common/http/safe-http.client.js';
 import { NODE_RETRY_DEFAULTS } from '../config/env.schema.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { workflowRuns, type RunStatus } from '../db/schema.js';
+import { nodeRuns, workflowRuns, type RunStatus } from '../db/schema.js';
 import { AgentService } from '../agent/agent.service.js';
 import { DocumentService } from '../documents/document.service.js';
 // v0.12 S1: PDF-рендерер узла document_gen (в этом спеке не выполняется).
@@ -182,6 +182,25 @@ function wherePairs(condition: unknown): Map<string, unknown> {
  * @param runId - uuid запуска, для которого создаётся строка `workflow_runs`
  * @returns двойник БД, строка запуска и массив строк `node_runs`
  */
+/**
+ * Терминал, который двойник Drizzle не поддерживает (KI-342).
+ *
+ * Раньше `await db.insert().values().onConflictDoUpdate(...)` без `.returning()`
+ * молча разрешался в объект-строитель — тест «проходил» по несуществующему
+ * пути. Теперь такой вызов отклоняется, а двойник остаётся thenable.
+ *
+ * @param chain - имя цепочки для сообщения об ошибке
+ * @returns функция `then`, отклоняющая await
+ */
+function unexpectedDrizzleThen(chain: string) {
+  return (
+    _resolve: unknown,
+    reject: (reason: unknown) => void,
+  ): void => {
+    reject(new Error(`Неожиданный терминал Drizzle: ${chain}`));
+  };
+}
+
 function createFakeDb(runId: string) {
   const run: FakeRun = {
     id: runId,
@@ -250,8 +269,10 @@ function createFakeDb(runId: string) {
         };
 
         return {
+          then: unexpectedDrizzleThen('insert().values()'),
           returning: (): Promise<unknown[]> => upsert(),
           onConflictDoUpdate: (config: { set?: Record<string, unknown> }) => ({
+            then: unexpectedDrizzleThen('insert().onConflictDoUpdate()'),
             returning: (): Promise<unknown[]> => upsert(config.set),
           }),
         };
@@ -717,6 +738,14 @@ describe('ExecutionEngineService', () => {
     vi.restoreAllMocks();
   });
 
+  it('KI-342: двойник Drizzle падает на неподдерживаемой цепочке без терминала', async () => {
+    await expect(
+      fake.db
+        .insert(nodeRuns)
+        .values({ runId: RUN_ID, nodeId: 'X', nodeType: 'llm' }),
+    ).rejects.toThrow('Неожиданный терминал Drizzle');
+  });
+
   it('выполняет линейный граф A→B→C и публикует полную цепочку событий', async () => {
     const graph: GraphDto = {
       nodes: [
@@ -886,8 +915,8 @@ describe('ExecutionEngineService', () => {
 
     const skippedC = fake.rows[2];
 
-    expect(skippedC.error).toBe('Пропущен: упал предшественник');
-    expect(skippedC.outputs).toBeNull();
+    expect(skippedC.error).toBe('Пропущен: упал предшественник B');
+    expect(skippedC.outputs).toEqual({});
     expect(skippedC.inputs).toEqual({});
     expect(skippedC.durationMs).toBe(0);
     expect(skippedC.startedAt).toBeInstanceOf(Date);
@@ -913,7 +942,7 @@ describe('ExecutionEngineService', () => {
       runId: RUN_ID,
       nodeId: 'C',
       nodeType: 'llm',
-      reason: 'Пропущен: упал предшественник',
+      reason: 'Пропущен: упал предшественник B',
       skippedAt: expect.any(String),
     });
     // KI-060: запуск закрыт в БД, но run_completed отдаёт процессор.
@@ -1190,7 +1219,7 @@ describe('ExecutionEngineService', () => {
 
     // До KI-288 здесь был `prompt: null` и падение самого узла.
     expect(dependentRow?.inputs).toEqual({});
-    expect(dependentRow?.error).toBe('Пропущен: упал предшественник');
+    expect(dependentRow?.error).toBe('Пропущен: упал предшественник источник');
 
     // В outputs запуска попадают только успешно завершившиеся узлы.
     expect(fake.run.outputs).toEqual({
@@ -1278,7 +1307,7 @@ describe('ExecutionEngineService', () => {
     const rowB = fake.rows.find((row) => row.nodeId === 'B');
 
     expect(rowB?.status).toBe('skipped');
-    expect(rowB?.outputs).toBeNull();
+    expect(rowB?.outputs).toEqual({});
     expect(fake.run.outputs).toEqual({});
     expect(fake.run.status).toBe('failed');
   });
@@ -1459,7 +1488,7 @@ describe('ExecutionEngineService', () => {
     // KI-289: узел закрыт failed, а не completed с { status, body }.
     expect(rowA?.status).toBe('failed');
     expect(rowA?.error).toBe('HTTP 404');
-    expect(rowA?.outputs).toBeNull();
+    expect(rowA?.outputs).toEqual({});
     // KI-288: потомок упавшего http-узла не запускается вовсе.
     expect(rowB?.status).toBe('skipped');
     expect(fake.run.outputs).toEqual({});
@@ -3151,9 +3180,9 @@ describe('ExecutionEngineService', () => {
         status: 'skipped',
         nodeType: 'llm',
         inputs: {},
-        outputs: null,
+        outputs: {},
         durationMs: 0,
-        error: 'Пропущен: упал предшественник',
+        error: 'Пропущен: упал предшественник sub_sub-1__SB',
       });
 
       // Событие — тот же контракт `node_skipped`, отличается только
@@ -3165,7 +3194,7 @@ describe('ExecutionEngineService', () => {
         runId: RUN_ID,
         nodeId: 'sub_sub-1__SC',
         nodeType: 'llm',
-        reason: 'Пропущен: упал предшественник',
+        reason: 'Пропущен: упал предшественник sub_sub-1__SB',
         skippedAt: expect.any(String),
       });
 
@@ -3330,7 +3359,7 @@ describe('ExecutionEngineService', () => {
       });
       expect(rowOf('sub_sub_sub-1__O1__I3')).toMatchObject({
         status: 'skipped',
-        error: 'Пропущен: упал предшественник',
+        error: 'Пропущен: упал предшественник sub_sub_sub-1__O1__I2',
       });
 
       // Внешний подграф: узел-ссылка O1 упал → его потомок O2 skipped.

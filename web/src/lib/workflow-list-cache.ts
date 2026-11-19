@@ -173,3 +173,31 @@ export function subscribeWorkflowList(listener: () => void): () => void {
 export function getWorkflowListRevision(): number {
   return revision;
 }
+
+/** Слушатели фокуса ставятся один раз за вкладку. */
+let focusInvalidationInstalled = false;
+
+/**
+ * Инвалидирует кэш при возврате во вкладку (KI-332).
+ *
+ * TTL проверяется только в момент запроса: если пользователь ушёл в другую
+ * вкладку, создал там workflow и вернулся, селект `sub_workflow` показывал бы
+ * старый список до истечения TTL. Фокус/видимость — явный сигнал «данные
+ * могли измениться», поэтому кэш сбрасывается сразу.
+ */
+export function installWorkflowListFocusInvalidation(): void {
+  if (focusInvalidationInstalled || typeof document === 'undefined') {
+    return;
+  }
+
+  focusInvalidationInstalled = true;
+
+  const onVisible = (): void => {
+    if (document.visibilityState === 'visible') {
+      invalidateWorkflowListCache();
+    }
+  };
+
+  document.addEventListener('visibilitychange', onVisible);
+  window.addEventListener('focus', onVisible);
+}

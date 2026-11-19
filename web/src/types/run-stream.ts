@@ -41,10 +41,11 @@ export type NodeRunStatus = z.infer<typeof NodeRunStatusSchema>;
 
 /** Запуск внутри snapshot-сообщения. */
 export const RunSnapshotSchema = z.object({
-  id: z.string(),
-  workflowId: z.string(),
+  // KI-350: mirror backend z.uuid()/z.iso.datetime(), не з.string().
+  id: z.uuid(),
+  workflowId: z.uuid(),
   status: RunStatusSchema,
-  createdAt: z.string(),
+  createdAt: z.iso.datetime(),
   /**
    * Текст ошибки запуска — зеркало backend `error` (KI-347).
    *
@@ -104,10 +105,10 @@ export const NodeRunSnapshotSchema = z.object({
   /** Своя (стабильная) ссылка на media-результат (R7.8, KI-362). */
   storedUrl: z.string().nullable().optional(),
   /** Когда `storedUrl` перестанет быть доступной (R7.8). */
-  storedExpiresAt: z.string().nullable().optional(),
-  durationMs: z.number().int().nullable(),
-  startedAt: z.string().nullable(),
-  finishedAt: z.string().nullable(),
+  storedExpiresAt: z.iso.datetime().nullable().optional(),
+  durationMs: z.number().int().nonnegative().nullable(),
+  startedAt: z.iso.datetime().nullable(),
+  finishedAt: z.iso.datetime().nullable(),
 });
 
 /** Сообщение-снимок: приходит первым в потоке (KI-049). */
@@ -122,24 +123,24 @@ export const RunEventSchema = z.discriminatedUnion('type', [
   /** Запуск перешёл в статус `running`. */
   z.object({
     type: z.literal('run_started'),
-    runId: z.string(),
-    startedAt: z.string(),
+    runId: z.uuid(),
+    startedAt: z.iso.datetime(),
   }),
   /** Узел начал выполнение. */
   z.object({
     type: z.literal('node_started'),
-    runId: z.string(),
+    runId: z.uuid(),
     nodeId: z.string(),
     nodeType: z.string(),
-    startedAt: z.string(),
+    startedAt: z.iso.datetime(),
   }),
   /** Узел успешно завершён. */
   z.object({
     type: z.literal('node_completed'),
-    runId: z.string(),
+    runId: z.uuid(),
     nodeId: z.string(),
     outputs: z.record(z.string(), z.unknown()),
-    durationMs: z.number().int(),
+    durationMs: z.number().int().nonnegative(),
     // KI-149 (KI-075): метрики приходят и в событии (backend v0.7.1). Без этих
     // полей Zod их отбрасывает (strip), и панель видит стоимость только из
     // snapshot после F5. Поля необязательные — старые события валидны.
@@ -153,16 +154,16 @@ export const RunEventSchema = z.discriminatedUnion('type', [
     // сразу, не дожидаясь F5. R7.8 (KI-362): своя ссылка на media-результат.
     cacheReadTokens: z.number().int().nonnegative().nullable().optional(),
     cacheCreationTokens: z.number().int().nonnegative().nullable().optional(),
-    cacheSavingsUsd: z.number().nullable().optional(),
+    cacheSavingsUsd: z.number().nonnegative().nullable().optional(),
     storedUrl: z.string().nullable().optional(),
-    storedExpiresAt: z.string().nullable().optional(),
+    storedExpiresAt: z.iso.datetime().nullable().optional(),
     logs: z.array(z.string()).nullable().optional(),
-    finishedAt: z.string(),
+    finishedAt: z.iso.datetime(),
   }),
   /** Узел упал. */
   z.object({
     type: z.literal('node_failed'),
-    runId: z.string(),
+    runId: z.uuid(),
     nodeId: z.string(),
     error: z.string(),
     costRub: z.string().nullable().optional(),
@@ -170,7 +171,7 @@ export const RunEventSchema = z.discriminatedUnion('type', [
     tokensOut: z.number().int().nonnegative().nullable().optional(),
     costUsd: z.string().nullable().optional(),
     logs: z.array(z.string()).nullable().optional(),
-    finishedAt: z.string(),
+    finishedAt: z.iso.datetime(),
   }),
   /**
    * Узел пропущен: движок его не выполнял, потому что упал (или был пропущен
@@ -182,18 +183,18 @@ export const RunEventSchema = z.discriminatedUnion('type', [
    */
   z.object({
     type: z.literal('node_skipped'),
-    runId: z.string(),
+    runId: z.uuid(),
     nodeId: z.string(),
     nodeType: z.string(),
     /** Причина пропуска — тот же текст, что записан в `node_runs.error`. */
     reason: z.string(),
     /** ISO-время пропуска на backend (поле `skippedAt`). */
-    skippedAt: z.string(),
+    skippedAt: z.iso.datetime(),
   }),
   /** Запуск завершён — успешно, с ошибкой или отменён (v1.4.0 S1). */
   z.object({
     type: z.literal('run_completed'),
-    runId: z.string(),
+    runId: z.uuid(),
     // `cancelled` (v1.4.0 S1) — финальный статус отменённого запуска; приходит
     // тем же событием, что `completed`/`failed`, чтобы UI закрыл поток и
     // показал «Отменён» без отдельного канала.
@@ -204,7 +205,7 @@ export const RunEventSchema = z.discriminatedUnion('type', [
     attempts: z.number().int().nullable(),
     /** KI-060: `true` — финал, поток можно закрывать (retry не будет). */
     final: z.boolean(),
-    finishedAt: z.string(),
+    finishedAt: z.iso.datetime(),
   }),
 ]);
 

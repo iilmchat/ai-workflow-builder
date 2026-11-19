@@ -10,6 +10,7 @@ import { Toast } from '@/components/Toast';
 import { Toolbar } from '@/components/Toolbar';
 import { TopBar } from '@/components/TopBar';
 import { initPushNotificationsAsync } from '@/hooks/usePushNotifications';
+import { installWorkflowListFocusInvalidation } from '@/lib/workflow-list-cache';
 import {
   useWorkflowStore,
   type FindCenterHandler,
@@ -51,6 +52,12 @@ export function App() {
   // (KI-074: модель по умолчанию = llmModels[0]), поэтому грузим его на старте.
   useEffect(() => {
     void useWorkflowStore.getState().loadLlmModelsAsync();
+  }, []);
+
+  // KI-332: список workflow мог измениться в другой вкладке — сбрасываем кэш
+  // при возврате в эту, не дожидаясь TTL.
+  useEffect(() => {
+    installWorkflowListFocusInvalidation();
   }, []);
 
   // Каталог media-моделей — та же причина: image-узел создаётся сразу с
