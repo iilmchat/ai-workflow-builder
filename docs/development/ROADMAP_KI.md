@@ -275,10 +275,10 @@
 
 ### Спринт 37 (Low)
 
-- [ ] **KI-249** 🟢 — Union `ReasoningEffort` продублирован в трёх местах — `src/llm/llm-provider.interface.ts,`
-- [ ] **KI-250** 🟢 — Placeholder «Max tokens» без пояснения — `web/src/components/nodes/LLMNode.tsx,`
-- [ ] **KI-251** 🟢 — Нет unit-теста на `nodeDataFromApi` (LLM-поля) — `web/src/stores/workflow.ts,`
-- [ ] **KI-252** 🟢 — Узлы из Toolbar не попадают на сетку 8×8 — `web/src/stores/workflow.ts (addNode, addNodeOnEdge)`
+- [x] **KI-249** 🟢 — Union `ReasoningEffort` продублирован в трёх местах — `src/llm/llm-provider.interface.ts,` (Fixed: 6 режимов + паритет-тест)
+- [x] **KI-250** 🟢 — Placeholder «Max tokens» без пояснения — `web/src/components/nodes/LLMNode.tsx,`
+- [x] **KI-251** 🟢 — Нет unit-теста на `nodeDataFromApi` (LLM-поля) — `web/src/stores/workflow.ts,`
+- [x] **KI-252** 🟢 — Узлы из Toolbar не попадают на сетку 8×8 — `web/src/stores/workflow.ts (addNode, addNodeOnEdge)`
 
 ### Спринт 38 (Low)
 
@@ -536,4 +536,5 @@
 | 33 | KI-210, KI-211, KI-212, KI-218 | 4 Fixed (3 по факту, 1 тесты) | `b1ad05b` |
 | 34 | KI-219, KI-222, KI-225, KI-226 | 1 Fixed (тесты), 2 Deferred, 1 Documented | `0f10da0` |
 | 35 | KI-227, KI-229, KI-230, KI-235 | 1 Fixed (мёртвый код), 3 Deferred | `9f5eb21` |
-| 36 | KI-237, KI-242, KI-243, KI-248 | 1 Fixed (UI), 3 Deferred | (текущий) |
+| 36 | KI-237, KI-242, KI-243, KI-248 | 1 Fixed (UI), 3 Deferred | `40941d1` |
+| 37 | KI-249, KI-250, KI-251, KI-252 | 4 Fixed (3 с кодом + паритет-тест, i18n, 3 теста сетки); backend 2150 / web 607 зелёные | (текущий) |

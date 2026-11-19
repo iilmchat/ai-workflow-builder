@@ -20,6 +20,7 @@ import { NodeCatalogPopover } from '@/components/NodeCatalogPopover';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
 import { useDebouncedEffect } from '@/hooks/use-debounced-effect';
 import { useHotkeys } from '@/hooks/use-hotkeys';
+import { SNAP_GRID } from '@/lib/canvas-grid';
 import { FIT_SELECTION_OPTIONS, FIT_VIEW_OPTIONS } from '@/lib/fit-view-options';
 import { computeGraphHash } from '@/lib/graph-hash';
 import { findGuides, type HelperLines } from '@/lib/graph-guides';
@@ -30,9 +31,6 @@ import {
 import { canInsertOnEdge } from '@/lib/node-registry';
 import { useWorkflowStore, type CanvasMode, type FindCenterHandler, type Position } from '@/stores/workflow';
 import { useTranslation } from 'react-i18next';
-
-/** Шаг сетки привязки узлов (KI-189). */
-const SNAP_GRID: [number, number] = [8, 8];
 
 /** Допуск совпадения центров для направляющих (KI-189), px. */
 const GUIDE_TOLERANCE = 4;

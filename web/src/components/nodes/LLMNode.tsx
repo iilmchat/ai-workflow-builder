@@ -7,6 +7,7 @@ import { useNodeDataHistory } from '@/hooks/use-node-data-history';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
 import {
   MAX_TOKENS_LIMIT,
+  REASONING_EFFORTS,
   validateMaxTokensOverride,
   validateReasoningEffort,
 } from '@/lib/llm-node-fields';
@@ -128,11 +129,14 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
   // R6.3.2 (KI-193): переключатель режима показываем только моделям, которые
   // backend помечает как способные к reasoning.
   const supportsReasoning = selected?.supportsReasoning === true;
-  // Подсказка лимита: дефолт модели (KI-183), иначе — общий текст i18n.
+  // Подсказка лимита: дефолт модели (KI-183) подписываем как «по умолчанию»
+  // (KI-250), иначе — общий текст без числа.
   const maxTokensPlaceholder =
     selected?.defaultMaxTokens === undefined
-      ? t('node.llm.maxTokens.placeholder')
-      : String(selected.defaultMaxTokens);
+      ? t('node.llm.maxTokens.placeholderGeneric')
+      : t('node.llm.maxTokens.placeholder', {
+          value: selected.defaultMaxTokens,
+        });
 
   return (
     <>
@@ -250,9 +254,13 @@ export function LLMNode({ id, data }: NodeProps<LlmFlowNode>) {
               })
             }
           >
-            <option value="off">{t('node.llm.reasoning.off')}</option>
-            <option value="medium">{t('node.llm.reasoning.medium')}</option>
-            <option value="high">{t('node.llm.reasoning.high')}</option>
+            {/* KI-249: варианты строятся из общего списка, чтобы UI не отстал
+                от backend-типа (иначе Load терял бы неизвестные режимы). */}
+            {REASONING_EFFORTS.map((effort) => (
+              <option key={effort} value={effort}>
+                {t(`node.llm.reasoning.${effort}`)}
+              </option>
+            ))}
           </select>
         )}
 

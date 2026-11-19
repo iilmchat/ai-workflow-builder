@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getWorkflowAsync, type ApiWorkflow } from '@/lib/api';
 import type { ApiGraphNode } from '@/lib/api';
 import { useWorkflowStore } from './workflow';
+import { REASONING_EFFORTS } from '@/lib/llm-node-fields';
 import type { NodeType } from '@/types/graph';
 
 /**
@@ -198,6 +199,101 @@ describe('nodeDataFromApi — Load узлов R6.5.2', () => {
       method: 'GET',
       url: '',
       headers: { B: 'ok' },
+    });
+  });
+
+  it('llm: переносит prompt/systemPrompt/reasoningEffort/maxTokensOverride', async () => {
+    vi.mocked(getWorkflowAsync).mockResolvedValue({
+      id: 'wf-llm-1',
+      userId: 'user-smoke',
+      name: 'llm',
+      version: 1,
+      edges: [],
+      nodes: [
+        {
+          id: 'llm-1',
+          type: 'llm',
+          position: AT_ZERO,
+          data: {
+            model: 'gpt-4o',
+            prompt: 'Вопрос пользователя',
+            systemPrompt: 'Ты помощник',
+            // KI-249: расширенные режимы больше не теряются при Load.
+            reasoningEffort: 'low',
+            maxTokensOverride: 4096,
+          },
+        },
+      ],
+    });
+
+    await state().loadWorkflowAsync('wf-llm-1');
+
+    expect(state().nodes[0]?.data).toEqual({
+      kind: 'llm',
+      model: 'gpt-4o',
+      prompt: 'Вопрос пользователя',
+      systemPrompt: 'Ты помощник',
+      reasoningEffort: 'low',
+      maxTokensOverride: 4096,
+    });
+  });
+
+  it('llm: все шесть режимов reasoning переживают Load (KI-249/251)', async () => {
+    for (const effort of REASONING_EFFORTS) {
+      useWorkflowStore.setState({ nodes: [], edges: [] });
+      vi.mocked(getWorkflowAsync).mockResolvedValue({
+        id: `wf-llm-${effort}`,
+        userId: 'user-smoke',
+        name: 'llm-effort',
+        version: 1,
+        edges: [],
+        nodes: [
+          {
+            id: `llm-${effort}`,
+            type: 'llm',
+            position: AT_ZERO,
+            data: { prompt: 'x', reasoningEffort: effort },
+          },
+        ],
+      });
+
+      await state().loadWorkflowAsync(`wf-llm-${effort}`);
+
+      expect(state().nodes[0]?.data, effort).toMatchObject({
+        reasoningEffort: effort,
+      });
+    }
+  });
+
+  it('llm: старый value → prompt, мусор отбрасывается (KI-251)', async () => {
+    vi.mocked(getWorkflowAsync).mockResolvedValue({
+      id: 'wf-llm-2',
+      userId: 'user-smoke',
+      name: 'llm-мусор',
+      version: 1,
+      edges: [],
+      nodes: [
+        {
+          id: 'llm-2',
+          type: 'llm',
+          position: AT_ZERO,
+          data: {
+            model: 42,
+            value: 'старый промпт',
+            systemPrompt: 7,
+            reasoningEffort: 'ultra',
+            maxTokensOverride: -1,
+          },
+        },
+      ],
+    });
+
+    await state().loadWorkflowAsync('wf-llm-2');
+
+    expect(state().nodes[0]?.data).toEqual({
+      kind: 'llm',
+      model: '',
+      prompt: 'старый промпт',
     });
   });
 
@@ -621,5 +717,60 @@ describe('vector/memory — createNode и Load (R7.4a, KI-128)', () => {
       key: 'profile',
       value: 'Аня',
     });
+  });
+});
+
+describe('KI-252: новые узлы выравниваются по сетке 8×8', () => {
+  beforeEach(() => {
+    useWorkflowStore.setState({
+      nodes: [],
+      edges: [],
+      past: [],
+      future: [],
+      notice: null,
+      isLoading: false,
+    });
+    vi.mocked(getWorkflowAsync).mockReset();
+  });
+
+  it('addNode: позиция из Toolbar округляется до шага сетки', () => {
+    state().addNode('text', { x: 13, y: 200.5 });
+
+    expect(state().nodes[0]?.position).toEqual({ x: 16, y: 200 });
+  });
+
+  it('addNodeOnEdge: вставленный в связь узел тоже попадает на сетку', async () => {
+    vi.mocked(getWorkflowAsync).mockResolvedValue({
+      id: 'wf-grid',
+      userId: 'user-smoke',
+      name: 'grid',
+      version: 1,
+      edges: [{ id: 'edge-1', source: 'n1', target: 'n2' }],
+      nodes: [
+        {
+          id: 'n1',
+          type: 'text',
+          position: { x: 0, y: 0 },
+          data: { value: 'a' },
+        },
+        {
+          id: 'n2',
+          type: 'llm',
+          position: { x: 401, y: 203 },
+          data: { prompt: 'b' },
+        },
+      ],
+    });
+
+    await state().loadWorkflowAsync('wf-grid');
+    expect(state().addNodeOnEdge('edge-1', 'llm')).toBe(true);
+
+    const inserted = state().nodes.find(
+      (node) => node.id !== 'n1' && node.id !== 'n2',
+    );
+
+    expect(inserted).toBeDefined();
+    expect((inserted?.position?.x ?? NaN) % 8).toBe(0);
+    expect((inserted?.position?.y ?? NaN) % 8).toBe(0);
   });
 });

@@ -9,6 +9,7 @@ import {
 } from '@xyflow/react';
 import { create } from 'zustand';
 import i18n from '@/i18n';
+import { snapToGridPosition } from '@/lib/canvas-grid';
 import {
   ApiError,
   createRunAsync,
@@ -2221,7 +2222,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       const generationType = generationTypeOf(type);
       const node = createNode(
         type,
-        position,
+        // KI-252: новые узлы приходят из Toolbar с дробными координатами —
+        // выравниваем их по той же сетке 8×8, что и перетаскивание в Canvas.
+        snapToGridPosition(position),
         state.nodes.length,
         state.llmModels[0]?.id,
         // KI-154: не mediaModels[0] (там bgremover — image-to-image),
@@ -2379,18 +2382,22 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     // KI-263: `insertPositionOnEdge` центрирует узел на связи, а в тесной
     // раскладке (центры ближе 300 px) дополнительно сдвигает его перпендикулярно
     // связи — иначе карточка 240 px накрыла бы источник и приёмник.
-    const position = insertPositionOnEdge(
-      {
-        position: source?.position ?? { x: 0, y: 0 },
-        width: source?.measured?.width,
-        height: source?.measured?.height,
-      },
-      {
-        position: target?.position ?? { x: 0, y: 0 },
-        width: target?.measured?.width,
-        height: target?.measured?.height,
-      },
-      size,
+    // KI-252: центр связи почти всегда имеет дробные координаты — новый
+    // узел и выглядел «не по сетке», хотя snapToGrid у React Flow включён.
+    const position = snapToGridPosition(
+      insertPositionOnEdge(
+        {
+          position: source?.position ?? { x: 0, y: 0 },
+          width: source?.measured?.width,
+          height: source?.measured?.height,
+        },
+        {
+          position: target?.position ?? { x: 0, y: 0 },
+          width: target?.measured?.width,
+          height: target?.measured?.height,
+        },
+        size,
+      ),
     );
 
     const generationType = generationTypeOf(type);

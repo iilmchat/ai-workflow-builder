@@ -1,4 +1,7 @@
 import type { Node } from '@xyflow/react';
+// KI-249: тип режима reasoning живёт в одном месте — в фронтенд-источнике
+// рантайм-валидации (`@/lib/llm-node-fields`), а не дублируется литералами.
+import type { ReasoningEffort } from '@/lib/llm-node-fields';
 
 /**
  * Дискриминированный union данных узла по `kind`.
@@ -210,7 +213,7 @@ export interface LlmNodeData extends Record<string, unknown> {
    * Поле показывается только для моделей с `supportsReasoning`; `'off'` —
    * «не передавать провайдеру».
    */
-  reasoningEffort?: 'off' | 'medium' | 'high';
+  reasoningEffort?: ReasoningEffort;
   /** Override лимита токенов ответа (R6.3.2, KI-183); пусто — дефолт модели. */
   maxTokensOverride?: number;
 }

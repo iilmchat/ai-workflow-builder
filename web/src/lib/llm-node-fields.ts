@@ -1,10 +1,20 @@
 /**
- * Режимы reasoning, которые понимает backend (R6.3.1, KI-193).
+ * Режимы reasoning, которые понимает backend (R6.3.1, KI-193, KI-246, KI-249).
  *
  * Список — единственный источник и для типа, и для рантайм-валидации данных,
- * пришедших из БД (`data.reasoningEffort` не типизирован).
+ * пришедших из БД (`data.reasoningEffort` не типизирован). Состав сверяется с
+ * backend-типом `ReasoningEffort` паритет-тестом
+ * `src/llm/reasoning-effort-contract.spec.ts`, поэтому добавление режима на
+ * одной стороне не должно оставаться незамеченным.
  */
-export const REASONING_EFFORTS = ['off', 'medium', 'high'] as const;
+export const REASONING_EFFORTS = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+] as const;
 
 /** Режим reasoning LLM-узла. */
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];

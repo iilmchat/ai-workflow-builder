@@ -1,15 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_TOKENS_LIMIT,
+  REASONING_EFFORTS,
   validateMaxTokensOverride,
   validateReasoningEffort,
 } from './llm-node-fields';
 
 describe('validateReasoningEffort (R6.3.2)', () => {
-  it('принимает три поддерживаемых режима', () => {
-    expect(validateReasoningEffort('off')).toBe('off');
-    expect(validateReasoningEffort('medium')).toBe('medium');
-    expect(validateReasoningEffort('high')).toBe('high');
+  it('принимает все шесть режимов backend-типа (KI-249)', () => {
+    for (const effort of REASONING_EFFORTS) {
+      expect(validateReasoningEffort(effort)).toBe(effort);
+    }
+
+    expect(REASONING_EFFORTS).toEqual([
+      'off',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+    ]);
   });
 
   it('отбрасывает неизвестные строки и не-строки', () => {
