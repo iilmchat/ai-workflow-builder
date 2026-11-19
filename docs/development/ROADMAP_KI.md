@@ -107,10 +107,10 @@
 
 ### Спринт 13 (Medium)
 
-- [ ] **KI-278** 🟡 — NodePortContract: 1 вход / 1 выход на тип — `src/engine/node-ports.ts, src/engine/engine.service.ts`
-- [ ] **KI-280** 🟡 — http-узел полностью не ретраится — `src/engine/execution-engine.service.ts,`
-- [ ] **KI-284** 🟡 — Вставка compare в связь теряет операнды — `web/src/stores/workflow.ts (addNodeOnEdge),`
-- [ ] **KI-304** 🟡 — Узлы подграфа видны в `node_runs`/SSE под префиксными id — `src/engine/execution-engine.service.ts,`
+- [x] **KI-278** 🟡 — NodePortContract: 1 вход / 1 выход на тип — `src/engine/node-ports.ts, src/engine/engine.service.ts` (Deferred)
+- [x] **KI-280** 🟡 — http-узел полностью не ретраится — `src/engine/execution-engine.service.ts,`
+- [x] **KI-284** 🟡 — Вставка compare в связь теряет операнды — `web/src/stores/workflow.ts (addNodeOnEdge),` (Deferred)
+- [x] **KI-304** 🟡 — Узлы подграфа видны в `node_runs`/SSE под префиксными id — `src/engine/execution-engine.service.ts,` (Deferred)
 
 ### Спринт 14 (Medium)
 
@@ -512,4 +512,5 @@
 | 09 | KI-145, KI-170, KI-184, KI-191 | 1 Fixed, 2 Deferred, 1 Documented | `da82928` |
 | 10 | KI-203, KI-209, KI-216, KI-223 | 3 Fixed (2 с кодом), 1 Deferred | `f3e53ab` |
 | 11 | KI-224, KI-231, KI-239, KI-240 | 2 Fixed (frontend), 2 Deferred | `0903ec7` |
-| 12 | KI-241, KI-244, KI-269, KI-275 | 2 Fixed (2 с кодом), 1 Deferred, 1 Documented | (текущий) |
+| 12 | KI-241, KI-244, KI-269, KI-275 | 2 Fixed (2 с кодом), 1 Deferred, 1 Documented | `0bf2e80` |
+| 13 | KI-278, KI-280, KI-284, KI-304 | 1 Fixed (код+тест), 3 Deferred | (текущий) |

@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S13 | KI-280 ретраи GET/HEAD при 429/5xx и таймауте (+тест); KI-278/284/304 Deferred (per-handle контракты и SSE подграфов) | 2026-11-19 | [KI-S13-http-retry-ports.md](v1.6.0/KI-S13-http-retry-ports.md) |
 | v1.6.0 | KI-S12 | KI-269 /engine/sort исключает аннотации (+тест), KI-241 валидация share-графа Zod; KI-244 Deferred, KI-275 Documented | 2026-11-19 | [KI-S12-split-validation.md](v1.6.0/KI-S12-split-validation.md) |
 | v1.6.0 | KI-S11 | KI-231 Web Lock для кросс-табной ротации refresh, KI-224 повтор logout; KI-239/KI-240 Deferred (share-контракт и read-only карточки) | 2026-11-19 | [KI-S11-multitab-logout.md](v1.6.0/KI-S11-multitab-logout.md) |
 | v1.6.0 | KI-S10 | KI-216 family-revocation refresh-токенов (+тест), KI-223 bootstrap не очищает сессию при сетевой ошибке; KI-203 Deferred, KI-209 Fixed | 2026-11-19 | [KI-S10-auth-fk-bootstrap.md](v1.6.0/KI-S10-auth-fk-bootstrap.md) |

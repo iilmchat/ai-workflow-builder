@@ -24,6 +24,7 @@ import {
   type SubWorkflowRecord,
 } from './node-executors.js';
 import { NotFoundException } from '@nestjs/common';
+import { RetryableNodeException } from './errors.js';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import type { GraphDto } from './dto/index.js';
@@ -250,6 +251,32 @@ describe('node-executors', () => {
           client,
         ),
       ).rejects.toThrow('HTTP 503');
+    });
+
+    it('KI-280: GET с 5xx — retryable, POST с 5xx — нет', async () => {
+      const getClient = createHttpClient(() => transportResponse(503, 'boom'));
+
+      await expect(
+        executeHttpNode(
+          { method: 'GET', url: 'https://example.com/flaky', failOnHttpError: true },
+          {},
+          getClient.client,
+        ),
+      ).rejects.toBeInstanceOf(RetryableNodeException);
+
+      const postClient = createHttpClient(() => transportResponse(503, 'boom'));
+
+      const error: unknown = await executeHttpNode(
+        { method: 'POST', url: 'https://example.com/flaky', failOnHttpError: true },
+        {},
+        postClient.client,
+      ).then(
+        () => null,
+        (reason: unknown) => reason,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(RetryableNodeException);
     });
 
     it('KI-289: текст ошибки без тела и заголовков ответа (RULES 5.9)', async () => {

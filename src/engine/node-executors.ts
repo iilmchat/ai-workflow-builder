@@ -45,7 +45,10 @@ import { PDF_MIME_TYPE } from '../documents/pdf-renderer.service.js';
 // documents (покрыт S2-тестами), исполнитель только вызывает его. Цикла нет:
 // `document-template.service` импортирует `engine/errors`, а не этот файл.
 import { resolveTemplateVariables } from '../documents/document-template.service.js';
-import { NodeDataValidationException } from './errors.js';
+import {
+  NodeDataValidationException,
+  RetryableNodeException,
+} from './errors.js';
 import {
   MCP_MAX_TOOLS_PER_NODE_LIMIT,
   MCP_SERVER_NAME,
@@ -1510,7 +1513,14 @@ export async function executeHttpNode(
     response = await httpClient.fetchAsync(request);
   } catch (error: unknown) {
     if (isAbortLikeError(error)) {
-      throw new Error(`Узел http: запрос прерван по таймауту ${timeoutMs} мс`);
+      const message = `Узел http: запрос прерван по таймауту ${timeoutMs} мс`;
+
+      // KI-280: GET/HEAD идемпотентны — таймаут безопасно повторить.
+      if (parsed.method === 'GET') {
+        throw new RetryableNodeException('http', message, { cause: error });
+      }
+
+      throw new Error(message);
     }
 
     throw error;
@@ -1519,7 +1529,19 @@ export async function executeHttpNode(
   // KI-289: явный заказ «4xx/5xx — это падение». Сравнение с `true` строгое:
   // отсутствие поля (старые графы) и `false` сохраняют прежнее поведение.
   if (parsed.failOnHttpError === true && response.status >= 400) {
-    throw new Error(`HTTP ${response.status}`);
+    const message = `HTTP ${response.status}`;
+
+    // KI-280: повторяем только транзиентные статусы идемпотентных методов.
+    // POST/PUT/DELETE не ретраятся во избежание дублирования эффектов.
+    const retryable =
+      parsed.method === 'GET' &&
+      (response.status === 429 || response.status >= 500);
+
+    if (retryable) {
+      throw new RetryableNodeException('http', message);
+    }
+
+    throw new Error(message);
   }
 
   return { status: response.status, body: response.body };

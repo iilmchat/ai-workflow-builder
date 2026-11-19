@@ -30,6 +30,8 @@
 
 ### Fixed
 
+- **KI-280:** идемпотентный HTTP-узел (GET) ретраится при 429/5xx и таймауте;
+  POST/PUT/DELETE остаются неповторяемыми.
 - **KI-269:** `POST /engine/sort` исключает узлы-аннотации и связи с ними —
   порядок совпадает с `/engine/plan`.
 - **KI-241:** публичный граф по share-ссылке валидируется Zod-схемами узлов и
@@ -49,6 +51,10 @@
   (+3 теста в `src/llm/provider-errors.spec.ts`).
 
 ### Changed
+
+- **KI-спринт 13** ([отчёт](development/reports/v1.6.0/KI-S13-http-retry-ports.md)):
+  KI-278/KI-284/KI-304 `Deferred` — требуют per-handle контракта портов и
+  изменения SSE-контракта для подграфов.
 
 - **KI-спринт 12** ([отчёт](development/reports/v1.6.0/KI-S12-split-validation.md)):
   KI-244 `Deferred` (каталог Anthropic и паритет web), KI-275 `Documented`
