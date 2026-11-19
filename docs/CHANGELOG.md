@@ -30,6 +30,7 @@
 
 ### Fixed
 
+- **KI-222:** тесты env-схемы для `AUTH_DISABLED=''` и `'garbage'` (108 passed).
 - **KI-218:** юнит-тесты `parseDurationToMs` (все единицы, пробелы, bad format).
 - **KI-208:** удалён неиспользуемый `@nestjs/passport` из зависимостей (−5 пакетов).
 - **KI-173:** `pickDefaultMediaModel` пропускает `deprecated`-модели (+тест,
@@ -75,6 +76,9 @@
   по образу job `web` в CI (проверено: 598 тестов зелёные).
 
 ### Changed
+
+- **KI-спринт 34** ([отчёт](development/reports/v1.6.0/KI-S34-auth-env.md)):
+  KI-219/KI-225 `Deferred`, KI-226 `Documented`.
 
 - **KI-спринт 33** ([отчёт](development/reports/v1.6.0/KI-S33-docs-tests.md)):
   KI-210/KI-211/KI-212 закрыты по факту (DESIGN, правила ведения, git note),

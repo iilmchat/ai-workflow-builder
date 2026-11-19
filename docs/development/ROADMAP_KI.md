@@ -254,10 +254,10 @@
 
 ### Спринт 34 (Low)
 
-- [ ] **KI-219** 🟢 — `refresh_tokens` не хранит контекст отзыва — `src/db/schema.ts`
-- [ ] **KI-222** 🟢 — Env-схема не покрыта кейсами `AUTH_DISABLED=''` и `'garbage'` — `src/config/env.schema.spec.ts`
-- [ ] **KI-225** 🟢 — Неточный маппинг 400 в LoginPage — `web/src/components/auth/LoginPage.tsx`
-- [ ] **KI-226** 🟢 — Красный 401 в консоли на неаутентифицированном заходе — `src/auth/auth.controller.ts (POST /auth/refresh),`
+- [x] **KI-219** 🟢 — `refresh_tokens` не хранит контекст отзыва — `src/db/schema.ts` (Deferred)
+- [x] **KI-222** 🟢 — Env-схема не покрыта кейсами `AUTH_DISABLED=''` и `'garbage'` — `src/config/env.schema.spec.ts`
+- [x] **KI-225** 🟢 — Неточный маппинг 400 в LoginPage — `web/src/components/auth/LoginPage.tsx` (Deferred)
+- [x] **KI-226** 🟢 — Красный 401 в консоли на неаутентифицированном заходе — `src/auth/auth.controller.ts (POST /auth/refresh),` (Documented)
 
 ### Спринт 35 (Low)
 
@@ -533,4 +533,5 @@
 | 30 | KI-144, KI-146, KI-153, KI-161 | 2 Documented, 2 Deferred | `46463de` |
 | 31 | KI-171, KI-172, KI-173, KI-177 | 2 Fixed (1 код+тест), 2 Deferred | `bf45116` |
 | 32 | KI-178, KI-194, KI-207, KI-208 | 2 Fixed (1 по факту), 2 Deferred | `d954b29` |
-| 33 | KI-210, KI-211, KI-212, KI-218 | 4 Fixed (3 по факту, 1 тесты) | (текущий) |
+| 33 | KI-210, KI-211, KI-212, KI-218 | 4 Fixed (3 по факту, 1 тесты) | `b1ad05b` |
+| 34 | KI-219, KI-222, KI-225, KI-226 | 1 Fixed (тесты), 2 Deferred, 1 Documented | (текущий) |

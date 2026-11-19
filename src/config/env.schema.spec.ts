@@ -425,6 +425,19 @@ describe('AUTH_DISABLED в production (KI-213)', () => {
 
     expect(parsed.AUTH_DISABLED).toBeUndefined();
   });
+
+  // KI-222: пустая строка — «не задано», мусор — ошибка fail-fast.
+  it('пустая строка AUTH_DISABLED трактуется как отсутствие', () => {
+    const parsed = EnvSchema.parse({ ...baseEnv, AUTH_DISABLED: '' });
+
+    expect(parsed.AUTH_DISABLED).toBeUndefined();
+  });
+
+  it('невалидное значение AUTH_DISABLED отвергается', () => {
+    expect(() =>
+      EnvSchema.parse({ ...baseEnv, AUTH_DISABLED: 'garbage' }),
+    ).toThrow();
+  });
 });
 
 describe('COOKIE_SECURE в production (KI-220)', () => {
