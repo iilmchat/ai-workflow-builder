@@ -774,3 +774,33 @@ describe('KI-252: новые узлы выравниваются по сетке
     expect((inserted?.position?.y ?? NaN) % 8).toBe(0);
   });
 });
+
+describe('KI-254: Ctrl+D не переключает панель результата', () => {
+  beforeEach(() => {
+    useWorkflowStore.setState({
+      nodes: [],
+      edges: [],
+      past: [],
+      future: [],
+      notice: null,
+      isLoading: false,
+    });
+  });
+
+  it('selectedNodeId остаётся на оригинале, копия выделяется визуально', () => {
+    state().addNode('text', AT_ZERO);
+    const originalId = state().nodes[0]?.id ?? '';
+    state().setSelectedNodeId(originalId);
+
+    state().duplicateNodes([originalId]);
+
+    const nodes = state().nodes;
+    const original = nodes.find((node) => node.id === originalId);
+    const copy = nodes.find((node) => node.id !== originalId);
+
+    expect(nodes).toHaveLength(2);
+    expect(state().selectedNodeId).toBe(originalId);
+    expect(original?.selected).toBe(true);
+    expect(copy?.selected).toBe(true);
+  });
+});

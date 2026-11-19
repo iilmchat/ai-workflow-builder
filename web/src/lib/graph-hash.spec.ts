@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { computeGraphHash } from './graph-hash';
 import type { AppNode } from '@/types/graph';
 import type { Edge } from '@xyflow/react';
@@ -53,5 +53,22 @@ describe('computeGraphHash (KI-195)', () => {
     const selected = { ...plain, selected: true } as AppNode;
 
     expect(computeGraphHash([selected], [])).toBe(computeGraphHash([plain], []));
+  });
+
+  it('кэширует хэш по ссылкам на nodes/edges (KI-253)', () => {
+    const nodes = [node('a', 'x')];
+    const edges = [edge('e1')];
+    const stringify = vi.spyOn(JSON, 'stringify');
+
+    computeGraphHash(nodes, edges);
+    computeGraphHash(nodes, edges);
+    // Два вызова с теми же массивами → одна сериализация.
+    expect(stringify).toHaveBeenCalledTimes(1);
+
+    // Новый массив узлов — граф изменился, хэш пересчитан.
+    computeGraphHash([...nodes], edges);
+    expect(stringify).toHaveBeenCalledTimes(2);
+
+    stringify.mockRestore();
   });
 });

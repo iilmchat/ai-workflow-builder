@@ -282,10 +282,10 @@
 
 ### Спринт 38 (Low)
 
-- [ ] **KI-253** 🟢 — Хэш графа считается на любом изменении стора — `web/src/components/Canvas.tsx,`
-- [ ] **KI-254** 🟢 — После Ctrl+D панель результата переключается на копию — `web/src/stores/workflow.ts (duplicateNodes)`
-- [ ] **KI-255** 🟢 — `structuredClone` в `duplicateNodes` упадёт на несериализуемых полях — `web/src/lib/graph-edit.ts`
-- [ ] **KI-262** 🟢 — `canBeInsertedOnEdge` не проверяется против фактических Handle — `web/src/lib/node-registry.ts,`
+- [x] **KI-253** 🟢 — Хэш графа считается на любом изменении стора — `web/src/components/Canvas.tsx,` (Fixed: WeakMap-кэш)
+- [x] **KI-254** 🟢 — После Ctrl+D панель результата переключается на копию — `web/src/stores/workflow.ts (duplicateNodes)`
+- [x] **KI-255** 🟢 — `structuredClone` в `duplicateNodes` упадёт на несериализуемых полях — `web/src/lib/graph-edit.ts`
+- [x] **KI-262** 🟢 — `canBeInsertedOnEdge` не проверяется против фактических Handle — `web/src/lib/node-registry.ts,` (Fixed: рендер-тест + text)
 
 ### Спринт 39 (Low)
 
@@ -537,4 +537,5 @@
 | 34 | KI-219, KI-222, KI-225, KI-226 | 1 Fixed (тесты), 2 Deferred, 1 Documented | `0f10da0` |
 | 35 | KI-227, KI-229, KI-230, KI-235 | 1 Fixed (мёртвый код), 3 Deferred | `9f5eb21` |
 | 36 | KI-237, KI-242, KI-243, KI-248 | 1 Fixed (UI), 3 Deferred | `40941d1` |
-| 37 | KI-249, KI-250, KI-251, KI-252 | 4 Fixed (3 с кодом + паритет-тест, i18n, 3 теста сетки); backend 2150 / web 607 зелёные | (текущий) |
+| 37 | KI-249, KI-250, KI-251, KI-252 | 4 Fixed (3 с кодом + паритет-тест, i18n, 3 теста сетки); backend 2150 / web 607 зелёные | `89eafbc` |
+| 38 | KI-253, KI-254, KI-255, KI-262 | 4 Fixed (кэш хэша, Ctrl+D, клон данных, Handle-гейт); web 633 зелёных | (текущий) |

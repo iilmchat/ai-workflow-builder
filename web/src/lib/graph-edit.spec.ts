@@ -70,6 +70,34 @@ describe('cloneNodesForDuplicate (KI-191)', () => {
     // Функция работает только с узлами: рёбра в неё не передаются вовсе.
     expect(copy).not.toHaveProperty('edges');
   });
+
+  it('не падает на функции в data: structuredClone → JSON-fallback (KI-255)', () => {
+    const original = {
+      ...node('a', 0, 0),
+      data: { kind: 'text', value: 'a', onAction: () => undefined },
+    } as AppNode;
+
+    const [copy] = cloneNodesForDuplicate([original], ['a'], idSequence());
+
+    expect(copy).toBeDefined();
+    expect(copy?.data).toMatchObject({ kind: 'text', value: 'a' });
+    expect(copy?.data).not.toHaveProperty('onAction');
+  });
+
+  it('сохраняет циклические ссылки через structuredClone (KI-255)', () => {
+    const shared: Record<string, unknown> = { name: 'узел' };
+    shared['self'] = shared;
+    const original = {
+      ...node('a', 0, 0),
+      data: { kind: 'text', value: 'a', shared },
+    } as AppNode;
+
+    const [copy] = cloneNodesForDuplicate([original], ['a'], idSequence());
+    const copiedShared = copy?.data['shared'] as Record<string, unknown>;
+
+    expect(copiedShared).not.toBe(shared);
+    expect(copiedShared['self']).toBe(copiedShared);
+  });
 });
 
 describe('insertPositionOnEdge (KI-260)', () => {

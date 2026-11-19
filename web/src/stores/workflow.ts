@@ -2475,10 +2475,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
       return {
         nodes: [
-          ...state.nodes.map((node) => ({ ...node, selected: false })),
+          // KI-254: не снимаем выделение с оригинала и не переводим
+          // `selectedNodeId` на копию — иначе панель результата показывает
+          // «пустой» только что скопированный узел. Копии тоже выделяем,
+          // поэтому визуально Ctrl+D по-прежнему выглядит как «создал копию».
+          ...state.nodes,
           ...copies,
         ],
-        selectedNodeId: copies[0]?.id ?? state.selectedNodeId,
       };
     }),
 

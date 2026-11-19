@@ -127,6 +127,39 @@ export function insertPositionOnEdge(
 }
 
 /**
+ * Глубоко копирует `data` узла с защитой от несериализуемых полей (KI-255).
+ *
+ * `structuredClone` быстрее и сохраняет циклические ссылки, но бросает
+ * `DataCloneError` на функциях, Symbol и DOM-узлах. Тогда пробуем JSON-клон
+ * (теряет функции и `undefined`), а если и он не подошёл — поверхностную
+ * копию: дублирование не должно ронять редактор из-за мусора в графе.
+ *
+ * @param data - данные узла из недоверенного графа
+ * @returns независимая копия данных
+ */
+function cloneNodeData(data: Record<string, unknown>): Record<string, unknown> {
+  try {
+    return structuredClone(data);
+  } catch {
+    try {
+      const parsed: unknown = JSON.parse(JSON.stringify(data));
+
+      if (
+        parsed !== null &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed)
+      ) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Последний fallback — поверхностная копия ниже.
+    }
+
+    return { ...data };
+  }
+}
+
+/**
  * Готовит копии узлов для дублирования (KI-191).
  *
  * Логика вынесена из стора в чистую функцию: так её можно покрыть тестами без
@@ -159,7 +192,7 @@ export function cloneNodesForDuplicate(
             y: node.position.y + offset,
           },
           // Данные копируем глубоко: иначе правка копии меняла бы оригинал.
-          data: structuredClone(node.data),
+          data: cloneNodeData(node.data),
           selected: true,
         }) as AppNode,
     );

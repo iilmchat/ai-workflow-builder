@@ -281,8 +281,9 @@ export const NODE_REGISTRY = {
     icon: '📝',
     category: 'input',
     component: TextNode,
-    // Входного порта нет: у TextNode только `text-output` (source).
-    canBeInsertedOnEdge: false,
+    // KI-349 добавил `text-input` (target): узел можно вставить в связь.
+    // Раньше реестр противоречил фактическому Handle — поймано тестом KI-262.
+    canBeInsertedOnEdge: true,
     capabilities: { externalState: false, userConfig: false },
   },
   llm: {

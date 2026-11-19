@@ -135,8 +135,10 @@ describe('NODE_REGISTRY — четыре типа R6.5.2', () => {
       expect(canInsertOnEdge(type), type).toBe(true);
     }
 
-    // Text и comment вставлять в связь нельзя — входных портов у них нет.
-    expect(canInsertOnEdge('text')).toBe(false);
+    // KI-349/262: у TextNode появился target-хендл `text-input`, поэтому
+    // флаг реестра исправлен на true (проверяется рендером в
+    // `node-registry-handles.spec.tsx`). У comment портов нет.
+    expect(canInsertOnEdge('text')).toBe(true);
     expect(canInsertOnEdge('comment')).toBe(false);
   });
 
