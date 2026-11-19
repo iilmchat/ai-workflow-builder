@@ -6,6 +6,7 @@ import {
   handleIdToOutputPort,
   inferDefaultOutputPort,
   inferInputPortName,
+  resolveCompareInputKey,
 } from './node-ports.js';
 
 /** Результат проверки графа: ошибки блокируют запуск, warnings — нет. */
@@ -225,6 +226,9 @@ export class EngineService {
     // Индекс «id узла → узел»: нужен, чтобы вывести выходной порт источника
     // (KI-022) без повторного прохода по массиву узлов на каждую связь.
     const nodesById = new Map(executableNodes.map((node) => [node.id, node]));
+    // KI-279: compare не имеет контракта портов, поэтому слоты a/b назначаем
+    // сами — по порядку входящих связей, без опоры на targetHandle.
+    const compareSlots = new Map<string, Set<string>>();
 
     for (const edge of index.edges) {
       const plan = executionMap[edge.target];
@@ -237,10 +241,20 @@ export class EngineService {
         // имя порта ('prompt'/'text'), а не UI-id хендла ('text-input'). Для
         // неизвестного типа контракта нет, поэтому работает прежний fallback
         // (KI-003): targetHandle → sourceHandle → edge.id.
-        const inputKey =
-          targetNode && NODE_PORT_CONTRACT[targetNode.type]
-            ? inferInputPortName(targetNode.type)
-            : (edge.targetHandle ?? edge.sourceHandle ?? edge.id);
+        let inputKey: string;
+
+        if (targetNode?.type === 'compare') {
+          const used = compareSlots.get(edge.target) ?? new Set<string>();
+
+          inputKey = resolveCompareInputKey(edge.targetHandle, used);
+          used.add(inputKey);
+          compareSlots.set(edge.target, used);
+        } else {
+          inputKey =
+            targetNode && NODE_PORT_CONTRACT[targetNode.type]
+              ? inferInputPortName(targetNode.type)
+              : (edge.targetHandle ?? edge.sourceHandle ?? edge.id);
+        }
 
         plan.inputs[inputKey] = {
           fromNode: edge.source,

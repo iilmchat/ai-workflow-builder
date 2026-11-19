@@ -7,7 +7,7 @@ import {
 import type { ApiGraphNode } from '@/lib/api';
 import { useWorkflowStore } from './workflow';
 import { REASONING_EFFORTS } from '@/lib/llm-node-fields';
-import type { NodeType } from '@/types/graph';
+import type { AppNode, NodeType } from '@/types/graph';
 
 /**
  * Заглушка i18n: jsdom настроен (KI-155), но тест проверяет стор, а не
@@ -860,5 +860,74 @@ describe('KI-267/270: диагностика Load и DTO создания', () =
     expect(payload).toBeDefined();
     expect(payload).not.toHaveProperty('userId');
     expect(payload).toMatchObject({ name: 'Новый', nodes: [], edges: [] });
+  });
+});
+
+describe('KI-273/277: хоткеи и история Load', () => {
+  beforeEach(() => {
+    useWorkflowStore.setState({
+      nodes: [],
+      edges: [],
+      past: [],
+      future: [],
+      currentWorkflowId: null,
+      selectedNodeId: null,
+      notice: null,
+      isLoading: false,
+    });
+  });
+
+  it('Ctrl+A / Ctrl+C / Ctrl+V создаёт копии со сдвигом', () => {
+    state().addNode('text', { x: 0, y: 0 });
+    const originalId = state().nodes[0]?.id ?? '';
+
+    state().selectAllNodes();
+    expect(state().nodes[0]?.selected).toBe(true);
+
+    state().copySelectedNodes();
+    state().pasteNodes();
+
+    const copy = state().nodes.find((node) => node.id !== originalId);
+
+    expect(state().nodes).toHaveLength(2);
+    expect(copy?.position).toEqual({ x: 30, y: 30 });
+    expect(copy?.data).toEqual({ kind: 'text', value: '' });
+    expect(copy?.data).not.toBe(state().nodes[0]?.data);
+  });
+
+  it('Ctrl+Shift+Backspace чистит prompt выделенных узлов', () => {
+    state().addNode('llm', AT_ZERO);
+    const original = state().nodes[0] as AppNode;
+    const patched = {
+      ...original,
+      data: { ...original.data, prompt: 'старый запрос' },
+    } as AppNode;
+    useWorkflowStore.setState({ nodes: [patched] });
+
+    state().clearSelectedNodesPrompt();
+
+    expect(state().nodes[0]?.data).toMatchObject({ prompt: '' });
+    expect(state().past.length).toBeGreaterThan(0);
+  });
+
+  it('Load очищает историю undo/redo (KI-277)', async () => {
+    useWorkflowStore.setState({
+      past: [{ nodes: [], edges: [] }],
+      future: [{ nodes: [], edges: [] }],
+    });
+    vi.mocked(getWorkflowAsync).mockResolvedValue({
+      id: 'wf-load-history',
+      userId: 'user-smoke',
+      name: 'load',
+      version: 1,
+      edges: [],
+      nodes: [],
+    });
+
+    await state().loadWorkflowAsync('wf-load-history');
+
+    expect(state().past).toEqual([]);
+    expect(state().future).toEqual([]);
+    expect(state().canUndo()).toBe(false);
   });
 });

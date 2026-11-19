@@ -137,7 +137,7 @@ export function insertPositionOnEdge(
  * @param data - данные узла из недоверенного графа
  * @returns независимая копия данных
  */
-function cloneNodeData(data: Record<string, unknown>): Record<string, unknown> {
+export function cloneNodeData(data: Record<string, unknown>): Record<string, unknown> {
   try {
     return structuredClone(data);
   } catch {

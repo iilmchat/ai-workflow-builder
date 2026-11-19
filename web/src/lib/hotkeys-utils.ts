@@ -215,3 +215,21 @@ export function isInputElement(
 
   return EDITABLE_TAGS.includes((element.tagName ?? '').toUpperCase());
 }
+
+/**
+ * Разрешает `Ctrl+Z` из поля ввода **внутри узла** (KI-276).
+ *
+ * Хук по умолчанию не перехватывает клавиши из полей ввода, поэтому в
+ * `textarea` узла браузер отменял последний введённый символ, а не действие
+ * графа.
+ * Этот предикат — точечное исключение: только поля внутри карточки узла
+ * React Flow. Поиск в TopBar и другие поля остаются за браузером.
+ *
+ * @param element - активный элемент документа (или `null`)
+ * @returns `true`, если откат графа должен сработать даже в поле ввода
+ */
+export function allowUndoInNodeField(
+  element: Element | null | undefined,
+): boolean {
+  return element?.closest('.react-flow__node') != null;
+}

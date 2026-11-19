@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  allowUndoInNodeField,
   bindingPriority,
   isInputElement,
   matchesHotkey,
@@ -204,5 +205,32 @@ describe('isInputElement (KI-186)', () => {
 
   it('регистр тега не важен', () => {
     expect(isInputElement({ tagName: 'input' })).toBe(true);
+  });
+});
+
+describe('allowUndoInNodeField (KI-276)', () => {
+  it('пропускает Ctrl+Z только из поля внутри карточки узла', () => {
+    const inside = document.createElement('textarea');
+    const node = document.createElement('div');
+
+    node.className = 'react-flow__node';
+    node.append(inside);
+    document.body.append(node);
+
+    expect(allowUndoInNodeField(inside)).toBe(true);
+    expect(allowUndoInNodeField(node)).toBe(true);
+
+    node.remove();
+  });
+
+  it('не трогает поля вне узла (поиск в TopBar и т.п.)', () => {
+    const outside = document.createElement('input');
+
+    document.body.append(outside);
+
+    expect(allowUndoInNodeField(outside)).toBe(false);
+    expect(allowUndoInNodeField(null)).toBe(false);
+
+    outside.remove();
   });
 });

@@ -30,6 +30,13 @@
 
 ### Fixed
 
+- **KI-273:** хоткеи Ctrl+A/C/V/S и Ctrl+Shift+Backspace (буфер узлов, вставка
+  со сдвигом, сохранение, очистка prompt).
+- **KI-276:** Ctrl+Z работает из полей внутри карточки узла (`allow` только для
+  `.react-flow__node`), не затрагивая поиск в шапке.
+- **KI-277:** Load очищает историю undo/redo («Load = новый документ»).
+- **KI-279:** `compare` получает слоты a/b по порядку связей даже без
+  `targetHandle` (новый `resolveCompareInputKey`).
 - **KI-267:** `loadWorkflowAsync` логирует ошибку схемы через `console.warn`
   `[loadWorkflow]` — диагностика Load больше не зависит только от notice.
 - **KI-270:** удалён мёртвый `userId: 'demo-user'` из DTO `POST /workflow`
@@ -108,6 +115,11 @@
   в [памятке](development/SMOKE_CDP.md); скрипты остаются вне репо.
 
 ### Changed
+
+- **KI-спринты 38–40** ([отчёт](development/reports/v1.6.0/KI-S38-S40-graph-ui-hotkeys.md)):
+  12 KI закрыты (11 Fixed, 1 Documented) — кэш хэша, Ctrl+D, клон данных,
+  Handle-гейт, диагностика Load, DTO создания, fatal SSE, хоткеи и слоты
+  `compare`.
 
 - **KI-спринт 37** ([отчёт](development/reports/v1.6.0/KI-S37-reasoning-llm-ui-grid.md)):
   KI-249/250/251/252 `Fixed` — 6 режимов reasoning вместо трёх, подписанный

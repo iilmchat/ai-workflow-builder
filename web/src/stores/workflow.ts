@@ -109,6 +109,7 @@ import {
   validateMaxTokensPerStep,
 } from '@/lib/agent-node-fields';
 import {
+  cloneNodeData,
   cloneNodesForDuplicate,
   insertPositionOnEdge,
   NODE_DEFAULT_HEIGHT,
@@ -557,6 +558,14 @@ const FIELD_EDIT_COALESCE_MS = 1000;
 let lastFieldEditAt = 0;
 
 /**
+ * Буфер узлов для Ctrl+C/Ctrl+V (KI-273).
+ *
+ * Живёт на уровне модуля, а не в сторе: копирование не должно вызывать
+ * ре-рендер подписчиков. Буфер — только в памяти вкладки, после F5 пуст.
+ */
+let nodeClipboard: AppNode[] = [];
+
+/**
  * Роль текущего пользователя в workflow (KI-397, R7.6).
  *
  * `owner` — владелец, `editor` — правка и запуск, `viewer` — только чтение.
@@ -829,6 +838,14 @@ export interface WorkflowState extends HistorySlice {
   clearPendingEdge: () => void;
   /** Дублировать узлы со сдвигом; связи не копируются (KI-191). */
   duplicateNodes: (ids: string[]) => void;
+  /** Выделить все узлы и связи (Ctrl+A, KI-273). */
+  selectAllNodes: () => void;
+  /** Скопировать выделенные узлы в буфер вкладки (Ctrl+C, KI-273). */
+  copySelectedNodes: () => void;
+  /** Вставить буфер со сдвигом и новыми id (Ctrl+V, KI-273). */
+  pasteNodes: () => void;
+  /** Очистить `prompt` у выделенных узлов (Ctrl+Shift+Backspace, KI-273). */
+  clearSelectedNodesPrompt: () => void;
   /**
    * Сбрасывает редактор к пустому новому workflow (A3): чистит граф, историю
    * запуска и выбранный узел, возвращает имя по умолчанию.
@@ -2460,6 +2477,94 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   requestInsertOnEdge: (edgeId) => set({ pendingEdgeId: edgeId }),
 
+  selectAllNodes: () => {
+    get().pushHistory();
+
+    set((state) => ({
+      nodes: state.nodes.map((node) => ({ ...node, selected: true })),
+      edges: state.edges.map((edge) => ({ ...edge, selected: true })),
+    }));
+  },
+
+  copySelectedNodes: () => {
+    const { nodes, selectedNodeId } = get();
+
+    nodeClipboard = nodes
+      .filter((node) => node.selected === true || node.id === selectedNodeId)
+      .map(
+        (node) =>
+          ({
+            ...node,
+            data: cloneNodeData(node.data),
+          }) as AppNode,
+      );
+  },
+
+  pasteNodes: () => {
+    const state = get();
+
+    if (nodeClipboard.length === 0) {
+      return;
+    }
+
+    const copies = cloneNodesForDuplicate(
+      nodeClipboard,
+      nodeClipboard.map((node) => node.id),
+      () => crypto.randomUUID(),
+    );
+
+    if (copies.length === 0) {
+      return;
+    }
+
+    get().pushHistory();
+
+    set({
+      nodes: [
+        ...state.nodes.map((node) => ({ ...node, selected: false })),
+        ...copies,
+      ],
+      selectedNodeId: copies[0]?.id ?? state.selectedNodeId,
+    });
+  },
+
+  clearSelectedNodesPrompt: () => {
+    const state = get();
+    const ids = new Set(
+      state.nodes
+        .filter((node) => node.selected === true || node.id === state.selectedNodeId)
+        .map((node) => node.id),
+    );
+
+    if (ids.size === 0) {
+      return;
+    }
+
+    let changed = false;
+    const nodes = state.nodes.map((node) => {
+      if (!ids.has(node.id)) {
+        return node;
+      }
+
+      const data = node.data as Record<string, unknown>;
+
+      if (!Object.hasOwn(data, 'prompt')) {
+        return node;
+      }
+
+      changed = true;
+
+      return { ...node, data: { ...data, prompt: '' } } as AppNode;
+    });
+
+    if (!changed) {
+      return;
+    }
+
+    get().pushHistory();
+    set({ nodes });
+  },
+
   clearPendingEdge: () => set({ pendingEdgeId: null }),
 
   duplicateNodes: (ids) =>
@@ -2583,6 +2688,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         // KI-195: только что загруженный граф — «чистый» (иначе после F5
         // индикатор показывал бы «есть изменения»).
         lastSavedHash: computeGraphHash(nodes, edges),
+        // KI-277: Load = новый документ — история предыдущего графа больше
+        // не относится к загруженному, Ctrl+Z не должен «откатить Load».
+        past: [],
+        future: [],
         isLoading: false,
         // Выбранная нода относилась к другому графу.
         selectedNodeId: null,

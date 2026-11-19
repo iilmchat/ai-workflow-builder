@@ -23,6 +23,7 @@ import { useHotkeys } from '@/hooks/use-hotkeys';
 import { SNAP_GRID } from '@/lib/canvas-grid';
 import { FIT_SELECTION_OPTIONS, FIT_VIEW_OPTIONS } from '@/lib/fit-view-options';
 import { computeGraphHash } from '@/lib/graph-hash';
+import { allowUndoInNodeField } from '@/lib/hotkeys-utils';
 import { findGuides, type HelperLines } from '@/lib/graph-guides';
 import {
   MINIMAP_MASK_STROKE_WIDTH,
@@ -121,6 +122,14 @@ function CanvasInner({ onReady }: CanvasProps) {
   const removeNode = useWorkflowStore((state) => state.removeNode);
   const addNodeOnEdge = useWorkflowStore((state) => state.addNodeOnEdge);
   const duplicateNodes = useWorkflowStore((state) => state.duplicateNodes);
+  // KI-273: расширенные хоткеи — селектор работает через стор, чтобы буфер
+  // обмена и история не жили в компоненте.
+  const selectAllNodes = useWorkflowStore((state) => state.selectAllNodes);
+  const copySelectedNodes = useWorkflowStore((state) => state.copySelectedNodes);
+  const pasteNodes = useWorkflowStore((state) => state.pasteNodes);
+  const clearSelectedNodesPrompt = useWorkflowStore(
+    (state) => state.clearSelectedNodesPrompt,
+  );
   const setSelectedNodeId = useWorkflowStore((state) => state.setSelectedNodeId);
   const selectedNodeId = useWorkflowStore((state) => state.selectedNodeId);
   const currentWorkflowId = useWorkflowStore((state) => state.currentWorkflowId);
@@ -365,6 +374,9 @@ function CanvasInner({ onReady }: CanvasProps) {
       // когда каталог узлов открыт и фокус стоит в его поиске (KI-186).
       'ctrl+z': {
         preventDefault: true,
+        // KI-276: в полях внутри карточки узла откатываем граф, а не
+        // локальную правку браузера (в остальных полях — как раньше).
+        allow: allowUndoInNodeField,
         handler: () => undo(),
       },
       'ctrl+shift+z': {
@@ -379,6 +391,27 @@ function CanvasInner({ onReady }: CanvasProps) {
 
         event.preventDefault();
         duplicateNodes([selectedNodeId]);
+      },
+      // KI-273: остальные хоткеи DESIGN v0.8 § 7.2.
+      'ctrl+a': {
+        preventDefault: true,
+        handler: () => selectAllNodes(),
+      },
+      'ctrl+c': {
+        preventDefault: true,
+        handler: () => copySelectedNodes(),
+      },
+      'ctrl+v': {
+        preventDefault: true,
+        handler: () => pasteNodes(),
+      },
+      'ctrl+s': {
+        preventDefault: true,
+        handler: () => void saveWorkflowAsync(),
+      },
+      'ctrl+shift+backspace': {
+        preventDefault: true,
+        handler: () => clearSelectedNodesPrompt(),
       },
       // S — режим «Курсор»: рамка выделения вместо перемещения холста (KI-188).
       s: () => setCanvasMode('select'),
@@ -419,6 +452,11 @@ function CanvasInner({ onReady }: CanvasProps) {
     [
       selectedNodeId,
       duplicateNodes,
+      selectAllNodes,
+      copySelectedNodes,
+      pasteNodes,
+      clearSelectedNodesPrompt,
+      saveWorkflowAsync,
       setCanvasMode,
       fitView,
       fitSelection,

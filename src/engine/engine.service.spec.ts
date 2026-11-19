@@ -680,6 +680,32 @@ describe('EngineService', () => {
       });
     });
 
+    it('compare получает a/b даже без targetHandle и с одинаковым sourceHandle (KI-279)', async () => {
+      const graph: GraphDto = {
+        nodes: [node('A'), node('B'), node('C', 'compare')],
+        edges: [
+          {
+            id: 'e1',
+            source: 'A',
+            target: 'C',
+            sourceHandle: 'text-output',
+          },
+          {
+            id: 'e2',
+            source: 'B',
+            target: 'C',
+            sourceHandle: 'text-output',
+          },
+        ],
+      };
+
+      const plan = await service.buildExecutionPlanAsync(graph);
+
+      expect(Object.keys(plan.executionMap.C.inputs).sort()).toEqual(['a', 'b']);
+      expect(plan.executionMap.C.inputs.a?.fromNode).toBe('A');
+      expect(plan.executionMap.C.inputs.b?.fromNode).toBe('B');
+    });
+
     it('бросает BadRequestException при цикле', async () => {
       const graph: GraphDto = {
         nodes: [node('A'), node('B')],

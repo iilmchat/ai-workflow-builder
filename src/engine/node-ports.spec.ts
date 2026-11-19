@@ -4,6 +4,7 @@ import {
   handleIdToOutputPort,
   inferDefaultOutputPort,
   inferInputPortName,
+  resolveCompareInputKey,
 } from './node-ports.js';
 
 describe('node-ports', () => {
@@ -192,6 +193,31 @@ describe('node-ports', () => {
     it('вход — text-input → prompt: текст для записи приходит от Text/LLM', () => {
       expect(NODE_PORT_CONTRACT.write_file.targetHandleId).toBe('text-input');
       expect(inferInputPortName('write_file')).toBe('prompt');
+    });
+  });
+
+  describe('resolveCompareInputKey (KI-279)', () => {
+    it('назначает a/b по порядку, даже если хендлы не заданы', () => {
+      const used = new Set<string>();
+
+      expect(resolveCompareInputKey(null, used)).toBe('a');
+      used.add('a');
+      expect(resolveCompareInputKey(null, used)).toBe('b');
+    });
+
+    it('уважает явный слот и не даёт ему схлопнуться', () => {
+      const used = new Set<string>();
+
+      expect(resolveCompareInputKey('b', used)).toBe('b');
+      used.add('b');
+      expect(resolveCompareInputKey('b', used)).toBe('a');
+      expect(resolveCompareInputKey('left', used)).toBe('a');
+    });
+
+    it('третью и последующие связи не теряет', () => {
+      const used = new Set(['a', 'b']);
+
+      expect(resolveCompareInputKey(null, used)).toBe('extra-2');
     });
   });
 });

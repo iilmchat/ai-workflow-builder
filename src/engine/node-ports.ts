@@ -241,8 +241,44 @@ export const NODE_PORT_CONTRACT: Record<string, NodePortContract> = {
   // fallback `targetHandle → sourceHandle → edge.id`, то есть `inputs.a` и
   // `inputs.b` — ровно то, что читает `executeCompareNode`.
   // Per-handle контракт (именованные входы/выходы) — KI-278; отсутствие
-  // типизированного контракта у `compare` — KI-279.
+  // типизированного контракта у `compare` — KI-279 (закрывается явными
+  // слотами {@link COMPARE_INPUT_SLOTS} ниже).
 };
+
+/**
+ * Именованные слоты входов узла `compare` (KI-279).
+ *
+ * Узла нет в `NODE_PORT_CONTRACT` (там один вход на тип), поэтому движок
+ * ранее выводил ключ из `targetHandle`/`sourceHandle`. Если UX прислал связи
+ * без хендлов или с одинаковым `sourceHandle`, оба операнда схлопывались в
+ * один ключ. Теперь слоты `a`/`b` назначаются явно, по порядку связей.
+ */
+export const COMPARE_INPUT_SLOTS = ['a', 'b'] as const;
+
+/**
+ * Выбирает свободный слот входа для связи узла `compare`.
+ *
+ * @param targetHandle - `edge.targetHandle` из графа (может отсутствовать)
+ * @param usedSlots - уже занятые слоты этого узла
+ * @returns имя ключа в `inputs` (`a`, `b` или `extra-N` для 3+ связей)
+ */
+export function resolveCompareInputKey(
+  targetHandle: string | null | undefined,
+  usedSlots: ReadonlySet<string>,
+): string {
+  if (
+    targetHandle !== null &&
+    targetHandle !== undefined &&
+    (COMPARE_INPUT_SLOTS as readonly string[]).includes(targetHandle) &&
+    !usedSlots.has(targetHandle)
+  ) {
+    return targetHandle;
+  }
+
+  const free = COMPARE_INPUT_SLOTS.find((slot) => !usedSlots.has(slot));
+
+  return free ?? `extra-${usedSlots.size}`;
+}
 
 /**
  * Карта: тип узла → имя выходного порта по умолчанию.

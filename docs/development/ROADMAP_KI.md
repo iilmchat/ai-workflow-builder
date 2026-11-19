@@ -296,10 +296,10 @@
 
 ### Спринт 40 (Low)
 
-- [ ] **KI-273** 🟢 — Расширенные хоткеи: Ctrl+A / Ctrl+C / Ctrl+V / Ctrl+S / Ctrl+Shift+Backspace — `web/src/hooks/use-hotkeys.ts, web/src/components/Canvas.tsx`
-- [ ] **KI-276** 🟢 — Ctrl+Z не работает при фокусе в поле ввода узла — `web/src/components/Canvas.tsx,`
-- [ ] **KI-277** 🟢 — Load не чистит историю undo — `web/src/stores/workflow.ts (loadWorkflowAsync)`
-- [ ] **KI-279** 🟢 — compare без контракта: fallback по targetHandle — `src/engine/node-ports.ts, src/engine/node-executors.ts`
+- [x] **KI-273** 🟢 — Расширенные хоткеи: Ctrl+A / Ctrl+C / Ctrl+V / Ctrl+S / Ctrl+Shift+Backspace — `web/src/hooks/use-hotkeys.ts, web/src/components/Canvas.tsx`
+- [x] **KI-276** 🟢 — Ctrl+Z не работает при фокусе в поле ввода узла — `web/src/components/Canvas.tsx,`
+- [x] **KI-277** 🟢 — Load не чистит историю undo — `web/src/stores/workflow.ts (loadWorkflowAsync)`
+- [x] **KI-279** 🟢 — compare без контракта: fallback по targetHandle — `src/engine/node-ports.ts, src/engine/node-executors.ts` (Fixed: слоты a/b в engine.service.ts)
 
 ### Спринт 41 (Low)
 
@@ -539,4 +539,5 @@
 | 36 | KI-237, KI-242, KI-243, KI-248 | 1 Fixed (UI), 3 Deferred | `40941d1` |
 | 37 | KI-249, KI-250, KI-251, KI-252 | 4 Fixed (3 с кодом + паритет-тест, i18n, 3 теста сетки); backend 2150 / web 607 зелёные | `89eafbc` |
 | 38 | KI-253, KI-254, KI-255, KI-262 | 4 Fixed (кэш хэша, Ctrl+D, клон данных, Handle-гейт); web 633 зелёных | `74bae8a` |
-| 39 | KI-264, KI-267, KI-270, KI-272 | 3 Fixed, 1 Documented (SMOKE_CDP.md); web 636 зелёных | (текущий) |
+| 39 | KI-264, KI-267, KI-270, KI-272 | 3 Fixed, 1 Documented (SMOKE_CDP.md); web 636 зелёных | `f550eae` |
+| 40 | KI-273, KI-276, KI-277, KI-279 | 4 Fixed (хоткеи, Ctrl+Z, история Load, слоты compare); backend 2154 / web 641 зелёные | (текущий) |
