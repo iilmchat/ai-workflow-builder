@@ -1,8 +1,8 @@
 # RoadMap: проверка и исправление открытых KI
 
 > Факт на HEAD `103bdf3` (v1.6.0, 19.11.2026 09:50 МСК): реестр
-> `docs/KNOWN_ISSUES.md` — 657 KI, из них **8 Open** (все 🟢 Low).
-> Выполнено **66 спринтов**; спринты **67–68** — оставшиеся Open KI. S69-Final
+> `docs/KNOWN_ISSUES.md` — 657 KI, из них **4 Open** (все 🟢 Low).
+> Выполнено **67 спринтов**; спринт **68** — оставшиеся Open KI. S69-Final
 > заведётся только по реальным находкам. Новых KI после 670 пока нет.
 > Правила: `docs/development/RULES.md` v1.10.0.
 
@@ -17,10 +17,10 @@
 
 ## Сводка
 
-- Изначально открытых KI: **272** → осталось **8** (все 🟢 Low).
-- Спринтов: **69** по 4 KI; **66 закрыты**, **2 в плане** (67–68) + S69-Final.
-- Статусы (grep, RULES 3.20): Fixed 440 (+12 частично), Documented 105
-  (+1 не воспроизводится), Deferred 77, Open 8, Won't Fix 11, Planned 3.
+- Изначально открытых KI: **272** → осталось **4** (все 🟢 Low).
+- Спринтов: **69** по 4 KI; **67 закрыты**, **1 в плане** (68) + S69-Final.
+- Статусы (grep, RULES 3.20): Fixed 441 (+12 частично), Documented 107
+  (+1 не воспроизводится), Deferred 79, Open 4, Won't Fix 11, Planned 3.
 - Прогресс отмечается галочками в списке ниже; исполнение фиксируется в «Логе спринтов».
 - Спринты 63–68 сформированы из фактически оставшихся Open KI на HEAD `103bdf3`.
 
@@ -490,10 +490,10 @@
 
 ### Спринт 67 (Low)
 
-- [ ] **KI-610** 🟢 — Grafana dashboard статичен: панели не проверяются в CI и нет alert rules — `infra/grafana/dashboard.json`
-- [ ] **KI-612** 🟢 — OTel-трейсы не экспортируются в Prometheus — `src/observability/, src/metrics/`
-- [ ] **KI-614** 🟢 — Logout не отзывает access-токен — `src/auth/auth.controller.ts, src/auth/auth.service.ts,`
-- [ ] **KI-615** 🟢 — `JwtAuthGuard` делает SELECT в БД на каждый аутентифицированный запрос — `src/auth/guards/jwt-auth.guard.ts`
+- [x] **KI-610** 🟢 — Grafana dashboard статичен: панели не проверяются в CI и нет alert rules — `infra/grafana/dashboard.json`
+- [x] **KI-612** 🟢 — OTel-трейсы не экспортируются в Prometheus — `src/observability/, src/metrics/` (Documented)
+- [x] **KI-614** 🟢 — Logout не отзывает access-токен — `src/auth/auth.controller.ts, src/auth/auth.service.ts,` (Deferred)
+- [x] **KI-615** 🟢 — `JwtAuthGuard` делает SELECT в БД на каждый аутентифицированный запрос — `src/auth/guards/jwt-auth.guard.ts` (Deferred)
 
 ### Спринт 68 (Low)
 
@@ -578,8 +578,9 @@
 | 63 | KI-512, KI-513, KI-514, KI-515 | 4 Fixed (локальный тип, Lua-валидация, lazy Redis, токен рамки); backend 0/0 + web 650 зелёных | `ffb7dc0` |
 | 64 | KI-516, KI-517, KI-519, KI-521 | 3 Fixed (MCP-лимит, Node 22.19, метрики), 1 Deferred | `9170078` |
 | 65 | KI-523, KI-524, KI-535, KI-536 | 3 Fixed (MCP-старт, паритет, cwd), 1 Documented | `5b873f1` |
-| 66 | KI-539, KI-543, KI-557, KI-559 | 3 Fixed (регистрация, история, FK), 1 Deferred | (текущий) |
+| 66 | KI-539, KI-543, KI-557, KI-559 | 3 Fixed (регистрация, история, FK), 1 Deferred | `f8d1427` |
+| 67 | KI-610, KI-612, KI-614, KI-615 | 1 Fixed (CI-гейт Grafana), 1 Documented, 2 Deferred | (текущий) |
 
-> **Спринты 67–68 не начинались.** Это 8 оставшихся Open KI (все Low),
+> **Спринт 68 не начинался.** Это 4 оставшихся Open KI (все Low),
 > сформированные в разделе «Спринты» по факту на HEAD `103bdf3`. S69-Final —
 > только реально найденные новые KI. Дедлайн окна — **06:00 МСК**.

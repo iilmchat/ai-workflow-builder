@@ -73,6 +73,10 @@ jobs:
       - name: Check KNOWN_ISSUES summary
         run: pnpm check:known-issues
 
+      # KI-610: панели дашборда обязаны ссылаться на реальные метрики.
+      - name: Check Grafana dashboard metrics
+        run: pnpm check:grafana
+
       # KI-298: гейт паритета схемы (src/db/schema-parity.spec.ts) читает
       # information_schema из services.postgres, поэтому схему нужно применить
       # до тестов — иначе БД пуста и гейт красный («таблица отсутствует в БД»).
