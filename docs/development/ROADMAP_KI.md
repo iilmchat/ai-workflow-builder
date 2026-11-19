@@ -429,24 +429,24 @@
 
 ### Спринт 59 (Low)
 
-- [ ] **KI-491** 🟢 — Список шаблонов не обновляется при возврате к узлу — `web/src/components/nodes/DocumentGenNode.tsx`
-- [ ] **KI-492** 🟢 — Дублирование контракта `document_gen` frontend ↔ backend — `web/src/types/graph.ts, src/engine/node-executors.ts`
-- [ ] **KI-493** 🟢 — Гонка повторного `startAsync` и тика — `src/runs/run-lease.service.ts`
-- [ ] **KI-494** 🟢 — `lease_expires_at` не обнуляется при завершении — `src/engine/execution-engine.service.ts`
+- [x] **KI-491** 🟢 — Список шаблонов не обновляется при возврате к узлу — `web/src/components/nodes/DocumentGenNode.tsx`
+- [x] **KI-492** 🟢 — Дублирование контракта `document_gen` frontend ↔ backend — `web/src/types/graph.ts, src/engine/node-executors.ts` (Documented)
+- [x] **KI-493** 🟢 — Гонка повторного `startAsync` и тика — `src/runs/run-lease.service.ts`
+- [x] **KI-494** 🟢 — `lease_expires_at` не обнуляется при завершении — `src/engine/execution-engine.service.ts`
 
 ### Спринт 60 (Low)
 
-- [ ] **KI-495** 🟢 — Рост `#stopped` в памяти — `src/runs/run-lease.service.ts`
-- [ ] **KI-496** 🟢 — Нет DB-интеграционного спека на SQL-флаги — `src/runs/runs.processor.spec.ts`
-- [ ] **KI-498** 🟢 — Дублирование релизных метрик в документации — `README.md, docs/README.md, PROMPT_CURRENT.md`
-- [ ] **KI-499** 🟢 — Нет проверки markdown-ссылок в CI — `.github/workflows/ci.yml`
+- [x] **KI-495** 🟢 — Рост `#stopped` в памяти — `src/runs/run-lease.service.ts` (Fixed по факту)
+- [x] **KI-496** 🟢 — Нет DB-интеграционного спека на SQL-флаги — `src/runs/runs.processor.spec.ts` (Documented)
+- [x] **KI-498** 🟢 — Дублирование релизных метрик в документации — `README.md, docs/README.md, PROMPT_CURRENT.md` (Documented)
+- [x] **KI-499** 🟢 — Нет проверки markdown-ссылок в CI — `.github/workflows/ci.yml`
 
 ### Спринт 61 (Low)
 
-- [ ] **KI-502** 🟢 — Нет DB-интеграционного спека на кэш-колонки — `src/engine/execution-engine.service.spec.ts`
-- [ ] **KI-503** 🟢 — `cacheSavingsUsd` агента не в SSE — `src/runs/run-node-snapshots.ts`
-- [ ] **KI-504** 🟢 — Нет теста на env-переопределение retry в движке — `src/engine/execution-engine.service.spec.ts`
-- [ ] **KI-505** 🟢 — `restoreRunAsync` не отменяет REST-запросы — `web/src/stores/workflow.ts`
+- [x] **KI-502** 🟢 — Нет DB-интеграционного спека на кэш-колонки — `src/engine/execution-engine.service.spec.ts` (Documented)
+- [x] **KI-503** 🟢 — `cacheSavingsUsd` агента не в SSE — `src/runs/run-node-snapshots.ts` (Documented)
+- [x] **KI-504** 🟢 — Нет теста на env-переопределение retry в движке — `src/engine/execution-engine.service.spec.ts` (Documented)
+- [x] **KI-505** 🟢 — `restoreRunAsync` не отменяет REST-запросы — `web/src/stores/workflow.ts`
 
 ### Спринт 62 (Low)
 
@@ -559,3 +559,6 @@
 | 56 | KI-458, KI-473, KI-476, KI-477 | 3 Fixed (1 по факту), 1 Documented; source-only контракт | (текущий) |
 | 57 | KI-480, KI-484, KI-485, KI-486 | 3 Fixed, 1 Documented; env-граница, SQL-тип, имя узла | (текущий) |
 | 58 | KI-487, KI-488, KI-489, KI-490 | 3 Fixed, 1 Documented; env-кросс-чек, ошибки шаблонов, variables | (текущий) |
+| 59 | KI-491, KI-492, KI-493, KI-494 | 3 Fixed, 1 Documented; refresh шаблонов, lease-гонка и очистка | (текущий) |
+| 60 | KI-495, KI-496, KI-498, KI-499 | 2 Fixed (1 по факту), 2 Documented; link-checker в CI | (текущий) |
+| 61 | KI-502, KI-503, KI-504, KI-505 | 1 Fixed, 3 Documented; guard late-response restore | (текущий) |

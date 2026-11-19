@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S59–S61 | 12 KI (6 Fixed, 6 Documented): аренда запуска, link-checker, late-response guard (backend 2159 / web 648) | 2026-11-19 | [KI-S59-S61-lease-and-links.md](v1.6.0/KI-S59-S61-lease-and-links.md) |
 | v1.6.0 | KI-S56–S58 | 12 KI (9 Fixed, 3 Documented): source-only контракт, env-кросс-чеки, ошибки шаблонов (backend 2159 / web 648) | 2026-11-19 | [KI-S56-S58-env-and-docs.md](v1.6.0/KI-S56-S58-env-and-docs.md) |
 | v1.6.0 | KI-S53–S55 | 12 KI (9 Fixed, 3 Documented): лимиты auth, env-пороги, lazy-роуты, lipsync-guard (backend 2159 / web 648) | 2026-11-19 | [KI-S53-S55-rate-limits-routes.md](v1.6.0/KI-S53-S55-rate-limits-routes.md) |
 | v1.6.0 | KI-S50–S52 | 12 KI (5 Fixed, 7 Documented): TerminalRunStatus, бюджет после финала, DESIGN/RELEASES/SMOKE_CDP по факту (backend 2159 / web 646) | 2026-11-19 | [KI-S50-S52-statuses-docs.md](v1.6.0/KI-S50-S52-statuses-docs.md) |

@@ -324,6 +324,8 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
   /** Список шаблонов workflow (`GET …/document-templates`). */
   const [templates, setTemplates] = useState<ApiDocumentTemplate[]>([]);
   const [templatesError, setTemplatesError] = useState(false);
+  /** KI-491: счётчик обновлений списка при возврате во вкладку. */
+  const [templatesRefresh, setTemplatesRefresh] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState(false);
   const [deleteError, setDeleteError] = useState(false);
@@ -390,6 +392,24 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
   useAutoResize(contentRef, content);
   useAutoResize(variablesRef, variablesText);
 
+  // KI-491: шаблон могли удалить в другой вкладке — обновляем список при
+  // возврате в эту (фокус/видимость), не дожидаясь F5.
+  useEffect(() => {
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') {
+        setTemplatesRefresh((value) => value + 1);
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, []);
+
   // v0.11 S5: список шаблонов нужен только в template-режиме и только после
   // сохранения workflow (GET требует uuid). Повторный запрос — при смене
   // workflow или режима; загрузка/удаление правят список локально.
@@ -419,7 +439,7 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
     return () => {
       cancelled = true;
     };
-  }, [mode, workflowId]);
+  }, [mode, workflowId, templatesRefresh]);
 
   /**
    * Загружает выбранный `.docx` и делает его текущим шаблоном узла.

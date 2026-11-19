@@ -2803,6 +2803,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     // Повторный mount (StrictMode) не должен оставить двух подписчиков:
     // сначала закрываем прежний поток, только потом открываем новый.
     closeStreamIfAny();
+    // KI-505: пока шли REST-запросы, пользователь мог открыть другой workflow —
+    // поздний ответ не должен записать в стор состояние «чужого» запуска.
+    const requestedWorkflowId = get().currentWorkflowId;
 
     try {
       // Запросы независимы — идут параллельно (RULES 4.17).
@@ -2810,6 +2813,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         fetchRunAsync(runId),
         fetchRunNodesAsync(runId),
       ]);
+
+      if (get().currentWorkflowId !== requestedWorkflowId) {
+        return;
+      }
 
       set((state) => ({
         runId: run.id,

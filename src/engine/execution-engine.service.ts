@@ -2351,7 +2351,15 @@ export class ExecutionEngineService {
     try {
       await this.db
         .update(workflowRuns)
-        .set({ status, outputs: bounded.outputs, error, finishedAt: new Date() })
+        .set({
+          status,
+          outputs: bounded.outputs,
+          error,
+          finishedAt: new Date(),
+          // KI-494: аренда нужна только пока запуск `running` — чистим её
+          // при финале, чтобы в БД не висел «живой» lease.
+          leaseExpiresAt: null,
+        })
         .where(eq(workflowRuns.id, runId));
     } catch (dbError: unknown) {
       throw new InternalServerErrorException(

@@ -50,6 +50,8 @@ export class RunLeaseService implements OnApplicationShutdown {
 
   /** Активные таймеры heartbeat: `runId` → таймер следующего тика. */
   readonly #timers = new Map<string, NodeJS.Timeout>();
+  /** KI-493: генерация heartbeats — старый тик не должен перепланироваться. */
+  readonly #generations = new Map<string, number>();
 
   /**
    * Запуски, для которых heartbeat остановлен (защита от гонки `stop`/`tick`).
@@ -104,6 +106,9 @@ export class RunLeaseService implements OnApplicationShutdown {
    * @returns промис без значения; разрешается после первого продления
    */
   async startAsync(runId: string): Promise<void> {
+    const generation = (this.#generations.get(runId) ?? 0) + 1;
+
+    this.#generations.set(runId, generation);
     this.#stopped.delete(runId);
     this.stopTimer(runId);
 
@@ -111,7 +116,7 @@ export class RunLeaseService implements OnApplicationShutdown {
       return;
     }
 
-    this.schedule(runId);
+    this.schedule(runId, generation);
   }
 
   /**
@@ -174,11 +179,11 @@ export class RunLeaseService implements OnApplicationShutdown {
    *
    * @param runId - uuid запуска
    */
-  private schedule(runId: string): void {
+  private schedule(runId: string, generation: number): void {
     const timer = setTimeout(() => {
       // `void` — осознанно: ошибки тика логируются внутри `tickAsync`, наружу
       // промис не пробрасывается (RULES 4.18).
-      void this.tickAsync(runId);
+      void this.tickAsync(runId, generation);
     }, this.#heartbeatMs);
 
     timer.unref();
@@ -194,7 +199,13 @@ export class RunLeaseService implements OnApplicationShutdown {
    *
    * @param runId - uuid запуска
    */
-  private async tickAsync(runId: string): Promise<void> {
+  private async tickAsync(runId: string, generation: number): Promise<void> {
+    // KI-493: повторный `startAsync` увеличил генерацию — старый тик
+    // не имеет права ни продлевать аренду, ни планировать следующий.
+    if ((this.#generations.get(runId) ?? 0) !== generation) {
+      return;
+    }
+
     // Таймер уже выстрелил — в карте его больше нет, иначе `stop` попытался бы
     // очистить протухший таймер.
     this.#timers.delete(runId);
@@ -221,7 +232,7 @@ export class RunLeaseService implements OnApplicationShutdown {
       return;
     }
 
-    this.schedule(runId);
+    this.schedule(runId, generation);
   }
 
   /**

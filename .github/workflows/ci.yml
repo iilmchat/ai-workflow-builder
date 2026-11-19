@@ -92,6 +92,9 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379
 
       # KI-343: e2e-спек (`*.e2e-spec.ts`) не входит в `pnpm test`.
+      - name: Check markdown links
+        run: pnpm check:links
+
       - name: Run e2e tests
         run: pnpm test:e2e
         env:

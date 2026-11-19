@@ -30,6 +30,11 @@
 
 ### Fixed
 
+- **KI-505:** `restoreRunAsync` игнорирует поздние ответы чужого workflow.
+- **KI-499:** проверка markdown-ссылок добавлена в CI (`pnpm check:links`).
+- **KI-491:** список шаблонов обновляется при возврате во вкладку.
+- **KI-493:** генерация heartbeat защищает от гонки повторного `startAsync`.
+- **KI-494:** `lease_expires_at` обнуляется при завершении запуска.
 - **KI-487:** env-проверка `heartbeat < staleThreshold`.
 - **KI-489:** DocumentGenNode показывает конкретный текст ошибки API шаблонов.
 - **KI-490:** черновик `variables` ресинхронизируется при undo/redo.
@@ -185,6 +190,11 @@
 
 ### Documented
 
+- **KI-502/503/504:** integration-спек кэш-колонок, agent cache в SSE и
+  фабрика провайдеров retry отложены с триггерами возврата.
+- **KI-496:** SQL-флаги «зависшего» запуска остаются под unit-тестами.
+- **KI-498:** релизные метрики остаются снимками в трёх документах.
+- **KI-492:** контракт `document_gen` остаётся дублированным до shared-пакета.
 - **KI-488:** константа MCP-лимита остаётся дублированной до shared-пакета.
 - **KI-486:** кавычивание custom SQL-типа в drizzle-kit безвредно для `bytea`.
 - **KI-458:** векторные инструменты агента не проверяют `PGVECTOR_ENABLED` —
@@ -216,6 +226,10 @@
   в [памятке](development/SMOKE_CDP.md); скрипты остаются вне репо.
 
 ### Changed
+
+- **KI-спринты 59–61** ([отчёт](development/reports/v1.6.0/KI-S59-S61-lease-and-links.md)):
+  12 KI закрыты (6 Fixed, 6 Documented) — heartbeat-генерация, очистка lease,
+  markdown-link гейт и защита restore от поздних ответов.
 
 - **KI-спринты 56–58** ([отчёт](development/reports/v1.6.0/KI-S56-S58-env-and-docs.md)):
   12 KI закрыты (9 Fixed, 3 Documented) — контракты портов, env-кросс-чеки,
