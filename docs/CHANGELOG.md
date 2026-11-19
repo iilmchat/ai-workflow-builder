@@ -30,6 +30,7 @@
 
 ### Fixed
 
+- **KI-218:** юнит-тесты `parseDurationToMs` (все единицы, пробелы, bad format).
 - **KI-208:** удалён неиспользуемый `@nestjs/passport` из зависимостей (−5 пакетов).
 - **KI-173:** `pickDefaultMediaModel` пропускает `deprecated`-модели (+тест,
   599 web-тестов зелёные).
@@ -74,6 +75,10 @@
   по образу job `web` в CI (проверено: 598 тестов зелёные).
 
 ### Changed
+
+- **KI-спринт 33** ([отчёт](development/reports/v1.6.0/KI-S33-docs-tests.md)):
+  KI-210/KI-211/KI-212 закрыты по факту (DESIGN, правила ведения, git note),
+  KI-218 — добавлением юнит-тестов.
 
 - **KI-спринт 32** ([отчёт](development/reports/v1.6.0/KI-S32-deps-nodes.md)):
   KI-194 закрыт проверкой (comment/compare уже в реестре), KI-178/KI-207

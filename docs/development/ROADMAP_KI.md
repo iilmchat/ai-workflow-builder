@@ -247,10 +247,10 @@
 
 ### Спринт 33 (Low)
 
-- [ ] **KI-210** 🟢 — DESIGN v0.8 § 1 / § 3.1 называют guard «Passport»-овым — `docs/development/v0.8/DESIGN_V08_FEATURES.md`
-- [ ] **KI-211** 🟢 — Пропущены номера KI-198 и KI-199 — `docs/KNOWN_ISSUES.md («Правила ведения»)`
-- [ ] **KI-212** 🟢 — Сообщение коммита `88f53e4` содержит ошибочный «KI-106» — `git history (коммит 88f53e4)`
-- [ ] **KI-218** 🟢 — Нет юнит-тестов `parseDurationToMs` и интеграционного теста ротации — `src/common/utils/parse-duration.ts,`
+- [x] **KI-210** 🟢 — DESIGN v0.8 § 1 / § 3.1 называют guard «Passport»-овым — `docs/development/v0.8/DESIGN_V08_FEATURES.md`
+- [x] **KI-211** 🟢 — Пропущены номера KI-198 и KI-199 — `docs/KNOWN_ISSUES.md («Правила ведения»)`
+- [x] **KI-212** 🟢 — Сообщение коммита `88f53e4` содержит ошибочный «KI-106» — `git history (коммит 88f53e4)`
+- [x] **KI-218** 🟢 — Нет юнит-тестов `parseDurationToMs` и интеграционного теста ротации — `src/common/utils/parse-duration.ts,`
 
 ### Спринт 34 (Low)
 
@@ -532,4 +532,5 @@
 | 29 | KI-138, KI-139, KI-140, KI-143 | 1 Fixed (скрипт), 1 Documented, 2 Deferred | `af506b5` |
 | 30 | KI-144, KI-146, KI-153, KI-161 | 2 Documented, 2 Deferred | `46463de` |
 | 31 | KI-171, KI-172, KI-173, KI-177 | 2 Fixed (1 код+тест), 2 Deferred | `bf45116` |
-| 32 | KI-178, KI-194, KI-207, KI-208 | 2 Fixed (1 по факту), 2 Deferred | (текущий) |
+| 32 | KI-178, KI-194, KI-207, KI-208 | 2 Fixed (1 по факту), 2 Deferred | `d954b29` |
+| 33 | KI-210, KI-211, KI-212, KI-218 | 4 Fixed (3 по факту, 1 тесты) | (текущий) |

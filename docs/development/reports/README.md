@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S33 | KI-218: юнит-тесты parseDurationToMs (3 зелёных); KI-210/211/212 Fixed по факту (DESIGN, правила, git note) | 2026-11-19 | [KI-S33-docs-tests.md](v1.6.0/KI-S33-docs-tests.md) |
 | v1.6.0 | KI-S32 | KI-208: удалён @nestjs/passport (−5 пакетов), build 0/0 + 2144 теста; KI-194 Fixed по факту, KI-178/KI-207 Deferred | 2026-11-19 | [KI-S32-deps-nodes.md](v1.6.0/KI-S32-deps-nodes.md) |
 | v1.6.0 | KI-S31 | KI-173 дефолтная медиамодель не deprecated (+тест, 599 web-тестов); KI-172 Fixed по факту, KI-171/KI-177 Deferred | 2026-11-19 | [KI-S31-model-defaults.md](v1.6.0/KI-S31-model-defaults.md) |
 | v1.6.0 | KI-S30 | KI-144/KI-153 Documented, KI-146/KI-161 Deferred — docs-only | 2026-11-19 | [KI-S30-workspace-a11y.md](v1.6.0/KI-S30-workspace-a11y.md) |

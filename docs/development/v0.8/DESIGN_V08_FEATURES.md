@@ -72,8 +72,8 @@
 **R6.1b (frontend):** refresh-cookie (httpOnly, sameSite=strict,
 7 дней) + fetch interceptor (401 → refresh → retry).
 
-**Passport:** `@nestjs/passport` остаётся в deps как задел,
-не используется в R6.1a (KI-208).
+**Passport:** не используется — `JwtAuthGuard` реализован на `@nestjs/jwt`.
+Зависимость `@nestjs/passport` удалена из deps (KI-208, v1.6.0).
 
 **Multi-tenant готовность:** в схеме `workflows.userId` **уже есть**
 (nullable). После v0.8 — **обязателен**.
