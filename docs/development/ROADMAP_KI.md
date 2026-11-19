@@ -191,10 +191,10 @@
 
 ### Спринт 25 (Low)
 
-- [ ] **KI-073** 🟢 — Точность номера попытки ограничена контрактом — `src/runs/dto/run-event.dto.ts, web/src/stores/workflow.ts`
-- [ ] **KI-076** 🟢 — Панель фиксированной высоты без drag-ресайза — `web/src/components/RunResultPanel.tsx`
-- [ ] **KI-089** 🟢 — `z.url({ protocol })` — deprecated в Zod 4 — `src/config/env.schema.ts`
-- [ ] **KI-090** 🟢 — oxlint warning в `web/src/lib/api.ts` (pre-existing) — `web/src/lib/api.ts`
+- [x] **KI-073** 🟢 — Точность номера попытки ограничена контрактом — `src/runs/dto/run-event.dto.ts, web/src/stores/workflow.ts` (Deferred)
+- [x] **KI-076** 🟢 — Панель фиксированной высоты без drag-ресайза — `web/src/components/RunResultPanel.tsx` (Deferred)
+- [x] **KI-089** 🟢 — `z.url({ protocol })` — deprecated в Zod 4 — `src/config/env.schema.ts` (Documented)
+- [x] **KI-090** 🟢 — oxlint warning в `web/src/lib/api.ts` (pre-existing) — `web/src/lib/api.ts` (уже исправлено)
 
 ### Спринт 26 (Low)
 
@@ -524,4 +524,5 @@
 | 21 | KI-533, KI-537, KI-538, KI-661 | 1 Fixed (код+тест), 3 Deferred | `23871ec` |
 | 22 | KI-013, KI-020, KI-021, KI-028 | 3 Fixed, 1 Deferred | `ffc1755` |
 | 23 | KI-029, KI-043, KI-044, KI-045 | 1 Fixed (по факту), 3 Deferred | `141a210` |
-| 24 | KI-051, KI-054, KI-057, KI-058 | 4 Deferred | (текущий) |
+| 24 | KI-051, KI-054, KI-057, KI-058 | 4 Deferred | `b74d121` |
+| 25 | KI-073, KI-076, KI-089, KI-090 | 1 Fixed (по факту), 1 Documented, 2 Deferred | (текущий) |

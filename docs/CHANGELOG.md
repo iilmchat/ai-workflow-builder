@@ -67,6 +67,10 @@
 
 ### Changed
 
+- **KI-спринт 25** ([отчёт](development/reports/v1.6.0/KI-S25-lint-sse-ux.md)):
+  KI-090 закрыт проверкой (Headers нормализуется, oxlint молчит), KI-089
+  `Documented`, KI-073/KI-076 `Deferred`.
+
 - **KI-спринт 24** ([отчёт](development/reports/v1.6.0/KI-S24-provider-cache.md)):
   KI-051/054/057/058 `Deferred` — кэш между запусками, агрегаты стоимости и
   «горячая» ротация ключей меняют семантику или требуют миграций.

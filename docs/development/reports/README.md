@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S25 | KI-090 Fixed по факту (Headers нормализуется), KI-089 Documented, KI-073/KI-076 Deferred — docs-only | 2026-11-19 | [KI-S25-lint-sse-ux.md](v1.6.0/KI-S25-lint-sse-ux.md) |
 | v1.6.0 | KI-S24 | KI-051/054/057/058 Deferred: кэш между запусками, агрегаты стоимости, горячая ротация и валидность ключей — docs-only | 2026-11-19 | [KI-S24-provider-cache.md](v1.6.0/KI-S24-provider-cache.md) |
 | v1.6.0 | KI-S23 | KI-045 Fixed по факту (Husky игнорирует .husky/_), KI-029/043/044 Deferred — docs-only | 2026-11-19 | [KI-S23-hooks-logs.md](v1.6.0/KI-S23-hooks-logs.md) |
 | v1.6.0 | KI-S22 | KI-013 env через ConfigService, KI-020 мёртвый executionMap, KI-028 общий toMessage; KI-021 Deferred | 2026-11-19 | [KI-S22-low-hygiene.md](v1.6.0/KI-S22-low-hygiene.md) |
