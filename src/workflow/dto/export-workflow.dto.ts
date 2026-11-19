@@ -18,7 +18,16 @@ import { z } from 'zod';
  */
 export const ExportWorkflowSchema = z.object({
   version: z.literal(1),
-  name: z.string().min(1),
+  /**
+   * Ревизия графа из `workflows.version` (KI-291).
+   *
+   * Отдельное необязательное поле: `version` — версия формата экспорта и
+   * должна оставаться литералом `1`, иначе старые файлы стали бы
+   * неимпортируемыми. При импорте поле игнорируется — ревизия относится к
+   * исходному графу, а не к новому workflow.
+   */
+  graphVersion: z.number().int().positive().optional(),
+  name: z.string().min(1).max(200),
   nodes: z.array(z.unknown()),
   edges: z.array(z.unknown()),
   exportedAt: z.string(),

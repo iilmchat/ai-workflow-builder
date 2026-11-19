@@ -290,7 +290,7 @@ export class WorkflowService {
    *
    * @param id - uuid workflow
    * @param access - пользователь и его организация из access-токена
-   * @returns артефакт `{ version, name, nodes, edges, exportedAt }`
+   * @returns артефакт `{ version, graphVersion, name, nodes, edges, exportedAt }`
    * @throws NotFoundException если workflow не существует или недоступен
    */
   async exportAsync(
@@ -299,9 +299,12 @@ export class WorkflowService {
   ): Promise<ExportWorkflowDto> {
     const [found] = await this.db
       .select({
+        // KI-291: ревизия графа — отдельное поле, `version` остаётся версией
+        // формата экспорта (литерал 1).
         name: workflows.name,
         nodes: workflows.nodes,
         edges: workflows.edges,
+        graphVersion: workflows.version,
       })
       .from(workflows)
       .where(this.buildAccessFilter(id, access))
@@ -314,6 +317,7 @@ export class WorkflowService {
 
     return {
       version: EXPORT_FORMAT_VERSION,
+      graphVersion: found.graphVersion,
       name: found.name,
       nodes: found.nodes,
       edges: found.edges,

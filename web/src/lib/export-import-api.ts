@@ -17,7 +17,9 @@ import { invalidateWorkflowListCache } from './workflow-list-cache';
  */
 export const ExportWorkflowSchema = z.object({
   version: z.literal(1),
-  name: z.string(),
+  // KI-291: ревизия исходного графа, при импорте игнорируется.
+  graphVersion: z.number().int().positive().optional(),
+  name: z.string().min(1).max(200),
   nodes: z.array(z.unknown()),
   edges: z.array(z.unknown()),
   exportedAt: z.string(),

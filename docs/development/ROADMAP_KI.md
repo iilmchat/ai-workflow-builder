@@ -310,10 +310,10 @@
 
 ### Спринт 42 (Low)
 
-- [ ] **KI-286** 🟢 — CDP-смоук: Ctrl+A вставляет символ; каталог требует scrollIntoView — `временные скрипты смоука (вне репо)`
-- [ ] **KI-291** 🟢 — `workflows.version` не переносится в артефакт экспорта — `src/workflow/workflow.service.ts (EXPORT_FORMAT_VERSION)`
-- [ ] **KI-292** 🟢 — `nest build` не копирует `src/templates/*.json` в dist — `nest-cli.json, src/templates/template-loader.service.ts,`
-- [ ] **KI-294** 🟢 — `ImportWorkflowSchema.name` без `.max(200)` — `src/workflow/dto/export-workflow.dto.ts`
+- [x] **KI-286** 🟢 — CDP-смоук: Ctrl+A вставляет символ; каталог требует scrollIntoView — `временные скрипты смоука (вне репо)` (Documented: SMOKE_CDP.md § 6)
+- [x] **KI-291** 🟢 — `workflows.version` не переносится в артефакт экспорта — `src/workflow/workflow.service.ts (EXPORT_FORMAT_VERSION)`
+- [x] **KI-292** 🟢 — `nest build` не копирует `src/templates/*.json` в dist — `nest-cli.json, src/templates/template-loader.service.ts,` (Fixed по факту)
+- [x] **KI-294** 🟢 — `ImportWorkflowSchema.name` без `.max(200)` — `src/workflow/dto/export-workflow.dto.ts`
 
 ### Спринт 43 (Low)
 
@@ -541,4 +541,5 @@
 | 38 | KI-253, KI-254, KI-255, KI-262 | 4 Fixed (кэш хэша, Ctrl+D, клон данных, Handle-гейт); web 633 зелёных | `74bae8a` |
 | 39 | KI-264, KI-267, KI-270, KI-272 | 3 Fixed, 1 Documented (SMOKE_CDP.md); web 636 зелёных | `f550eae` |
 | 40 | KI-273, KI-276, KI-277, KI-279 | 4 Fixed (хоткеи, Ctrl+Z, история Load, слоты compare); backend 2154 / web 641 зелёные | `6414e2a` |
-| 41 | KI-281, KI-282, KI-283, KI-285 | 4 Fixed (1 по факту, типы evaluated, явные порты, UI-раскладка); web 643 зелёных | (текущий) |
+| 41 | KI-281, KI-282, KI-283, KI-285 | 4 Fixed (1 по факту, типы evaluated, явные порты, UI-раскладка); web 643 зелёных | `613908f` |
+| 42 | KI-286, KI-291, KI-292, KI-294 | 3 Fixed (1 по факту), 1 Documented; экспорт graphVersion, лимит имени, SMOKE_CDP | (текущий) |

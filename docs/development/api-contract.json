@@ -6,7 +6,7 @@
     "AuditLogsResponse": ["logs", "nextCursor", "total"],
     "CollaboratorResponse": ["email", "invitedAt", "invitedBy", "role", "userId"],
     "DocumentTemplateSummary": ["bytes", "createdAt", "id", "name", "placeholders"],
-    "ExportWorkflowDto": ["edges", "exportedAt", "name", "nodes", "version"],
+    "ExportWorkflowDto": ["edges", "exportedAt", "graphVersion", "name", "nodes", "version"],
     "InviteMemberResponse": ["email", "emailQueued", "emailSent", "invitedAt", "invitedBy", "role"],
     "LlmHealthResponse": ["local", "routerEnabled"],
     "LocalLlmHealth": ["available", "lastCheck"],

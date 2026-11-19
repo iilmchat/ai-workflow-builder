@@ -481,16 +481,33 @@ describe('WorkflowService', () => {
   });
 
   describe('exportAsync', () => {
-    it('выбирает только name/nodes/edges и собирает артефакт версии 1', async () => {
+    it('выбирает name/nodes/edges/version и собирает артефакт версии 1', async () => {
+      // Проекция select'а в тесте задаётся явно: двойник Drizzle не применяет
+      // реальные колонки, поэтому без graphVersion в строке поле было бы undefined.
+      selectChain = chain(() => [
+        {
+          name: baseWorkflow.name,
+          nodes: baseWorkflow.nodes,
+          edges: baseWorkflow.edges,
+          graphVersion: baseWorkflow.version,
+        },
+      ]);
+
       const result = await service.exportAsync(WORKFLOW_ID, ACCESS);
 
       // Явная проекция: служебные поля (id/userId/shareToken/createdAt) не
       // выбираются, поэтому не могут попасть в артефакт (R6.6.1, RULES 5.9).
       const selection = db.select.mock.calls[0]?.[0] as Record<string, unknown>;
 
-      expect(Object.keys(selection).sort()).toEqual(['edges', 'name', 'nodes']);
+      expect(Object.keys(selection).sort()).toEqual([
+        'edges',
+        'graphVersion',
+        'name',
+        'nodes',
+      ]);
       expect(result).toEqual({
         version: 1,
+        graphVersion: baseWorkflow.version,
         name: baseWorkflow.name,
         nodes: baseWorkflow.nodes,
         edges: baseWorkflow.edges,
