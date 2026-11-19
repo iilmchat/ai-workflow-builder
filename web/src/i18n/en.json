@@ -316,7 +316,7 @@
   "node.audio.speed": "Speed",
   "node.audio.text_placeholder": "Enter the text to synthesize…",
   "node.audio.voice": "Voice",
-  "node.audio.voice_placeholder": "voice id (e.g. ru-female-1)",
+  "node.audio.voice_placeholder": "Voice ID (optional — provider default)",
   "node.audio_generation.label": "Speech synthesis",
   "node.music.alt": "Generated music",
   "node.music.duration": "Duration",

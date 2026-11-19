@@ -366,24 +366,24 @@
 
 ### Спринт 50 (Low)
 
-- [ ] **KI-355** 🟢 — обречённый подграф доигрывает независимые ветки — `src/engine/execution-engine.service.ts`
-- [ ] **KI-358** 🟢 — у REST-ответов backend нет Zod: гейт разбирает TS-интерфейсы — `src/runs/runs.service.ts,`
-- [ ] **KI-359** 🟢 — inline-union'ы финальных статусов запуска вне канона — `src/engine/execution-engine.service.ts (:164, :370, :1208),`
-- [ ] **KI-360** 🟢 — Перспектива: вынос vector store в отдельный сервис — `src/db/schema.ts, src/engine/execution-engine.service.ts`
+- [x] **KI-355** 🟢 — обречённый подграф доигрывает независимые ветки — `src/engine/execution-engine.service.ts` (Documented)
+- [x] **KI-358** 🟢 — у REST-ответов backend нет Zod: гейт разбирает TS-интерфейсы — `src/runs/runs.service.ts,` (Documented)
+- [x] **KI-359** 🟢 — inline-union'ы финальных статусов запуска вне канона — `src/engine/execution-engine.service.ts (:164, :370, :1208),`
+- [x] **KI-360** 🟢 — Перспектива: вынос vector store в отдельный сервис — `src/db/schema.ts, src/engine/execution-engine.service.ts` (Documented)
 
 ### Спринт 51 (Low)
 
-- [ ] **KI-374** 🟢 — `bgremover` требует prompt, операция в нём не нуждается — `src/media/image-tool.ts`
-- [ ] **KI-375** 🟢 — бюджет-бар только при активном run — `web/src/components/TopBar.tsx`
-- [ ] **KI-376** 🟢 — sse-contract не расширен — `docs/development/sse-contract.json,`
-- [ ] **KI-388** 🟢 — `durationSec`/`aspectRatio` в DESIGN § 3.2 не совпадают с каталогом; узел без модели не показывает поля — `docs/development/v0.9/DESIGN_V09_FEATURES.md (§ 3.2),`
+- [x] **KI-374** 🟢 — `bgremover` требует prompt, операция в нём не нуждается — `src/media/image-tool.ts` (Fixed по факту)
+- [x] **KI-375** 🟢 — бюджет-бар только при активном run — `web/src/components/TopBar.tsx`
+- [x] **KI-376** 🟢 — sse-contract не расширен — `docs/development/sse-contract.json,` (Documented)
+- [x] **KI-388** 🟢 — `durationSec`/`aspectRatio` в DESIGN § 3.2 не совпадают с каталогом; узел без модели не показывает поля — `docs/development/v0.9/DESIGN_V09_FEATURES.md (§ 3.2),` (Documented)
 
 ### Спринт 52 (Low)
 
-- [ ] **KI-389** 🟢 — TTS: нет каталога голосов, `speed` не объявлен ни одной моделью — `web/src/components/nodes/AudioGenNode.tsx, src/media/media-generation.ts`
-- [ ] **KI-394** 🟢 — Миграция `BULLMQ_PREFIX` `bull` → `workflow-runs` (операционное) — `.env.example, src/runs/runs.worker-options.ts`
-- [ ] **KI-395** 🟢 — allowlist sandbox расширен сверх DESIGN § 3.5 — `src/sandbox/quickjs-runner.service.ts,`
-- [ ] **KI-396** 🟢 — CDP-смоук невоспроизводим без Docker (инфраструктурный) — `.smoke/** (скрипты), docs/development/ (SMOKE_CDP.md)`
+- [x] **KI-389** 🟢 — TTS: нет каталога голосов, `speed` не объявлен ни одной моделью — `web/src/components/nodes/AudioGenNode.tsx, src/media/media-generation.ts`
+- [x] **KI-394** 🟢 — Миграция `BULLMQ_PREFIX` `bull` → `workflow-runs` (операционное) — `.env.example, src/runs/runs.worker-options.ts` (Documented: RELEASES.md)
+- [x] **KI-395** 🟢 — allowlist sandbox расширен сверх DESIGN § 3.5 — `src/sandbox/quickjs-runner.service.ts,` (DESIGN обновлён)
+- [x] **KI-396** 🟢 — CDP-смоук невоспроизводим без Docker (инфраструктурный) — `.smoke/** (скрипты), docs/development/ (SMOKE_CDP.md)` (Documented)
 
 ### Спринт 53 (Low)
 
@@ -549,4 +549,7 @@
 | 46 | KI-323, KI-324, KI-325, KI-327 | 4 Fixed (SQL CASE version, хэш типа, updatedAt, dev-автологин); web 645 | `40b5e55` |
 | 47 | KI-332, KI-333, KI-335, KI-339 | 4 Fixed (1 по факту; focus-инвалидация, lint, id предшественника); web 646 | (текущий) |
 | 48 | KI-341, KI-342, KI-343, KI-345 | 4 Fixed (outputs {}, Drizzle-ловушка, e2e в CI, dotenv в parity) | (текущий) |
-| 49 | KI-346, KI-350, KI-351, KI-354 | 2 Fixed, 2 Documented; typecheck scripts/drizzle, строгий SSE-зеркало | (текущий) |
+| 49 | KI-346, KI-350, KI-351, KI-354 | 2 Fixed, 2 Documented; typecheck scripts/drizzle, строгий SSE-зеркало | `3291b0f` |
+| 50 | KI-355, KI-358, KI-359, KI-360 | 1 Fixed, 3 Documented; TerminalRunStatus канонизирован | (текущий) |
+| 51 | KI-374, KI-375, KI-376, KI-388 | 2 Fixed (1 по факту), 2 Documented; бюджет после финала | (текущий) |
+| 52 | KI-389, KI-394, KI-395, KI-396 | 2 Fixed, 2 Documented; DESIGN и памятки по факту | (текущий) |

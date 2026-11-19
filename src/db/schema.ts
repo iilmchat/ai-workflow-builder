@@ -53,6 +53,9 @@ export const TERMINAL_WORKFLOW_RUN_STATUSES = [
   'cancelled',
 ] as const satisfies readonly RunStatus[];
 
+/** Тип финального статуса запуска (KI-359) — канон в этом файле. */
+export type TerminalRunStatus = (typeof TERMINAL_WORKFLOW_RUN_STATUSES)[number];
+
 /**
  * Значения колонки `node_runs.status` (KI-288, KI-336).
  *

@@ -209,7 +209,8 @@ audio_generation использует фолбэк AUDIO ∪ MUSIC-модели 
       model: string;
       text?: string;          // TTS
       voiceId?: string;
-      speed?: number;         // 0.5–2.0
+      // KI-389: `speed` убран — ни одна модель каталога не объявляет этот
+      // параметр, поэтому поле в UI никогда не появлялось.
     }
 
     interface MusicGenNodeData {
@@ -438,8 +439,10 @@ timeline шагов (`data-agent-step`).
     interface SandboxOptions {
       timeoutMs?: number;      // default 100
       memoryLimitMb?: number;  // default 16
-      allowlist?: string[];    // default: input, Math, JSON, Date, String,
-                               //          Number, Array, Object, Boolean
+      allowlist?: string[];    // default (KI-395): input, Math, JSON, Date,
+                               //   String, Number, Array, Object, Boolean,
+                               //   Error, RegExp, Map, Set, Promise, Symbol
+                               //   (14 глобалов + input; без process/require/fetch)
     }
 
     async function evaluateSandboxedAsync(

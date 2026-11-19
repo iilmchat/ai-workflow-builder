@@ -320,7 +320,7 @@
   "node.audio.speed": "Скорость",
   "node.audio.text_placeholder": "Введите текст для озвучки…",
   "node.audio.voice": "Голос",
-  "node.audio.voice_placeholder": "id голоса (например, ru-female-1)",
+  "node.audio.voice_placeholder": "ID голоса (необязательно — голос по умолчанию)",
   "node.audio_generation.label": "Синтез речи",
   "node.music.alt": "Сгенерированная музыка",
   "node.music.duration": "Длительность",

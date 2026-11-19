@@ -326,7 +326,9 @@ export function TopBar() {
 
   // Прогресс-бар показывается только при активном запуске (DESIGN v0.9 § 3.1):
   // без запуска тратить нечего, а завершённый запуск виден по бейджу статуса.
-  const showBudget = isRunActive && runBudget !== null && runId !== null;
+  // KI-375: после финала бар скрывается, но итог "$X / $Y" остаётся виден —
+  // последний снимок бюджета хранится в сторе и доступен через SSE/REST.
+  const showBudget = runBudget !== null && runId !== null;
   const budgetRatio =
     runBudget !== null && runBudget.max > 0
       ? Math.min(runBudget.accumulated / runBudget.max, 1)

@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S50–S52 | 12 KI (5 Fixed, 7 Documented): TerminalRunStatus, бюджет после финала, DESIGN/RELEASES/SMOKE_CDP по факту (backend 2159 / web 646) | 2026-11-19 | [KI-S50-S52-statuses-docs.md](v1.6.0/KI-S50-S52-statuses-docs.md) |
 | v1.6.0 | KI-S47–S49 | 12 KI (10 Fixed, 2 Documented): focus-кэш, lint web, id предшественника, e2e в CI, строгий SSE; отчёт на 3 спринта (backend 2159 / web 646) | 2026-11-19 | [KI-S47-S49-cache-e2e-sse.md](v1.6.0/KI-S47-S49-cache-e2e-sse.md) |
 | v1.6.0 | KI-S44–S46 | 12 KI (11 Fixed, 1 Documented): холст, удалённый nodes, префикс-гейт, tsconfig.spec, SQL CASE version, dev-автологин; отчёт на 3 спринта (backend 2158 / web 645) | 2026-11-19 | [KI-S44-S46-patch-auth-parity.md](v1.6.0/KI-S44-S46-patch-auth-parity.md) |
 | v1.6.0 | KI-S41–S43 | 12 KI (11 Fixed, 1 Documented): типы условия, явные порты, экспорт graphVersion, Async-суффиксы, inputsMap и пустой подграф; отчёт на 3 спринта (backend 2159 / web 643) | 2026-11-19 | [KI-S41-S43-backend-contracts.md](v1.6.0/KI-S41-S43-backend-contracts.md) |

@@ -19,6 +19,7 @@ import {
   workflowRuns,
   workflows,
   type NodeRunStatus,
+  type TerminalRunStatus,
 } from '../db/schema.js';
 import { DocumentService } from '../documents/document.service.js';
 // v0.12 S1 (DESIGN § 3.1.3): PDF-рендерер для `document_gen` (format='pdf').
@@ -370,8 +371,8 @@ function toNodeRunMetrics(step: NodeStepResult): NodeRunMetrics {
 
 /** Итог выполнения запуска. */
 export interface ExecutionResult {
-  /** Итоговый статус запуска. */
-  status: 'completed' | 'failed';
+  /** Итоговый статус запуска (KI-359: канон из db/schema.ts). */
+  status: TerminalRunStatus;
   /** Сколько узлов успешно завершилось. */
   executedNodes: number;
   /** `id` первого упавшего узла либо `null`. */
@@ -2334,7 +2335,7 @@ export class ExecutionEngineService {
    */
   private async finishRunAsync(
     runId: string,
-    status: 'completed' | 'failed',
+    status: TerminalRunStatus,
     outputs: Record<string, Record<string, unknown>>,
     error: string | null,
   ): Promise<void> {

@@ -6,7 +6,12 @@ import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { toMessage } from '../common/utils/to-message.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { workflows, workflowRuns, type RunStatus } from '../db/schema.js';
+import {
+  workflows,
+  workflowRuns,
+  type RunStatus,
+  type TerminalRunStatus,
+} from '../db/schema.js';
 import { GraphSnapshotSchema, type GraphSnapshotDto } from '../engine/dto/index.js';
 import { isRunCancelledError } from '../engine/errors.js';
 import { ExecutionEngineService } from '../engine/execution-engine.service.js';
@@ -320,7 +325,7 @@ export class RunsProcessor extends WorkerHost {
    */
   private async notifyRunFinishedAsync(
     runId: string,
-    status: 'completed' | 'failed' | 'cancelled',
+    status: TerminalRunStatus,
   ): Promise<void> {
     if (status === 'cancelled' || !this.pushOnRunComplete) {
       return;
@@ -390,7 +395,7 @@ export class RunsProcessor extends WorkerHost {
     runId: string,
     completion: {
       /** v1.4.0 S1: `cancelled` — штатный финал отменённого запуска. */
-      status: 'completed' | 'failed' | 'cancelled';
+      status: TerminalRunStatus;
       attemptsMade: number;
       attempts: number | null;
       final: boolean;
