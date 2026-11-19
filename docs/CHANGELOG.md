@@ -72,6 +72,9 @@
 
 ### Changed
 
+- **KI-спринт 30** ([отчёт](development/reports/v1.6.0/KI-S30-workspace-a11y.md)):
+  KI-144/KI-153 `Documented`, KI-146/KI-161 `Deferred`.
+
 - **KI-спринт 29** ([отчёт](development/reports/v1.6.0/KI-S29-local-ci-i18n.md)):
   KI-139 `Documented`, KI-138/KI-140 `Deferred`.
 

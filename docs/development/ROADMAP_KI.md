@@ -226,10 +226,10 @@
 
 ### Спринт 30 (Low)
 
-- [ ] **KI-144** 🟢 — web/ — самостоятельный пакет, но zod «одалживал» из корня — `web/package.json, pnpm-workspace.yaml (не содержит`
-- [ ] **KI-146** 🟢 — Каталог: подсветка выбора не прокручивается и не отличима от hover — `web/src/components/NodeCatalogPopover.tsx`
-- [ ] **KI-153** 🟢 — Стоимость локального вызова не зависит от наличия usage — `src/llm/model-pricing.ts (calculateCostUsdForProvider)`
-- [ ] **KI-161** 🟢 — Позицию курсора нельзя проверить в CI — `web/src/hooks/use-preserve-cursor.ts`
+- [x] **KI-144** 🟢 — web/ — самостоятельный пакет, но zod «одалживал» из корня — `web/package.json, pnpm-workspace.yaml (не содержит` (Documented)
+- [x] **KI-146** 🟢 — Каталог: подсветка выбора не прокручивается и не отличима от hover — `web/src/components/NodeCatalogPopover.tsx` (Deferred)
+- [x] **KI-153** 🟢 — Стоимость локального вызова не зависит от наличия usage — `src/llm/model-pricing.ts (calculateCostUsdForProvider)` (Documented)
+- [x] **KI-161** 🟢 — Позицию курсора нельзя проверить в CI — `web/src/hooks/use-preserve-cursor.ts` (Deferred)
 
 ### Спринт 31 (Low)
 
@@ -529,4 +529,5 @@
 | 26 | KI-093, KI-095, KI-098, KI-100 | 1 Documented, 1 Won't Fix, 2 Deferred | `1fa02b1` |
 | 27 | KI-102, KI-103, KI-115, KI-116 | 1 Fixed (по факту), 1 Documented, 2 Deferred | `b840f50` |
 | 28 | KI-117, KI-133, KI-135, KI-136 | 2 Documented, 2 Deferred | `6c78437` |
-| 29 | KI-138, KI-139, KI-140, KI-143 | 1 Fixed (скрипт), 1 Documented, 2 Deferred | (текущий) |
+| 29 | KI-138, KI-139, KI-140, KI-143 | 1 Fixed (скрипт), 1 Documented, 2 Deferred | `af506b5` |
+| 30 | KI-144, KI-146, KI-153, KI-161 | 2 Documented, 2 Deferred | (текущий) |

@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S30 | KI-144/KI-153 Documented, KI-146/KI-161 Deferred — docs-only | 2026-11-19 | [KI-S30-workspace-a11y.md](v1.6.0/KI-S30-workspace-a11y.md) |
 | v1.6.0 | KI-S29 | KI-143: root-скрипт pnpm ci:web (598 тестов зелёные); KI-139 Documented, KI-138/KI-140 Deferred | 2026-11-19 | [KI-S29-local-ci-i18n.md](v1.6.0/KI-S29-local-ci-i18n.md) |
 | v1.6.0 | KI-S28 | KI-117/KI-133 Deferred, KI-135/KI-136 Documented: темы, focus, кэш каталога — docs-only | 2026-11-19 | [KI-S28-ui-theme-a11y.md](v1.6.0/KI-S28-ui-theme-a11y.md) |
 | v1.6.0 | KI-S27 | KI-103 Fixed по факту (поле provider уже есть), KI-102 Documented, KI-115/KI-116 Deferred — docs-only | 2026-11-19 | [KI-S27-media-dto.md](v1.6.0/KI-S27-media-dto.md) |
