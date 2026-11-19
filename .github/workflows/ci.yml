@@ -68,6 +68,11 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # KI-497/KI-344: реестр KI и его сводка обязаны сходиться по grep
+      # (RULES 3.20) — расхождение блокирует merge.
+      - name: Check KNOWN_ISSUES summary
+        run: pnpm check:known-issues
+
       # KI-298: гейт паритета схемы (src/db/schema-parity.spec.ts) читает
       # information_schema из services.postgres, поэтому схему нужно применить
       # до тестов — иначе БД пуста и гейт красный («таблица отсутствует в БД»).

@@ -54,7 +54,17 @@
   `NetworkError`) теперь классифицируются как retryable по имени класса
   (+3 теста в `src/llm/provider-errors.spec.ts`).
 
+### Added
+
+- **KI-497:** `scripts/check-known-issues.mjs` + шаг CI `Check KNOWN_ISSUES
+  summary` — автоматическая сверка числа KI, статусов и сводной таблицы
+  (RULES 3.20); расхождение блокирует merge.
+
 ### Changed
+
+- **KI-спринт 20** ([отчёт](development/reports/v1.6.0/KI-S20-registry-gate.md)):
+  KI-475/KI-509/KI-520 `Deferred`; сводка статусов пересчитана grep'ом
+  (657 = 657) и защищена CI-гейтом.
 
 - **KI-спринт 19** ([отчёт](development/reports/v1.6.0/KI-S19-agent-ui-limits.md)):
   все четыре KI (`KI-436`, `KI-449`, `KI-462`, `KI-474`) `Deferred` — требуют

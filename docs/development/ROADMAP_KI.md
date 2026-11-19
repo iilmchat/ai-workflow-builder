@@ -156,10 +156,10 @@
 
 ### Спринт 20 (Medium)
 
-- [ ] **KI-475** 🟡 — 3D/Motion узлы не реализованы (перенесено из KI-196) — `web/src/lib/node-registry.ts,`
-- [ ] **KI-497** 🟡 — Сводка `KNOWN_ISSUES.md` расходится с `grep` — `docs/KNOWN_ISSUES.md`
-- [ ] **KI-509** 🟡 — Бейджи статусов и возможностей — светлые литералы (Medium) — `web/src/components/TopBar.tsx,`
-- [ ] **KI-520** 🟡 — MCP-ссылки вне каталога не видны в UI узла `agent` — `web/src/components/nodes/AgentNode.tsx,`
+- [x] **KI-475** 🟡 — 3D/Motion узлы не реализованы (перенесено из KI-196) — `web/src/lib/node-registry.ts,` (Deferred)
+- [x] **KI-497** 🟡 — Сводка `KNOWN_ISSUES.md` расходится с `grep` — `docs/KNOWN_ISSUES.md`
+- [x] **KI-509** 🟡 — Бейджи статусов и возможностей — светлые литералы (Medium) — `web/src/components/TopBar.tsx,` (Deferred)
+- [x] **KI-520** 🟡 — MCP-ссылки вне каталога не видны в UI узла `agent` — `web/src/components/nodes/AgentNode.tsx,` (Deferred)
 
 ### Спринт 21 (Medium)
 
@@ -519,4 +519,5 @@
 | 16 | KI-372, KI-379, KI-381, KI-385 | 3 Deferred, 1 Documented | `b60a6aa` |
 | 17 | KI-386, KI-392, KI-393, KI-402 | 1 Fixed (код), 2 Deferred, 1 Documented | `72e7c8b` |
 | 18 | KI-403, KI-404, KI-408, KI-426 | 1 Documented (docs), 3 Deferred | `4f816ef` |
-| 19 | KI-436, KI-449, KI-462, KI-474 | 4 Deferred | (текущий) |
+| 19 | KI-436, KI-449, KI-462, KI-474 | 4 Deferred | `ab0da22` |
+| 20 | KI-475, KI-497, KI-509, KI-520 | 1 Fixed (CI-гейт), 3 Deferred | (текущий) |
