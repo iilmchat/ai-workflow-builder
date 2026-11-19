@@ -1507,7 +1507,7 @@ describe('ExecutionEngineService', () => {
     expect(conditionRow?.inputs).toEqual({ input: '5' });
     expect(conditionRow?.outputs).toEqual({
       result: true,
-      evaluated: { left: 5, right: 3 },
+      evaluated: { left: 5, right: 3, leftType: 'string', rightType: 'number' },
     });
   });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CONDITION_MODES,
   CONDITION_OPERATORS,
+  validateConditionInputPorts,
   validateConditionMode,
   validateConditionOperator,
 } from './condition-node-fields';
@@ -32,5 +33,23 @@ describe('validateConditionMode (R7.5)', () => {
     expect(validateConditionMode('wasm')).toBe('dsl');
     expect(validateConditionMode(undefined)).toBe('dsl');
     expect(validateConditionMode(null)).toBe('dsl');
+  });
+});
+
+describe('validateConditionInputPorts (KI-283)', () => {
+  it('переносит непустые имена портов', () => {
+    expect(validateConditionInputPorts({ left: 'value', right: 'prompt' })).toEqual({
+      left: 'value',
+      right: 'prompt',
+    });
+    expect(validateConditionInputPorts({ left: 'value' })).toEqual({ left: 'value' });
+  });
+
+  it('мусор и пустые схемы отбрасываются', () => {
+    expect(validateConditionInputPorts(undefined)).toBeUndefined();
+    expect(validateConditionInputPorts(null)).toBeUndefined();
+    expect(validateConditionInputPorts([])).toBeUndefined();
+    expect(validateConditionInputPorts({})).toBeUndefined();
+    expect(validateConditionInputPorts({ left: 1, right: '' })).toBeUndefined();
   });
 });

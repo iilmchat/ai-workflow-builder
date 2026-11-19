@@ -96,7 +96,9 @@ export function HttpNode({ id, data }: NodeProps<HttpFlowNode>) {
         dataNodeAttr={{ name: 'data-http-node', value: id }}
         onDelete={() => removeNode(id)}
       >
-        <div className="flex gap-1.5">
+        {/* KI-285: метод и URL в одну строку w-60 обрезали адрес — кладём
+            метод отдельной строкой, URL занимает всю ширину карточки. */}
+        <div className="flex flex-col gap-1.5">
           <select
             value={data.method}
             aria-label={t('node.http.method')}

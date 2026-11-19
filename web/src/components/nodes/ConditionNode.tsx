@@ -117,7 +117,9 @@ export function ConditionNode({ id, data }: NodeProps<ConditionFlowNode>) {
           </div>
 
           {mode === 'dsl' ? (
-            <div className="flex items-center gap-1">
+            // KI-285: три поля в одну строку w-60 обрезались. Левый операнд
+            // занимает всю ширину, оператор и правый операнд — вторую строку.
+            <div className="flex flex-col gap-1">
               <input
                 type="text"
                 value={data.left}
@@ -125,37 +127,39 @@ export function ConditionNode({ id, data }: NodeProps<ConditionFlowNode>) {
                 aria-label={t('node.condition.left')}
                 data-condition-left=""
                 // nodrag: иначе протяжка мышью по полю тащит ноду.
-                className="nodrag min-w-0 flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+                className="nodrag w-full min-w-0 rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
                 onChange={handleLeftChange}
               />
 
-              <select
-                value={data.operator}
-                aria-label={t('node.condition.operator')}
-                data-condition-operator=""
-                className="nodrag w-20 rounded-lg border border-border bg-background px-1 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-                onChange={(event) =>
-                  updateNodeData(id, {
-                    operator: validateConditionOperator(event.target.value),
-                  })
-                }
-              >
-                {CONDITION_OPERATORS.map((operator) => (
-                  <option key={operator} value={operator}>
-                    {operator}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center gap-1">
+                <select
+                  value={data.operator}
+                  aria-label={t('node.condition.operator')}
+                  data-condition-operator=""
+                  className="nodrag w-20 shrink-0 rounded-lg border border-border bg-background px-1 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                  onChange={(event) =>
+                    updateNodeData(id, {
+                      operator: validateConditionOperator(event.target.value),
+                    })
+                  }
+                >
+                  {CONDITION_OPERATORS.map((operator) => (
+                    <option key={operator} value={operator}>
+                      {operator}
+                    </option>
+                  ))}
+                </select>
 
-              <input
-                type="text"
-                value={data.right}
-                placeholder={t('node.condition.right.placeholder')}
-                aria-label={t('node.condition.right')}
-                data-condition-right=""
-                className="nodrag min-w-0 flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
-                onChange={handleRightChange}
-              />
+                <input
+                  type="text"
+                  value={data.right}
+                  placeholder={t('node.condition.right.placeholder')}
+                  aria-label={t('node.condition.right')}
+                  data-condition-right=""
+                  className="nodrag min-w-0 flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+                  onChange={handleRightChange}
+                />
+              </div>
             </div>
           ) : (
             <div className="flex flex-col gap-1">

@@ -2,6 +2,7 @@ import {
   DEFAULT_CONDITION_MODE,
   DEFAULT_CONDITION_OPERATOR,
   type ConditionMode,
+  type ConditionNodeData,
   type ConditionOperator,
 } from '@/types/graph';
 
@@ -55,4 +56,30 @@ export const CONDITION_MODES = ['dsl', 'sandbox'] as const satisfies readonly Co
  */
 export function validateConditionMode(value: unknown): ConditionMode {
   return CONDITION_MODES.find((mode) => mode === value) ?? DEFAULT_CONDITION_MODE;
+}
+
+/**
+ * Проверяет явное соответствие операндов портам из недоверенного графа (KI-283).
+ *
+ * @param value - значение `data.inputPorts`
+ * @returns валидная схема либо `undefined` (старые графы, мусор)
+ */
+export function validateConditionInputPorts(
+  value: unknown,
+): ConditionNodeData['inputPorts'] {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const source = value as Record<string, unknown>;
+  const left = typeof source['left'] === 'string' && source['left'].length > 0
+    ? source['left']
+    : undefined;
+  const right = typeof source['right'] === 'string' && source['right'].length > 0
+    ? source['right']
+    : undefined;
+
+  return left === undefined && right === undefined
+    ? undefined
+    : { ...(left === undefined ? {} : { left }), ...(right === undefined ? {} : { right }) };
 }

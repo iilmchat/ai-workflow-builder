@@ -574,7 +574,56 @@ describe('node-executors', () => {
         { value: 5 },
       );
 
-      expect(result).toEqual({ result: true, evaluated: { left: 5, right: 3 } });
+      expect(result).toEqual({
+        result: true,
+        evaluated: { left: 5, right: 3, leftType: 'number', rightType: 'number' },
+      });
+    });
+
+    it('KI-282: evaluated хранит исходный тип строкового операнда', async () => {
+      const result = await executeConditionNode(
+        { left: 'input.value', operator: '>', right: '3' },
+        { value: '5' },
+      );
+
+      expect(result).toEqual({
+        result: true,
+        evaluated: { left: 5, right: 3, leftType: 'string', rightType: 'number' },
+      });
+    });
+
+    it('KI-283: явные порты дают доступ ко второму входу', async () => {
+      const result = await executeConditionNode(
+        {
+          left: 'input.value',
+          operator: '===',
+          right: 'input.prompt',
+          inputPorts: { left: 'value', right: 'prompt' },
+        },
+        { value: 'a', prompt: 'b' },
+      );
+
+      expect(result.evaluated).toEqual({
+        left: 'a',
+        right: 'b',
+        leftType: 'string',
+        rightType: 'string',
+      });
+      expect(result.result).toBe(false);
+    });
+
+    it('KI-283: неверный явный порт — ошибка, а не подстановка запасного', async () => {
+      await expect(
+        executeConditionNode(
+          {
+            left: 'input.typo',
+            operator: '===',
+            right: "'b'",
+            inputPorts: { left: 'typo' },
+          },
+          { value: 'a' },
+        ),
+      ).rejects.toThrow("явный вход 'typo' не найден");
     });
 
     it('> возвращает false, когда условие не выполнено', async () => {
@@ -594,7 +643,15 @@ describe('node-executors', () => {
           { left: 'input.text', operator: '===', right: "'готово'" },
           { text: 'готово' },
         ),
-      ).toEqual({ result: true, evaluated: { left: 'готово', right: 'готово' } });
+      ).toEqual({
+        result: true,
+        evaluated: {
+          left: 'готово',
+          right: 'готово',
+          leftType: 'string',
+          rightType: 'string',
+        },
+      });
     });
 
     it('includes работает для массива', async () => {
@@ -625,7 +682,15 @@ describe('node-executors', () => {
           { left: 'input.value', operator: '===', right: "'привет'" },
           { text: 'привет' },
         ),
-      ).toEqual({ result: true, evaluated: { left: 'привет', right: 'привет' } });
+      ).toEqual({
+        result: true,
+        evaluated: {
+          left: 'привет',
+          right: 'привет',
+          leftType: 'string',
+          rightType: 'string',
+        },
+      });
     });
 
     it('падает на невалидном операторе (валидация Zod)', async () => {
@@ -680,7 +745,15 @@ describe('node-executors', () => {
           { left: 'input.value', operator: '===', right: "'готово'" },
           { input: 'готово' },
         ),
-      ).toEqual({ result: true, evaluated: { left: 'готово', right: 'готово' } });
+      ).toEqual({
+        result: true,
+        evaluated: {
+          left: 'готово',
+          right: 'готово',
+          leftType: 'string',
+          rightType: 'string',
+        },
+      });
     });
 
     it('R7.5: mode=dsl — явный режим работает как прежний DSL', async () => {
@@ -689,7 +762,10 @@ describe('node-executors', () => {
           { mode: 'dsl', left: 'input.value', operator: '>', right: '3' },
           { value: 5 },
         ),
-      ).toEqual({ result: true, evaluated: { left: 5, right: 3 } });
+      ).toEqual({
+        result: true,
+        evaluated: { left: 5, right: 3, leftType: 'number', rightType: 'number' },
+      });
     });
 
     it('R7.5: mode=sandbox — вычисляет JS-выражение в QuickJS', async () => {

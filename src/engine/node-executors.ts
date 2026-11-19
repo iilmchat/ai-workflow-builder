@@ -1600,6 +1600,53 @@ export interface ConditionSandboxEvaluator {
   ): Promise<SandboxEvaluation>;
 }
 
+/** Тип значения операнда условия (KI-282). */
+export type OperandValueType =
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'bigint'
+  | 'symbol'
+  | 'function'
+  | 'object'
+  | 'array'
+  | 'null'
+  | 'undefined';
+
+/**
+ * Возвращает тип значения операнда, различая `null` и массивы (KI-282).
+ *
+ * @param value - значение операнда
+ * @returns тип для поля `evaluated.leftType`/`evaluated.rightType`
+ */
+export function operandValueType(value: unknown): OperandValueType {
+  if (value === null) {
+    return 'null';
+  }
+
+  if (value === undefined) {
+    return 'undefined';
+  }
+
+  if (Array.isArray(value)) {
+    return 'array';
+  }
+
+  return typeof value as OperandValueType;
+}
+
+/** Разрешённые операнды DSL с их исходными типами (KI-282). */
+export interface EvaluatedOperands {
+  /** Значение, которое участвовало в сравнении (для чисел — приведённое). */
+  left: unknown;
+  /** Значение, которое участвовало в сравнении (для чисел — приведённое). */
+  right: unknown;
+  /** Исходный тип левого операнда до числового приведения. */
+  leftType: OperandValueType;
+  /** Исходный тип правого операнда до числового приведения. */
+  rightType: OperandValueType;
+}
+
 /** Результат вычисления условия. */
 export interface ConditionResult extends Record<string, unknown> {
   /** Итог условия. */
@@ -1609,7 +1656,7 @@ export interface ConditionResult extends Record<string, unknown> {
    * обращаться к любым полям входа, и восстановить «левый/правый операнд»
    * нельзя (KI-282).
    */
-  evaluated?: { left: unknown; right: unknown };
+  evaluated?: EvaluatedOperands;
 }
 
 /** Zod-схема данных узла `condition` в режиме DSL (R6.5.1). */
@@ -1617,6 +1664,14 @@ const ConditionNodeDataSchema = z.object({
   left: z.string().min(1, 'left обязателен'),
   operator: z.enum(['>', '<', '>=', '<=', '===', 'includes']),
   right: z.string().min(1, 'right обязателен'),
+  // KI-283: явное соответствие операндов входным портам. Если задано,
+  // эвристика prompt/text/value не применяется — опечатка не подменит вход.
+  inputPorts: z
+    .object({
+      left: z.string().min(1).optional(),
+      right: z.string().min(1).optional(),
+    })
+    .optional(),
 });
 
 /** Zod-схема данных узла `condition` в режиме `sandbox` (R7.5). */
@@ -1693,6 +1748,7 @@ interface ResolvedOperand {
  * @param inputs - собранные входы узла
  * @param nodeType - тип узла (определяет приоритетный входной ключ)
  * @param side - сторона операнда (для понятного текста ошибки)
+ * @param explicitPort - явный входной порт из `data.inputPorts` (KI-283)
  * @returns значение операнда и признак «пришло из входа»
  * @throws Error если `input.X` не найден и запасных входов тоже нет
  */
@@ -1701,9 +1757,23 @@ function resolveConditionOperand(
   inputs: Record<string, unknown>,
   nodeType: string,
   side: 'left' | 'right',
+  explicitPort?: string,
 ): ResolvedOperand {
   const operand = raw.trim();
   const candidates = fallbackInputKeys(nodeType);
+
+  // KI-283: явная схема отображения имеет приоритет над эвристикой. Отсутствие
+  // порта — ошибка, а не молчаливая подстановка первого попавшегося входа.
+  if (explicitPort !== undefined) {
+    if (Object.hasOwn(inputs, explicitPort)) {
+      return { value: inputs[explicitPort], numericEligible: true };
+    }
+
+    throw new Error(
+      `Узел condition: ${side}='${raw}' — явный вход '${explicitPort}' не найден ` +
+        `(получены ключи: ${Object.keys(inputs).join(', ') || '(нет)'})`,
+    );
+  }
 
   if (operand.startsWith('input.')) {
     const key = operand.slice('input.'.length);
@@ -1826,16 +1896,32 @@ export async function executeConditionNode(
 function executeDslCondition(
   data: unknown,
   inputs: Record<string, unknown>,
-): ConditionResult & { evaluated: { left: unknown; right: unknown } } {
+): ConditionResult & { evaluated: EvaluatedOperands } {
   const parsed = parseNodeData('condition', ConditionNodeDataSchema, data);
-  const resolvedLeft = resolveConditionOperand(parsed.left, inputs, 'condition', 'left');
-  const resolvedRight = resolveConditionOperand(parsed.right, inputs, 'condition', 'right');
+  const resolvedLeft = resolveConditionOperand(
+    parsed.left,
+    inputs,
+    'condition',
+    'left',
+    parsed.inputPorts?.left,
+  );
+  const resolvedRight = resolveConditionOperand(
+    parsed.right,
+    inputs,
+    'condition',
+    'right',
+    parsed.inputPorts?.right,
+  );
   const left = resolvedLeft.value;
   const right = resolvedRight.value;
+  // KI-282: типы фиксируются до числового приведения — иначе `'5' > 3` и
+  // `5 > 3` были бы неразличимы в `evaluated`.
+  const leftType = operandValueType(left);
+  const rightType = operandValueType(right);
 
   // Числовые операции отдают в `evaluated` ровно те значения, которые
   // сравнивались (то есть приведённые к числу), остальные — исходные.
-  let evaluated: { left: unknown; right: unknown } = { left, right };
+  let evaluated: EvaluatedOperands = { left, right, leftType, rightType };
   let result: boolean;
 
   switch (parsed.operator) {
@@ -1846,7 +1932,7 @@ function executeDslCondition(
       const a = requireFiniteNumber(resolvedLeft, 'left');
       const b = requireFiniteNumber(resolvedRight, 'right');
 
-      evaluated = { left: a, right: b };
+      evaluated = { left: a, right: b, leftType, rightType };
 
       result =
         parsed.operator === '>'

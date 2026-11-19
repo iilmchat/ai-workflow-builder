@@ -89,7 +89,11 @@ import {
   validateHttpMethod,
   validateTimeoutMs,
 } from '@/lib/http-node-fields';
-import { validateConditionMode, validateConditionOperator } from '@/lib/condition-node-fields';
+import {
+  validateConditionInputPorts,
+  validateConditionMode,
+  validateConditionOperator,
+} from '@/lib/condition-node-fields';
 import {
   validateInputsMap,
   validateWorkflowVersion,
@@ -1689,6 +1693,13 @@ function nodeDataFromApi(type: NodeType, data: Record<string, unknown>): NodeDat
       // введённый текст.
       if (typeof data.expression === 'string' && data.expression.length > 0) {
         result.expression = data.expression;
+      }
+
+      // KI-283: явная схема портов переживает Load/Save; мусор не создаём.
+      const inputPorts = validateConditionInputPorts(data.inputPorts);
+
+      if (inputPorts !== undefined) {
+        result.inputPorts = inputPorts;
       }
 
       return result;

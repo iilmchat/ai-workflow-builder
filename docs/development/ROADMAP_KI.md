@@ -303,10 +303,10 @@
 
 ### Спринт 41 (Low)
 
-- [ ] **KI-281** 🟢 — http: тело ответа читается целиком перед обрезкой — `src/engine/node-executors.ts`
-- [ ] **KI-282** 🟢 — condition: `evaluated` теряет типы — `src/engine/node-executors.ts`
-- [ ] **KI-283** 🟢 — condition: эвристика ключей `input.X` — `src/engine/node-executors.ts`
-- [ ] **KI-285** 🟢 — UI новых узлов: обрезка полей в карточке w-60 — `web/src/components/nodes/ConditionNode.tsx,`
+- [x] **KI-281** 🟢 — http: тело ответа читается целиком перед обрезкой — `src/engine/node-executors.ts` (Fixed по факту: SafeHttpClient stream)
+- [x] **KI-282** 🟢 — condition: `evaluated` теряет типы — `src/engine/node-executors.ts`
+- [x] **KI-283** 🟢 — condition: эвристика ключей `input.X` — `src/engine/node-executors.ts`
+- [x] **KI-285** 🟢 — UI новых узлов: обрезка полей в карточке w-60 — `web/src/components/nodes/ConditionNode.tsx,`
 
 ### Спринт 42 (Low)
 
@@ -540,4 +540,5 @@
 | 37 | KI-249, KI-250, KI-251, KI-252 | 4 Fixed (3 с кодом + паритет-тест, i18n, 3 теста сетки); backend 2150 / web 607 зелёные | `89eafbc` |
 | 38 | KI-253, KI-254, KI-255, KI-262 | 4 Fixed (кэш хэша, Ctrl+D, клон данных, Handle-гейт); web 633 зелёных | `74bae8a` |
 | 39 | KI-264, KI-267, KI-270, KI-272 | 3 Fixed, 1 Documented (SMOKE_CDP.md); web 636 зелёных | `f550eae` |
-| 40 | KI-273, KI-276, KI-277, KI-279 | 4 Fixed (хоткеи, Ctrl+Z, история Load, слоты compare); backend 2154 / web 641 зелёные | (текущий) |
+| 40 | KI-273, KI-276, KI-277, KI-279 | 4 Fixed (хоткеи, Ctrl+Z, история Load, слоты compare); backend 2154 / web 641 зелёные | `6414e2a` |
+| 41 | KI-281, KI-282, KI-283, KI-285 | 4 Fixed (1 по факту, типы evaluated, явные порты, UI-раскладка); web 643 зелёных | (текущий) |
