@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | S68 | KI-616 маскировка email collaborator, KI-665 тост недоступного QR, KI-668 CORS prod-like, KI-669 IPv6-CIDR; Open = 0 | 2026-11-19 | [KI-S68-audit-qr-cors-ipv6.md](v1.6.0/KI-S68-audit-qr-cors-ipv6.md) |
 | v1.6.0 | S67 | KI-610: CI-гейт панелей Grafana (сверка с метриками), KI-612 Documented, KI-614/KI-615 Deferred | 2026-11-19 | [KI-S67-grafana-metrics.md](v1.6.0/KI-S67-grafana-metrics.md) |
 | v1.6.0 | S66 | KI-557: 409 вместо 500 при гонке email, KI-543: polling истории, KI-559: CASCADE invited_by (миграция 0024), KI-539 Deferred | 2026-11-19 | [KI-S66-registration-history-fk.md](v1.6.0/KI-S66-registration-history-fk.md) |
 | v1.6.0 | S65 | KI-535 WARN о stdio при старте, KI-536 абсолютный MCP_STDIO_CWD, KI-524 паритет image_tool; KI-523 Documented | 2026-11-19 | [KI-S65-mcp-startup-parity.md](v1.6.0/KI-S65-mcp-startup-parity.md) |

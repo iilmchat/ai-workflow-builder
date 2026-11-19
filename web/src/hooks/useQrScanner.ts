@@ -5,6 +5,19 @@ import {
 import { isAndroid, isNative } from '@/lib/platform';
 
 /**
+ * Сканер недоступен на этом устройстве (KI-665).
+ *
+ * Отдельный класс нужен, чтобы вызвать стороны различали «пользователь закрыл
+ * камеру» (`null`) и «сканер нельзя запустить» (ошибка → тост в UI).
+ */
+export class QrUnavailableException extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'QrUnavailableException';
+  }
+}
+
+/**
  * Открывает QR-сканер и возвращает первое распознанное значение (v1.5.0 S1).
  *
  * Сканер построен на Google ML Kit, поэтому перед показом камеры проверяются
@@ -33,7 +46,7 @@ export async function scanQr(): Promise<string | null> {
   if (!supported) {
     console.warn('[qr] сканер недоступен: на устройстве нет камеры');
 
-    return null;
+    throw new QrUnavailableException('нет камеры');
   }
 
   if (isAndroid()) {
@@ -45,7 +58,7 @@ export async function scanQr(): Promise<string | null> {
       // это отдельный UX-сценарий с прогрессом установки — вне S1.
       console.warn('[qr] сканер недоступен (нет Google Play Services?)');
 
-      return null;
+      throw new QrUnavailableException('нет Google Play Services');
     }
   }
 
@@ -54,7 +67,7 @@ export async function scanQr(): Promise<string | null> {
   if (perm.camera !== 'granted') {
     console.warn('[qr] разрешение на камеру не выдано');
 
-    return null;
+    throw new QrUnavailableException('разрешение на камеру не выдано');
   }
 
   try {

@@ -25,6 +25,12 @@
 
 ### Fixed
 
+- **KI-спринт 68** ([отчёт](development/reports/v1.6.0/KI-S68-audit-qr-cors-ipv6.md)):
+  - **KI-616:** маскировка email распространена на `collaborator.invite`.
+  - **KI-665:** недоступный QR-сканер показывает тост вместо тихого возврата.
+  - **KI-668:** CORS-allowlist распространён на staging/preprod.
+  - **KI-669:** IPv6-CIDR в allowlist `/metrics` (BigInt, 128 бит).
+
 - **KI-спринт 67** ([отчёт](development/reports/v1.6.0/KI-S67-grafana-metrics.md)):
   - **KI-610:** CI-гейт дашборда Grafana — панели обязаны ссылаться на реальные метрики.
   - **KI-612** `Documented`, **KI-614/KI-615** `Deferred` — архитектурные решения по метрикам/авторизации.

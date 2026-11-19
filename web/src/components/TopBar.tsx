@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import i18n, { setLanguage, type Language } from '@/i18n';
 import { usePreserveCursor } from '@/hooks/use-preserve-cursor';
-import { scanQr } from '@/hooks/useQrScanner';
+import { QrUnavailableException, scanQr } from '@/hooks/useQrScanner';
 import { useTheme } from '@/hooks/use-theme';
 import { fetchLlmHealthAsync, cancelRunAsync } from '@/lib/api';
 import { APP_VERSION } from '@/lib/app-version';
@@ -700,7 +700,7 @@ export function TopBar() {
       const value = await scanQr();
 
       if (value === null) {
-        // Отмена, отсутствие Play Services или запрет камеры.
+        // Пользователь сам закрыл камеру — это не ошибка (KI-665).
         return;
       }
 
@@ -729,6 +729,14 @@ export function TopBar() {
       // при ошибке оставляет прежний id и показывает своё уведомление.
       if (useWorkflowStore.getState().currentWorkflowId === payload.id) {
         setNotice({ kind: 'success', text: t('topbar.scan_qr_ok') });
+      }
+    } catch (error: unknown) {
+      // KI-665: недоступный сканер — не «тихая отмена», а понятный тост.
+      if (error instanceof QrUnavailableException) {
+        setNotice({
+          kind: 'error',
+          text: t('topbar.scan_qr_unavailable'),
+        });
       }
     } finally {
       setIsScanning(false);

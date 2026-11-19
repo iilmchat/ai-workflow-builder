@@ -49,6 +49,8 @@ const UUID_PATTERN =
 const EMAIL_MASKED_ACTIONS: ReadonlySet<string> = new Set([
   'member.invite',
   'member.remove',
+  // KI-616: приглашение участника workflow тоже пишет email в теле запроса.
+  'collaborator.invite',
 ]);
 
 /** Email-подобная подстрока в значении metadata. */

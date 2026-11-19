@@ -77,7 +77,11 @@ export function resolveCorsOrigin(
   nodeEnv: string | undefined,
   raw: string | undefined,
 ): true | string[] {
-  if (nodeEnv !== 'production') {
+  // KI-668: staging/preprod — публичные среды; отражать Origin там так же
+  // опасно, как в проде (KI-221). Только dev/test/CI сохраняют origin: true.
+  const prodLike = new Set(['production', 'staging', 'preprod']);
+
+  if (nodeEnv === undefined || !prodLike.has(nodeEnv)) {
     return true;
   }
 
@@ -85,7 +89,7 @@ export function resolveCorsOrigin(
 
   if (origins.length === 0) {
     throw new Error(
-      'CORS_ALLOWED_ORIGINS обязателен при NODE_ENV=production: перечислите ' +
+      `CORS_ALLOWED_ORIGINS обязателен при NODE_ENV=${nodeEnv}: перечислите ` +
         "origin'ы через запятую (например " +
         'https://app.example.com,https://localhost,capacitor://localhost). ' +
         'Приложение не стартует, чтобы не открыть CORS всему интернету.',

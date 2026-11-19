@@ -54,13 +54,21 @@ describe('parseIpAllowlist (S6-A)', () => {
     ]);
   });
 
+  it('KI-669: IPv6-CIDR покрывает подсеть и не пускает соседнюю', () => {
+    const rules = parseIpAllowlist('fe80::/10');
+
+    expect(rules).toMatchObject([{ address: 'fe80::', prefixLength: 10 }]);
+    expect(isIpAllowed('fe80::1', rules)).toBe(true);
+    expect(isIpAllowed('febf:ffff::5', rules)).toBe(true);
+    expect(isIpAllowed('fec0::1', rules)).toBe(false);
+    expect(isIpAllowed('2001:db8::1', rules)).toBe(false);
+  });
+
   it('некорректные записи отбрасываются (fail-closed)', () => {
     // Все записи невалидны → allowlist пуст → закрыто для всех. Это осознанный
     // fail-closed: опечатка в env не должна открывать ручку «всем».
     expect(parseIpAllowlist('not-an-ip,app.example.com')).toMatchObject([]);
-    // IPv6-CIDR не поддержан (KI-669) — правило не создаётся.
-    expect(parseIpAllowlist('fe80::/10')).toMatchObject([]);
-    // Маска вне 0..32 невалидна.
+    // Маска вне 0..128 невалидна.
     expect(parseIpAllowlist('10.0.0.0/64')).toMatchObject([]);
     // Валидная запись рядом с невалидной сохраняется.
     expect(parseIpAllowlist('not-an-ip,127.0.0.1')).toMatchObject([

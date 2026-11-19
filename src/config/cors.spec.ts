@@ -56,13 +56,19 @@ describe('parseCorsAllowedOrigins (S6-A)', () => {
 });
 
 describe('resolveCorsOrigin (S6-A)', () => {
-  it('вне production сохраняет прежнее `origin: true`', () => {
+  it('в dev/test сохраняет прежнее `origin: true`', () => {
     expect(resolveCorsOrigin('development', undefined)).toBe(true);
     expect(resolveCorsOrigin('test', '')).toBe(true);
     expect(resolveCorsOrigin(undefined, undefined)).toBe(true);
-    // staging/preprod остаются на прежнем поведении (см. KI-668).
-    expect(resolveCorsOrigin('staging', 'https://app.example.com')).toBe(true);
-    expect(resolveCorsOrigin('preprod', undefined)).toBe(true);
+  });
+
+  it('KI-668: staging/preprod — prod-like, пустой allowlist блокирует старт', () => {
+    expect(resolveCorsOrigin('staging', 'https://app.example.com')).toEqual([
+      'https://app.example.com',
+    ]);
+    expect(() => resolveCorsOrigin('preprod', undefined)).toThrow(
+      /CORS_ALLOWED_ORIGINS/,
+    );
   });
 
   it("в production возвращает массив origin'ов", () => {

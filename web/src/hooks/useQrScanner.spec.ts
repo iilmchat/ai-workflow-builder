@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { scanQr } from './useQrScanner';
+import { QrUnavailableException, scanQr } from './useQrScanner';
 
 /**
  * Управляемое состояние моков (v1.5.0 S1).
@@ -77,10 +77,10 @@ describe('scanQr — QR-сканер через Capacitor ML Kit (v1.5.0 S1)', (
     expect(mocks.scan).toHaveBeenCalledWith({ formats: ['QR_CODE'] });
   });
 
-  it('нет камеры (supported: false): null, разрешение не запрашивается', async () => {
+  it('KI-665: нет камеры — QrUnavailableException, разрешение не запрашивается', async () => {
     mocks.isSupported.mockResolvedValue({ supported: false });
 
-    await expect(scanQr()).resolves.toBeNull();
+    await expect(scanQr()).rejects.toBeInstanceOf(QrUnavailableException);
     expect(mocks.requestPermissions).not.toHaveBeenCalled();
     expect(mocks.scan).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(
@@ -88,10 +88,10 @@ describe('scanQr — QR-сканер через Capacitor ML Kit (v1.5.0 S1)', (
     );
   });
 
-  it('нет модуля Google Barcode Scanner (Play Services): null, сканер не открывается', async () => {
+  it('KI-665: нет Play Services — QrUnavailableException, сканер не открывается', async () => {
     mocks.isModuleAvailable.mockResolvedValue({ available: false });
 
-    await expect(scanQr()).resolves.toBeNull();
+    await expect(scanQr()).rejects.toBeInstanceOf(QrUnavailableException);
     expect(mocks.requestPermissions).not.toHaveBeenCalled();
     expect(mocks.scan).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(
@@ -107,10 +107,10 @@ describe('scanQr — QR-сканер через Capacitor ML Kit (v1.5.0 S1)', (
     expect(mocks.scan).toHaveBeenCalledTimes(1);
   });
 
-  it('без разрешения на камеру: null, сканер не открывается', async () => {
+  it('KI-665: без разрешения на камеру — QrUnavailableException', async () => {
     mocks.requestPermissions.mockResolvedValue({ camera: 'denied' });
 
-    await expect(scanQr()).resolves.toBeNull();
+    await expect(scanQr()).rejects.toBeInstanceOf(QrUnavailableException);
     expect(mocks.scan).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith('[qr] разрешение на камеру не выдано');
   });

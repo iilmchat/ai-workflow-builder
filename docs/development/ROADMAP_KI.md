@@ -1,9 +1,9 @@
 # RoadMap: проверка и исправление открытых KI
 
 > Факт на HEAD `103bdf3` (v1.6.0, 19.11.2026 09:50 МСК): реестр
-> `docs/KNOWN_ISSUES.md` — 657 KI, из них **4 Open** (все 🟢 Low).
-> Выполнено **67 спринтов**; спринт **68** — оставшиеся Open KI. S69-Final
-> заведётся только по реальным находкам. Новых KI после 670 пока нет.
+> `docs/KNOWN_ISSUES.md` — 657 KI, **Open = 0**. Выполнено **68 спринтов** —
+> весь бэклог из 272 изначально открытых KI закрыт. S69-Final — только по
+> реальным находкам в коде (первая зафиксирована в отчёте S68).
 > Правила: `docs/development/RULES.md` v1.10.0.
 
 ## Порядок и ритм
@@ -17,10 +17,10 @@
 
 ## Сводка
 
-- Изначально открытых KI: **272** → осталось **4** (все 🟢 Low).
-- Спринтов: **69** по 4 KI; **67 закрыты**, **1 в плане** (68) + S69-Final.
-- Статусы (grep, RULES 3.20): Fixed 441 (+12 частично), Documented 107
-  (+1 не воспроизводится), Deferred 79, Open 4, Won't Fix 11, Planned 3.
+- Изначально открытых KI: **272** → осталось **0**.
+- Спринтов: **68 закрыты** + S69-Final (по реальным находкам).
+- Статусы (grep, RULES 3.20): Fixed 457 (+12 частично), Documented 107
+  (+1 не воспроизводится), Deferred 79, Open 0, Won't Fix 11, Planned 3.
 - Прогресс отмечается галочками в списке ниже; исполнение фиксируется в «Логе спринтов».
 - Спринты 63–68 сформированы из фактически оставшихся Open KI на HEAD `103bdf3`.
 
@@ -497,10 +497,10 @@
 
 ### Спринт 68 (Low)
 
-- [ ] **KI-616** 🟢 — Email маскируется только в `member.invite`/`member.remove` — `src/audit/audit.interceptor.ts`
-- [ ] **KI-665** 🟢 — QR без GMS: кнопка молча ничего не делает — `web/src/hooks/useQrScanner.ts, web/src/components/TopBar.tsx`
-- [ ] **KI-668** 🟢 — CORS_ALLOWED_ORIGINS действует только в production — `src/config/cors.ts, src/main.ts, .env.example`
-- [ ] **KI-669** 🟢 — Allowlist `/metrics` не поддерживает IPv6-CIDR — `src/metrics/metrics-ip-allowlist.ts`
+- [x] **KI-616** 🟢 — Email маскируется только в `member.invite`/`member.remove` — `src/audit/audit.interceptor.ts`
+- [x] **KI-665** 🟢 — QR без GMS: кнопка молча ничего не делает — `web/src/hooks/useQrScanner.ts, web/src/components/TopBar.tsx`
+- [x] **KI-668** 🟢 — CORS_ALLOWED_ORIGINS действует только в production — `src/config/cors.ts, src/main.ts, .env.example`
+- [x] **KI-669** 🟢 — Allowlist `/metrics` не поддерживает IPv6-CIDR — `src/metrics/metrics-ip-allowlist.ts`
 
 ### Спринт 69 (Final — только реальные находки)
 
@@ -579,8 +579,8 @@
 | 64 | KI-516, KI-517, KI-519, KI-521 | 3 Fixed (MCP-лимит, Node 22.19, метрики), 1 Deferred | `9170078` |
 | 65 | KI-523, KI-524, KI-535, KI-536 | 3 Fixed (MCP-старт, паритет, cwd), 1 Documented | `5b873f1` |
 | 66 | KI-539, KI-543, KI-557, KI-559 | 3 Fixed (регистрация, история, FK), 1 Deferred | `f8d1427` |
-| 67 | KI-610, KI-612, KI-614, KI-615 | 1 Fixed (CI-гейт Grafana), 1 Documented, 2 Deferred | (текущий) |
+| 67 | KI-610, KI-612, KI-614, KI-615 | 1 Fixed (CI-гейт Grafana), 1 Documented, 2 Deferred | `b115fed` |
+| 68 | KI-616, KI-665, KI-668, KI-669 | 4 Fixed (аудит, QR, CORS, IPv6); **Open = 0** | (текущий) |
 
-> **Спринт 68 не начинался.** Это 4 оставшихся Open KI (все Low),
-> сформированные в разделе «Спринты» по факту на HEAD `103bdf3`. S69-Final —
-> только реально найденные новые KI. Дедлайн окна — **06:00 МСК**.
+> **Бэклог исчерпан:** все 272 изначально открытых KI обработаны в спринтах
+> 01–68. S69-Final — только реальные находки; дедлайн окна — **06:00 МСК**.

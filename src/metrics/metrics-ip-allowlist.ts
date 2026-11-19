@@ -7,10 +7,10 @@
  * - точный адрес (`127.0.0.1`, `::1`, `62.109.1.230`);
  * - IPv4-CIDR (`172.18.0.0/16`) — Prometheus в Docker ходит из подсети
  *   compose, и перечислять IP контейнера вручную бессмысленно: он меняется
- *   при пересоздании.
+ *   при пересоздании;
+ * - IPv6-CIDR (`fe80::/10`) — для скрейперов в IPv6-сети (KI-669).
  *
- * IPv6-CIDR сознательно не поддерживается (KI-669): в прод-стеке внешний
- * скрейпер ходит по IPv4, а ошибка в маске молча расширила бы доступ.
+ * Невалидная запись отбрасывается: fail-closed важнее дружелюбия к опечаткам.
  *
  * Модуль без Nest-зависимостей: вся логика — чистые функции, поэтому она
  * покрыта unit-тестами без поднятия DI (`metrics-ip-allowlist.spec.ts`).
@@ -25,7 +25,7 @@
  */
 export const DEFAULT_METRICS_ALLOWED_IPS = '127.0.0.1';
 
-/** Скомпилированное правило: точный адрес или IPv4-подсеть. */
+/** Скомпилированное правило: точный адрес, IPv4- или IPv6-подсеть. */
 export interface IpRule {
   /** Нормализованный адрес (для CIDR — адрес сети). */
   readonly address: string;
@@ -164,19 +164,26 @@ function toRule(entry: string): IpRule | null {
 
   const address = normalizeClientIp(entry.slice(0, slash));
   const prefixRaw = entry.slice(slash + 1).trim();
-  const prefixLength = /^\d{1,2}$/.test(prefixRaw) ? Number(prefixRaw) : null;
+  const prefixLength = /^\d{1,3}$/.test(prefixRaw) ? Number(prefixRaw) : null;
 
-  // IPv6-CIDR не поддержан (KI-669): правило не создаём, чтобы оно не
-  // совпало случайно с «похожим» адресом.
-  if (address === null || prefixLength === null || prefixLength > 32) {
+  if (address === null || prefixLength === null) {
     return null;
   }
 
-  if (ipv4ToInt(address) === null) {
+  // KI-669: IPv6 использует 128 бит маски, IPv4 — 32. Ошибка в маске
+  // не должна молча расширить доступ, поэтому невалидное правило отбрасываем.
+  const isIPv6 = address.includes(':');
+  const maxPrefix = isIPv6 ? 128 : 32;
+
+  if (prefixLength > maxPrefix) {
     return null;
   }
 
-  return { address, prefixLength };
+  const valid = isIPv6
+    ? ipv6ToBigInt(address) !== null
+    : ipv4ToInt(address) !== null;
+
+  return valid ? { address, prefixLength } : null;
 }
 
 /**
@@ -194,6 +201,23 @@ function toRule(entry: string): IpRule | null {
 function matchesRule(ip: string, rule: IpRule): boolean {
   if (rule.prefixLength === null) {
     return ip === rule.address || isLoopbackAlias(ip, rule.address);
+  }
+
+  if (rule.address.includes(':')) {
+    const client = ipv6ToBigInt(ip);
+    const network = ipv6ToBigInt(rule.address);
+
+    if (client === null || network === null) {
+      return false;
+    }
+
+    const bits = BigInt(rule.prefixLength);
+    const mask =
+      bits === 0n
+        ? 0n
+        : ((1n << bits) - 1n) << BigInt(128 - rule.prefixLength);
+
+    return (client & mask) === (network & mask);
   }
 
   const client = ipv4ToInt(ip);
@@ -223,6 +247,53 @@ function isLoopbackAlias(left: string, right: string): boolean {
     (left === '127.0.0.1' && right === '::1') ||
     (left === '::1' && right === '127.0.0.1')
   );
+}
+
+/**
+ * Переводит IPv6 в 128-битное число (KI-669).
+ *
+ * Поддерживается сокращение `::` ровно один раз и hex-группы по 1–4 цифры.
+ * IPv4-mapped адреса (`::ffff:a.b.c.d`) нормализуются в IPv4 выше.
+ *
+ * @param ip - адрес с двоеточиями
+ * @returns число `bigint` или `null` для невалидной записи
+ */
+function ipv6ToBigInt(ip: string): bigint | null {
+  if (!ip.includes(':')) {
+    return null;
+  }
+
+  const parts = ip.split('::');
+
+  if (parts.length > 2) {
+    return null;
+  }
+
+  const left = parts[0] ? parts[0].split(':') : [];
+  const right = parts.length === 2 && parts[1] ? parts[1].split(':') : [];
+  const missing = 8 - left.length - right.length;
+
+  if (missing < 0) {
+    return null;
+  }
+
+  const groups = [...left, ...Array<string>(missing).fill('0'), ...right];
+
+  if (groups.length !== 8) {
+    return null;
+  }
+
+  let value = 0n;
+
+  for (const group of groups) {
+    if (!/^[0-9a-f]{1,4}$/.test(group)) {
+      return null;
+    }
+
+    value = (value << 16n) | BigInt(parseInt(group, 16));
+  }
+
+  return value;
 }
 
 /**
