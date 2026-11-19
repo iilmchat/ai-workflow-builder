@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S23 | KI-045 Fixed по факту (Husky игнорирует .husky/_), KI-029/043/044 Deferred — docs-only | 2026-11-19 | [KI-S23-hooks-logs.md](v1.6.0/KI-S23-hooks-logs.md) |
 | v1.6.0 | KI-S22 | KI-013 env через ConfigService, KI-020 мёртвый executionMap, KI-028 общий toMessage; KI-021 Deferred | 2026-11-19 | [KI-S22-low-hygiene.md](v1.6.0/KI-S22-low-hygiene.md) |
 | v1.6.0 | KI-S21 | KI-533: per-server envAllowlist для MCP stdio (+тест, безопасность секретов); KI-537/538/661 Deferred | 2026-11-19 | [KI-S21-mcp-permissions.md](v1.6.0/KI-S21-mcp-permissions.md) |
 | v1.6.0 | KI-S20 | KI-497: CI-гейт согласованности реестра (scripts/check-known-issues.mjs), сводка пересчитана (657=657); KI-475/509/520 Deferred | 2026-11-19 | [KI-S20-registry-gate.md](v1.6.0/KI-S20-registry-gate.md) |

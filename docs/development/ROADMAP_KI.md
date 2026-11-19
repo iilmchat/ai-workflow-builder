@@ -177,10 +177,10 @@
 
 ### Спринт 23 (Low)
 
-- [ ] **KI-029** 🟢 — Нет следа узла, если падение до INSERT в `node_runs` — `src/engine/execution-engine.service.ts`
-- [ ] **KI-043** 🟢 — `node_runs.logs` — свободный текст — `src/db/schema.ts (node_runs.logs), src/engine/execution-engine.service.ts`
-- [ ] **KI-044** 🟢 — `lint-staged` установлен, но не сконфигурирован — `package.json, .husky/pre-commit`
-- [ ] **KI-045** 🟢 — Husky-файл `.husky/_/` не в `.gitignore` (проверить) — `.gitignore, .husky/_/`
+- [x] **KI-029** 🟢 — Нет следа узла, если падение до INSERT в `node_runs` — `src/engine/execution-engine.service.ts` (Deferred)
+- [x] **KI-043** 🟢 — `node_runs.logs` — свободный текст — `src/db/schema.ts (node_runs.logs), src/engine/execution-engine.service.ts` (Deferred)
+- [x] **KI-044** 🟢 — `lint-staged` установлен, но не сконфигурирован — `package.json, .husky/pre-commit` (Deferred)
+- [x] **KI-045** 🟢 — Husky-файл `.husky/_/` не в `.gitignore` (проверить) — `.gitignore, .husky/_/` (уже исправлено)
 
 ### Спринт 24 (Low)
 
@@ -522,4 +522,5 @@
 | 19 | KI-436, KI-449, KI-462, KI-474 | 4 Deferred | `ab0da22` |
 | 20 | KI-475, KI-497, KI-509, KI-520 | 1 Fixed (CI-гейт), 3 Deferred | `7a99759` |
 | 21 | KI-533, KI-537, KI-538, KI-661 | 1 Fixed (код+тест), 3 Deferred | `23871ec` |
-| 22 | KI-013, KI-020, KI-021, KI-028 | 3 Fixed, 1 Deferred | (текущий) |
+| 22 | KI-013, KI-020, KI-021, KI-028 | 3 Fixed, 1 Deferred | `ffc1755` |
+| 23 | KI-029, KI-043, KI-044, KI-045 | 1 Fixed (по факту), 3 Deferred | (текущий) |

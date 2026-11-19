@@ -67,6 +67,10 @@
 
 ### Changed
 
+- **KI-спринт 23** ([отчёт](development/reports/v1.6.0/KI-S23-hooks-logs.md)):
+  KI-045 закрыт проверкой (Husky уже игнорирует `.husky/_`); KI-029, KI-043,
+  KI-044 `Deferred`.
+
 - **KI-спринт 22** ([отчёт](development/reports/v1.6.0/KI-S22-low-hygiene.md)):
   KI-021 `Deferred` — отдельный `created_at` у `node_runs` дублировал бы
   `started_at` и требовал миграции.
