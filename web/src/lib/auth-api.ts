@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { AuthUser } from '@/stores/auth';
 import { OrgRoleSchema } from '@/types/organization';
 import { requestAsync } from './api';
 
@@ -98,16 +97,3 @@ export async function logoutAsync(): Promise<void> {
   });
 }
 
-/**
- * Текущий пользователь по access-токену.
- *
- * @param accessToken - действующий access-токен
- * @returns публичные данные пользователя
- */
-export async function meAsync(accessToken: string): Promise<AuthUser> {
-  const body = await requestAsync<unknown>('/auth/me', {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  return AuthUserSchema.parse(body);
-}

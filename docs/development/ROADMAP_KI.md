@@ -261,10 +261,10 @@
 
 ### Спринт 35 (Low)
 
-- [ ] **KI-227** 🟢 — `meAsync` мёртвый + alias `@/` в vitest — `web/src/lib/auth-api.ts, web/vitest.config.ts`
-- [ ] **KI-229** 🟢 — `syncWorkflowUrlParam` через `history.replaceState` — роутер не знает — `web/src/components/TopBar.tsx (syncWorkflowUrlParam)`
-- [ ] **KI-230** 🟢 — Нет unit-тестов на `ProtectedRoute` / `App` — `web/src/components/auth/ProtectedRoute.tsx,`
-- [ ] **KI-235** 🟢 — Share-ссылка бессрочная и без аудита — `src/db/schema.ts (workflows),`
+- [x] **KI-227** 🟢 — `meAsync` мёртвый + alias `@/` в vitest — `web/src/lib/auth-api.ts, web/vitest.config.ts`
+- [x] **KI-229** 🟢 — `syncWorkflowUrlParam` через `history.replaceState` — роутер не знает — `web/src/components/TopBar.tsx (syncWorkflowUrlParam)` (Deferred)
+- [x] **KI-230** 🟢 — Нет unit-тестов на `ProtectedRoute` / `App` — `web/src/components/auth/ProtectedRoute.tsx,` (Deferred)
+- [x] **KI-235** 🟢 — Share-ссылка бессрочная и без аудита — `src/db/schema.ts (workflows),` (Deferred)
 
 ### Спринт 36 (Low)
 
@@ -534,4 +534,5 @@
 | 31 | KI-171, KI-172, KI-173, KI-177 | 2 Fixed (1 код+тест), 2 Deferred | `bf45116` |
 | 32 | KI-178, KI-194, KI-207, KI-208 | 2 Fixed (1 по факту), 2 Deferred | `d954b29` |
 | 33 | KI-210, KI-211, KI-212, KI-218 | 4 Fixed (3 по факту, 1 тесты) | `b1ad05b` |
-| 34 | KI-219, KI-222, KI-225, KI-226 | 1 Fixed (тесты), 2 Deferred, 1 Documented | (текущий) |
+| 34 | KI-219, KI-222, KI-225, KI-226 | 1 Fixed (тесты), 2 Deferred, 1 Documented | `0f10da0` |
+| 35 | KI-227, KI-229, KI-230, KI-235 | 1 Fixed (мёртвый код), 3 Deferred | (текущий) |

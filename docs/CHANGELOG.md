@@ -30,6 +30,8 @@
 
 ### Fixed
 
+- **KI-227:** удалён мёртвый `meAsync` и неиспользуемый импорт (alias `@/` в
+  vitest уже был настроен).
 - **KI-222:** тесты env-схемы для `AUTH_DISABLED=''` и `'garbage'` (108 passed).
 - **KI-218:** юнит-тесты `parseDurationToMs` (все единицы, пробелы, bad format).
 - **KI-208:** удалён неиспользуемый `@nestjs/passport` из зависимостей (−5 пакетов).
@@ -76,6 +78,9 @@
   по образу job `web` в CI (проверено: 598 тестов зелёные).
 
 ### Changed
+
+- **KI-спринт 35** ([отчёт](development/reports/v1.6.0/KI-S35-auth-api-deadcode.md)):
+  KI-229/KI-230/KI-235 `Deferred`.
 
 - **KI-спринт 34** ([отчёт](development/reports/v1.6.0/KI-S34-auth-env.md)):
   KI-219/KI-225 `Deferred`, KI-226 `Documented`.
