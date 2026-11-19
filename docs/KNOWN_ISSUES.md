@@ -5686,13 +5686,17 @@
 ## v1.0.0 — Audit Logs (S3, 2026-11-02)
 
 ### KI-393 — `pricing.plus` и `expr.units`-объекты не учитываются
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Приоритет:** 🟡 Medium | **Статус:** Deferred | **Обнаружено:** 2026-10-17
 - **Файлы:** `src/runs/cost-budget.service.ts`
 - **Описание:** составные доплаты (`base`/`unitsSum`/`tierRates`) у `krea-3`,
   `minimax-h3-max`, `seedance-2-5` и `expr.units`-объекты у `flux-2-pro` не
   считаются → недооценка бюджета.
 - **Решение:** парсить `plus` и `expr`-объекты (или фолбэк на `price` +
   `margin`).
+- **Deferred (KI-спринт 17):** структура тарифов (`base`/`unitsSum`/
+  `tierRates`, `expr.units`) зависит от формата каталога upstream и меняется
+  без версионирования; ошибка приведёт к неверной оценке бюджета. Нужен
+  отдельный спринт с тестами на реальных ответах каталога.
 - **Связанные:** KI-384, KI-392.
 
 ---
@@ -5757,7 +5761,7 @@
 ---
 
 ### KI-386 — Метаданные результата музыки/аудио теряются на схеме задачи
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Исправлено в:** v1.6.0 (KI-спринт 17) | **Обнаружено:** 2026-10-17
 - **Файлы:** `src/media/dto/media-task.dto.ts`, `src/media/dto/media-task.mapper.ts`,
   `web/src/types/media.ts`
 - **Описание:** `MediaTaskResponseSchema.result` объявлен как
@@ -5766,6 +5770,11 @@
   отбрасываются. UI не может показать обложку, длительность и текст песни.
 - **Решение:** `passthrough()` в схеме + новые поля `MediaTaskResult`
   (`durationSec`, `coverUrl`, `title`) и их запись в `node_runs.outputs`.
+- **Fix:** элемент `result` в `MediaTaskResponseSchema` получил `.passthrough()` —
+  поля `duration`/`title`/`cover_url`/`lyric`/`tags` больше не отбрасываются
+  Zod и доступны мапперу. Явные поля `durationSec`/`coverUrl` в web-зеркале
+  остаются отдельным UX-шагом; данные теперь не теряются на границе API.
+  Build 0/0, media-спеки 292 passed.
 - **Связанные:** KI-361, KI-362, R7.2.
 
 ---
@@ -6292,14 +6301,18 @@
 ---
 
 ### KI-392 — `matrix.unitParam='duration'` семантика не документирована
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Приоритет:** 🟡 Medium | **Статус:** Documented | **Обнаружено:** 2026-10-17
 - **Файлы:** `src/runs/cost-budget.service.ts`, `src/media/dto/media-model.dto.ts`
 - **Описание:** `matrix.unitParam='duration'` трактуется как «цена за секунду»
   (5 с × 30 = 150 для `wan-3.0`). Для `minimax-h3-max` (10/с → 50) и
   `minimax-hailuo-03` (12/с → 60) может расходиться с биллингом upstream.
 - **Решение:** сверка с upstream-документацией; при необходимости — отдельный
   тариф на модель.
-- **Связанные:** KI-384.
+- **Documented (KI-спринт 17):** трактовка «цена за секунду» зафиксирована
+  в коде и работает для `wan-3.0`; расхождения для `minimax-h3-max` и
+  `minimax-hailuo-03` требуют подтверждения биллинга upstream. Без него
+  изменение тарифа может занизить или завысить бюджет.
+- **Связанные:** KI-384, KI-393.
 
 ---
 
@@ -8943,14 +8956,19 @@ MediaModelInfo, engine-DTO
 ---
 
 ### KI-402 — каталог embedding-моделей не формализован
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-17
+- **Приоритет:** 🟡 Medium | **Статус:** Deferred | **Обнаружено:** 2026-10-17
 - **Файлы:** `src/llm/llm-provider.factory.ts`,
   `src/llm/llm-registry.service.ts`
 - **Описание:** `text-embedding-3-small` с префиксом `openai/` у RouterAI,
   но другие провайдеры (GPTunnel, DeepSeek, Yandex) не проверялись.
   `resolveEmbeddingModel` знает только RouterAI.
 - **Решение:** таблица embedding-моделей с alias по провайдеру.
-- **Связанные:** KI-128, KI-174.
+- **Deferred (KI-спринт 17):** `resolveEmbeddingModel` покрывает RouterAI —
+  провайдера, реально используемого для vector/memory-узлов. Добавление
+  alias'ов для GPTunnel/DeepSeek/Yandex требует проверки, что эти провайдеры
+  вообще выдают embeddings; без этого таблица будет содержать несуществующие
+  модели.
+- **Связанные:** KI-128, KI-174, KI-406.
 
 ---
 

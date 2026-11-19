@@ -135,10 +135,10 @@
 
 ### Спринт 17 (Medium)
 
-- [ ] **KI-386** 🟡 — Метаданные результата музыки/аудио теряются на схеме задачи — `src/media/dto/media-task.dto.ts, src/media/dto/media-task.mapper.ts,`
-- [ ] **KI-392** 🟡 — `matrix.unitParam='duration'` семантика не документирована — `src/runs/cost-budget.service.ts, src/media/dto/media-model.dto.ts`
-- [ ] **KI-393** 🟡 — `pricing.plus` и `expr.units`-объекты не учитываются — `src/runs/cost-budget.service.ts`
-- [ ] **KI-402** 🟡 — каталог embedding-моделей не формализован — `src/llm/llm-provider.factory.ts,`
+- [x] **KI-386** 🟡 — Метаданные результата музыки/аудио теряются на схеме задачи — `src/media/dto/media-task.dto.ts, src/media/dto/media-task.mapper.ts,`
+- [x] **KI-392** 🟡 — `matrix.unitParam='duration'` семантика не документирована — `src/runs/cost-budget.service.ts, src/media/dto/media-model.dto.ts` (Documented)
+- [x] **KI-393** 🟡 — `pricing.plus` и `expr.units`-объекты не учитываются — `src/runs/cost-budget.service.ts` (Deferred)
+- [x] **KI-402** 🟡 — каталог embedding-моделей не формализован — `src/llm/llm-provider.factory.ts,` (Deferred)
 
 ### Спринт 18 (Medium)
 
@@ -516,4 +516,5 @@
 | 13 | KI-278, KI-280, KI-284, KI-304 | 1 Fixed (код+тест), 3 Deferred | `9366a08` |
 | 14 | KI-322, KI-338, KI-340, KI-344 | 2 Fixed (по факту), 2 Deferred | `54e4175` |
 | 15 | KI-349, KI-356, KI-357, KI-370 | 1 Fixed (UI), 3 Deferred | `aafa9b2` |
-| 16 | KI-372, KI-379, KI-381, KI-385 | 3 Deferred, 1 Documented | (текущий) |
+| 16 | KI-372, KI-379, KI-381, KI-385 | 3 Deferred, 1 Documented | `b60a6aa` |
+| 17 | KI-386, KI-392, KI-393, KI-402 | 1 Fixed (код), 2 Deferred, 1 Documented | (текущий) |

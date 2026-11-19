@@ -80,7 +80,9 @@ export const MediaTaskResponseSchema = z.object({
   price: z.number().nonnegative().optional(),
   /** URL-ы результата (48 часов жизни, см. KI-077). */
   // KI-111: upstream отдаёт массив объектов { url }, а не массив строк.
-  result: z.array(z.object({ url: z.url() })).optional(),
+  // KI-386: grom-zvuk кладёт в элемент duration/title/cover_url/lyric/tags —
+  // passthrough сохраняет их для маппера и node_runs.outputs.
+  result: z.array(z.object({ url: z.url() }).passthrough()).optional(),
   /** Причина падения при `status: 'failed'` (строка либо объект). */
   error: MediaTaskErrorSchema.optional(),
   /**

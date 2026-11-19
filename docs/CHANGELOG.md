@@ -30,6 +30,8 @@
 
 ### Fixed
 
+- **KI-386:** `MediaTaskResponseSchema` сохраняет метаданные результата
+  (`duration`, `title`, `cover_url`, `lyric`, `tags`) через `passthrough()`.
 - **KI-349:** у `TextNode` появился target-handle `text-input` — входящие связи
   больше не рисуются висячими.
 - **KI-280:** идемпотентный HTTP-узел (GET) ретраится при 429/5xx и таймауте;
@@ -53,6 +55,10 @@
   (+3 теста в `src/llm/provider-errors.spec.ts`).
 
 ### Changed
+
+- **KI-спринт 17** ([отчёт](development/reports/v1.6.0/KI-S17-media-metadata.md)):
+  KI-393/KI-402 `Deferred`, KI-392 `Documented` — тарифы и каталоги требуют
+  подтверждения upstream.
 
 - **KI-спринт 16** ([отчёт](development/reports/v1.6.0/KI-S16-budget-media.md)):
   KI-372/379/381 `Deferred`, KI-385 `Documented` — бюджет, идемпотентность
