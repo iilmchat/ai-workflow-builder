@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | S65 | KI-535 WARN о stdio при старте, KI-536 абсолютный MCP_STDIO_CWD, KI-524 паритет image_tool; KI-523 Documented | 2026-11-19 | [KI-S65-mcp-startup-parity.md](v1.6.0/KI-S65-mcp-startup-parity.md) |
 | v1.6.0 | S64 | KI-521: общий читатель MCP_MAX_TOOLS_PER_NODE, KI-517: Node 22.19 в Dockerfile, KI-519 по факту, KI-516 Deferred | 2026-11-19 | [KI-S64-mcp-docker-ci.md](v1.6.0/KI-S64-mcp-docker-ci.md) |
 | v1.6.0 | S63 | Throttler: локальный тип, валидация Lua, lazy Redis; токен рамки pending (KI-512–515) | 2026-11-19 | [KI-S63-throttler-theme.md](v1.6.0/KI-S63-throttler-theme.md) |
 | v1.6.0 | KI-S62 | 4 KI (1 Fixed, 3 Documented): тесты API-обёрток; сессия завершена (web 650) | 2026-11-19 | [KI-S62-api-wrappers.md](v1.6.0/KI-S62-api-wrappers.md) |

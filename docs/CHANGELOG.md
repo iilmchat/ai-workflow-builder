@@ -25,6 +25,12 @@
 
 ### Fixed
 
+- **KI-спринт 65** ([отчёт](development/reports/v1.6.0/KI-S65-mcp-startup-parity.md)):
+  - **KI-524:** паритет-тест UI/backend операций `image_tool`.
+  - **KI-535:** WARN о stdio без Docker — при старте адаптера.
+  - **KI-536:** `MCP_STDIO_CWD` канонизируется в абсолютный путь.
+  - **KI-523** `Documented` — внутренние ретраи SDK намеренно отключены.
+
 - **KI-спринт 64** ([отчёт](development/reports/v1.6.0/KI-S64-mcp-docker-ci.md)):
   - **KI-517:** `Dockerfile` закреплён на `node:22.19-alpine` (оба этапа).
   - **KI-519:** метрики в `RELEASES.md` не дублируются (сверено по факту).

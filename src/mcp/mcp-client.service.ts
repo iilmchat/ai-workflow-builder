@@ -21,8 +21,13 @@
  * должен переживать backend (DESIGN § 3.3.2/§ 3.3.3).
  */
 import { mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
-import { Injectable, Logger, type OnApplicationShutdown } from '@nestjs/common';
+import { join, resolve } from 'node:path';
+import {
+  Injectable,
+  Logger,
+  type OnApplicationShutdown,
+  type OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
@@ -220,7 +225,7 @@ function isCallToolResult(result: unknown): result is CallToolResult {
  * вызов пробует переподключиться.
  */
 @Injectable()
-export class McpClientService implements OnApplicationShutdown {
+export class McpClientService implements OnApplicationShutdown, OnModuleInit {
   private readonly logger = new Logger(McpClientService.name);
 
   /** Состояния серверов, к которым уже обращались (ленивое создание). */
@@ -324,14 +329,30 @@ export class McpClientService implements OnApplicationShutdown {
     this.stdioEnabled = readBooleanConfig(
       config.get<unknown>('MCP_ENABLE_STDIO'),
     );
-    this.stdioCwd = readStringConfig(
-      config,
-      'MCP_STDIO_CWD',
-      MCP_STDIO_CWD_DEFAULT,
+    // KI-536: фиксируем абсолютный путь сразу — иначе смена рабочего каталога
+    // процесса разводит базу изоляции и проверку `cwd` подпроцесса.
+    this.stdioCwd = resolve(
+      readStringConfig(config, 'MCP_STDIO_CWD', MCP_STDIO_CWD_DEFAULT),
     );
     this.stdioEnvAllowlist = parseStdioEnvAllowlist(
       config.get<unknown>('MCP_STDIO_ENV_ALLOWLIST'),
     );
+  }
+
+  /**
+   * Предупреждает о stdio-серверах без Docker сразу при старте (KI-535).
+   *
+   * Раньше WARN появлялся только при первом подключении — неиспользуемый
+   * сервер оставлял оператора в неведении об отсутствии изоляции.
+   *
+   * @returns nothing
+   */
+  onModuleInit(): void {
+    for (const { name, config } of this.registry.listServers()) {
+      if (config.transport === 'stdio') {
+        this.warnIfNotDocker(name, config);
+      }
+    }
   }
 
   /**

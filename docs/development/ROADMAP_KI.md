@@ -1,8 +1,8 @@
 # RoadMap: проверка и исправление открытых KI
 
 > Факт на HEAD `103bdf3` (v1.6.0, 19.11.2026 09:50 МСК): реестр
-> `docs/KNOWN_ISSUES.md` — 657 KI, из них **16 Open** (все 🟢 Low).
-> Выполнено **64 спринта**; спринты **65–68** — оставшиеся Open KI. S69-Final
+> `docs/KNOWN_ISSUES.md` — 657 KI, из них **12 Open** (все 🟢 Low).
+> Выполнено **65 спринтов**; спринты **66–68** — оставшиеся Open KI. S69-Final
 > заведётся только по реальным находкам. Новых KI после 670 пока нет.
 > Правила: `docs/development/RULES.md` v1.10.0.
 
@@ -17,10 +17,10 @@
 
 ## Сводка
 
-- Изначально открытых KI: **272** → осталось **16** (все 🟢 Low).
-- Спринтов: **69** по 4 KI; **64 закрыты**, **4 в плане** (65–68) + S69-Final.
-- Статусы (grep, RULES 3.20): Fixed 434 (+12 частично), Documented 104
-  (+1 не воспроизводится), Deferred 76, Open 16, Won't Fix 11, Planned 3.
+- Изначально открытых KI: **272** → осталось **12** (все 🟢 Low).
+- Спринтов: **69** по 4 KI; **65 закрыты**, **3 в плане** (66–68) + S69-Final.
+- Статусы (grep, RULES 3.20): Fixed 437 (+12 частично), Documented 105
+  (+1 не воспроизводится), Deferred 76, Open 12, Won't Fix 11, Planned 3.
 - Прогресс отмечается галочками в списке ниже; исполнение фиксируется в «Логе спринтов».
 - Спринты 63–68 сформированы из фактически оставшихся Open KI на HEAD `103bdf3`.
 
@@ -476,10 +476,10 @@
 
 ### Спринт 65 (Low)
 
-- [ ] **KI-523** 🟢 — `maxRetries: 0` для SDK захардкожен — `src/llm/providers/openai-compatible.provider.ts,`
-- [ ] **KI-524** 🟢 — Список операций `image_tool` продублирован в UI — `src/media/image-tool.ts, web/src/types/graph.ts`
-- [ ] **KI-535** 🟢 — WARN «stdio без Docker» только при первом подключении — `src/mcp/mcp-client.service.ts`
-- [ ] **KI-536** 🟢 — `MCP_STDIO_CWD` не канонизируется — `src/config/env.schema.ts`
+- [x] **KI-523** 🟢 — `maxRetries: 0` для SDK захардкожен — `src/llm/providers/openai-compatible.provider.ts,` (Documented)
+- [x] **KI-524** 🟢 — Список операций `image_tool` продублирован в UI — `src/media/image-tool.ts, web/src/types/graph.ts`
+- [x] **KI-535** 🟢 — WARN «stdio без Docker» только при первом подключении — `src/mcp/mcp-client.service.ts`
+- [x] **KI-536** 🟢 — `MCP_STDIO_CWD` не канонизируется — `src/config/env.schema.ts`
 
 ### Спринт 66 (Low)
 
@@ -576,8 +576,9 @@
 | 62 | KI-506, KI-507, KI-508, KI-510 | 1 Fixed, 3 Documented; тесты API-обёрток; сессия завершена | `103bdf3` |
 
 | 63 | KI-512, KI-513, KI-514, KI-515 | 4 Fixed (локальный тип, Lua-валидация, lazy Redis, токен рамки); backend 0/0 + web 650 зелёных | `ffb7dc0` |
-| 64 | KI-516, KI-517, KI-519, KI-521 | 3 Fixed (MCP-лимит, Node 22.19, метрики), 1 Deferred | (текущий) |
+| 64 | KI-516, KI-517, KI-519, KI-521 | 3 Fixed (MCP-лимит, Node 22.19, метрики), 1 Deferred | `9170078` |
+| 65 | KI-523, KI-524, KI-535, KI-536 | 3 Fixed (MCP-старт, паритет, cwd), 1 Documented | (текущий) |
 
-> **Спринты 65–68 не начинались.** Это 16 оставшихся Open KI (все Low),
+> **Спринты 66–68 не начинались.** Это 12 оставшихся Open KI (все Low),
 > сформированные в разделе «Спринты» по факту на HEAD `103bdf3`. S69-Final —
 > только реально найденные новые KI. Дедлайн окна — **06:00 МСК**.
