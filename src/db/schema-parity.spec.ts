@@ -63,6 +63,19 @@ const PG_DATA_TYPE_BY_COLUMN_TYPE: Readonly<Record<string, string>> = {
   PgJsonb: 'jsonb',
   PgBoolean: 'boolean',
   PgNumeric: 'numeric',
+  // KI-320: широкие типы, встречающиеся в миграциях и новых схемах.
+  // `varchar(n)` приходит в information_schema как `character varying`
+  // (длина сверяется отдельным полем character_maximum_length в KI-321).
+  PgVarchar: 'character varying',
+  PgBigInt: 'bigint',
+  PgDoublePrecision: 'double precision',
+  PgReal: 'real',
+  PgDate: 'date',
+  PgTime: 'time without time zone',
+  PgInterval: 'interval',
+  // Drizzle-массивы и enum'ы в information_schema — `ARRAY`/`USER-DEFINED`.
+  PgArray: 'ARRAY',
+  PgEnum: 'USER-DEFINED',
   // R7.4a: расширение pgvector регистрирует тип `vector` как user-defined —
   // `information_schema.columns.data_type` для него — `USER-DEFINED`.
   // Размерность (1536) живёт в `udt_name`/типе колонки, гейт её не сверяет:

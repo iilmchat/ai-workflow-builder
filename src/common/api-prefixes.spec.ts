@@ -30,7 +30,7 @@ const REGISTRY_PATH = join(PROJECT_ROOT, 'api-prefixes.json');
 const SRC_DIR = join(PROJECT_ROOT, 'src');
 
 /**
- * Ожидаемые префиксы с контроллерами (14).
+ * Ожидаемые префиксы с контроллерами (13).
  *
  * `/api` сюда не входит: это legacy-префикс backend'а без собственного
  * `@Controller` (`controller: false` в реестре). `/admin` добавлен в v1.0.0 S3

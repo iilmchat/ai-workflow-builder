@@ -331,10 +331,10 @@
 
 ### Спринт 45 (Low)
 
-- [ ] **KI-311** 🟢 — `@Controller()` без `path` невидим для regex-паритета — `src/common/api-prefixes.spec.ts`
-- [ ] **KI-313** 🟢 — Смоук-чек-лист: `/unknown/foo → 404` верен только для fetch — `docs/development/SMOKE_CDP.md (нет) или заметки`
-- [ ] **KI-320** 🟢 — Паритет-гейт требует ручного маппинга типов колонок — `src/db/schema-parity.spec.ts`
-- [ ] **KI-321** 🟢 — Гейт не сверяет length/order/constraints — `src/db/schema-parity.spec.ts`
+- [x] **KI-311** 🟢 — `@Controller()` без `path` невидим для regex-паритета — `src/common/api-prefixes.spec.ts` (Fixed по факту)
+- [x] **KI-313** 🟢 — Смоук-чек-лист: `/unknown/foo → 404` верен только для fetch — `docs/development/SMOKE_CDP.md (нет) или заметки`
+- [x] **KI-320** 🟢 — Паритет-гейт требует ручного маппинга типов колонок — `src/db/schema-parity.spec.ts`
+- [x] **KI-321** 🟢 — Гейт не сверяет length/order/constraints — `src/db/schema-parity.spec.ts` (Documented)
 
 ### Спринт 46 (Low)
 
@@ -544,4 +544,5 @@
 | 41 | KI-281, KI-282, KI-283, KI-285 | 4 Fixed (1 по факту, типы evaluated, явные порты, UI-раскладка); web 643 зелёных | `613908f` |
 | 42 | KI-286, KI-291, KI-292, KI-294 | 3 Fixed (1 по факту), 1 Documented; экспорт graphVersion, лимит имени, SMOKE_CDP | `00f9301` |
 | 43 | KI-295, KI-297, KI-303, KI-305 | 4 Fixed (Async-суффиксы, findShared, inputsMap, пустой подграф); backend 2159 / web 643 | `3c3156a` |
-| 44 | KI-307, KI-308, KI-309, KI-310 | 4 Fixed (autoPan, удалён nodes, конкатенация в спеке, tsconfig.spec); web 644 | (текущий) |
+| 44 | KI-307, KI-308, KI-309, KI-310 | 4 Fixed (autoPan, удалён nodes, конкатенация в спеке, tsconfig.spec); web 644 | `dc1d795` |
+| 45 | KI-311, KI-313, KI-320, KI-321 | 3 Fixed (1 по факту), 1 Documented; SMOKE_CDP § 7, карта типов гейта | (текущий) |
