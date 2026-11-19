@@ -198,10 +198,10 @@
 
 ### Спринт 26 (Low)
 
-- [ ] **KI-093** 🟢 — Возможности модели видны только у LLM-узла — `web/src/components/nodes/LLMNode.tsx`
-- [ ] **KI-095** 🟢 — Правило включения env-провайдера разъехалось — `src/llm/llm-provider.factory.ts`
-- [ ] **KI-098** 🟢 — Vision-возможности GPTunnel объявляются вручную — `.env.example (пример GPTUNNEL_MODELS)`
-- [ ] **KI-100** 🟢 — `GET /media/models` тормозит на холодном кэше — `src/media/providers/creativelab.provider.ts`
+- [x] **KI-093** 🟢 — Возможности модели видны только у LLM-узла — `web/src/components/nodes/LLMNode.tsx` (Won't Fix)
+- [x] **KI-095** 🟢 — Правило включения env-провайдера разъехалось — `src/llm/llm-provider.factory.ts` (Deferred)
+- [x] **KI-098** 🟢 — Vision-возможности GPTunnel объявляются вручную — `.env.example (пример GPTUNNEL_MODELS)` (Documented)
+- [x] **KI-100** 🟢 — `GET /media/models` тормозит на холодном кэше — `src/media/providers/creativelab.provider.ts` (Deferred)
 
 ### Спринт 27 (Low)
 
@@ -525,4 +525,5 @@
 | 22 | KI-013, KI-020, KI-021, KI-028 | 3 Fixed, 1 Deferred | `ffc1755` |
 | 23 | KI-029, KI-043, KI-044, KI-045 | 1 Fixed (по факту), 3 Deferred | `141a210` |
 | 24 | KI-051, KI-054, KI-057, KI-058 | 4 Deferred | `b74d121` |
-| 25 | KI-073, KI-076, KI-089, KI-090 | 1 Fixed (по факту), 1 Documented, 2 Deferred | (текущий) |
+| 25 | KI-073, KI-076, KI-089, KI-090 | 1 Fixed (по факту), 1 Documented, 2 Deferred | `1b0eecd` |
+| 26 | KI-093, KI-095, KI-098, KI-100 | 1 Documented, 1 Won't Fix, 2 Deferred | (текущий) |

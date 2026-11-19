@@ -67,6 +67,9 @@
 
 ### Changed
 
+- **KI-спринт 26** ([отчёт](development/reports/v1.6.0/KI-S26-model-badges.md)):
+  KI-093 `Won't Fix`, KI-098 `Documented`, KI-095/KI-100 `Deferred`.
+
 - **KI-спринт 25** ([отчёт](development/reports/v1.6.0/KI-S25-lint-sse-ux.md)):
   KI-090 закрыт проверкой (Headers нормализуется, oxlint молчит), KI-089
   `Documented`, KI-073/KI-076 `Deferred`.
