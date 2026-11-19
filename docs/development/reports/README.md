@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S41–S43 | 12 KI (11 Fixed, 1 Documented): типы условия, явные порты, экспорт graphVersion, Async-суффиксы, inputsMap и пустой подграф; отчёт на 3 спринта (backend 2159 / web 643) | 2026-11-19 | [KI-S41-S43-backend-contracts.md](v1.6.0/KI-S41-S43-backend-contracts.md) |
 | v1.6.0 | KI-S38–S40 | 12 KI (11 Fixed, 1 Documented): кэш хэша, Ctrl+D, Handle-гейт, диагностика Load, DTO, fatal SSE, хоткеи, слоты compare; отчёт на 3 спринта (backend 2154 / web 641) | 2026-11-19 | [KI-S38-S40-graph-ui-hotkeys.md](v1.6.0/KI-S38-S40-graph-ui-hotkeys.md) |
 | v1.6.0 | KI-S37 | KI-249: 6 режимов reasoning + паритет-гейт; KI-250 подписанный плейсхолдер, KI-251 тесты LLM-Load, KI-252 сетка 8×8 (backend 2150 / web 607) | 2026-11-19 | [KI-S37-reasoning-llm-ui-grid.md](v1.6.0/KI-S37-reasoning-llm-ui-grid.md) |
 | v1.6.0 | KI-S36 | KI-248: reasoningEffort сбрасывается при смене модели (web 599 тестов); KI-237/242/243 Deferred | 2026-11-19 | [KI-S36-share-llm-ui.md](v1.6.0/KI-S36-share-llm-ui.md) |

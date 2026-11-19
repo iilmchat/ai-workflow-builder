@@ -81,7 +81,7 @@ describe('WorkflowController', () => {
     it('делегирует создание сервису и возвращает результат', async () => {
       const dto = { userId: 'attacker', name: 'My workflow', nodes: [], edges: [] };
 
-      await expect(controller.create(dto, USER)).resolves.toEqual(workflow);
+      await expect(controller.createAsync(dto, USER)).resolves.toEqual(workflow);
       // KI-204/KI-605: `userId` из тела игнорируется, организация резолвится
       // в сервисе из БД — контроллер передаёт только `sub`.
       expect(service.createAsync).toHaveBeenCalledWith(dto, USER.sub);
@@ -92,7 +92,7 @@ describe('WorkflowController', () => {
     it('передаёт access из токена, limit и offset в сервис', async () => {
       const query = { userId: 'attacker', limit: 10, offset: 20 };
 
-      await expect(controller.findAll(query, USER)).resolves.toEqual([workflow]);
+      await expect(controller.findAllAsync(query, USER)).resolves.toEqual([workflow]);
       // KI-204: чужой `userId` из query не влияет — фильтр строится по токену.
       expect(service.findAllAsync).toHaveBeenCalledWith(ACCESS, 10, 20);
     });
@@ -100,7 +100,7 @@ describe('WorkflowController', () => {
 
   describe('findOne', () => {
     it('возвращает workflow, если он найден', async () => {
-      await expect(controller.findOne({ id: WORKFLOW_ID }, USER)).resolves.toEqual(
+      await expect(controller.findOneAsync({ id: WORKFLOW_ID }, USER)).resolves.toEqual(
         workflow,
       );
       expect(service.findOneAsync).toHaveBeenCalledWith(WORKFLOW_ID, ACCESS);
@@ -112,7 +112,7 @@ describe('WorkflowController', () => {
       // не раскрывая существование чужого workflow.
       service.findOneAsync.mockResolvedValue(null);
 
-      await expect(controller.findOne({ id: WORKFLOW_ID }, USER)).rejects.toThrow(
+      await expect(controller.findOneAsync({ id: WORKFLOW_ID }, USER)).rejects.toThrow(
         NotFoundException,
       );
       expect(service.findOneAsync).toHaveBeenCalledWith(WORKFLOW_ID, ACCESS);
@@ -123,7 +123,7 @@ describe('WorkflowController', () => {
     it('возвращает обновлённый workflow', async () => {
       const dto = { name: 'Updated' };
 
-      await expect(controller.update({ id: WORKFLOW_ID }, dto, USER)).resolves.toEqual(
+      await expect(controller.updateAsync({ id: WORKFLOW_ID }, dto, USER)).resolves.toEqual(
         workflow,
       );
       expect(service.updateAsync).toHaveBeenCalledWith(WORKFLOW_ID, dto, ACCESS);
@@ -133,21 +133,21 @@ describe('WorkflowController', () => {
       service.updateAsync.mockResolvedValue(null);
 
       await expect(
-        controller.update({ id: WORKFLOW_ID }, { name: 'Updated' }, USER),
+        controller.updateAsync({ id: WORKFLOW_ID }, { name: 'Updated' }, USER),
       ).rejects.toThrow(NotFoundException);
     });
   });
 
   describe('remove', () => {
     it('завершается успешно, когда сервис удалил запись', async () => {
-      await expect(controller.remove({ id: WORKFLOW_ID }, USER)).resolves.toBeUndefined();
+      await expect(controller.removeAsync({ id: WORKFLOW_ID }, USER)).resolves.toBeUndefined();
       expect(service.removeAsync).toHaveBeenCalledWith(WORKFLOW_ID, ACCESS);
     });
 
     it('бросает NotFoundException, если сервис вернул false', async () => {
       service.removeAsync.mockResolvedValue(false);
 
-      await expect(controller.remove({ id: WORKFLOW_ID }, USER)).rejects.toThrow(
+      await expect(controller.removeAsync({ id: WORKFLOW_ID }, USER)).rejects.toThrow(
         NotFoundException,
       );
     });

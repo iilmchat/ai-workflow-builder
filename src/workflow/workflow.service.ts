@@ -578,9 +578,8 @@ export class WorkflowService {
       name: found.name,
       nodes: found.nodes,
       edges: found.edges,
-      // В Drizzle-схеме createdAt без `.notNull()` (дефолт задан в БД), поэтому
-      // тип nullable — подстраховываемся, не отдавая клиенту `null`.
-      createdAt: (found.createdAt ?? new Date()).toISOString(),
+      // `created_at` NOT NULL и в схеме, и в БД (KI-293) — fallback не нужен.
+      createdAt: found.createdAt.toISOString(),
     };
   }
 

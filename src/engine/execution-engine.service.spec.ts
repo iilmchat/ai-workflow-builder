@@ -2849,6 +2849,60 @@ describe('ExecutionEngineService', () => {
       });
     });
 
+    it('KI-303: inputsMap переносит вход родителя в подграф под нужным ключом', async () => {
+      findWorkflow.mockResolvedValue({
+        id: SUB_WORKFLOW_ID,
+        name: 'Подграф-приёмник',
+        version: 1,
+        nodes: [{ id: 'S1', type: 'output', data: { name: 'answer' } }],
+        edges: [],
+      });
+
+      const graph: GraphDto = {
+        nodes: [
+          node('p1', 'text', { value: 'из родителя' }),
+          node('sub-1', 'sub_workflow', {
+            kind: 'sub_workflow',
+            workflowId: SUB_WORKFLOW_ID,
+            inputsMap: { prompt: 'text' },
+          }),
+        ],
+        edges: [edge('e1', 'p1', 'sub-1', 'text-output', 'text-input')],
+      };
+
+      const result = await service.executeAsync(RUN_ID, graph);
+
+      expect(result.status).toBe('completed');
+      expect(result.outputs['sub-1']).toEqual({
+        result: { answer: 'из родителя' },
+      });
+    });
+
+    it('KI-305: подграф только из comment — такой же пустой результат, как пустой граф', async () => {
+      findWorkflow.mockResolvedValue({
+        id: SUB_WORKFLOW_ID,
+        name: 'Подграф-аннотация',
+        version: 1,
+        nodes: [{ id: 'c1', type: 'comment', data: { text: 'заметка' } }],
+        edges: [],
+      });
+
+      const graph: GraphDto = {
+        nodes: [
+          node('sub-1', 'sub_workflow', {
+            kind: 'sub_workflow',
+            workflowId: SUB_WORKFLOW_ID,
+          }),
+        ],
+        edges: [],
+      };
+
+      const result = await service.executeAsync(RUN_ID, graph);
+
+      expect(result.status).toBe('completed');
+      expect(result.outputs['sub-1']).toEqual({ result: {} });
+    });
+
     it('несколько терминальных узлов подграфа сливаются в плоский result', async () => {
       findWorkflow.mockResolvedValue({
         ...subGraph,

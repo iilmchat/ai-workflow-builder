@@ -317,10 +317,10 @@
 
 ### Спринт 43 (Low)
 
-- [ ] **KI-295** 🟢 — `WorkflowController`: смешан Async-стиль — `src/workflow/workflow.controller.ts`
-- [ ] **KI-297** 🟢 — Устаревший комментарий и мёртвый null-fallback в `findSharedAsync` — `src/workflow/workflow.service.ts`
-- [ ] **KI-303** 🟢 — `inputsMap` не применяется executor'ом подграфа — `src/engine/node-executors.ts, web/src/types/graph.ts`
-- [ ] **KI-305** 🟢 — Асимметрия пустого подграфа — `src/engine/execution-engine.service.ts,`
+- [x] **KI-295** 🟢 — `WorkflowController`: смешан Async-стиль — `src/workflow/workflow.controller.ts`
+- [x] **KI-297** 🟢 — Устаревший комментарий и мёртвый null-fallback в `findSharedAsync` — `src/workflow/workflow.service.ts`
+- [x] **KI-303** 🟢 — `inputsMap` не применяется executor'ом подграфа — `src/engine/node-executors.ts, web/src/types/graph.ts`
+- [x] **KI-305** 🟢 — Асимметрия пустого подграфа — `src/engine/execution-engine.service.ts,`
 
 ### Спринт 44 (Low)
 
@@ -542,4 +542,5 @@
 | 39 | KI-264, KI-267, KI-270, KI-272 | 3 Fixed, 1 Documented (SMOKE_CDP.md); web 636 зелёных | `f550eae` |
 | 40 | KI-273, KI-276, KI-277, KI-279 | 4 Fixed (хоткеи, Ctrl+Z, история Load, слоты compare); backend 2154 / web 641 зелёные | `6414e2a` |
 | 41 | KI-281, KI-282, KI-283, KI-285 | 4 Fixed (1 по факту, типы evaluated, явные порты, UI-раскладка); web 643 зелёных | `613908f` |
-| 42 | KI-286, KI-291, KI-292, KI-294 | 3 Fixed (1 по факту), 1 Documented; экспорт graphVersion, лимит имени, SMOKE_CDP | (текущий) |
+| 42 | KI-286, KI-291, KI-292, KI-294 | 3 Fixed (1 по факту), 1 Documented; экспорт graphVersion, лимит имени, SMOKE_CDP | `00f9301` |
+| 43 | KI-295, KI-297, KI-303, KI-305 | 4 Fixed (Async-суффиксы, findShared, inputsMap, пустой подграф); backend 2159 / web 643 | (текущий) |

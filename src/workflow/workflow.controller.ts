@@ -84,7 +84,7 @@ export class WorkflowController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  async create(
+  async createAsync(
     @Body(ZodValidationPipe.create(CreateWorkflowSchema)) dto: CreateWorkflowDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<Workflow> {
@@ -106,7 +106,7 @@ export class WorkflowController {
    * @returns массив workflow с ролью (сначала новые)
    */
   @Get()
-  async findAll(
+  async findAllAsync(
     @Query(ZodValidationPipe.create(ListWorkflowsQuerySchema)) query: ListWorkflowsQueryDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<WorkflowListItem[]> {
@@ -180,7 +180,7 @@ export class WorkflowController {
    * @throws NotFoundException если workflow недоступен
    */
   @Get(':id/collaborators')
-  async getCollaborators(
+  async getCollaboratorsAsync(
     @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<CollaboratorResponse[]> {
@@ -207,7 +207,7 @@ export class WorkflowController {
    */
   @Post(':id/collaborators')
   @HttpCode(HttpStatus.CREATED)
-  async inviteCollaborator(
+  async inviteCollaboratorAsync(
     @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
     @Body(ZodValidationPipe.create(InviteCollaboratorSchema)) dto: InviteCollaboratorDto,
     @CurrentUser() user: JwtPayload,
@@ -231,7 +231,7 @@ export class WorkflowController {
    * @throws NotFoundException если workflow чужой или участник не найден
    */
   @Patch(':id/collaborators/:userId')
-  async updateCollaboratorRole(
+  async updateCollaboratorRoleAsync(
     @Param(ZodValidationPipe.create(CollaboratorParamSchema)) params: CollaboratorParamDto,
     @Body(ZodValidationPipe.create(UpdateCollaboratorRoleSchema)) dto: UpdateCollaboratorRoleDto,
     @CurrentUser() user: JwtPayload,
@@ -257,7 +257,7 @@ export class WorkflowController {
    */
   @Delete(':id/collaborators/:userId')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async removeCollaborator(
+  async removeCollaboratorAsync(
     @Param(ZodValidationPipe.create(CollaboratorParamSchema)) params: CollaboratorParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<void> {
@@ -277,7 +277,7 @@ export class WorkflowController {
    * @throws NotFoundException если workflow не найден
    */
   @Get(':id')
-  async findOne(
+  async findOneAsync(
     @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<Workflow> {
@@ -303,7 +303,7 @@ export class WorkflowController {
    * @throws NotFoundException если workflow не найден
    */
   @Patch(':id')
-  async update(
+  async updateAsync(
     @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
     @Body(ZodValidationPipe.create(UpdateWorkflowSchema)) dto: UpdateWorkflowDto,
     @CurrentUser() user: JwtPayload,
@@ -333,7 +333,7 @@ export class WorkflowController {
    */
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(
+  async removeAsync(
     @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<void> {
@@ -360,7 +360,7 @@ export class WorkflowController {
    */
   @Post(':id/share')
   @HttpCode(HttpStatus.OK)
-  async share(
+  async shareAsync(
     @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<ShareTokenDto> {
@@ -380,7 +380,7 @@ export class WorkflowController {
    */
   @Delete(':id/share')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async unshare(
+  async unshareAsync(
     @Param(ZodValidationPipe.create(UuidParamSchema)) params: UuidParamDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<void> {

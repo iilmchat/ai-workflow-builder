@@ -64,6 +64,7 @@ import {
   isRunCancelledError,
 } from './errors.js';
 import {
+  ANNOTATION_NODE_TYPES,
   UnsupportedNodeTypeException,
   executeCompareNode,
   executeConditionNode,
@@ -1581,7 +1582,12 @@ export class ExecutionEngineService {
         // R6.7 (KI-200): узел не преобразует входы, а выполняет другой граф
         // как часть текущего запуска. Метрик у него нет — стоимости валют
         // живут на строках узлов подграфа (cost_usd/cost_rub).
-        const outputs = await this.executeSubWorkflowGraphAsync(node, runId, subContext);
+        const outputs = await this.executeSubWorkflowGraphAsync(
+          node,
+          runId,
+          subContext,
+          inputs,
+        );
 
         return { kind: 'plain', outputs, metrics: null };
       }
@@ -2002,17 +2008,40 @@ export class ExecutionEngineService {
     node: NodeDto,
     runId: string,
     subContext: SubWorkflowContext,
+    parentInputs: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     const target = await executeSubWorkflowNode(node.data, subContext);
 
-    // Пустой подграф — не ошибка: «выполнять нечего» так же легально, как
-    // пустой корневой граф (KI-037). План для него строить незачем.
-    if (target.subGraph.nodes.length === 0) {
+    // KI-305: пустой граф и граф только из аннотаций — одно и то же
+    // «выполнять нечего», оба дают `{ result: {} }`, а не асимметрию
+    // «успех vs BadRequest» (KI-037).
+    const executableCount = target.subGraph.nodes.filter(
+      (subNode) => !ANNOTATION_NODE_TYPES.has(subNode.type),
+    ).length;
+
+    if (executableCount === 0) {
       this.logger.warn(
-        `Узел ${node.id}: подграф ${target.workflowId} пуст — результат пустой`,
+        `Узел ${node.id}: подграф ${target.workflowId} пуст или содержит только аннотации — результат пустой`,
       );
 
       return { result: {} };
+    }
+
+    // KI-303: `inputsMap` задаёт соответствие «вход родителя → ключ входа
+    // подграфа». Без явной схемы сохраняем прежнее поведение — все входы узла
+    // передаются под своими именами (источники подграфа их увидят как
+    // run-level входы, KI-027).
+    const inputsMap = node.data.inputsMap;
+    const subInputs: Record<string, unknown> = {};
+
+    if (inputsMap !== undefined && inputsMap !== null && typeof inputsMap === 'object') {
+      for (const [parentName, subKey] of Object.entries(inputsMap)) {
+        if (typeof subKey === 'string' && Object.hasOwn(parentInputs, parentName)) {
+          subInputs[subKey] = parentInputs[parentName];
+        }
+      }
+    } else {
+      Object.assign(subInputs, parentInputs);
     }
 
     // DESIGN § 5.5: расхождение со снимком версии — предупреждение, а не
@@ -2078,9 +2107,17 @@ export class ExecutionEngineService {
 
       const results = await Promise.allSettled(
         activeLevel.map((subNodeId) =>
-          // Внутри подграфа run-level входы не действуют: узел sub_workflow
-          // получает свои входы по рёбрам родительского графа (KI-027).
-          this.executeNodeAsync(runId, subNodeId, prefixed, subPlan, branchContext, {}),
+          // KI-303: входные значения узла sub_workflow (с учётом inputsMap)
+          // действуют как run-level входы для источников подграфа; явные
+          // связи внутри подграфа по-прежнему имеют приоритет (KI-027).
+          this.executeNodeAsync(
+            runId,
+            subNodeId,
+            prefixed,
+            subPlan,
+            branchContext,
+            subInputs,
+          ),
         ),
       );
 
