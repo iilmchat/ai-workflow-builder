@@ -30,6 +30,8 @@
 
 ### Fixed
 
+- **KI-533:** у MCP stdio-серверов появился per-server `envAllowlist` в
+  `MCP_SERVERS` — каждый процесс получает только свои env-переменные.
 - **KI-386:** `MediaTaskResponseSchema` сохраняет метаданные результата
   (`duration`, `title`, `cover_url`, `lyric`, `tags`) через `passthrough()`.
 - **KI-349:** у `TextNode` появился target-handle `text-input` — входящие связи
@@ -61,6 +63,10 @@
   (RULES 3.20); расхождение блокирует merge.
 
 ### Changed
+
+- **KI-спринт 21** ([отчёт](development/reports/v1.6.0/KI-S21-mcp-permissions.md)):
+  KI-537/KI-538/KI-661 `Deferred` — решение по правам, миграция метрик запуска
+  и отдельный срез удаления аккаунта.
 
 - **KI-спринт 20** ([отчёт](development/reports/v1.6.0/KI-S20-registry-gate.md)):
   KI-475/KI-509/KI-520 `Deferred`; сводка статусов пересчитана grep'ом

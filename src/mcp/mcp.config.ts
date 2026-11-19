@@ -168,6 +168,14 @@ const McpStdioServerConfigSchema = z.strictObject({
    * их значения берутся из окружения backend'а по имени (RULES 5.1).
    */
   env: z.record(z.string(), z.string()).optional(),
+  /**
+   * Per-server allowlist env-переменных (KI-533).
+   *
+   * Если задан — сужает глобальный `MCP_STDIO_ENV_ALLOWLIST` для этого сервера:
+   * каждый stdio-процесс получает только свои имена. Без поля действует
+   * глобальный список (обратная совместимость).
+   */
+  envAllowlist: z.array(z.string().trim().min(1).max(256)).max(64).optional(),
   /** Включён ли сервер (default true). Выключенный сервер не подключается. */
   enabled: z.boolean().default(true),
 });

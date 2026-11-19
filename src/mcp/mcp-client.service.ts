@@ -985,8 +985,9 @@ export class McpClientService implements OnApplicationShutdown {
    * Источники значения: явный `env` сервера в `MCP_SERVERS` (приоритет) и
    * окружение backend'а, прочитанное через `ConfigService` (RULES 4.6).
    * Ключи вне `MCP_STDIO_ENV_ALLOWLIST` не передаются даже при явном `env` —
-   * иначе allowlist перестал бы быть границей. Значения не логируются
-   * (RULES 5.1).
+   * иначе allowlist перестал бы быть границей. Для сервера с полем
+   * `envAllowlist` (KI-533) действует он вместо глобального списка. Значения
+   * не логируются (RULES 5.1).
    *
    * **Диагностика allowlist (v0.16 S1, KI-534).** Если имя из allowlist не
    * найдено ни в `env` сервера, ни в окружении backend'а, пишется WARN с
@@ -1003,8 +1004,11 @@ export class McpClientService implements OnApplicationShutdown {
   ): Record<string, string> {
     const env: Record<string, string> = {};
     const missing: string[] = [];
+    // KI-533: per-server список сужает глобальный allowlist — иначе
+    // каждый stdio-процесс получал бы все разрешённые секреты процесса.
+    const names = config.envAllowlist ?? this.stdioEnvAllowlist;
 
-    for (const name of this.stdioEnvAllowlist) {
+    for (const name of names) {
       const explicit = config.env?.[name];
       const inherited = this.config.get<unknown>(name);
       const value =

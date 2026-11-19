@@ -659,6 +659,43 @@ describe('McpClientService — подключение и каталог (v0.11 S
     expect(sdk.FakeTransport.instances).toHaveLength(0);
   });
 
+  it('KI-533: per-server envAllowlist сужает глобальный список', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wb-mcp-env-'));
+
+    try {
+      const { service } = await createHarness({
+        MCP_ENABLE_STDIO: true,
+        MCP_STDIO_ENV_ALLOWLIST: 'MCP_A, MCP_B',
+        MCP_STDIO_CWD: root,
+        MCP_A: 'a',
+        MCP_B: 'b',
+        MCP_SERVERS: JSON.stringify({
+          first: {
+            transport: 'stdio',
+            command: 'node',
+            args: ['first.js'],
+            envAllowlist: ['MCP_A'],
+          },
+          second: {
+            transport: 'stdio',
+            command: 'node',
+            args: ['second.js'],
+            envAllowlist: ['MCP_B'],
+          },
+        }),
+      });
+
+      await service.listToolsAsync('first');
+      await service.listToolsAsync('second');
+
+      const envs = sdk.FakeStdioTransport.instances.map((item) => item.params.env);
+
+      expect(envs).toEqual([{ MCP_A: 'a' }, { MCP_B: 'b' }]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('stdio: env фильтруется по allowlist, cwd — отдельный каталог сервера (v0.13 S1)', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wb-mcp-cwd-'));
     const serverName = 'local';

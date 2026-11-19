@@ -163,10 +163,10 @@
 
 ### Спринт 21 (Medium)
 
-- [ ] **KI-533** 🟡 — Глобальный `MCP_STDIO_ENV_ALLOWLIST` отдаёт все env всем серверам — `src/mcp/mcp-client.service.ts`
-- [ ] **KI-537** 🟡 — Права на историю запусков уже, чем на сам запуск — `src/runs/runs.service.ts, src/runs/runs.controller.ts`
-- [ ] **KI-538** 🟡 — В `workflow_runs` нет длительности и стоимости запуска — `src/runs/runs.service.ts, src/engine/execution-engine.service.ts,`
-- [ ] **KI-661** 🟡 — Нет удаления аккаунта и согласия на обработку ПД — `web/src/components/auth/LoginPage.tsx, src/auth/**,`
+- [x] **KI-533** 🟡 — Глобальный `MCP_STDIO_ENV_ALLOWLIST` отдаёт все env всем серверам — `src/mcp/mcp-client.service.ts`
+- [x] **KI-537** 🟡 — Права на историю запусков уже, чем на сам запуск — `src/runs/runs.service.ts, src/runs/runs.controller.ts` (Deferred)
+- [x] **KI-538** 🟡 — В `workflow_runs` нет длительности и стоимости запуска — `src/runs/runs.service.ts, src/engine/execution-engine.service.ts,` (Deferred)
+- [x] **KI-661** 🟡 — Нет удаления аккаунта и согласия на обработку ПД — `web/src/components/auth/LoginPage.tsx, src/auth/**,` (Deferred)
 
 ### Спринт 22 (Low)
 
@@ -520,4 +520,5 @@
 | 17 | KI-386, KI-392, KI-393, KI-402 | 1 Fixed (код), 2 Deferred, 1 Documented | `72e7c8b` |
 | 18 | KI-403, KI-404, KI-408, KI-426 | 1 Documented (docs), 3 Deferred | `4f816ef` |
 | 19 | KI-436, KI-449, KI-462, KI-474 | 4 Deferred | `ab0da22` |
-| 20 | KI-475, KI-497, KI-509, KI-520 | 1 Fixed (CI-гейт), 3 Deferred | (текущий) |
+| 20 | KI-475, KI-497, KI-509, KI-520 | 1 Fixed (CI-гейт), 3 Deferred | `7a99759` |
+| 21 | KI-533, KI-537, KI-538, KI-661 | 1 Fixed (код+тест), 3 Deferred | (текущий) |

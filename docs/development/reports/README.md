@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S21 | KI-533: per-server envAllowlist для MCP stdio (+тест, безопасность секретов); KI-537/538/661 Deferred | 2026-11-19 | [KI-S21-mcp-permissions.md](v1.6.0/KI-S21-mcp-permissions.md) |
 | v1.6.0 | KI-S20 | KI-497: CI-гейт согласованности реестра (scripts/check-known-issues.mjs), сводка пересчитана (657=657); KI-475/509/520 Deferred | 2026-11-19 | [KI-S20-registry-gate.md](v1.6.0/KI-S20-registry-gate.md) |
 | v1.6.0 | KI-S19 | KI-436/449/462/474 Deferred (бюджет агента, MediaSource, лимит блоков, format/overwrite файлов) — docs-only | 2026-11-19 | [KI-S19-agent-ui-limits.md](v1.6.0/KI-S19-agent-ui-limits.md) |
 | v1.6.0 | KI-S18 | KI-426 Documented: lifecycle Expiration для S3-медиа в PRODUCTION.md; KI-403/404/408 Deferred (масштаб, контракты) — docs-only | 2026-11-19 | [KI-S18-vector-agent-s3.md](v1.6.0/KI-S18-vector-agent-s3.md) |
