@@ -235,7 +235,10 @@ export class AuthService {
 
     const passwordHash = await this.hashPasswordAsync(dto.password);
 
-    const created = await this.db.transaction(async (tx) => {
+    let created;
+
+    try {
+      created = await this.db.transaction(async (tx) => {
       if (invitation !== undefined) {
         const [invited] = await tx
           .insert(users)
@@ -273,7 +276,21 @@ export class AuthService {
         .returning();
 
       return user;
-    });
+      });
+    } catch (error: unknown) {
+      // KI-557: pre-check(email) вне транзакции — два параллельных запроса
+      // могут оба пройти; второй упирается в users_email_unique (23505).
+      // Для клиента это тот же конфликт, что и «уже занят», а не 500.
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === '23505'
+      ) {
+        throw new ConflictException('Email уже зарегистрирован');
+      }
+
+      throw error;
+    }
 
     return {
       accessToken: await this.generateAccessTokenAsync(created),

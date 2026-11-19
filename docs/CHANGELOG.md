@@ -25,6 +25,12 @@
 
 ### Fixed
 
+- **KI-спринт 66** ([отчёт](development/reports/v1.6.0/KI-S66-registration-history-fk.md)):
+  - **KI-543:** история запусков обновляется раз в 5 с, пока модалка открыта.
+  - **KI-557:** гонка регистрации с одним email — 409 вместо 500.
+  - **KI-559:** `ON DELETE CASCADE` на `workflow_collaborators.invited_by` (миграция 0024).
+  - **KI-539** `Deferred` — правка `started_at` требует миграции и смены контракта.
+
 - **KI-спринт 65** ([отчёт](development/reports/v1.6.0/KI-S65-mcp-startup-parity.md)):
   - **KI-524:** паритет-тест UI/backend операций `image_tool`.
   - **KI-535:** WARN о stdio без Docker — при старте адаптера.

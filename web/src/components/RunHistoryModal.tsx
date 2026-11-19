@@ -178,6 +178,30 @@ export function RunHistoryModal({ workflowId, onClose }: RunHistoryModalProps) {
     };
   }, [workflowId, reloadKey]);
 
+  // KI-543: пока история открыта, обновляем первую страницу раз в 5 с —
+  // статусы pending/running и новые запуски появляются без переоткрытия.
+  // Без setIsLoading: фоновое обновление не должно мигать загрузчиком.
+  useEffect(() => {
+    let active = true;
+
+    const timer = window.setInterval(() => {
+      fetchWorkflowRunsAsync(workflowId, PAGE_SIZE)
+        .then((page) => {
+          if (active) {
+            setRuns(page.runs);
+            setNextCursor(page.nextCursor);
+            setTotal(page.total);
+          }
+        })
+        .catch(() => undefined);
+    }, 5_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [workflowId]);
+
   // Escape закрывает окно — то же поведение, что у LoadModal/ShareModal.
   // v1.4.0 S2: если сверху открыта модалка сравнения, Escape принадлежит ей;
   // иначе закрылись бы обе модалки одним нажатием.

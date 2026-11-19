@@ -384,6 +384,17 @@ describe('AuthService', () => {
       expect(result.user.role).toBe('member');
     });
 
+    it('KI-557: 23505 из транзакции — ConflictException, а не 500', async () => {
+      const duplicate = Object.assign(new Error('duplicate key'), {
+        code: '23505',
+      });
+      transaction.mockRejectedValueOnce(duplicate);
+
+      await expect(
+        service.registerAsync({ email: EMAIL, password: PASSWORD }),
+      ).rejects.toThrow(ConflictException);
+    });
+
     it('бросает ConflictException на занятый email', async () => {
       selectLimit.mockResolvedValue([{ id: USER_ID }]);
 

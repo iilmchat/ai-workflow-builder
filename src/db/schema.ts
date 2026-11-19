@@ -494,9 +494,11 @@ export const workflowCollaborators = pgTable(
     invitedAt: timestamp('invited_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
+    // KI-559: без CASCADE удаление организации падало на 23503 — каскад
+    // users/workflows удалял строки быстрее, чем cleanup участников.
     invitedBy: uuid('invited_by')
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: 'cascade' }),
   },
   (table) => [
     primaryKey({ columns: [table.workflowId, table.userId] }),
