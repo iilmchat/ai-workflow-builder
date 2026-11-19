@@ -30,6 +30,8 @@
 
 ### Fixed
 
+- **KI-248:** при смене модели без `supportsReasoning` поле `reasoningEffort`
+  сбрасывается и не попадает в граф.
 - **KI-227:** удалён мёртвый `meAsync` и неиспользуемый импорт (alias `@/` в
   vitest уже был настроен).
 - **KI-222:** тесты env-схемы для `AUTH_DISABLED=''` и `'garbage'` (108 passed).
@@ -78,6 +80,9 @@
   по образу job `web` в CI (проверено: 598 тестов зелёные).
 
 ### Changed
+
+- **KI-спринт 36** ([отчёт](development/reports/v1.6.0/KI-S36-share-llm-ui.md)):
+  KI-237/KI-242/KI-243 `Deferred` — правки ShareModal зависят от KI-239/KI-138.
 
 - **KI-спринт 35** ([отчёт](development/reports/v1.6.0/KI-S35-auth-api-deadcode.md)):
   KI-229/KI-230/KI-235 `Deferred`.

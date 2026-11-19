@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S36 | KI-248: reasoningEffort сбрасывается при смене модели (web 599 тестов); KI-237/242/243 Deferred | 2026-11-19 | [KI-S36-share-llm-ui.md](v1.6.0/KI-S36-share-llm-ui.md) |
 | v1.6.0 | KI-S35 | KI-227: удалён мёртвый meAsync (web build 0/0, 599 тестов); KI-229/230/235 Deferred | 2026-11-19 | [KI-S35-auth-api-deadcode.md](v1.6.0/KI-S35-auth-api-deadcode.md) |
 | v1.6.0 | KI-S34 | KI-222: +2 теста AUTH_DISABLED (108 env-тестов); KI-219/KI-225 Deferred, KI-226 Documented | 2026-11-19 | [KI-S34-auth-env.md](v1.6.0/KI-S34-auth-env.md) |
 | v1.6.0 | KI-S33 | KI-218: юнит-тесты parseDurationToMs (3 зелёных); KI-210/211/212 Fixed по факту (DESIGN, правила, git note) | 2026-11-19 | [KI-S33-docs-tests.md](v1.6.0/KI-S33-docs-tests.md) |

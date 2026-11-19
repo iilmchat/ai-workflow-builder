@@ -268,10 +268,10 @@
 
 ### Спринт 36 (Low)
 
-- [ ] **KI-237** 🟢 — Повторный POST `/workflow/:id/share` молча перевыпускает токен — `src/workflow/workflow.service.ts`
-- [ ] **KI-242** 🟢 — Сбой копирования не сообщается пользователю — `web/src/components/ShareModal.tsx`
-- [ ] **KI-243** 🟢 — Флаг «Разрешить копирование» — UI-заглушка — `web/src/components/ShareModal.tsx`
-- [ ] **KI-248** 🟢 — `reasoningEffort` не сбрасывается при смене модели — `web/src/components/nodes/LLMNode.tsx`
+- [x] **KI-237** 🟢 — Повторный POST `/workflow/:id/share` молча перевыпускает токен — `src/workflow/workflow.service.ts` (Deferred)
+- [x] **KI-242** 🟢 — Сбой копирования не сообщается пользователю — `web/src/components/ShareModal.tsx` (Deferred)
+- [x] **KI-243** 🟢 — Флаг «Разрешить копирование» — UI-заглушка — `web/src/components/ShareModal.tsx` (Deferred)
+- [x] **KI-248** 🟢 — `reasoningEffort` не сбрасывается при смене модели — `web/src/components/nodes/LLMNode.tsx`
 
 ### Спринт 37 (Low)
 
@@ -535,4 +535,5 @@
 | 32 | KI-178, KI-194, KI-207, KI-208 | 2 Fixed (1 по факту), 2 Deferred | `d954b29` |
 | 33 | KI-210, KI-211, KI-212, KI-218 | 4 Fixed (3 по факту, 1 тесты) | `b1ad05b` |
 | 34 | KI-219, KI-222, KI-225, KI-226 | 1 Fixed (тесты), 2 Deferred, 1 Documented | `0f10da0` |
-| 35 | KI-227, KI-229, KI-230, KI-235 | 1 Fixed (мёртвый код), 3 Deferred | (текущий) |
+| 35 | KI-227, KI-229, KI-230, KI-235 | 1 Fixed (мёртвый код), 3 Deferred | `9f5eb21` |
+| 36 | KI-237, KI-242, KI-243, KI-248 | 1 Fixed (UI), 3 Deferred | (текущий) |
