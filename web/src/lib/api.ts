@@ -642,10 +642,9 @@ export async function getWorkflowAsync(id: string): Promise<ApiWorkflow> {
 /**
  * Создаёт workflow.
  *
- * @param dto - данные нового workflow
+ * @param dto - данные нового workflow (без `userId`: владелец берётся из JWT, KI-270)
  */
 export async function createWorkflowAsync(dto: {
-  userId: string;
   name: string;
   description?: string;
   nodes: ApiGraphNode[];

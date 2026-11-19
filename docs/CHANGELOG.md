@@ -30,6 +30,12 @@
 
 ### Fixed
 
+- **KI-267:** `loadWorkflowAsync` логирует ошибку схемы через `console.warn`
+  `[loadWorkflow]` — диагностика Load больше не зависит только от notice.
+- **KI-270:** удалён мёртвый `userId: 'demo-user'` из DTO `POST /workflow`
+  (владелец определяется backend из JWT).
+- **KI-272:** после фатальной ошибки SSE `runStatus='failed'` — кнопка Run
+  разблокируется, «Выполняется…» не висит без потока.
 - **KI-253:** `computeGraphHash` кэшируется по ссылкам на `nodes`/`edges` — хэш
   больше не сериализует граф на каждое изменение стора.
 - **KI-254:** Ctrl+D оставляет `selectedNodeId` на оригинале (панель результата
@@ -94,6 +100,12 @@
 
 - **KI-143:** root-скрипт `pnpm ci:web` — чистый install + build + test web
   по образу job `web` в CI (проверено: 598 тестов зелёные).
+
+### Documented
+
+- **KI-264:** правила CDP-смоука (узкий Fetch-перехват, virtual key codes,
+  фокус/visibility, URL стора с `?t=`, заголовки, хуки после F5) зафиксированы
+  в [памятке](development/SMOKE_CDP.md); скрипты остаются вне репо.
 
 ### Changed
 

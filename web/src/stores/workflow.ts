@@ -282,7 +282,13 @@ function buildRunStreamHandlers(
     onFatalError: (attempts) => {
       const text = i18n.t('toast.stream_stalled', { count: attempts });
 
-      set({ runError: text, notice: { kind: 'error', text } });
+      // KI-272: поток мёртв, повторов не будет — снимаем «выполняется», иначе
+      // `isRunActive` держал бы кнопку Run заблокированной без подписки.
+      set({
+        runStatus: 'failed',
+        runError: text,
+        notice: { kind: 'error', text },
+      });
     },
   };
 }
@@ -391,8 +397,6 @@ function mapsFromNodes(nodes: readonly NodeRunSnapshot[]): NodeRunMaps {
   return { nodeStatuses, nodeOutputs, nodeErrors, nodeLogs, nodeMetrics };
 }
 
-/** Владелец графа: авторизации пока нет, поэтому значение фиксированное. */
-export const DEFAULT_USER_ID = 'demo-user';
 /** Имя workflow по умолчанию (backend требует непустое). */
 /**
  * Имя нового workflow.
@@ -2525,7 +2529,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     try {
       const saved = currentWorkflowId
         ? await updateWorkflowAsync(currentWorkflowId, payload)
-        : await createWorkflowAsync({ userId: DEFAULT_USER_ID, ...payload });
+        // KI-270: владельца определяет backend из JWT, `userId` в DTO мёртв.
+        : await createWorkflowAsync(payload);
 
       set({
         currentWorkflowId: saved.id,
@@ -2606,6 +2611,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         });
       }
     } catch (error) {
+      // KI-267: notice показывает пользователю общий текст, а диагностика
+      // Zod-ошибки схемы ответа без консоли невозможна.
+      console.warn('[loadWorkflow]', error);
       const message = messageOf(error);
       set({ isLoading: false, error: message, notice: { kind: 'error', text: message } });
     }

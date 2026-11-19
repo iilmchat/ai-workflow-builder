@@ -10,6 +10,7 @@ import {
   type ApiRun,
 } from '@/lib/api';
 import type { AppNode } from '@/types/graph';
+import type { RunStreamHandlers } from '@/lib/run-stream';
 import type { NodeRunSnapshot, SnapshotMessage } from '@/types/run-stream';
 
 /**
@@ -839,6 +840,26 @@ describe('useWorkflowStore — восстановление запуска по�
     expect(replaceState).not.toHaveBeenCalled();
     // R7.1 (KI-048): прогресс-бар бюджета тоже восстанавливается.
     expect(fetchRunBudgetAsync).toHaveBeenCalledWith(RUN_ID);
+  });
+
+  it('onFatalError снимает «выполняется» и ставит failed (KI-272)', async () => {
+    vi.mocked(fetchRunAsync).mockResolvedValue(apiRun({ status: 'running' }));
+    vi.mocked(fetchRunNodesAsync).mockResolvedValue([]);
+
+    await state().restoreRunAsync(RUN_ID);
+
+    const handlers = subscribeToRunStreamMock.mock.calls[0]?.[1] as
+      | RunStreamHandlers
+      | undefined;
+
+    expect(state().runStatus).toBe('running');
+    expect(handlers?.onFatalError).toBeTypeOf('function');
+
+    handlers?.onFatalError?.(3);
+
+    expect(state().runStatus).toBe('failed');
+    expect(state().runError).toBe('toast.stream_stalled');
+    expect(state().notice?.kind).toBe('error');
   });
 
   it('preserveRunIdInUrl сохраняет ?runId= у терминального запуска (KI-541)', async () => {

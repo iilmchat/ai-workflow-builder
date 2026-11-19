@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getWorkflowAsync, type ApiWorkflow } from '@/lib/api';
+import {
+  createWorkflowAsync,
+  getWorkflowAsync,
+  type ApiWorkflow,
+} from '@/lib/api';
 import type { ApiGraphNode } from '@/lib/api';
 import { useWorkflowStore } from './workflow';
 import { REASONING_EFFORTS } from '@/lib/llm-node-fields';
@@ -24,7 +28,11 @@ vi.mock('@/i18n', () => {
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
 
-  return { ...actual, getWorkflowAsync: vi.fn() };
+  return {
+    ...actual,
+    getWorkflowAsync: vi.fn(),
+    createWorkflowAsync: vi.fn(),
+  };
 });
 
 /**
@@ -802,5 +810,55 @@ describe('KI-254: Ctrl+D не переключает панель результ
     expect(state().selectedNodeId).toBe(originalId);
     expect(original?.selected).toBe(true);
     expect(copy?.selected).toBe(true);
+  });
+});
+
+describe('KI-267/270: диагностика Load и DTO создания', () => {
+  beforeEach(() => {
+    useWorkflowStore.setState({
+      nodes: [],
+      edges: [],
+      past: [],
+      future: [],
+      currentWorkflowId: null,
+      notice: null,
+      isLoading: false,
+    });
+    vi.mocked(getWorkflowAsync).mockReset();
+    vi.mocked(createWorkflowAsync).mockReset();
+  });
+
+  it('Load пишет ошибку схемы в console.warn, а не только в notice', async () => {
+    const failure = new Error('Zod: неверный формат workflow');
+    vi.mocked(getWorkflowAsync).mockRejectedValue(failure);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await state().loadWorkflowAsync('wf-broken');
+
+    expect(warn).toHaveBeenCalledWith('[loadWorkflow]', failure);
+    expect(state().notice?.kind).toBe('error');
+    expect(state().isLoading).toBe(false);
+
+    warn.mockRestore();
+  });
+
+  it('POST /workflow не содержит мёртвое поле userId', async () => {
+    useWorkflowStore.setState({ currentWorkflowName: 'Новый' });
+    vi.mocked(createWorkflowAsync).mockResolvedValue({
+      id: 'wf-new',
+      userId: '11111111-1111-4111-8111-111111111111',
+      name: 'Новый',
+      nodes: [],
+      edges: [],
+      version: 1,
+    });
+
+    await state().saveWorkflowAsync();
+
+    const payload = vi.mocked(createWorkflowAsync).mock.calls[0]?.[0];
+
+    expect(payload).toBeDefined();
+    expect(payload).not.toHaveProperty('userId');
+    expect(payload).toMatchObject({ name: 'Новый', nodes: [], edges: [] });
   });
 });

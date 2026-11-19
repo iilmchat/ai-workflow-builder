@@ -289,10 +289,10 @@
 
 ### Спринт 39 (Low)
 
-- [ ] **KI-264** 🟢 — Смоук-харнесс CDP: узкий Fetch-перехват + windowsVirtualKeyCode — `временные скрипты смоука (вне репо)`
-- [ ] **KI-267** 🟢 — `loadWorkflowAsync` при ошибке схемы молчит в консоль — `web/src/stores/workflow.ts (loadWorkflowAsync)`
-- [ ] **KI-270** 🟢 — фронт шлёт мёртвый `userId: 'demo-user'` в POST /workflow — `web/src/stores/workflow.ts (DEFAULT_USER_ID),`
-- [ ] **KI-272** 🟢 — `onFatalError` потока не снимает «выполняется» — `web/src/stores/workflow.ts`
+- [x] **KI-264** 🟢 — Смоук-харнесс CDP: узкий Fetch-перехват + windowsVirtualKeyCode — `временные скрипты смоука (вне репо)` (Documented: SMOKE_CDP.md)
+- [x] **KI-267** 🟢 — `loadWorkflowAsync` при ошибке схемы молчит в консоль — `web/src/stores/workflow.ts (loadWorkflowAsync)`
+- [x] **KI-270** 🟢 — фронт шлёт мёртвый `userId: 'demo-user'` в POST /workflow — `web/src/stores/workflow.ts (DEFAULT_USER_ID),`
+- [x] **KI-272** 🟢 — `onFatalError` потока не снимает «выполняется» — `web/src/stores/workflow.ts`
 
 ### Спринт 40 (Low)
 
@@ -538,4 +538,5 @@
 | 35 | KI-227, KI-229, KI-230, KI-235 | 1 Fixed (мёртвый код), 3 Deferred | `9f5eb21` |
 | 36 | KI-237, KI-242, KI-243, KI-248 | 1 Fixed (UI), 3 Deferred | `40941d1` |
 | 37 | KI-249, KI-250, KI-251, KI-252 | 4 Fixed (3 с кодом + паритет-тест, i18n, 3 теста сетки); backend 2150 / web 607 зелёные | `89eafbc` |
-| 38 | KI-253, KI-254, KI-255, KI-262 | 4 Fixed (кэш хэша, Ctrl+D, клон данных, Handle-гейт); web 633 зелёных | (текущий) |
+| 38 | KI-253, KI-254, KI-255, KI-262 | 4 Fixed (кэш хэша, Ctrl+D, клон данных, Handle-гейт); web 633 зелёных | `74bae8a` |
+| 39 | KI-264, KI-267, KI-270, KI-272 | 3 Fixed, 1 Documented (SMOKE_CDP.md); web 636 зелёных | (текущий) |
