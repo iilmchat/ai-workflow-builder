@@ -10,6 +10,7 @@ import { randomInt } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { isDeepStrictEqual } from 'node:util';
 import { isRetryableProviderError } from '../common/errors/retryable-provider.error.js';
+import { toMessage } from '../common/utils/to-message.js';
 import { SafeHttpClient } from '../common/http/safe-http.client.js';
 import { NODE_RETRY_DEFAULTS } from '../config/env.schema.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
@@ -83,16 +84,6 @@ import {
   type SubWorkflowContext,
   type VectorMemoryContext,
 } from './node-executors.js';
-
-/**
- * Приводит неизвестную ошибку к тексту для логов и колонки `error`.
- *
- * @param error - значение из `catch` (тип `unknown`)
- * @returns текст ошибки
- */
-function toMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * Приводит стоимость к виду колонки `numeric`.

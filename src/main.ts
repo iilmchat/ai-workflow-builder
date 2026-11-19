@@ -83,6 +83,7 @@ async function bootstrap() {
   // соединения BullMQ с Redis (RULES 4.12).
   app.enableShutdownHooks();
 
-  await app.listen(process.env.PORT ?? 3000);
+  // KI-013: порт читается через ConfigService (RULES 4.6).
+  await app.listen(configService.get<string>('PORT') ?? 3000);
 }
 await bootstrap();

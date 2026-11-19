@@ -66,14 +66,10 @@ export const ApiWorkflowSchema = z.object({
 /** Workflow в терминах API. */
 export type ApiWorkflow = z.infer<typeof ApiWorkflowSchema>;
 
-/** Уровни выполнения из `/engine/plan`. */
+/** Уровни выполнения из `/engine/plan` (KI-020: мёртвое поле убрано). */
 export interface ExecutionPlan {
   order: string[];
   levels: string[][];
-  executionMap: Record<
-    string,
-    { inputs: Record<string, unknown>; dependents: string[] }
-  >;
 }
 
 /**

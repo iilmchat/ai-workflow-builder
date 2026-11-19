@@ -170,10 +170,10 @@
 
 ### Спринт 22 (Low)
 
-- [ ] **KI-013** 🟢 — `process.env` читается напрямую в обход `ConfigService` — `src/db/db.module.ts (DATABASE_URL), src/main.ts (PORT)`
-- [ ] **KI-020** 🟢 — Мёртвое поле `executionMap` во фронтенде — `web/src/lib/api.ts`
-- [ ] **KI-021** 🟢 — У `node_runs` нет `created_at` — `src/db/schema.ts`
-- [ ] **KI-028** 🟢 — Дублирование `toMessage` в 4 файлах — `src/runs/runs.service.ts, src/runs/run-events.service.ts,`
+- [x] **KI-013** 🟢 — `process.env` читается напрямую в обход `ConfigService` — `src/db/db.module.ts (DATABASE_URL), src/main.ts (PORT)`
+- [x] **KI-020** 🟢 — Мёртвое поле `executionMap` во фронтенде — `web/src/lib/api.ts`
+- [x] **KI-021** 🟢 — У `node_runs` нет `created_at` — `src/db/schema.ts` (Deferred)
+- [x] **KI-028** 🟢 — Дублирование `toMessage` в 4 файлах — `src/runs/runs.service.ts, src/runs/run-events.service.ts,`
 
 ### Спринт 23 (Low)
 
@@ -521,4 +521,5 @@
 | 18 | KI-403, KI-404, KI-408, KI-426 | 1 Documented (docs), 3 Deferred | `4f816ef` |
 | 19 | KI-436, KI-449, KI-462, KI-474 | 4 Deferred | `ab0da22` |
 | 20 | KI-475, KI-497, KI-509, KI-520 | 1 Fixed (CI-гейт), 3 Deferred | `7a99759` |
-| 21 | KI-533, KI-537, KI-538, KI-661 | 1 Fixed (код+тест), 3 Deferred | (текущий) |
+| 21 | KI-533, KI-537, KI-538, KI-661 | 1 Fixed (код+тест), 3 Deferred | `23871ec` |
+| 22 | KI-013, KI-020, KI-021, KI-028 | 3 Fixed, 1 Deferred | (текущий) |

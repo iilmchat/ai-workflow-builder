@@ -30,6 +30,9 @@
 
 ### Fixed
 
+- **KI-013:** `DbModule` и `main.ts` читают env через `ConfigService` (RULES 4.6).
+- **KI-020:** удалено мёртвое поле `executionMap` из типа `ExecutionPlan` (web).
+- **KI-028:** общая функция `toMessage` вынесена в `src/common/utils/`.
 - **KI-533:** у MCP stdio-серверов появился per-server `envAllowlist` в
   `MCP_SERVERS` — каждый процесс получает только свои env-переменные.
 - **KI-386:** `MediaTaskResponseSchema` сохраняет метаданные результата
@@ -63,6 +66,10 @@
   (RULES 3.20); расхождение блокирует merge.
 
 ### Changed
+
+- **KI-спринт 22** ([отчёт](development/reports/v1.6.0/KI-S22-low-hygiene.md)):
+  KI-021 `Deferred` — отдельный `created_at` у `node_runs` дублировал бы
+  `started_at` и требовал миграции.
 
 - **KI-спринт 21** ([отчёт](development/reports/v1.6.0/KI-S21-mcp-permissions.md)):
   KI-537/KI-538/KI-661 `Deferred` — решение по правам, миграция метрик запуска

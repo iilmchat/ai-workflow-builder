@@ -1,4 +1,5 @@
 import { Global, Inject, Module, OnApplicationShutdown } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from './schema.js';
@@ -34,8 +35,10 @@ function createDrizzleClient(url: string) {
   providers: [
     {
       provide: DRIZZLE,
-      useFactory: () => {
-        const url = process.env.DATABASE_URL;
+      // KI-013: env читается через ConfigService (RULES 4.6), а не напрямую.
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => {
+        const url = config.get<string>('DATABASE_URL');
         if (!url) {
           throw new Error('DATABASE_URL is not set — добавьте его в .env в корне проекта');
         }

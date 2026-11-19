@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import type { Job } from 'bullmq';
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { toMessage } from '../common/utils/to-message.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { workflows, workflowRuns, type RunStatus } from '../db/schema.js';
 import { GraphSnapshotSchema, type GraphSnapshotDto } from '../engine/dto/index.js';
@@ -18,16 +19,6 @@ import {
   RUNS_INSTANCE_ID,
   WORKFLOW_RUNS_WORKER_OPTIONS,
 } from './runs.worker-options.js';
-
-/**
- * Приводит неизвестную ошибку к тексту для логов и колонки `error`.
- *
- * @param error - значение из `catch` (тип `unknown`)
- * @returns текст ошибки
- */
-function toMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /** Данные запуска, нужные обработчику для старта выполнения. */
 interface RunForExecution {
