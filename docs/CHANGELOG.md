@@ -30,6 +30,8 @@
 
 ### Fixed
 
+- **KI-349:** у `TextNode` появился target-handle `text-input` — входящие связи
+  больше не рисуются висячими.
 - **KI-280:** идемпотентный HTTP-узел (GET) ретраится при 429/5xx и таймауте;
   POST/PUT/DELETE остаются неповторяемыми.
 - **KI-269:** `POST /engine/sort` исключает узлы-аннотации и связи с ними —
@@ -51,6 +53,10 @@
   (+3 теста в `src/llm/provider-errors.spec.ts`).
 
 ### Changed
+
+- **KI-спринт 15** ([отчёт](development/reports/v1.6.0/KI-S15-text-handle-contracts.md)):
+  KI-356/KI-357/KI-370 `Deferred` — контрактные гейты и перенос маршрутизации
+  в media-реестр требуют отдельных спринтов.
 
 - **KI-спринт 14** ([отчёт](development/reports/v1.6.0/KI-S14-ci-gate-routing.md)):
   KI-340 закрыт вместе с KI-280, KI-344 закрыт по факту (паритет-гейт

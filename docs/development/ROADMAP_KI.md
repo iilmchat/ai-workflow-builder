@@ -121,10 +121,10 @@
 
 ### Спринт 15 (Medium)
 
-- [ ] **KI-349** 🟡 — `TextNode` без target-handle при контракте `text-input` — `web/src/components/nodes/TextNode.tsx, src/engine/node-ports.ts`
-- [ ] **KI-356** 🟡 — REST-ответ workflow без DTO: web-зеркало расходится на shareToken — `src/workflow/workflow.controller.ts, src/db/schema.ts,`
-- [ ] **KI-357** 🟡 — REST-зеркала вне паритет-гейта: TemplateSummary, LlmModelInfo, — `web/src/lib/api.ts, web/src/lib/export-import-api.ts,`
-- [ ] **KI-370** 🟡 — дублирование маршрутизации в `MediaNodeExecutor` — `src/media/media-node-executor.service.ts`
+- [x] **KI-349** 🟡 — `TextNode` без target-handle при контракте `text-input` — `web/src/components/nodes/TextNode.tsx, src/engine/node-ports.ts`
+- [x] **KI-356** 🟡 — REST-ответ workflow без DTO: web-зеркало расходится на shareToken — `src/workflow/workflow.controller.ts, src/db/schema.ts,` (Deferred)
+- [x] **KI-357** 🟡 — REST-зеркала вне паритет-гейта: TemplateSummary, LlmModelInfo, — `web/src/lib/api.ts, web/src/lib/export-import-api.ts,` (Deferred)
+- [x] **KI-370** 🟡 — дублирование маршрутизации в `MediaNodeExecutor` — `src/media/media-node-executor.service.ts` (Deferred)
 
 ### Спринт 16 (Medium)
 
@@ -514,4 +514,5 @@
 | 11 | KI-224, KI-231, KI-239, KI-240 | 2 Fixed (frontend), 2 Deferred | `0903ec7` |
 | 12 | KI-241, KI-244, KI-269, KI-275 | 2 Fixed (2 с кодом), 1 Deferred, 1 Documented | `0bf2e80` |
 | 13 | KI-278, KI-280, KI-284, KI-304 | 1 Fixed (код+тест), 3 Deferred | `9366a08` |
-| 14 | KI-322, KI-338, KI-340, KI-344 | 2 Fixed (по факту), 2 Deferred | (текущий) |
+| 14 | KI-322, KI-338, KI-340, KI-344 | 2 Fixed (по факту), 2 Deferred | `54e4175` |
+| 15 | KI-349, KI-356, KI-357, KI-370 | 1 Fixed (UI), 3 Deferred | (текущий) |

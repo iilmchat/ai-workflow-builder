@@ -4182,14 +4182,19 @@
 ---
 
 ### KI-370 — дублирование маршрутизации в `MediaNodeExecutor`
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Deferred | **Обнаружено:** 2026-10-16
 - **Файлы:** `src/media/media-node-executor.service.ts`
 - **Описание:** `MediaNodeExecutor` инжектит `MEDIA_PROVIDERS` напрямую и
   сам ищет модель в каталогах, потому что `media-registry.service.ts`
   зарезервирован R7.3. Логика должна жить в реестре (метод
   `applyToolAsync` в `MediaRegistryService`).
 - **Решение:** после R7.3 вернуть в реестр.
-- **Связанные:** KI-352, KI-363, R7.3.
+- **Deferred (KI-спринт 15):** `MediaRegistryService` в текущей архитектуре
+  не используется — маршрутизация живёт в `MediaNodeExecutor` и покрыта
+  спеками. Перенос логики в реестр — чистый рефакторинг без изменения
+  поведения; дубль KI-379 отслеживает ту же задачу. Делать в рамках
+  выделенного спринта по media-подсистеме.
+- **Связанные:** KI-352, KI-363, KI-379, R7.3.
 
 ---
 
@@ -5638,10 +5643,13 @@
 ---
 
 ### KI-349 — `TextNode` без target-handle при контракте `text-input`
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Fixed | **Исправлено в:** v1.6.0 (KI-спринт 15) | **Обнаружено:** 2026-10-16
 - **Файлы:** `web/src/components/nodes/TextNode.tsx`, `src/engine/node-ports.ts`
 - **Описание:** Связь «в text-узел» рисуется висячей (36 warning React Flow в смоуке B2), хотя планировщик вход видит.
 - **Решение:** добавить target-handle `text-input` (или убрать из контракта).
+- **Fix:** в `TextNode` добавлен `<Handle type="target" id="text-input">`
+  слева с цветом типа `text`; входящая связь теперь имеет реальный хэндл
+  и не висит. Web build 0/0, 598 тестов зелёных.
 - **Связанные:** KI-030, KI-301.
 
 ---
@@ -6283,7 +6291,7 @@
 ---
 
 ### KI-356 — REST-ответ workflow без DTO: web-зеркало расходится на shareToken
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Deferred | **Обнаружено:** 2026-10-16
 - **Файлы:** `src/workflow/workflow.controller.ts`, `src/db/schema.ts`,
   `web/src/lib/api.ts`
 - **Описание:** `GET/POST/PATCH /workflow` отдают строку Drizzle `workflows`
@@ -6292,7 +6300,11 @@
   контракта ответа нет — в `api-contract.json` пара не попадает.
 - **Решение:** ввести backend-DTO `WorkflowResponse` (без `shareToken`),
   внести пару в `api-contract.json` — гейт KI-352 подхватит автоматически.
-- **Связанные:** KI-352, KI-348.
+- **Deferred (KI-спринт 15):** дефект пока не проявляется — Zod на клиенте
+  отбрасывает лишнее поле. Введение DTO затронет все три ручки workflow и
+  контрактный гейт; объединяем с KI-239 (возврат `shareToken` владельцу),
+  чтобы не делать два несовместимых изменения контракта.
+- **Связанные:** KI-352, KI-348, KI-239.
 
 ---
 
@@ -6806,7 +6818,7 @@
 
 ### KI-357 — REST-зеркала вне паритет-гейта: TemplateSummary, LlmModelInfo,
 MediaModelInfo, engine-DTO
-- **Приоритет:** 🟡 Medium | **Статус:** Open | **Обнаружено:** 2026-10-16
+- **Приоритет:** 🟡 Medium | **Статус:** Deferred | **Обнаружено:** 2026-10-16
 - **Файлы:** `web/src/lib/api.ts`, `web/src/lib/export-import-api.ts`,
   `web/src/types/media.ts`, `src/templates/dto/template.dto.ts`,
   `src/llm/llm-registry.service.ts`, `src/media/dto/media-model.mapper.ts`,
@@ -6819,7 +6831,11 @@ MediaModelInfo, engine-DTO
   (значения дублируются).
 - **Решение:** добавить `TemplateSummary` в текущий `api-contract.json`;
   LLM/media/engine — после снятия ограничений на чтение их папок.
-- **Связанные:** KI-352, KI-348, KI-350.
+- **Deferred (KI-спринт 15):** расширение паритет-гейта — отдельная задача
+  по контрактам: нужно согласовать optional/nullable у `ApiNodeSchema`/
+  `ApiEdgeSchema` и типы модальностей между TS и Zod. Текущие 4 пары
+  покрыты, расхождения не вызывают падений.
+- **Связанные:** KI-352, KI-348, KI-350, KI-241.
 
 ---
 

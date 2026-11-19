@@ -63,6 +63,15 @@ export function TextNode({ id, data }: NodeProps<TextFlowNode>) {
       >
         {DATA_TYPE_LABELS.text}
       </span>
+      {/* KI-349: контракт `text-input` объявлен в node-ports, но handle
+          отсутствовал — входящая связь рисовалась висячей. */}
+      <Handle
+        type="target"
+        id="text-input"
+        position={Position.Left}
+        className="h-2.5! w-2.5! border-2! border-white!"
+        style={{ background: DATA_TYPE_COLORS.text }}
+      />
       <Handle
         type="source"
         id="text-output"
