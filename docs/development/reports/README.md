@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | S69-sync | Синхронизация зеркала GitHub Issues: 3387 закрыто, открыто 3 Planned; REST-пагинация и закрытие дубликатов в sync-known-issues.ps1 | 2026-11-20 | [KI-S69-github-mirror-sync.md](v1.6.0/KI-S69-github-mirror-sync.md) |
 | v1.6.0 | S69 (Final) | KI-671: гейт реестра проверяет нулевые счёты; 658 KI = 658 статусов, Open = 0 — марафон завершён | 2026-11-20 | [KI-S69-registry-gate-final.md](v1.6.0/KI-S69-registry-gate-final.md) |
 | v1.6.0 | S68 | KI-616 маскировка email collaborator, KI-665 тост недоступного QR, KI-668 CORS prod-like, KI-669 IPv6-CIDR; Open = 0 | 2026-11-19 | [KI-S68-audit-qr-cors-ipv6.md](v1.6.0/KI-S68-audit-qr-cors-ipv6.md) |
 | v1.6.0 | S67 | KI-610: CI-гейт панелей Grafana (сверка с метриками), KI-612 Documented, KI-614/KI-615 Deferred | 2026-11-19 | [KI-S67-grafana-metrics.md](v1.6.0/KI-S67-grafana-metrics.md) |

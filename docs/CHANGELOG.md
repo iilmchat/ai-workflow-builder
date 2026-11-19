@@ -17,6 +17,13 @@
 ---
 ## [Unreleased]
 
+### Changed
+
+- **GitHub Issues** ([отчёт](development/reports/v1.6.0/KI-S69-github-mirror-sync.md)):
+  зеркало реестра синхронизировано — 3387 устаревших Issues закрыты с
+  комментариями, открыты только 3 канонические Planned-копии; `sync-known-issues.ps1`
+  теперь читает все страницы REST и закрывает дубликаты.
+
 ### Fixed
 
 - **KI-спринт 69 (Final)** ([отчёт](development/reports/v1.6.0/KI-S69-registry-gate-final.md)):

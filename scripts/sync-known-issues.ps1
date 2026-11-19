@@ -181,17 +181,26 @@ if ($DryRun) {
     $existingLabels = @{}
 } else {
     Write-Host "[INFO] Читаю существующие Issues ($Repo)..." -ForegroundColor Cyan
-    $jsonIssues = gh issue list --repo $Repo --state all --limit 500 --json number,title,state,labels
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "gh issue list упал (exit $LASTEXITCODE). Проверьте авторизацию: gh auth status"
-        exit 1
+    # KI-671: `gh issue list --limit 500` видел только последние 500 Issues —
+    # старые дубликаты оставались открытыми вечно. Читаем все страницы REST API.
+    $allIssues = @()
+    for ($page = 1; $page -le 200; $page++) {
+        $jsonPage = gh api "repos/$Repo/issues?state=all&per_page=100&page=$page" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "gh api issues (page $page) упал (exit $LASTEXITCODE): $jsonPage"
+            exit 1
+        }
+        $pageIssues = @($jsonPage | ConvertFrom-Json)
+        if ($pageIssues.Count -eq 0) { break }
+        $allIssues += $pageIssues
     }
-    $allIssues = $jsonIssues | ConvertFrom-Json
 
     $issueByKiId = @{}
     foreach ($iss in $allIssues) {
         if ($iss.title -match '^(KI-\d+)[:\s]') {
-            $issueByKiId[$Matches[1]] = $iss
+            $kiKey = $Matches[1]
+            if (-not $issueByKiId.ContainsKey($kiKey)) { $issueByKiId[$kiKey] = @() }
+            $issueByKiId[$kiKey] += $iss
         }
     }
     Write-Host "[INFO] Найдено $($allIssues.Count) Issues, из них KI-*: $($issueByKiId.Count)." -ForegroundColor Cyan
@@ -343,7 +352,10 @@ foreach ($ki in $filterList) {
     ) -join ","
 
     $closed = Get-ClosedStatus $ki.Status
-    $existing = $issueByKiId[$ki.Id]
+    # Каноническая копия — самый свежий Issue; остальные дубликаты закрываем
+    # после обновления, сохраняя историю (KI-671).
+    $kiIssues = @($issueByKiId[$ki.Id])
+    $existing = $kiIssues | Sort-Object number -Descending | Select-Object -First 1
 
     Write-Host ""
     Write-Host "── $($ki.Id) — $($ki.Title)" -ForegroundColor White
@@ -450,6 +462,13 @@ foreach ($ki in $filterList) {
             }
             elseif (-not $closed -and $existing.state -ne "OPEN") {
                 gh issue reopen $existing.number --repo $Repo 2>&1 | Out-Null
+            }
+
+            # Закрываем дубликаты, чтобы витрина отражала текущий статус.
+            foreach ($duplicate in ($kiIssues | Where-Object { $_.number -ne $existing.number })) {
+                if ($duplicate.state -ne "CLOSED") {
+                    gh issue close $duplicate.number --repo $Repo 2>&1 | Out-Null
+                }
             }
 
             $updated++
