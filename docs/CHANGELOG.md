@@ -65,7 +65,15 @@
   summary` — автоматическая сверка числа KI, статусов и сводной таблицы
   (RULES 3.20); расхождение блокирует merge.
 
+### Added
+
+- **KI-143:** root-скрипт `pnpm ci:web` — чистый install + build + test web
+  по образу job `web` в CI (проверено: 598 тестов зелёные).
+
 ### Changed
+
+- **KI-спринт 29** ([отчёт](development/reports/v1.6.0/KI-S29-local-ci-i18n.md)):
+  KI-139 `Documented`, KI-138/KI-140 `Deferred`.
 
 - **KI-спринт 28** ([отчёт](development/reports/v1.6.0/KI-S28-ui-theme-a11y.md)):
   KI-117/KI-133 `Deferred`, KI-135/KI-136 `Documented` — косметика тем,

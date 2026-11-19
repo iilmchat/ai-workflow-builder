@@ -219,10 +219,10 @@
 
 ### Спринт 29 (Low)
 
-- [ ] **KI-138** 🟢 — Тосты хранят готовый текст, а не ключ — `web/src/stores/workflow.ts (notice: { kind, text }),`
-- [ ] **KI-139** 🟢 — Unmet peer: react-i18next хочет TypeScript ^5 — `web/package.json, web/pnpm-lock.yaml`
-- [ ] **KI-140** 🟢 — Строки вне UI-слоя остаются русскими — `web/src/lib/api.ts, web/src/types/media.ts,`
-- [ ] **KI-143** 🟢 — Нет локального CI-прогона для web перед push — `package.json (корневой), возможно .github/workflows/ci.yml`
+- [x] **KI-138** 🟢 — Тосты хранят готовый текст, а не ключ — `web/src/stores/workflow.ts (notice: { kind, text }),` (Deferred)
+- [x] **KI-139** 🟢 — Unmet peer: react-i18next хочет TypeScript ^5 — `web/package.json, web/pnpm-lock.yaml` (Documented)
+- [x] **KI-140** 🟢 — Строки вне UI-слоя остаются русскими — `web/src/lib/api.ts, web/src/types/media.ts,` (Deferred)
+- [x] **KI-143** 🟢 — Нет локального CI-прогона для web перед push — `package.json (корневой), возможно .github/workflows/ci.yml`
 
 ### Спринт 30 (Low)
 
@@ -528,4 +528,5 @@
 | 25 | KI-073, KI-076, KI-089, KI-090 | 1 Fixed (по факту), 1 Documented, 2 Deferred | `1b0eecd` |
 | 26 | KI-093, KI-095, KI-098, KI-100 | 1 Documented, 1 Won't Fix, 2 Deferred | `1fa02b1` |
 | 27 | KI-102, KI-103, KI-115, KI-116 | 1 Fixed (по факту), 1 Documented, 2 Deferred | `b840f50` |
-| 28 | KI-117, KI-133, KI-135, KI-136 | 2 Documented, 2 Deferred | (текущий) |
+| 28 | KI-117, KI-133, KI-135, KI-136 | 2 Documented, 2 Deferred | `6c78437` |
+| 29 | KI-138, KI-139, KI-140, KI-143 | 1 Fixed (скрипт), 1 Documented, 2 Deferred | (текущий) |
