@@ -13,7 +13,7 @@ import type { NodeRunStatus } from '@/types/run-stream';
  * пунктиром: он визуально «выключен» — движок его не выполнял.
  */
 const STATUS_BORDER: Record<NodeRunStatus, string> = {
-  pending: 'border-node-pending',
+  pending: 'border-node-border-pending',
   running: 'border-node-border-running',
   completed: 'border-node-border-completed',
   failed: 'border-node-border-failed',

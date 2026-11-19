@@ -25,6 +25,12 @@
 
 ### Fixed
 
+- **KI-спринт 63** ([отчёт](development/reports/v1.6.0/KI-S63-throttler-theme.md)):
+  - **KI-512:** отдельный токен рамки `pending` — контраст в тёмной теме.
+  - **KI-513:** локальный `ThrottlerStorageRecord` вместо deep-import пакета.
+  - **KI-514:** валидация ответа Lua и fallback при некорректном результате.
+  - **KI-515:** ленивое Redis-соединение, когда выбран `memory`-режим.
+
 - **KI-спринт 01** ([отчёт](development/reports/v1.6.0/KI-S01-backup-engine-ci.md)):
   - **KI-024:** публикация SSE-событий движка (`run_started`, `node_started`,
     `node_completed`) стала best-effort — недоступность Redis больше не

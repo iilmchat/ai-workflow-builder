@@ -66,6 +66,8 @@
    * остаются литеральными классами (Tailwind v4 сканирует исходники, RULES 4.32),
    * а цвет приходит из переменной и меняется вместе с темой.
    */
+  /* KI-512: отдельная рамка pending — slate-200 на белом был нечитаем. */
+  --color-node-border-pending: theme(colors.slate.400);
   --color-node-bg-pending: theme(colors.white);
   --color-node-bg-running: theme(colors.blue.50);
   --color-node-bg-completed: theme(colors.green.50);
@@ -145,6 +147,7 @@
   --color-node-skipped: theme(colors.slate.500);
 
   /* KI-448: статусные поверхности узлов — тёмные заливки и светлые рамки. */
+  --color-node-border-pending: theme(colors.slate.500);
   --color-node-bg-pending: theme(colors.slate.900);
   --color-node-bg-running: theme(colors.blue.950);
   --color-node-bg-completed: theme(colors.green.950);

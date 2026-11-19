@@ -21,7 +21,7 @@ const STATUS_TOKENS: ReadonlyArray<{
   readonly border: string;
   readonly background: string;
 }> = [
-  { status: 'pending', border: 'border-node-pending', background: 'bg-node-bg-pending' },
+  { status: 'pending', border: 'border-node-border-pending', background: 'bg-node-bg-pending' },
   {
     status: 'running',
     border: 'border-node-border-running',
@@ -111,7 +111,7 @@ describe('BaseNode — статусные классы на токенах те�
     const root = renderRoot();
 
     expect(root).toHaveAttribute('data-status', 'idle');
-    expect(root).toHaveClass('bg-node-bg-pending', 'border-node-pending');
+    expect(root).toHaveClass('bg-node-bg-pending', 'border-node-border-pending');
   });
 
   it('ни один статус не возвращает светлые литералы (регресс KI-448)', () => {

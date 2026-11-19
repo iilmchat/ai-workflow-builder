@@ -1,9 +1,9 @@
 # RoadMap: проверка и исправление открытых KI
 
 > Факт на HEAD `103bdf3` (v1.6.0, 19.11.2026 09:50 МСК): реестр
-> `docs/KNOWN_ISSUES.md` — 657 KI, из них **24 Open** (все 🟢 Low).
-> Выполнено **62 спринта**; спринты **63–68** — оставшиеся Open KI, ждут
-> команды старта. Новых номеров KI после 670 не заведено.
+> `docs/KNOWN_ISSUES.md` — 657 KI, из них **20 Open** (все 🟢 Low).
+> Выполнено **63 спринта**; спринты **64–68** — оставшиеся Open KI. S69-Final
+> заведётся только по реальным находкам. Новых KI после 670 пока нет.
 > Правила: `docs/development/RULES.md` v1.10.0.
 
 ## Порядок и ритм
@@ -17,10 +17,10 @@
 
 ## Сводка
 
-- Изначально открытых KI: **272** → осталось **24** (все 🟢 Low).
-- Спринтов: **68** по 4 KI; **62 закрыты**, **6 в плане** (63–68).
-- Статусы (grep, RULES 3.20): Fixed 427 (+12 частично), Documented 104
-  (+1 не воспроизводится), Deferred 75, Open 24, Won't Fix 11, Planned 3.
+- Изначально открытых KI: **272** → осталось **20** (все 🟢 Low).
+- Спринтов: **69** по 4 KI; **63 закрыты**, **5 в плане** (64–68) + S69-Final.
+- Статусы (grep, RULES 3.20): Fixed 431 (+12 частично), Documented 104
+  (+1 не воспроизводится), Deferred 75, Open 20, Won't Fix 11, Planned 3.
 - Прогресс отмечается галочками в списке ниже; исполнение фиксируется в «Логе спринтов».
 - Спринты 63–68 сформированы из фактически оставшихся Open KI на HEAD `103bdf3`.
 
@@ -462,10 +462,10 @@
 
 ### Спринт 63 (Low)
 
-- [ ] **KI-512** 🟢 — Тёмная тема: рамка `pending`-узла почти не видна (Low) — `web/src/styles/theme.css,`
-- [ ] **KI-513** 🟢 — Хрупкий deep-import `ThrottlerStorageRecord` — `src/common/throttler/redis-throttler.storage.ts`
-- [ ] **KI-514** 🟢 — Нет валидации ответа Lua в Redis Throttler — `src/common/throttler/redis-throttler.storage.ts`
-- [ ] **KI-515** 🟢 — `THROTTLER_STORAGE=memory` создает Redis-соединение — `src/common/throttler/redis-throttler.storage.ts`
+- [x] **KI-512** 🟢 — Тёмная тема: рамка `pending`-узла почти не видна (Low) — `web/src/styles/theme.css,`
+- [x] **KI-513** 🟢 — Хрупкий deep-import `ThrottlerStorageRecord` — `src/common/throttler/redis-throttler.storage.ts`
+- [x] **KI-514** 🟢 — Нет валидации ответа Lua в Redis Throttler — `src/common/throttler/redis-throttler.storage.ts`
+- [x] **KI-515** 🟢 — `THROTTLER_STORAGE=memory` создает Redis-соединение — `src/common/throttler/redis-throttler.storage.ts`
 
 ### Спринт 64 (Low)
 
@@ -501,6 +501,12 @@
 - [ ] **KI-665** 🟢 — QR без GMS: кнопка молча ничего не делает — `web/src/hooks/useQrScanner.ts, web/src/components/TopBar.tsx`
 - [ ] **KI-668** 🟢 — CORS_ALLOWED_ORIGINS действует только в production — `src/config/cors.ts, src/main.ts, .env.example`
 - [ ] **KI-669** 🟢 — Allowlist `/metrics` не поддерживает IPv6-CIDR — `src/metrics/metrics-ip-allowlist.ts`
+
+### Спринт 69 (Final — только реальные находки)
+
+- [ ] *Заведётся после S68, если в ходе проверок найдены новые KI
+      (RULES 1.13/2.4). Если находок нет — фиксируется как «новых KI не
+      найдено», и марафон завершается.*
 
 ## Лог спринтов
 
@@ -569,6 +575,8 @@
 | 61 | KI-502, KI-503, KI-504, KI-505 | 1 Fixed, 3 Documented; guard late-response restore | `7a35eaa` |
 | 62 | KI-506, KI-507, KI-508, KI-510 | 1 Fixed, 3 Documented; тесты API-обёрток; сессия завершена | `103bdf3` |
 
-> **Спринты 63–68 не начинались.** Это 24 оставшихся Open KI (все Low),
-> сформированные в разделе «Спринты» по факту на HEAD `103bdf3`. Старт — по
-> команде; дедлайн следующего окна — **06:00 МСК**.
+| 63 | KI-512, KI-513, KI-514, KI-515 | 4 Fixed (локальный тип, Lua-валидация, lazy Redis, токен рамки); backend 0/0 + web 650 зелёных | (текущий) |
+
+> **Спринты 64–68 не начинались.** Это 20 оставшихся Open KI (все Low),
+> сформированные в разделе «Спринты» по факту на HEAD `103bdf3`. S69-Final —
+> только реально найденные новые KI. Дедлайн окна — **06:00 МСК**.

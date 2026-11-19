@@ -9,12 +9,12 @@
 import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { ThrottlerStorageService } from '@nestjs/throttler';
-import type { ThrottlerStorageRecord } from '@nestjs/throttler/dist/throttler-storage-record.interface.js';
 import type { Redis } from 'ioredis';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   RedisThrottlerStorage,
   THROTTLE_LUA,
+  type ThrottlerStorageRecord,
 } from './redis-throttler.storage.js';
 
 /** Запись, которую отдаёт fallback. */
@@ -81,15 +81,32 @@ afterEach(() => {
 });
 
 describe('RedisThrottlerStorage (v0.11 S15, KI-420)', () => {
-  it('создаёт fail-fast duplicate и читает префикс из конфига', () => {
-    const { duplicateMock } = createStorage(() =>
+  it('KI-515: duplicate создаётся лениво, при первом обращении к Redis', async () => {
+    const { storage, duplicateMock } = createStorage(() =>
       Promise.resolve([1, 60_000, 0, 0] as LuaResult),
     );
+
+    // Конструктор не открывает соединение (режим memory).
+    expect(duplicateMock).not.toHaveBeenCalled();
+
+    await storage.increment('ip', 60_000, 5, 0, 'default');
 
     expect(duplicateMock).toHaveBeenCalledWith({
       maxRetriesPerRequest: 1,
       enableOfflineQueue: false,
     });
+    expect(duplicateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('KI-514: некорректный ответ Lua уходит в fallback', async () => {
+    const { storage, fallbackIncrement } = createStorage(() =>
+      Promise.resolve(['bad'] as unknown as LuaResult),
+    );
+
+    const record = await storage.increment('ip', 60_000, 5, 0, 'default');
+
+    expect(record).toEqual({ totalHits: 1, timeToExpire: 60_000, isBlocked: false, timeToBlockExpire: 0 });
+    expect(fallbackIncrement).toHaveBeenCalled();
   });
 
   it('успешный increment: ключ с префиксом и именем throttler, результат Lua', async () => {
@@ -189,11 +206,16 @@ describe('RedisThrottlerStorage (v0.11 S15, KI-420)', () => {
     expect(warnSpy).toHaveBeenCalledTimes(2);
   });
 
-  it('onApplicationShutdown закрывает собственное соединение', async () => {
+  it('onApplicationShutdown закрывает созданное соединение (KI-515)', async () => {
     const { storage, quitMock } = createStorage(() =>
       Promise.resolve([1, 60_000, 0, 0] as LuaResult),
     );
 
+    // Соединение ленивое: без обращения к Redis закрывать нечего.
+    await storage.onApplicationShutdown();
+    expect(quitMock).not.toHaveBeenCalled();
+
+    await storage.increment('ip', 60_000, 5, 0, 'default');
     await storage.onApplicationShutdown();
 
     expect(quitMock).toHaveBeenCalledTimes(1);

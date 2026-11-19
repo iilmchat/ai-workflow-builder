@@ -26,9 +26,6 @@ import {
   ThrottlerStorageService,
   type ThrottlerStorage,
 } from '@nestjs/throttler';
-// `ThrottlerStorageRecord` не реэкспортируется из index пакета 6.7.1 —
-// берём тип из его файла (у пакета нет `exports`-карты, subpath резолвится).
-import type { ThrottlerStorageRecord } from '@nestjs/throttler/dist/throttler-storage-record.interface.js';
 import type { Redis } from 'ioredis';
 import { InjectRedis } from '../../redis/redis.module.js';
 
@@ -69,6 +66,42 @@ return { hits, ttlLeft, 0, 0 }
 const REDIS_WARN_INTERVAL_MS = 60_000;
 
 /**
+ * Локальная структура результата `increment` (KI-513).
+ *
+ * Пакет `@nestjs/throttler` не реэкспортирует `ThrottlerStorageRecord` из
+ * index — deep-import `@nestjs/throttler/dist/...` ломается при смене его
+ * внутренней раскладки. Контракт стабилен и описан здесь.
+ */
+export interface ThrottlerStorageRecord {
+  /** Число запросов в текущем окне. */
+  totalHits: number;
+  /** Оставшееся время окна, мс. */
+  timeToExpire: number;
+  /** Активна ли блокировка после превышения лимита. */
+  isBlocked: boolean;
+  /** Оставшееся время блокировки, мс. */
+  timeToBlockExpire: number;
+}
+
+/**
+ * Проверяет ответ Lua перед использованием (KI-514, RULES 1.17).
+ *
+ * @param reply - сырой результат `EVAL`
+ * @returns кортеж из четырёх конечных чисел либо `null`
+ */
+function parseLuaReply(reply: unknown): [number, number, number, number] | null {
+  if (!Array.isArray(reply) || reply.length !== 4) {
+    return null;
+  }
+
+  if (!reply.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+    return null;
+  }
+
+  return [reply[0], reply[1], reply[2], reply[3]];
+}
+
+/**
  * Приводит неизвестную ошибку к тексту для лога.
  *
  * @param error - значение из `catch`
@@ -100,13 +133,17 @@ export class RedisThrottlerStorage
   private lastWarnAt = 0;
 
   /**
-   * Отдельное fail-fast соединение.
+   * Отдельное fail-fast соединение, создаваемое лениво (KI-515).
    *
    * `duplicate()` наследует `REDIS_URL`/`keepAlive`/`retryStrategy`, но
    * перекрывает поведение очереди команд: при мёртвом Redis `eval` сразу
-   * падает, а не копится в offline-очереди.
+   * падает, а не копится в offline-очереди. При `THROTTLER_STORAGE=memory`
+   * соединение не создаётся вовсе.
    */
-  private readonly redis: Redis;
+  private redis: Redis | null = null;
+
+  /** Базовый клиент, от которого делается `duplicate()`. */
+  private readonly base: Redis;
 
   /**
    * @param base - общий клиент Redis (`REDIS_TOKEN`) для `duplicate()`
@@ -118,12 +155,25 @@ export class RedisThrottlerStorage
     private readonly fallback: ThrottlerStorageService,
     config: ConfigService,
   ) {
-    this.redis = base.duplicate({
-      maxRetriesPerRequest: 1,
-      enableOfflineQueue: false,
-    });
+    this.base = base;
     // Префикс версионирован: смена алгоритма не должна смешивать старые ключи.
     this.prefix = config.get<string>('THROTTLER_KEY_PREFIX') ?? 'throttle:v1';
+  }
+
+  /**
+   * Возвращает fail-fast соединение, создавая его при первом обращении.
+   *
+   * @returns клиент Redis для `EVAL`
+   */
+  private getRedis(): Redis {
+    if (this.redis === null) {
+      this.redis = this.base.duplicate({
+        maxRetriesPerRequest: 1,
+        enableOfflineQueue: false,
+      });
+    }
+
+    return this.redis;
   }
 
   /**
@@ -133,7 +183,8 @@ export class RedisThrottlerStorage
    * @returns промис без значения; ошибка закрытия не пробрасывается
    */
   async onApplicationShutdown(): Promise<void> {
-    await this.redis.quit().catch(() => undefined);
+    await this.redis?.quit().catch(() => undefined);
+    this.redis = null;
   }
 
   /**
@@ -157,15 +208,23 @@ export class RedisThrottlerStorage
     throttlerName: string,
   ): Promise<ThrottlerStorageRecord> {
     try {
-      const [totalHits, timeToExpire, blocked, timeToBlockExpire] =
-        (await this.redis.eval(
+      const reply = parseLuaReply(
+        await this.getRedis().eval(
           THROTTLE_LUA,
           1,
           `${this.prefix}:${throttlerName}:${key}`,
           ttl,
           limit,
           blockDuration,
-        )) as [number, number, number, number];
+        ),
+      );
+
+      // Некорректный ответ upstream — не доверяем ему, уходим в fallback.
+      if (reply === null) {
+        throw new Error('Некорректный ответ Lua Redis Throttler');
+      }
+
+      const [totalHits, timeToExpire, blocked, timeToBlockExpire] = reply;
 
       return {
         totalHits,
