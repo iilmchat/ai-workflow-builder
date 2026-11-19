@@ -36,16 +36,21 @@ export interface NodePortContract {
   sourceHandleId: string;
   /** Имя выходного порта в `node_runs.outputs`. */
   outputPortName: string;
-  /** id target-хендла во frontend (React Flow `edge.targetHandle`). */
-  targetHandleId: string;
+  /**
+   * id target-хендла во frontend (React Flow `edge.targetHandle`).
+   *
+   * `null` для source-only узлов (`read_file`, KI-477).
+   */
+  targetHandleId: string | null;
   /**
    * Имя входного порта узла в `executionMap.inputs` / `node_runs.inputs`.
    *
    * Нормализованное имя вместо UI-id хендла (KI-034): исполнителю узла нужно
    * читать вход по контракту (`inputs.prompt`), а не угадывать ключ
-   * (`text-input`). У `text`-узла входа нет — значение-заглушка.
+   * (`text-input`). У `text`-узла входа нет — значение-заглушка; `null` для
+   * source-only узлов (`read_file`, KI-477).
    */
-  inputPortName: string;
+  inputPortName: string | null;
 }
 
 /** Контракт портов по типу узла. */
@@ -222,8 +227,9 @@ export const NODE_PORT_CONTRACT: Record<string, NodePortContract> = {
   read_file: {
     sourceHandleId: 'file-output',
     outputPortName: 'text',
-    targetHandleId: 'text-input',
-    inputPortName: 'prompt',
+    // KI-477: узел source-only — объявлять target-хендл нельзя.
+    targetHandleId: null,
+    inputPortName: null,
   },
   // v0.10 S8 (DESIGN v0.10 § 3.3.4): узел `write_file`. Вход — текст для
   // записи (`text` приходит от Text/LLM), выход — `result` — подтверждение

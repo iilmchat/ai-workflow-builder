@@ -67,7 +67,7 @@ S3/local media, QuickJS-WASM, OpenTelemetry.
 | **KI-450** | 🟢 Low | Open | Дубль KI-077 | Закрывается вместе с KI-077, отдельной работы нет |
 | **KI-478** | 🟠 High | Open | У узла `http` **вообще нет** SSRF-защиты (не только redirect) | Тот же `SafeHttpClient`, что у `http_request`; env-исключение для доверенных инсталляций |
 | **KI-479** | 🟡 Medium | Open | `web/src/lib/api.ts` всегда ставит `Content-Type: application/json` → multipart-загрузка невозможна | Не ставить JSON-заголовок для `FormData` |
-| **KI-480** | 🟢 Low | Open | Документация/промпты называют узел `document_generation`, фактический тип — `document_gen` | Зафиксировать имя в DESIGN/CHANGELOG, не переименовывать тип |
+| **KI-480** | 🟢 Low | Fixed | Документация/промпты называли узел `document_generation`, фактический тип — `document_gen` | Зафиксировано: `document_gen` — единственное имя типа; `document_generation` — только название фичи (KI-спринт 57) |
 
 > KI-478…480 зарегистрированы в [`KNOWN_ISSUES.md`](../../KNOWN_ISSUES.md)
 > 2026-10-19 (статус `Open`); S0 остаётся точкой входа для env-ключей и

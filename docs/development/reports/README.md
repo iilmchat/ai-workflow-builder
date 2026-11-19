@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S56–S58 | 12 KI (9 Fixed, 3 Documented): source-only контракт, env-кросс-чеки, ошибки шаблонов (backend 2159 / web 648) | 2026-11-19 | [KI-S56-S58-env-and-docs.md](v1.6.0/KI-S56-S58-env-and-docs.md) |
 | v1.6.0 | KI-S53–S55 | 12 KI (9 Fixed, 3 Documented): лимиты auth, env-пороги, lazy-роуты, lipsync-guard (backend 2159 / web 648) | 2026-11-19 | [KI-S53-S55-rate-limits-routes.md](v1.6.0/KI-S53-S55-rate-limits-routes.md) |
 | v1.6.0 | KI-S50–S52 | 12 KI (5 Fixed, 7 Documented): TerminalRunStatus, бюджет после финала, DESIGN/RELEASES/SMOKE_CDP по факту (backend 2159 / web 646) | 2026-11-19 | [KI-S50-S52-statuses-docs.md](v1.6.0/KI-S50-S52-statuses-docs.md) |
 | v1.6.0 | KI-S47–S49 | 12 KI (10 Fixed, 2 Documented): focus-кэш, lint web, id предшественника, e2e в CI, строгий SSE; отчёт на 3 спринта (backend 2159 / web 646) | 2026-11-19 | [KI-S47-S49-cache-e2e-sse.md](v1.6.0/KI-S47-S49-cache-e2e-sse.md) |

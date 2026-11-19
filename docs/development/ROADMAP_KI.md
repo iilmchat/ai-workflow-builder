@@ -408,24 +408,24 @@
 
 ### Спринт 56 (Low)
 
-- [ ] **KI-458** 🟢 — `PGVECTOR_ENABLED=false` не отключает vector-инструменты агента (Low) — `v0.10 S10`
-- [ ] **KI-473** 🟢 — Коллизия ссылок в `node-executors.ts` — `src/engine/node-executors.ts`
-- [ ] **KI-476** 🟢 — Реестр KI: KI-001 ломает счётчики статусов — `docs/KNOWN_ISSUES.md (KI-001, сводка)`
-- [ ] **KI-477** 🟢 — `read_file` в `NODE_PORT_CONTRACT` имеет target-хендл — `src/engine/node-ports.ts,`
+- [x] **KI-458** 🟢 — `PGVECTOR_ENABLED=false` не отключает vector-инструменты агента (Low) — `v0.10 S10` (Documented)
+- [x] **KI-473** 🟢 — Коллизия ссылок в `node-executors.ts` — `src/engine/node-executors.ts`
+- [x] **KI-476** 🟢 — Реестр KI: KI-001 ломает счётчики статусов — `docs/KNOWN_ISSUES.md (KI-001, сводка)` (Fixed по факту)
+- [x] **KI-477** 🟢 — `read_file` в `NODE_PORT_CONTRACT` имеет target-хендл — `src/engine/node-ports.ts,`
 
 ### Спринт 57 (Low)
 
-- [ ] **KI-480** 🟢 — Расхождение имён `document_generation` и `document_gen` (Low) — `web/src/lib/node-registry.ts,`
-- [ ] **KI-484** 🟢 — `WORKFLOW_RUN_LEASE_TTL_MS` без верхней границы — `src/config/env.schema.ts`
-- [ ] **KI-485** 🟢 — `schema-parity` маппит все `PgCustomColumn` в `bytea` — `src/db/schema-parity.spec.ts`
-- [ ] **KI-486** 🟢 — `drizzle-kit` кавычит custom SQL-тип — `drizzle/0012_document_templates.sql`
+- [x] **KI-480** 🟢 — Расхождение имён `document_generation` и `document_gen` (Low) — `web/src/lib/node-registry.ts,` (DESIGN обновлён)
+- [x] **KI-484** 🟢 — `WORKFLOW_RUN_LEASE_TTL_MS` без верхней границы — `src/config/env.schema.ts`
+- [x] **KI-485** 🟢 — `schema-parity` маппит все `PgCustomColumn` в `bytea` — `src/db/schema-parity.spec.ts`
+- [x] **KI-486** 🟢 — `drizzle-kit` кавычит custom SQL-тип — `drizzle/0012_document_templates.sql` (Documented)
 
 ### Спринт 58 (Low)
 
-- [ ] **KI-487** 🟢 — Конфликт `heartbeat < staleThreshold` с верхней границей heartbeat — `docs/development/v0.11/DESIGN_V011_FEATURES.md, src/config/env.schema.ts`
-- [ ] **KI-488** 🟢 — Дублирование константы `MCP_MAX_TOOLS_PER_NODE_LIMIT` — `src/config/env.schema.ts, web/src/types/graph.ts`
-- [ ] **KI-489** 🟢 — Причина ошибки загрузки/удаления шаблона не показывается — `web/src/components/nodes/DocumentGenNode.tsx`
-- [ ] **KI-490** 🟢 — variables-черновик не ресинхронизируется при undo/redo — `web/src/components/nodes/DocumentGenNode.tsx`
+- [x] **KI-487** 🟢 — Конфликт `heartbeat < staleThreshold` с верхней границей heartbeat — `docs/development/v0.11/DESIGN_V011_FEATURES.md, src/config/env.schema.ts`
+- [x] **KI-488** 🟢 — Дублирование константы `MCP_MAX_TOOLS_PER_NODE_LIMIT` — `src/config/env.schema.ts, web/src/types/graph.ts` (Documented)
+- [x] **KI-489** 🟢 — Причина ошибки загрузки/удаления шаблона не показывается — `web/src/components/nodes/DocumentGenNode.tsx`
+- [x] **KI-490** 🟢 — variables-черновик не ресинхронизируется при undo/redo — `web/src/components/nodes/DocumentGenNode.tsx`
 
 ### Спринт 59 (Low)
 
@@ -556,3 +556,6 @@
 | 53 | KI-400, KI-411, KI-422, KI-423 | 4 Fixed (invite 409, runError, env throttle, auth-лимиты); web 647 | (текущий) |
 | 54 | KI-428, KI-429, KI-430, KI-431 | 3 Fixed, 1 Documented; зазор вставки, URI, env-порог кэша | (текущий) |
 | 55 | KI-432, KI-438, KI-441, KI-447 | 2 Fixed, 2 Documented; lipsync-блок, lazy-роуты | (текущий) |
+| 56 | KI-458, KI-473, KI-476, KI-477 | 3 Fixed (1 по факту), 1 Documented; source-only контракт | (текущий) |
+| 57 | KI-480, KI-484, KI-485, KI-486 | 3 Fixed, 1 Documented; env-граница, SQL-тип, имя узла | (текущий) |
+| 58 | KI-487, KI-488, KI-489, KI-490 | 3 Fixed, 1 Documented; env-кросс-чек, ошибки шаблонов, variables | (текущий) |

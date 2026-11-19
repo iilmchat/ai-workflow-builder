@@ -110,6 +110,20 @@ function readVariables(value: unknown): Record<string, unknown> | undefined {
  * @param variables - объект переменных
  * @returns JSON с отступами либо пустая строка
  */
+/**
+ * Достаёт текст ошибки из ответа API (KI-489).
+ *
+ * @param error - пойманное исключение
+ * @returns сообщение для пользователя (без стека)
+ */
+function describeApiError(error: unknown): string | null {
+  if (error instanceof Error && error.message.trim() !== '') {
+    return error.message;
+  }
+
+  return typeof error === 'string' && error.trim() !== '' ? error : null;
+}
+
 function variablesToText(
   variables: Record<string, unknown> | undefined,
 ): string {
@@ -313,8 +327,12 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState(false);
   const [deleteError, setDeleteError] = useState(false);
+  /** KI-489: конкретный текст ошибки API (413/400/403) вместо generic. */
+  const [templateErrorText, setTemplateErrorText] = useState<string | null>(null);
   /** Черновик textarea переменных: `null` — показываем `data.variables`. */
   const [variablesDraft, setVariablesDraft] = useState<string | null>(null);
+  /** KI-490: последнее значение, записанное этим же полем (чтобы не сбросить курсор). */
+  const lastWrittenVariables = useRef<unknown>(data.variables);
   const [variablesError, setVariablesError] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -348,13 +366,25 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
         }
 
         setVariablesError(false);
-        updateNodeData(id, {
-          variables: parsed.kind === 'valid' ? parsed.value : undefined,
-        });
+        const nextVariables =
+          parsed.kind === 'valid' ? parsed.value : undefined;
+
+        lastWrittenVariables.current = nextVariables;
+        updateNodeData(id, { variables: nextVariables });
       },
       [id, updateNodeData],
     ),
   );
+
+  // KI-490: при undo/redo/graft из БД `data.variables` меняется «извне» —
+  // сбрасываем черновик. Собственную запись помечаем lastWritten, чтобы не
+  // дёргать текст (и курсор) во время набора.
+  useEffect(() => {
+    if (data.variables !== lastWrittenVariables.current) {
+      lastWrittenVariables.current = data.variables;
+      setVariablesDraft(null);
+    }
+  }, [data.variables]);
 
   // KI-169: textarea растёт по тексту (у переменных — только в template-режиме).
   useAutoResize(contentRef, content);
@@ -371,6 +401,7 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
     let cancelled = false;
 
     setTemplatesError(false);
+    setTemplateErrorText(null);
 
     void listDocumentTemplatesAsync(workflowId)
       .then((list) => {
@@ -378,9 +409,10 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
           setTemplates(list);
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!cancelled) {
           setTemplatesError(true);
+          setTemplateErrorText(describeApiError(error));
         }
       });
 
@@ -402,6 +434,7 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
 
       setIsUploading(true);
       setUploadError(false);
+      setTemplateErrorText(null);
 
       try {
         const created = await uploadDocumentTemplateAsync(workflowId, file);
@@ -411,8 +444,9 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
           ...previous.filter((item) => item.id !== created.id),
         ]);
         updateNodeData(id, { templateId: created.id, mode: 'template' });
-      } catch {
+      } catch (error: unknown) {
         setUploadError(true);
+        setTemplateErrorText(describeApiError(error));
       } finally {
         setIsUploading(false);
       }
@@ -437,6 +471,7 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
     }
 
     setDeleteError(false);
+    setTemplateErrorText(null);
 
     try {
       await deleteDocumentTemplateAsync(workflowId, selectedTemplate.id);
@@ -444,8 +479,9 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
         previous.filter((item) => item.id !== selectedTemplate.id),
       );
       updateNodeData(id, { templateId: undefined });
-    } catch {
+    } catch (error: unknown) {
       setDeleteError(true);
+      setTemplateErrorText(describeApiError(error));
     }
   }, [id, isViewer, selectedTemplate, t, updateNodeData, workflowId]);
 
@@ -750,6 +786,15 @@ export function DocumentGenNode({ id, data }: NodeProps<DocumentGenFlowNode>) {
                 {deleteError ? (
                   <p className="text-[9px] text-status-danger-foreground">
                     {t('template.deleteError')}
+                  </p>
+                ) : null}
+                {templateErrorText !== null ? (
+                  <p
+                    data-document-template-error-detail=""
+                    className="truncate text-[9px] text-status-danger-foreground"
+                    title={templateErrorText}
+                  >
+                    {templateErrorText}
                   </p>
                 ) : null}
               </>

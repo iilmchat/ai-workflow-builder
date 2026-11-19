@@ -865,7 +865,9 @@ export const RunLeaseEnvSchema = z.object({
    * не считаются смертью worker'а.
    */
   WORKFLOW_RUN_LEASE_TTL_MS: z
-    .preprocess(emptyToUndefined, z.coerce.number().int().optional())
+    // KI-484: верхняя граница (24 ч) не даёт «отключить» обнаружение падения
+    // worker'а через 10^12 мс.
+    .preprocess(emptyToUndefined, z.coerce.number().int().min(1_000).max(86_400_000).optional())
     .default(90_000),
 });
 
@@ -1507,6 +1509,16 @@ export const EnvSchema = z.object({
       message:
         'WORKFLOW_RUN_LEASE_TTL_MS должен быть не меньше 2 × WORKFLOW_RUN_HEARTBEAT_MS',
       path: ['WORKFLOW_RUN_LEASE_TTL_MS'],
+    });
+  }
+  // KI-487: DESIGN § 3.3.1 требует heartbeat < staleThreshold. Без этой
+  // проверки max heartbeat (300000) совпадал с дефолтным stale (300000).
+  if (env.WORKFLOW_RUN_HEARTBEAT_MS >= env.WORKFLOW_RUNS_STALE_THRESHOLD_MS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'WORKFLOW_RUN_HEARTBEAT_MS должен быть меньше WORKFLOW_RUNS_STALE_THRESHOLD_MS',
+      path: ['WORKFLOW_RUN_HEARTBEAT_MS'],
     });
   }
 });

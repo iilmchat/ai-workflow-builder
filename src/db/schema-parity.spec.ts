@@ -235,6 +235,15 @@ function buildExpectation(column: Column): ExpectedColumn {
         ? 'timestamp with time zone'
         : 'timestamp without time zone';
   }
+  // KI-485: custom-колонки не всегда `bytea` — берём фактический SQL-тип из
+  // Drizzle, чтобы второй custom-тип не прошёл гейт молча.
+  if (column.columnType === 'PgCustomColumn') {
+    const sqlType = (
+      column as unknown as { getSQLType?: () => string }
+    ).getSQLType?.();
+
+    dataType = (sqlType ?? 'bytea').replace(/"/g, '').trim().toLowerCase();
+  }
   const defaultInfo = describeDefault(column.default);
   const numeric = is(column, PgNumeric) ? column : null;
   return {

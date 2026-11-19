@@ -173,11 +173,11 @@ describe('node-ports', () => {
       expect(handleIdToOutputPort('text-output', 'read_file')).toBeNull();
     });
 
-    it('source-only: входной хендл в UI не рисуется, путь — только data.path', () => {
-      // Контракт хранит fallback target-порт (нужен EngineService для
-      // type-aware резолвера), но `read_file.canBeInsertedOnEdge = false`
-      // и компонент не рендерит Handle type="target" (KI-456).
-      expect(NODE_PORT_CONTRACT.read_file.targetHandleId).toBe('text-input');
+    it('source-only: контракт не объявляет входной порт (KI-477)', () => {
+      // Раньше контракт хранил фиктивный fallback target-порт, хотя компонент
+      // не рендерит Handle type="target" (KI-456). Теперь это явно null.
+      expect(NODE_PORT_CONTRACT.read_file.targetHandleId).toBeNull();
+      expect(NODE_PORT_CONTRACT.read_file.inputPortName).toBeNull();
     });
   });
 
