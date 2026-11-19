@@ -52,6 +52,10 @@
 
 ### Changed
 
+- **KI-спринт 14** ([отчёт](development/reports/v1.6.0/KI-S14-ci-gate-routing.md)):
+  KI-340 закрыт вместе с KI-280, KI-344 закрыт по факту (паритет-гейт
+  запускается в CI после Apply migrations); KI-322/KI-338 `Deferred`.
+
 - **KI-спринт 13** ([отчёт](development/reports/v1.6.0/KI-S13-http-retry-ports.md)):
   KI-278/KI-284/KI-304 `Deferred` — требуют per-handle контракта портов и
   изменения SSE-контракта для подграфов.

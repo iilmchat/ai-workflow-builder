@@ -114,10 +114,10 @@
 
 ### Спринт 14 (Medium)
 
-- [ ] **KI-322** 🟡 — Подграф вне топ-50 `GET /workflow` → warning недостижим — `web/src/components/nodes/SubWorkflowNode.tsx,`
-- [ ] **KI-338** 🟡 — `condition`: непройденная ветка не помечается skipped — `src/engine/node-executors.ts, src/engine/execution-engine.service.ts`
-- [ ] **KI-340** 🟡 — `http.failOnHttpError` не ретраит 5xx/429 — `src/engine/node-executors.ts`
-- [ ] **KI-344** 🟡 — KI-318 закрыт наполовину — `package.json, vitest.config.ts`
+- [x] **KI-322** 🟡 — Подграф вне топ-50 `GET /workflow` → warning недостижим — `web/src/components/nodes/SubWorkflowNode.tsx,` (Deferred)
+- [x] **KI-338** 🟡 — `condition`: непройденная ветка не помечается skipped — `src/engine/node-executors.ts, src/engine/execution-engine.service.ts` (Deferred)
+- [x] **KI-340** 🟡 — `http.failOnHttpError` не ретраит 5xx/429 — `src/engine/node-executors.ts` (уже исправлено в S13)
+- [x] **KI-344** 🟡 — KI-318 закрыт наполовину — `package.json, vitest.config.ts` (уже исправлено)
 
 ### Спринт 15 (Medium)
 
@@ -513,4 +513,5 @@
 | 10 | KI-203, KI-209, KI-216, KI-223 | 3 Fixed (2 с кодом), 1 Deferred | `f3e53ab` |
 | 11 | KI-224, KI-231, KI-239, KI-240 | 2 Fixed (frontend), 2 Deferred | `0903ec7` |
 | 12 | KI-241, KI-244, KI-269, KI-275 | 2 Fixed (2 с кодом), 1 Deferred, 1 Documented | `0bf2e80` |
-| 13 | KI-278, KI-280, KI-284, KI-304 | 1 Fixed (код+тест), 3 Deferred | (текущий) |
+| 13 | KI-278, KI-280, KI-284, KI-304 | 1 Fixed (код+тест), 3 Deferred | `9366a08` |
+| 14 | KI-322, KI-338, KI-340, KI-344 | 2 Fixed (по факту), 2 Deferred | (текущий) |
