@@ -54,6 +54,10 @@
 
 ### Changed
 
+- **KI-спринт 16** ([отчёт](development/reports/v1.6.0/KI-S16-budget-media.md)):
+  KI-372/379/381 `Deferred`, KI-385 `Documented` — бюджет, идемпотентность
+ прямых провайдеров и каталог TTS требуют внешних решений/ключей.
+
 - **KI-спринт 15** ([отчёт](development/reports/v1.6.0/KI-S15-text-handle-contracts.md)):
   KI-356/KI-357/KI-370 `Deferred` — контрактные гейты и перенос маршрутизации
   в media-реестр требуют отдельных спринтов.

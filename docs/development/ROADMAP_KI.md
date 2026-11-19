@@ -128,10 +128,10 @@
 
 ### Спринт 16 (Medium)
 
-- [ ] **KI-372** 🟡 — бюджет: фиксированный курс + нулевая оценка LLM — `src/runs/cost-budget.service.ts, src/config/env.schema.ts`
-- [ ] **KI-379** 🟡 — KI-370 не закрыт, дублирование маршрутизации — `src/media/media-node-executor.service.ts,`
-- [ ] **KI-381** 🟡 — серверной идемпотентности нет у Replicate/FAL/OpenAI — `src/media/providers/*.provider.ts`
-- [ ] **KI-385** 🟡 — CreativeLab не отдаёт `type=AUDIO`: TTS-модели лежат в MUSIC — `src/media/media-generation.ts, web/src/lib/generation-node.ts`
+- [x] **KI-372** 🟡 — бюджет: фиксированный курс + нулевая оценка LLM — `src/runs/cost-budget.service.ts, src/config/env.schema.ts` (Deferred)
+- [x] **KI-379** 🟡 — KI-370 не закрыт, дублирование маршрутизации — `src/media/media-node-executor.service.ts,` (Deferred)
+- [x] **KI-381** 🟡 — серверной идемпотентности нет у Replicate/FAL/OpenAI — `src/media/providers/*.provider.ts` (Deferred)
+- [x] **KI-385** 🟡 — CreativeLab не отдаёт `type=AUDIO`: TTS-модели лежат в MUSIC — `src/media/media-generation.ts, web/src/lib/generation-node.ts` (Documented)
 
 ### Спринт 17 (Medium)
 
@@ -515,4 +515,5 @@
 | 12 | KI-241, KI-244, KI-269, KI-275 | 2 Fixed (2 с кодом), 1 Deferred, 1 Documented | `0bf2e80` |
 | 13 | KI-278, KI-280, KI-284, KI-304 | 1 Fixed (код+тест), 3 Deferred | `9366a08` |
 | 14 | KI-322, KI-338, KI-340, KI-344 | 2 Fixed (по факту), 2 Deferred | `54e4175` |
-| 15 | KI-349, KI-356, KI-357, KI-370 | 1 Fixed (UI), 3 Deferred | (текущий) |
+| 15 | KI-349, KI-356, KI-357, KI-370 | 1 Fixed (UI), 3 Deferred | `aafa9b2` |
+| 16 | KI-372, KI-379, KI-381, KI-385 | 3 Deferred, 1 Documented | (текущий) |

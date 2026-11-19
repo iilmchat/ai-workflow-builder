@@ -2,6 +2,7 @@
 
 | Версия | Шаг | Тема | Дата | Файл |
 |---|---|---|---|---|
+| v1.6.0 | KI-S16 | KI-372/379/381 Deferred (курс, media-реестр, idempotency), KI-385 Documented (TTS-фолбэк) — docs-only | 2026-11-19 | [KI-S16-budget-media.md](v1.6.0/KI-S16-budget-media.md) |
 | v1.6.0 | KI-S15 | KI-349: target-handle `text-input` у TextNode (визуальный дефект связей); KI-356/357/370 Deferred | 2026-11-19 | [KI-S15-text-handle-contracts.md](v1.6.0/KI-S15-text-handle-contracts.md) |
 | v1.6.0 | KI-S14 | KI-340 закрыт вместе с KI-280, KI-344 Fixed (паритет-гейт в CI), KI-322/KI-338 Deferred — docs-only | 2026-11-19 | [KI-S14-ci-gate-routing.md](v1.6.0/KI-S14-ci-gate-routing.md) |
 | v1.6.0 | KI-S13 | KI-280 ретраи GET/HEAD при 429/5xx и таймауте (+тест); KI-278/284/304 Deferred (per-handle контракты и SSE подграфов) | 2026-11-19 | [KI-S13-http-retry-ports.md](v1.6.0/KI-S13-http-retry-ports.md) |
