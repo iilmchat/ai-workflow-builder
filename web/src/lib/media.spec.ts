@@ -88,6 +88,15 @@ describe('pickDefaultMediaModel (KI-154)', () => {
     expect(pickDefaultMediaModel(catalog)).toBe('some-new-model');
   });
 
+  it('KI-173: не выбирает deprecated-модель даже из приоритетного списка', () => {
+    const catalog = [
+      model('flux-schnell', { deprecated: true }),
+      model('flux-dev'),
+    ];
+
+    expect(pickDefaultMediaModel(catalog)).toBe('flux-dev');
+  });
+
   it('пропускает модель, у которой промпт необязателен', () => {
     const catalog = [
       model('upscaler', { prompt: 'none' }),

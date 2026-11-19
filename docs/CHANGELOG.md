@@ -30,6 +30,8 @@
 
 ### Fixed
 
+- **KI-173:** `pickDefaultMediaModel` пропускает `deprecated`-модели (+тест,
+  599 web-тестов зелёные).
 - **KI-013:** `DbModule` и `main.ts` читают env через `ConfigService` (RULES 4.6).
 - **KI-020:** удалено мёртвое поле `executionMap` из типа `ExecutionPlan` (web).
 - **KI-028:** общая функция `toMessage` вынесена в `src/common/utils/`.
@@ -71,6 +73,10 @@
   по образу job `web` в CI (проверено: 598 тестов зелёные).
 
 ### Changed
+
+- **KI-спринт 31** ([отчёт](development/reports/v1.6.0/KI-S31-model-defaults.md)):
+  KI-172 закрыт по факту (версия Yandex задаётся в `YANDEX_MODELS`), KI-171/
+  KI-177 `Deferred`.
 
 - **KI-спринт 30** ([отчёт](development/reports/v1.6.0/KI-S30-workspace-a11y.md)):
   KI-144/KI-153 `Documented`, KI-146/KI-161 `Deferred`.

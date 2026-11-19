@@ -233,10 +233,10 @@
 
 ### Спринт 31 (Low)
 
-- [ ] **KI-171** 🟢 — auto-resize не учитывает смену ширины узла — `web/src/hooks/use-auto-resize.ts`
-- [ ] **KI-172** 🟢 — Версия модели Yandex захардкожена (`latest`) — `src/llm/llm-provider.factory.ts`
-- [ ] **KI-173** 🟢 — `pickDefaultMediaModel` не учитывает `deprecated` — `web/src/lib/media.ts`
-- [ ] **KI-177** 🟢 — LM Studio auto-discovery работает только на старте — `src/llm/llm-provider.factory.ts`
+- [x] **KI-171** 🟢 — auto-resize не учитывает смену ширины узла — `web/src/hooks/use-auto-resize.ts` (Deferred)
+- [x] **KI-172** 🟢 — Версия модели Yandex захардкожена (`latest`) — `src/llm/llm-provider.factory.ts` (уже исправлено)
+- [x] **KI-173** 🟢 — `pickDefaultMediaModel` не учитывает `deprecated` — `web/src/lib/media.ts`
+- [x] **KI-177** 🟢 — LM Studio auto-discovery работает только на старте — `src/llm/llm-provider.factory.ts` (Deferred)
 
 ### Спринт 32 (Low)
 
@@ -530,4 +530,5 @@
 | 27 | KI-102, KI-103, KI-115, KI-116 | 1 Fixed (по факту), 1 Documented, 2 Deferred | `b840f50` |
 | 28 | KI-117, KI-133, KI-135, KI-136 | 2 Documented, 2 Deferred | `6c78437` |
 | 29 | KI-138, KI-139, KI-140, KI-143 | 1 Fixed (скрипт), 1 Documented, 2 Deferred | `af506b5` |
-| 30 | KI-144, KI-146, KI-153, KI-161 | 2 Documented, 2 Deferred | (текущий) |
+| 30 | KI-144, KI-146, KI-153, KI-161 | 2 Documented, 2 Deferred | `46463de` |
+| 31 | KI-171, KI-172, KI-173, KI-177 | 2 Fixed (1 код+тест), 2 Deferred | (текущий) |

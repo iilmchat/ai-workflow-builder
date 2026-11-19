@@ -218,9 +218,12 @@ export function filterModelsByProvider(
 export function pickDefaultMediaModel(
   models: readonly MediaModelInfo[],
 ): string {
+  // KI-173: снятые с продажи модели не должны становиться дефолтом.
+  const active = models.filter((model) => model.deprecated !== true);
+
   // 1. Известные text-to-image модели — в порядке приоритета.
   for (const preferredId of PREFERRED_IMAGE_MODEL_IDS) {
-    const match = models.find((model) => model.id === preferredId);
+    const match = active.find((model) => model.id === preferredId);
 
     if (match) {
       return match.id;
@@ -228,7 +231,7 @@ export function pickDefaultMediaModel(
   }
 
   // 2. Любая модель, которой для генерации достаточно одного промпта.
-  const promptOnly = models.find(
+  const promptOnly = active.find(
     (model) => model.prompt === 'required' && !requiresInputFiles(model),
   );
 
