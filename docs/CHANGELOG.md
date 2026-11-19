@@ -67,6 +67,10 @@
 
 ### Changed
 
+- **KI-спринт 27** ([отчёт](development/reports/v1.6.0/KI-S27-media-dto.md)):
+  KI-103 закрыт проверкой (поле `provider` уже есть), KI-102 `Documented`,
+  KI-115/KI-116 `Deferred`.
+
 - **KI-спринт 26** ([отчёт](development/reports/v1.6.0/KI-S26-model-badges.md)):
   KI-093 `Won't Fix`, KI-098 `Documented`, KI-095/KI-100 `Deferred`.
 

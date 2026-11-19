@@ -205,10 +205,10 @@
 
 ### Спринт 27 (Low)
 
-- [ ] **KI-102** 🟢 — `passthrough()` может дублировать имя поля в ответе — `src/media/dto/media-model.dto.ts, media-model.mapper.ts`
-- [ ] **KI-103** 🟢 — `MediaProviderException` не различает, какой провайдер упал — `src/media/media-provider.interface.ts`
-- [ ] **KI-115** 🟢 — `aspectRatio` не материализуется в `data` до первого изменения — `web/src/components/nodes/ImageGenNode.tsx`
-- [ ] **KI-116** 🟢 — `aspect_ratio` рендерится только если у модели есть `options` — `web/src/components/nodes/ImageGenNode.tsx`
+- [x] **KI-102** 🟢 — `passthrough()` может дублировать имя поля в ответе — `src/media/dto/media-model.dto.ts, media-model.mapper.ts` (Documented)
+- [x] **KI-103** 🟢 — `MediaProviderException` не различает, какой провайдер упал — `src/media/media-provider.interface.ts` (уже исправлено)
+- [x] **KI-115** 🟢 — `aspectRatio` не материализуется в `data` до первого изменения — `web/src/components/nodes/ImageGenNode.tsx` (Deferred)
+- [x] **KI-116** 🟢 — `aspect_ratio` рендерится только если у модели есть `options` — `web/src/components/nodes/ImageGenNode.tsx` (Deferred)
 
 ### Спринт 28 (Low)
 
@@ -526,4 +526,5 @@
 | 23 | KI-029, KI-043, KI-044, KI-045 | 1 Fixed (по факту), 3 Deferred | `141a210` |
 | 24 | KI-051, KI-054, KI-057, KI-058 | 4 Deferred | `b74d121` |
 | 25 | KI-073, KI-076, KI-089, KI-090 | 1 Fixed (по факту), 1 Documented, 2 Deferred | `1b0eecd` |
-| 26 | KI-093, KI-095, KI-098, KI-100 | 1 Documented, 1 Won't Fix, 2 Deferred | (текущий) |
+| 26 | KI-093, KI-095, KI-098, KI-100 | 1 Documented, 1 Won't Fix, 2 Deferred | `1fa02b1` |
+| 27 | KI-102, KI-103, KI-115, KI-116 | 1 Fixed (по факту), 1 Documented, 2 Deferred | (текущий) |
